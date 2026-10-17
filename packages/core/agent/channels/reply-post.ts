@@ -4,6 +4,7 @@ import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { swallowRoomPost } from "./egress-spoof.js";
 import { answerIntent, landsInDirectConversation, postArm, type PostIntent } from "./post-arms.js";
+import { normalizeFollowUps } from "./reply-follow-ups.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { withReplierPrefix, truncateMemoryCitationPaths, type ReplierLabel } from "./turn-delivery.js";
 import { recordOwnPost } from "./own-post-ledger.js";
@@ -237,13 +238,14 @@ export async function postReply(
   text: string,
   audit?: ReplyAudit,
   replier?: ReplierLabel,
-  opts?: { readonly host?: boolean },
+  opts?: { readonly host?: boolean; readonly followUps?: readonly string[] },
 ): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
-  const provenance = applyReplyProvenance(requestGuard.body, audit, landsInDirectConversation(target.platform, replyEditLocus(target)?.channelId));
-  const postIntent = answerIntent(audit, provenance.sources, true, opts?.host === true);
+  const direct = landsInDirectConversation(target.platform, replyEditLocus(target)?.channelId);
+  const provenance = applyReplyProvenance(requestGuard.body, audit, direct);
+  const postIntent = answerIntent(audit, provenance.sources, true, opts?.host === true, false, direct ? normalizeFollowUps(opts?.followUps) : []);
   const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
   const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(target.platform);

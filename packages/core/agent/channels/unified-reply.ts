@@ -16,6 +16,7 @@ import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-clai
 import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
 import { swallowRoomPost } from "./egress-spoof.js";
 import { answerIntent, landsInDirectConversation, postArm, type PostIntent } from "./post-arms.js";
+import { normalizeFollowUps } from "./reply-follow-ups.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { coverLabelForReply, recordCoverReply, withCoverLabel } from "../cover/wake.js";
 import type { EditLocus } from "./reply-edit.js";
@@ -69,13 +70,21 @@ export async function postUnifiedReply(
   audit?: ReplyAudit,
   replier?: ReplierLabel,
   intent?: PostIntent,
-  opts?: { readonly host?: boolean; readonly generated?: boolean },
+  opts?: { readonly host?: boolean; readonly generated?: boolean; readonly followUps?: readonly string[] },
 ): Promise<string> {
   const claimGuard = guardMemoryClaims(truncateMemoryCitationPaths(text), audit);
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
-  const provenance = applyReplyProvenance(requestGuard.body, audit, landsInDirectConversation(origin.platform, unifiedEditLocus(origin)?.channelId));
-  const postIntent = answerIntent(audit, provenance.sources, intent?.terminal ?? true, opts?.host === true, opts?.generated === true);
+  const direct = landsInDirectConversation(origin.platform, unifiedEditLocus(origin)?.channelId);
+  const provenance = applyReplyProvenance(requestGuard.body, audit, direct);
+  const postIntent = answerIntent(
+    audit,
+    provenance.sources,
+    intent?.terminal ?? true,
+    opts?.host === true,
+    opts?.generated === true,
+    direct ? normalizeFollowUps(opts?.followUps) : [],
+  );
   const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
   const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(origin.platform);

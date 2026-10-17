@@ -6130,6 +6130,54 @@ export const SCENARIOS: readonly Scenario[] = [
   },
 
   {
+    id: "S-REPLY-FOLLOWUPS",
+    title: "Suggested follow-ups (OPE-2516): a DM answer carries the follow-up the person was promised as a button, and a signed press on it is answered in the same DM",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic!;
+      const { userId: personId, teamId } = await ctx.slack!.identity();
+      await fenceDmSeat(ctx, "S-REPLY-FOLLOWUPS");
+      const token = factToken("next");
+      const followUp = `Say ${token}`;
+      const { ts: askTs } = await dm.post(
+        fixtureLine(`e2e S-REPLY-FOLLOWUPS: reply with one short sentence, and offer exactly one follow-up (the followUps input of reply) whose text is "${followUp}".`),
+      );
+
+      const answer = await pollUntil(
+        async () => (await dm.collectBotMessagesAfter(askTs, askTs)).find((m) => (m.followUps ?? []).some((f) => f.value === followUp)),
+        { timeoutMs: FILE_REPLY_WAIT, what: `the DM answer carrying the follow-up "${followUp}" as a button` },
+      );
+      const button = answer.followUps!.find((f) => f.value === followUp)!;
+      ctx.gate(button.actionId.startsWith("oe_followup:"), `S-REPLY-FOLLOWUPS: the follow-up is our own button (action id ${button.actionId})`);
+      ctx.gate(answer.actions === undefined, "S-REPLY-FOLLOWUPS: an answer with follow-ups does not read as a card");
+
+      const pressed = await synthetic.clickBlockAction({
+        actionId: button.actionId,
+        blockId: "oe_followups",
+        value: button.value,
+        buttonText: button.value,
+        userId: personId,
+        teamId,
+        channelId: dm.channelId,
+        messageTs: answer.ts,
+        ...(answer.threadTs ? { threadTs: answer.threadTs } : {}),
+      });
+      ctx.gate(pressed.status === 200, `S-REPLY-FOLLOWUPS: the signed press is acknowledged (${pressed.label}, HTTP ${pressed.status})`);
+
+      const next = await pollUntil(
+        async () => (await dm.collectBotMessagesAfter(answer.threadTs ?? askTs, answer.ts)).find((m) => m.ts !== answer.ts && m.text.includes(token)),
+        { timeoutMs: FILE_REPLY_WAIT, what: `the agent's answer to the pressed follow-up, carrying ${token}` },
+      );
+      ctx.gate(next.text.includes(token), `S-REPLY-FOLLOWUPS: the press reached the agent as the person's message, and the answer says ${token}`);
+    },
+  },
+
+  {
     id: "S-MEMORY-CANVAS",
     title: "Domain memory canvas (OPE-2499): a taught fact appears in the internal channel's canvas, and in no canvas of a shared or guest channel of the same domain",
     requires: ["slack"],

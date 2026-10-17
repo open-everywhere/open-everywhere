@@ -532,6 +532,7 @@ test:surface-session-state
 test:voice-clips
 test:doing-for-me
 test:reply-source-links
+test:reply-follow-ups
 test:workflow-discovery
 test:first-routine
 test:ask-watch

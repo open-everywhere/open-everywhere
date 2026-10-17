@@ -28,7 +28,10 @@ export interface SlackMessage {
   readonly blockTexts?: readonly string[];
   readonly approvalCard?: { readonly kind: string; readonly detail: readonly string[] };
   readonly feedbackActionId?: string;
+  readonly followUps?: readonly { readonly actionId: string; readonly value: string }[];
 }
+
+const SLACK_FOLLOW_UP_BLOCK_ID = "oe_followups";
 
 export interface SlackApiButton {
   type?: string;
@@ -108,6 +111,7 @@ export function seatMessageSettles(
 
 export function toMessage(m: SlackApiMessage): SlackMessage {
   const actions = (m.blocks ?? [])
+    .filter((b) => b.block_id !== SLACK_FOLLOW_UP_BLOCK_ID)
     .flatMap((b) =>
       [...(b.elements ?? []), ...(b.actions ?? [])]
         .filter((e): e is SlackApiButton & { action_id: string } => typeof e.action_id === "string" && e.type !== "feedback_buttons")
@@ -117,6 +121,11 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
   const blockTexts = blockTextsOf(m.blocks);
   const approvalCard = approvalCardOf(m);
   const feedback = (m.blocks ?? []).flatMap((b) => b.elements ?? []).find((e) => e.type === "feedback_buttons" && typeof e.action_id === "string");
+  const followUps = (m.blocks ?? [])
+    .filter((b) => b.block_id === SLACK_FOLLOW_UP_BLOCK_ID)
+    .flatMap((b) => b.elements ?? [])
+    .filter((e): e is SlackApiButton & { action_id: string; value: string } => typeof e.action_id === "string" && typeof e.value === "string")
+    .map((e) => ({ actionId: e.action_id, value: e.value }));
   return {
     ts: m.ts ?? "",
     threadTs: m.thread_ts,
@@ -130,6 +139,7 @@ export function toMessage(m: SlackApiMessage): SlackMessage {
     ...(blockTexts.length > 0 ? { blockTexts } : {}),
     ...(approvalCard ? { approvalCard } : {}),
     ...(feedback?.action_id ? { feedbackActionId: feedback.action_id } : {}),
+    ...(followUps.length > 0 ? { followUps } : {}),
   };
 }
 

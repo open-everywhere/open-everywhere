@@ -1242,6 +1242,10 @@
       "types": "./dist/agent/channels/reply-fold.d.ts",
       "default": "./dist/agent/channels/reply-fold.js"
     },
+    "./agent/channels/reply-follow-ups.js": {
+      "types": "./dist/agent/channels/reply-follow-ups.d.ts",
+      "default": "./dist/agent/channels/reply-follow-ups.js"
+    },
     "./agent/channels/reply-freshness.js": {
       "types": "./dist/agent/channels/reply-freshness.d.ts",
       "default": "./dist/agent/channels/reply-freshness.js"
@@ -4211,6 +4215,7 @@
     "test:routing-decision-scoring": "NODE_NO_WARNINGS=1 tsx scripts/routing-decision-scoring-test.ts",
     "test:reply-provenance": "NODE_NO_WARNINGS=1 tsx scripts/reply-provenance-test.ts",
     "test:reply-source-links": "NODE_NO_WARNINGS=1 tsx scripts/reply-source-links-test.ts",
+    "test:reply-follow-ups": "NODE_NO_WARNINGS=1 tsx scripts/reply-follow-ups-test.ts",
     "test:delegated-provenance": "NODE_NO_WARNINGS=1 tsx scripts/delegated-provenance-test.ts",
     "test:runtime-rotation": "NODE_NO_WARNINGS=1 tsx scripts/runtime-rotation-test.ts",
     "test:app-code-fingerprint": "NODE_NO_WARNINGS=1 tsx scripts/app-code-fingerprint-test.ts",

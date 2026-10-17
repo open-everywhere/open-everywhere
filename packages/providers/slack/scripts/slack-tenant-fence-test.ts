@@ -481,7 +481,7 @@ async function dropRows(ts: string) {
         `TOTALITY(click): the "${arm.name}" branch runs no model turn and still decides something, so it must consult the tenant fence`,
       );
     }
-    ok(fenced === 10, `…and the scan really found all ten deciding branches (six clicks, the OPE-2423 user-change branch, the OPE-2451 channel-shared canvas recheck, the OPE-2519 Stop press and the OPE-2520 thumbs click) (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
+    ok(fenced === 11, `…and the scan really found all eleven deciding branches (six clicks, the OPE-2423 user-change branch, the OPE-2451 channel-shared canvas recheck, the OPE-2519 Stop press, the OPE-2520 thumbs click and the OPE-2516 follow-up press) (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
     const homeAt = frontCode.indexOf('if (decision.kind === "home-open" || decision.kind === "home-click" || decision.kind === "home-submit") {');
     ok(homeAt >= 0, "the Home tab arm is present, under its three decision kinds");
     const homeBody = frontCode.slice(homeAt, frontCode.indexOf("\n    if (decision.kind ===", homeAt + 1));
@@ -496,6 +496,8 @@ async function dropRows(ts: string) {
       ["grant-click", "handleGrantCardClick("],
       ["setkey-submit", "handleSetKeyViewSubmission("],
       ["feedback-click", "routeSlackFeedbackClick("],
+      ["followup-click", "notYetSeenKey("],
+      ["followup-click", "markFollowUpPressed("],
     ] as const) {
       const at = frontCode.indexOf(`if (decision.kind === "${arm}") {`);
       const body = frontCode.slice(at, frontCode.indexOf("\n    if (decision.kind ===", at + 1));

@@ -1,3 +1,5 @@
+// proves: REPLY-57, REPLY-58
+
 import type { ReplyFeedbackClick } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   isTeamsPersonalConversationId,
@@ -107,6 +109,22 @@ console.log("§5 the 1:1 rule");
   ok(isTeamsPersonalConversationId("a:1abc") && teamsPostArm.isDirectConversation?.({ channelId: "a:1abc" }) === true, "a personal chat is 1:1");
   ok(teamsPostArm.isDirectConversation?.({ channelId: "19:abc@thread.v2" }) === false, "🔴 a group chat is not");
   ok(teamsPostArm.isDirectConversation?.({ channelId: "19:abc@thread.tacv2;messageid=1" }) === false, "a channel is not");
+}
+
+console.log("§6 suggested follow-ups (OPE-2516)");
+{
+  const next = ["Move the 2pm", "Show Friday too"];
+  const a = teamsAnswerActivity("Your meetings are on Thursday.", { terminal: true, feedback: true, generated: true, followUps: next }) as {
+    suggestedActions?: { actions?: { type?: string; title?: string; value?: string }[] };
+  };
+  const actions = a.suggestedActions?.actions ?? [];
+  ok(actions.length === 2, `🔴 an answer with follow-ups carries Teams' own suggested actions (got ${actions.length})`);
+  ok(
+    actions.every((x, i) => x.type === "imBack" && x.title === next[i] && x.value === next[i]),
+    "🔴 each is an imBack whose title IS the text a press sends as the person's message",
+  );
+  ok(!("suggestedActions" in teamsAnswerActivity("x", { terminal: true, feedback: true })), "no follow-ups: no suggested actions");
+  ok(!("suggestedActions" in teamsAnswerActivity("x", { terminal: true, followUps: [] })), "an empty list: no suggested actions");
 }
 
 console.log(`teams-reply-feedback: ${passed} assertions passed`);

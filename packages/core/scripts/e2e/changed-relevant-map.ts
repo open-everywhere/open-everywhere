@@ -211,6 +211,16 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-REPLY-FEEDBACK (OPE-2520) is the only live leg on the native thumbs. It reads a DM answer back and gates that it carries Slack's feedback_buttons, then forges a signed thumbs-down on that message and gates on the one reply.feedback row. `slack-reply-blocks.ts` renders the control, `slack-reply-feedback.ts` parses the click and `reply-feedback.ts` writes the row, so a change to any of them changes an answer this leg gates.",
   },
   {
+    area: "reply-follow-ups",
+    globs: [
+      "packages/providers/slack/agent/channels/slack-follow-ups.ts",
+      "packages/providers/slack/agent/channels/slack-reply-blocks.ts",
+      "packages/core/agent/channels/reply-follow-ups.ts",
+    ],
+    scenarios: ["S-REPLY-FOLLOWUPS"],
+    why: "S-REPLY-FOLLOWUPS (OPE-2516) is the only live leg on suggested follow-ups. It reads a DM answer back and gates that it carries the promised follow-up as a button, then forges a signed press on it and gates that the agent answers the button's text in the same DM. `reply-follow-ups.ts` decides which follow-ups an answer keeps, `slack-reply-blocks.ts` renders the buttons and `slack-follow-ups.ts` turns a press into the person's next message, so a change to any of them changes what this leg gates.",
+  },
+  {
     area: "domain-memory-canvas",
     globs: [
       "packages/providers/slack/agent/channels/slack-memory-canvas.ts",

@@ -80,6 +80,7 @@ import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postUnifiedReply, unifiedEditLocus, terminalPostClosesConversation } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicVariants } from "../access/window-gated.js";
+import { FOLLOW_UPS_INPUT } from "../channels/reply-follow-ups.js";
 
 function replierFor(ctx: BindableContext): ReplierLabel | undefined {
   return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
@@ -180,6 +181,7 @@ export const unifiedReplyEntry = defineTool({
         .describe(
           "Leave false. Set true ONLY to override a host refusal about the state of the room: that this conversation has moved on (newer messages you have not read are on their way to you), that your own last message here is still the newest one and this should be an edit, or that you already answered this wake in this turn. It posts your reply anyway. It does NOT override a refusal about what the room can still receive — where your answer closed the conversation, no flag reopens it. Use it when posting NOW as a separate message matters more — a time-critical alert, a line that says what will happen, or something that genuinely has to notify the room again. It costs the room a near-duplicate to read, and it is recorded.",
         ),
+      followUps: FOLLOW_UPS_INPUT,
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
     async execute(input, ctx) {
@@ -287,6 +289,7 @@ export const unifiedReplyEntry = defineTool({
         replyAuditFor(ctx as BindableContext, "tool", input.wake),
         replierFor(bind),
         { terminal: input.done !== false },
+        { followUps: input.followUps ?? [] },
       );
       markRepliedThisTurn(turnId);
       if (standDown.stopped) await spendStoppedAck(bind, turnId, "unified");
@@ -355,6 +358,7 @@ export const baseReplyEntry = defineTool({
           "woke you; you can't target another place.",
         inputSchema: z.object({
           text: z.string().min(1).describe("The message to post (channel mrkdwn/markdown). Keep it one curated message, not a stack."),
+          followUps: FOLLOW_UPS_INPUT,
         }),
         outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
         async execute(input, ctx) {
@@ -385,7 +389,7 @@ export const baseReplyEntry = defineTool({
             });
           }
           await flushWriteIntentMemory(ctx as MemoryPersistContext);
-          const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase));
+          const id = await postReply(target, input.text, replyAuditFor(bindBase, "tool"), replierFor(bindBase), { followUps: input.followUps ?? [] });
           markRepliedThisTurn(baseTurnId);
           if (standDownBase.stopped) await spendStoppedAck(bindBase, baseTurnId, "per-surface");
           return {

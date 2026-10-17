@@ -603,6 +603,16 @@ the label, the click parse and the 1:1 rule. `tests/integration/channels/reply-f
 posts a signed feedback invoke at a booted agent and reads the `reply.feedback` row back. No test runs
 a live tenant, so that Teams draws the pills, the thumbs and the label is unproven here.
 
+## Suggested follow-ups
+
+An answer in the person's 1:1 (personal) chat can end with up to three suggested follow-ups (OPE-2516),
+as on Slack. The activity carries them as Teams' own `suggestedActions`, one `imBack` per follow-up.
+A press sends the text as the person's own message, so it arrives as an ordinary message and wakes the
+seat as a typed message does. Teams shows the buttons under the newest message only, and removes them
+once the person writes. A group chat, a channel, a `done: false` part and a host post get none.
+`test:teams-reply-feedback` pins the activity. No test runs a live tenant, so that Teams draws the
+buttons is unproven here.
+
 ## Listing in the Teams admin centre
 
 This section is written for an **agent** that drives the setup over the ops MCP server, as in

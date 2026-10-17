@@ -68,6 +68,10 @@
       "types": "./dist/agent/channels/slack-events.d.ts",
       "default": "./dist/agent/channels/slack-events.js"
     },
+    "./agent/channels/slack-follow-ups.js": {
+      "types": "./dist/agent/channels/slack-follow-ups.d.ts",
+      "default": "./dist/agent/channels/slack-follow-ups.js"
+    },
     "./agent/channels/slack-friendly-names.js": {
       "types": "./dist/agent/channels/slack-friendly-names.d.ts",
       "default": "./dist/agent/channels/slack-friendly-names.js"
@@ -287,7 +291,8 @@
     "test:slack-home": "NODE_NO_WARNINGS=1 tsx scripts/slack-home-test.ts",
     "test:slack-side-panel": "NODE_NO_WARNINGS=1 tsx scripts/slack-side-panel-test.ts",
     "test:slack-agent-session": "NODE_NO_WARNINGS=1 tsx scripts/slack-agent-session-test.ts",
-    "test:slack-reply-feedback": "NODE_NO_WARNINGS=1 tsx scripts/slack-reply-feedback-test.ts"
+    "test:slack-reply-feedback": "NODE_NO_WARNINGS=1 tsx scripts/slack-reply-feedback-test.ts",
+    "test:slack-follow-ups": "NODE_NO_WARNINGS=1 tsx scripts/slack-follow-ups-test.ts"
   },
   "dependencies": {
     "@open-everywhere/core": "0.7.0",

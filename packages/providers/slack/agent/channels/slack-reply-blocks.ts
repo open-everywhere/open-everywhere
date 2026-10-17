@@ -5,6 +5,14 @@ export const SLACK_FEEDBACK_ACTION_ID = "oe_feedback";
 export const SLACK_FEEDBACK_VALUE_UP = "up";
 export const SLACK_FEEDBACK_VALUE_DOWN = "down";
 
+export const SLACK_FOLLOW_UP_ACTION_PREFIX = "oe_followup:";
+
+export const SLACK_FOLLOW_UP_BLOCK_ID = "oe_followups";
+
+export const SLACK_INVISIBLE_CHARACTER = /[\p{Cc}\p{Cf}]/u;
+
+const BUTTON_TEXT_MAX = 75;
+
 const SECTION_TEXT_MAX = 3000;
 
 const MAX_BLOCKS = 50;
@@ -75,10 +83,26 @@ function slackFeedbackBlock(): Record<string, unknown> {
   };
 }
 
+function slackFollowUpsBlock(followUps: readonly string[]): Record<string, unknown> | undefined {
+  const fit = followUps.filter((f) => f.length > 0 && Array.from(f).length <= BUTTON_TEXT_MAX && !SLACK_INVISIBLE_CHARACTER.test(f));
+  if (fit.length === 0) return undefined;
+  return {
+    type: "actions",
+    block_id: SLACK_FOLLOW_UP_BLOCK_ID,
+    elements: fit.map((text, i) => ({
+      type: "button",
+      action_id: `${SLACK_FOLLOW_UP_ACTION_PREFIX}${i}`,
+      text: { type: "plain_text", text, emoji: true },
+      value: text,
+    })),
+  };
+}
+
 export function slackReplyBlocks(mrkdwn: string, intent: PostIntent | undefined): Record<string, unknown>[] | undefined {
   const sources = intent?.sources ?? [];
   const feedback = intent?.feedback === true;
-  if (sources.length === 0 && !feedback) return undefined;
+  const followUps = slackFollowUpsBlock(intent?.followUps ?? []);
+  if (sources.length === 0 && !feedback && followUps === undefined) return undefined;
   const blocks: Record<string, unknown>[] = [];
   for (const chunk of chunkSlackSectionText(mrkdwn)) {
     if (chunk.trim().length === 0) continue;
@@ -86,6 +110,7 @@ export function slackReplyBlocks(mrkdwn: string, intent: PostIntent | undefined)
   }
   if (sources.length > 0) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: slackSourcesLine(sources) }] });
   if (feedback) blocks.push(slackFeedbackBlock());
+  if (followUps !== undefined) blocks.push(followUps);
   return blocks.length > MAX_BLOCKS ? undefined : blocks;
 }
 

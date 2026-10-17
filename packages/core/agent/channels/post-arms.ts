@@ -11,7 +11,7 @@ import { expandLinkSet } from "../identity/link-store.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "../identity/principal-key.js";
 import type { LinkedAccount } from "../identity/link-store.js";
 import { processRegistryMap } from "../lib/process-registry.js";
-import { FRIENDLY_GUARDED, FRIENDLY_SOURCE, friendlyOutboundText, isFriendlyGuarded } from "./friendly-outbound.js";
+import { FRIENDLY_GUARDED, FRIENDLY_SOURCE, friendlyOutboundText, friendlyPlainText, isFriendlyGuarded } from "./friendly-outbound.js";
 
 export interface TargetResolveBag {
   str(k: string): string | undefined;
@@ -67,6 +67,7 @@ export interface PostIntent {
   readonly sources?: readonly SourceLink[];
   readonly feedback?: boolean;
   readonly generated?: boolean;
+  readonly followUps?: readonly string[];
 }
 
 export interface PostArm {
@@ -104,7 +105,11 @@ function guardPostArm(arm: PostArm): PostArm {
       const intent = args[intentAt] as PostIntent | undefined;
       if (intent?.sources !== undefined && intent.sources.length > 0) {
         const sources = await Promise.all(intent.sources.map(async (s) => ({ ...s, name: await friendlyOutboundText(s.name, p) })));
-        args[intentAt] = { ...intent, sources };
+        args[intentAt] = { ...(args[intentAt] as PostIntent), sources };
+      }
+      if (intent?.followUps !== undefined && intent.followUps.length > 0) {
+        const followUps = await Promise.all(intent.followUps.map((f) => friendlyPlainText(f, p)));
+        args[intentAt] = { ...(args[intentAt] as PostIntent), followUps };
       }
       return (fn as (...a: unknown[]) => unknown).apply(arm, args);
     };
@@ -135,6 +140,7 @@ export function answerIntent(
   terminal = true,
   host = false,
   relaysModelText = false,
+  followUps: readonly string[] = [],
 ): PostIntent {
   if (host) return { terminal };
   return {
@@ -142,6 +148,7 @@ export function answerIntent(
     ...(audit !== undefined || relaysModelText ? { generated: true } : {}),
     ...(audit !== undefined && terminal ? { feedback: true } : {}),
     ...(terminal && sources.length > 0 ? { sources } : {}),
+    ...(audit !== undefined && terminal && followUps.length > 0 ? { followUps } : {}),
   };
 }
 

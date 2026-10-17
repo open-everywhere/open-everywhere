@@ -93,6 +93,7 @@ import { botReplyCandidate, slackBotReplyFacts } from "./slack-bot-ask.js";
 import { sidePanelViewedRoom, slackDmSystemNote } from "./slack-side-panel.js";
 import { parseAgentSessionStopped, routeAgentSessionStop, setSlackSessionStatus, slackSessionTitle } from "./slack-agent-session.js";
 import { parseSlackFeedbackClick, routeSlackFeedbackClick, type ParsedSlackFeedbackClick } from "./slack-reply-feedback.js";
+import { followUpMessageEvent, followUpPressKey, markFollowUpPressed, parseSlackFollowUpClick, type ParsedSlackFollowUpClick } from "./slack-follow-ups.js";
 import {
   renderWakeMessage,
   slackChannelFactsFor,
@@ -146,6 +147,7 @@ export type FrontDecision =
   | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "grant-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "feedback-click"; readonly reason: string; readonly payload: unknown; readonly click: ParsedSlackFeedbackClick }
+  | { readonly kind: "followup-click"; readonly reason: string; readonly payload: unknown; readonly click: ParsedSlackFollowUpClick }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" }
   | { readonly kind: "shortcut"; readonly reason: string; readonly shortcut: ParsedSlackShortcut }
@@ -280,6 +282,10 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     const feedbackClick = parseSlackFeedbackClick(feedbackPayload);
     if (feedbackClick !== undefined) {
       return { kind: "feedback-click", reason: `block_actions oe_feedback ${feedbackClick.rating} — ours, never forwarded`, payload: feedbackPayload, click: feedbackClick };
+    }
+    const followUpClick = parseSlackFollowUpClick(feedbackPayload);
+    if (followUpClick !== undefined) {
+      return { kind: "followup-click", reason: "block_actions oe_followup: press in a DM — ours, never forwarded", payload: feedbackPayload, click: followUpClick };
     }
     const homePayload = decodeInteractivityPayload(rawBody);
     const homeClick = parseHomeClick(homePayload);
@@ -1152,6 +1158,29 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
             if (!recorded) console.warn("[open-everywhere:slack-front] a thumbs click was not recorded");
           })
           .catch(() => undefined),
+      );
+      return new Response(null, { status: 200 });
+    }
+
+    if (decision.kind === "followup-click") {
+      const click = decision.click;
+      const sev = followUpMessageEvent(click, now());
+      if (slackInteractivityTenantFenceDeclined(interactivityFenceIds(decision.payload), "followup-click", "front-interactivity-branch")) {
+        return fencedAck(new Response(null, { status: 200 }));
+      }
+      if (!(await notYetSeenKey(followUpPressKey(click), sev))) return new Response(null, { status: 200 });
+      args.waitUntil(
+        markFollowUpPressed(click)
+          .then((rewritten) => {
+            if (!rewritten) console.log(`[open-everywhere:slack-front] follow-up press in ${click.channelId}: the answer was not rewritten`);
+          })
+          .catch(() => undefined),
+      );
+      args.waitUntil(
+        fifo.enqueue(dmFifoKey(click.channelId), async () => {
+          await deliverWithStrandRetry(() => scheduleDmWake(sev, "im", false, click.threadTs === undefined ? undefined : click.text));
+          console.log(`[open-everywhere:slack-front] follow-up press in ${click.channelId}: woke the DM window`);
+        }),
       );
       return new Response(null, { status: 200 });
     }

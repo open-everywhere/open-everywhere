@@ -138,6 +138,11 @@ export async function friendlyOutboundText(text: string, platform: string): Prom
   return renderFriendlyText(text, { platform, names: await resolveFriendlyNames([text], platform) });
 }
 
+export async function friendlyPlainText(text: string, surface: string): Promise<string> {
+  const names = resolvableIds(text, surface).length > 0 ? await resolveFriendlyNames([text], surface) : undefined;
+  return renderFriendlyText(text, { platform: "plain", surface, ...(names !== undefined ? { names } : {}) });
+}
+
 interface Slot {
   readonly get: () => string;
   readonly set: (value: string) => void;

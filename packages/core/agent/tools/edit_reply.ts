@@ -12,6 +12,7 @@ import {
   type EditLocus,
 } from "../channels/reply-edit.js";
 import { platformFailureClass } from "../channels/platform-failure.js";
+import { FOLLOW_UPS_INPUT } from "../channels/reply-follow-ups.js";
 import type { ReplyAudit } from "../channels/reply-post.js";
 import { resolveEditableWakeTarget, replyRefusalMessage } from "../channels/unified-window.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
@@ -33,9 +34,10 @@ async function editOrReportAmbiguous(
   messageId: string,
   text: string,
   audit: ReplyAudit,
+  followUps: readonly string[] | undefined,
 ): Promise<{ edited: boolean; id: string; note: string }> {
   try {
-    await editPostedMessage(locus, messageId, text, audit);
+    await editPostedMessage(locus, messageId, text, audit, {}, { followUps: followUps ?? [] });
   } catch (err) {
     if (platformFailureClass(err) !== "ambiguous") throw err;
     return { edited: false, id: messageId, note: ambiguousEditNote(locus.platform) };
@@ -66,6 +68,7 @@ export const unifiedEditReplyEntry = defineTool({
     "instead. For anything NEW to say, and for withdrawing something you got wrong, post a `reply`.",
   inputSchema: z.object({
     text: EDIT_TEXT,
+    followUps: FOLLOW_UPS_INPUT,
     wake: z.string().min(1).describe("The `wake-id` of the conversation holding the message — the same id you replied under."),
     message_id: MESSAGE_ID,
   }),
@@ -91,7 +94,7 @@ export const unifiedEditReplyEntry = defineTool({
     }
 
     const owingTask = pendingDelegationOwing(turnId, input.wake, addressedWakeThisTurn(turnId));
-    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool", input.wake));
+    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool", input.wake), input.followUps);
     markWakeRepliedThisTurn(turnId, input.wake);
     return owingTask === undefined ? result : { ...result, note: `${result.note}${PENDING_WORK_INSTRUCTION}` };
   },
@@ -106,7 +109,7 @@ const baseEditReplyEntry = defineTool({
     "surface marks the message as edited. Not every surface can edit — where the platform has no " +
     "edit API the call is refused and says so, and you post a `reply` instead. For anything NEW to " +
     "say, and for withdrawing something you got wrong, post a `reply`.",
-  inputSchema: z.object({ text: EDIT_TEXT, message_id: MESSAGE_ID }),
+  inputSchema: z.object({ text: EDIT_TEXT, message_id: MESSAGE_ID, followUps: FOLLOW_UPS_INPUT }),
   outputSchema: z.object({ edited: z.boolean(), id: z.string(), note: z.string() }),
   async execute(input, ctx) {
     const bind = ctx as BindableContext;
@@ -123,7 +126,7 @@ const baseEditReplyEntry = defineTool({
     }
     const turnId = currentTurnId(bind);
     const owingTask = pendingDelegationThisTurn(turnId);
-    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"));
+    const result = await editOrReportAmbiguous(locus, input.message_id, input.text, replyAuditFor(bind, "tool"), input.followUps);
     return owingTask === undefined ? result : { ...result, note: `${result.note}${PENDING_WORK_INSTRUCTION}` };
   },
 });

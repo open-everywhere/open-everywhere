@@ -83,7 +83,7 @@ export function globalShortcutText(sc: ParsedSlackShortcut): string {
   return `Shortcut "${sc.callbackId}" invoked.`;
 }
 
-function slackTsFromMs(nowMs: number): string {
+export function slackTsFromMs(nowMs: number): string {
   const seconds = Math.floor(nowMs / 1000);
   const millis = nowMs % 1000;
   return `${seconds}.${String(millis).padStart(3, "0")}000`;

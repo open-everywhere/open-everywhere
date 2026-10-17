@@ -73,6 +73,7 @@ const REQUIRED_IDS = [
   "S-SIDE-PANEL",
   "S-SESSION-STOP",
   "S-REPLY-FEEDBACK",
+  "S-REPLY-FOLLOWUPS",
   "J-ENGAGED-slack",
   "J-ENGAGED-github",
   "J-ENGAGED-notion",

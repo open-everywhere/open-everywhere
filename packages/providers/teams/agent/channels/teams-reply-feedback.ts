@@ -61,11 +61,13 @@ export function teamsAnswerActivity(text: string, intent: PostIntent | undefined
   const sources = intent?.sources ?? [];
   const answer = intent?.feedback === true;
   const markers = sources.map((_, i) => `[${i + 1}]`).join(" ");
+  const followUps = intent?.followUps ?? [];
   return {
     type: "message",
     text: sources.length > 0 ? `${text}\n\nSources: ${markers}` : text,
     ...(answer ? { channelData: { feedbackLoopEnabled: true } } : {}),
     ...(intent?.generated === true || answer || sources.length > 0 ? { entities: [teamsAnswerEntity(sources)] } : {}),
+    ...(followUps.length > 0 ? { suggestedActions: { actions: followUps.map((f) => ({ type: "imBack", title: f, value: f })) } } : {}),
   };
 }
 
