@@ -16,6 +16,7 @@ import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.j
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
 import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
+import { coverLabelForReply, recordCoverReply, withCoverLabel } from "../cover/wake.js";
 
 export type { ReplierLabel };
 
@@ -236,10 +237,12 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
   const provenance = applyReplyProvenance(requestGuard.body, audit);
-  const clean = provenance.body;
+  const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
+  const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(target.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
-  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
+  const prefixed = (b: string): string => (replier && !arm?.displayNameCapable ? withReplierPrefix(b, replier) : b);
+  const body = prefixed(clean);
   const locus = replyDedupeLocus(target);
   const key = outboundKey({
     surface: target.platform,
@@ -247,7 +250,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
     threadTs: locus.threadTs,
     action: "reply.dispatch",
     stableId: audit?.wakeId,
-    payload: body,
+    payload: prefixed(provenance.body),
   });
   const id = await postOnce({
     org: audit?.org,
@@ -273,6 +276,9 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
         platform: target.platform,
         wake: audit?.wakeId,
       });
+      if (cover && audit?.wakeId) {
+        await recordCoverReply({ org: audit.org, platform: audit.platform, workspace: audit.workspace ?? "", surface: audit.surface ?? "" }, audit.wakeId, cover, provenance.body);
+      }
       return realId;
     },
     releaseKeyOnFailure: releasePostKeyOnFailure,

@@ -1466,6 +1466,10 @@
       "types": "./dist/agent/commands/core.d.ts",
       "default": "./dist/agent/commands/core.js"
     },
+    "./agent/commands/cover.js": {
+      "types": "./dist/agent/commands/cover.d.ts",
+      "default": "./dist/agent/commands/cover.js"
+    },
     "./agent/commands/optout.js": {
       "types": "./dist/agent/commands/optout.d.ts",
       "default": "./dist/agent/commands/optout.js"
@@ -1673,6 +1677,18 @@
     "./agent/control/writes.js": {
       "types": "./dist/agent/control/writes.d.ts",
       "default": "./dist/agent/control/writes.js"
+    },
+    "./agent/cover/recap.js": {
+      "types": "./dist/agent/cover/recap.d.ts",
+      "default": "./dist/agent/cover/recap.js"
+    },
+    "./agent/cover/state.js": {
+      "types": "./dist/agent/cover/state.d.ts",
+      "default": "./dist/agent/cover/state.js"
+    },
+    "./agent/cover/wake.js": {
+      "types": "./dist/agent/cover/wake.d.ts",
+      "default": "./dist/agent/cover/wake.js"
     },
     "./agent/credentials/binding-pr.js": {
       "types": "./dist/agent/credentials/binding-pr.d.ts",
@@ -2886,6 +2902,10 @@
       "types": "./dist/agent/schedules/audit-export.d.ts",
       "default": "./dist/agent/schedules/audit-export.js"
     },
+    "./agent/schedules/cover-recap.js": {
+      "types": "./dist/agent/schedules/cover-recap.d.ts",
+      "default": "./dist/agent/schedules/cover-recap.js"
+    },
     "./agent/schedules/directory-sync.js": {
       "types": "./dist/agent/schedules/directory-sync.d.ts",
       "default": "./dist/agent/schedules/directory-sync.js"
@@ -3756,6 +3776,7 @@
     "test:memory-visible": "NODE_NO_WARNINGS=1 tsx scripts/memory-visible-test.ts",
     "test:person-opt-out": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-test.ts",
     "test:person-opt-out-hooks": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-hooks-test.ts",
+    "test:cover": "NODE_NO_WARNINGS=1 tsx scripts/cover-test.ts",
     "test:personal-watch": "NODE_NO_WARNINGS=1 tsx scripts/personal-watch-test.ts",
     "test:bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/bot-ask-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",

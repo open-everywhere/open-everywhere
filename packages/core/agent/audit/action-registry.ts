@@ -788,6 +788,36 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised: "S-WATCH proves only that a forged answer writes NO row; a real answer needs a nudge, which needs a calendar fixture no board carries. `test:personal-watch` drives the row offline.",
   },
   {
+    action: "cover.set",
+    fields: ["on", "until", "questions", "via"],
+    proves: "a person turned their out-of-office cover on (with its end date) or off, and through which door (`command`, or `end-date` when the date passed)",
+    notExercised: "S-COVER drives `/oe cover on` and `/oe cover off` and gates on this row; it is NON_LAUNCH until a board runs it live.",
+  },
+  {
+    action: "cover.wake",
+    fields: ["wakeId", "recorded", "mentioned"],
+    proves: "a room wake mentioned a person with live cover, so the wake carried OE's cover note, and whether the question entered the person's recap log",
+    notExercised: "S-COVER posts a mention of the covered person in a domain channel and gates on this row; NON_LAUNCH until a board runs it live.",
+  },
+  {
+    action: "cover.answered",
+    fields: ["wakeId", "chars"],
+    proves: "the agent's reply on a cover wake was posted with the host's cover label, and its text became the answer in the person's recap",
+    notExercised: "S-COVER gates on this row and on the label in the posted reply; NON_LAUNCH until a board runs it live.",
+  },
+  {
+    action: "cover.recap",
+    fields: ["questions", "leftOut", "sent"],
+    proves: "the recap of a person's cover went to their own DM, with how many questions it showed and how many it left out because the person could not read the room",
+    notExercised: "S-COVER waits for this row after `/oe cover off` (the schedule runs every 5 minutes); NON_LAUNCH until a board runs it live. `test:cover` drives the tick offline.",
+  },
+  {
+    action: "cover.recap_refused",
+    fields: ["reason", "gaveUp", "tries"],
+    proves: "a recap could not be delivered (no DM, not a 1:1 DM, over budget, a failed send), and whether the tick gave up and dropped the log",
+    notExercised: "no board fixture refuses a DM; `test:cover` drives the refusal and the give-up offline.",
+  },
+  {
     action: "person.opt_out.set",
     fields: ["via"],
     proves: "a person opted out of agent actions on their own content, and through which door (`command` or `app-home`)",

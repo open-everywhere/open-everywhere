@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type ChannelSessionRuntimeStamp, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -754,6 +754,16 @@ function getDb(): DatabaseSync {
       updated_at    TEXT NOT NULL,
       PRIMARY KEY (org_id, principal_key)
     );
+    -- personal_cover (OPE-2513): one row per person who turned out-of-office cover on — store.ts's
+    -- PersonalCoverRow. Every write is a compare-and-set on version.
+    CREATE TABLE IF NOT EXISTS personal_cover (
+      org_id        TEXT NOT NULL,
+      principal_key TEXT NOT NULL,        -- the person's qualified principal key, e.g. slack/T01/U0456
+      state_json    TEXT NOT NULL,
+      version       INTEGER NOT NULL,
+      updated_at    TEXT NOT NULL,
+      PRIMARY KEY (org_id, principal_key)
+    );
     -- meeting_data (OPE-2461): the meeting rows, each with its OWN expiry — store.ts's meeting_data section.
     -- A read ignores a row past expires_at, a write deletes only such rows, and the meeting sweep deletes
     -- them on a timer. Never task_result: that table's prune runs by the calling writer's TTL, not the row's.
@@ -1327,6 +1337,10 @@ function personalBrowserRowFrom(r: PersonalBrowserSqliteRow): PersonalBrowserRow
 }
 
 function personalWatchRowFrom(r: PersonalBrowserSqliteRow): PersonalWatchRow {
+  return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
+}
+
+function personalCoverRowFrom(r: PersonalBrowserSqliteRow): PersonalCoverRow {
   return { principalKey: r.principal_key, stateJson: r.state_json, version: Number(r.version), updatedAt: r.updated_at };
 }
 
@@ -2616,6 +2630,34 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("SELECT principal_key, state_json, version, updated_at FROM personal_watch WHERE org_id = ? ORDER BY principal_key")
       .all(org) as unknown as PersonalBrowserSqliteRow[];
     return rows.map(personalWatchRowFrom);
+  },
+
+  async getPersonalCover(org, principalKey) {
+    const row = getDb()
+      .prepare("SELECT principal_key, state_json, version, updated_at FROM personal_cover WHERE org_id = ? AND principal_key = ?")
+      .get(org, principalKey) as PersonalBrowserSqliteRow | undefined;
+    return row ? personalCoverRowFrom(row) : null;
+  },
+
+  async casPersonalCover(org, principalKey, stateJson, at, expected) {
+    const db = getDb();
+    if (expected === null) {
+      const changes = db
+        .prepare("INSERT INTO personal_cover (org_id, principal_key, state_json, version, updated_at) VALUES (?, ?, ?, 1, ?) ON CONFLICT (org_id, principal_key) DO NOTHING")
+        .run(org, principalKey, stateJson, at).changes;
+      return changes > 0 ? 1 : null;
+    }
+    const changes = db
+      .prepare("UPDATE personal_cover SET state_json = ?, version = version + 1, updated_at = ? WHERE org_id = ? AND principal_key = ? AND version = ?")
+      .run(stateJson, at, org, principalKey, expected).changes;
+    return changes > 0 ? expected + 1 : null;
+  },
+
+  async listPersonalCovers(org) {
+    const rows = getDb()
+      .prepare("SELECT principal_key, state_json, version, updated_at FROM personal_cover WHERE org_id = ? ORDER BY principal_key")
+      .all(org) as unknown as PersonalBrowserSqliteRow[];
+    return rows.map(personalCoverRowFrom);
   },
 
   async getPersonOptOut(org, principalKey) {

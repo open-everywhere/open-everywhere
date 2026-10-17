@@ -54,6 +54,7 @@ export const SECTION_ROOT: readonly DocEntry[] = [
       "## 3. Capabilities",
       "",
       "- [Memory](./capabilities/memory.md) — opt-in domains, silos, materialised vs pointer, the trust gate.",
+      "- [Out-of-office cover](./capabilities/out-of-office-cover.md) — while a person is away, the agent answers questions people ask them in its channels, marked as cover and from what the room already knows, and sends them one recap when they are back.",
       "- [Your DM can ask your domains](./capabilities/domain-questions.md) — the person's DM seat asks a domain they belong to, the domain's own seat answers under its own rules, and the answer comes back to the DM.",
       "- [Your DM can ask other bots](./capabilities/bot-delegation.md) — the person's DM asks another bot in a shared channel in the person's name, and only that bot's replies in that thread come back to the DM.",
       "- [Roles & personas](./capabilities/roles.md) — named presets: per-turn instructions, voice, themed verbs, domain knobs.",

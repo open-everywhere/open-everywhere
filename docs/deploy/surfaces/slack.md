@@ -944,6 +944,7 @@ Commands (typed as free text after `/oe`):
 | `/oe rate <1-5>` | Records one human mark on the [model A/B test](../../extending/models-and-gateway.md#ab-testing-a-challenger-model): rates this channel's most recent champion/challenger turn, on the arm that turn actually ran. Answers "nothing to rate" — the normal reply — while the test is off. | Ephemeral |
 | `/oe optout on` / `/oe optout off` / `/oe optout` | Turns on (or off, or shows) **your own** opt-out of agent actions on your content: no memory is saved from your own turns (in a shared conversation, a later turn by somebody else can still save what you said, and a [domain question](../../capabilities/domain-questions.md) you ask is not covered yet), and the agent refuses when somebody else hands it one of your messages with a shortcut. Keyed to you alone — there is no argument that names another person. The Home tab has the same switch. See [Opting out](../../capabilities/memory.md#opting-out-of-agent-actions-on-your-content). | Ephemeral |
 | `/oe watch more` / `/oe watch less` / `/oe watch none` / `/oe watch` | Sets (or shows) **your own** dial for the [chief-of-staff watch](../../capabilities/proactivity-and-routines.md#the-chief-of-staff-watch): how often the agent may message you on its own about something that needs you, such as two meetings that overlap. Everyone starts at `less`. `none` turns it off. Keyed to you alone. The Home tab has the same three buttons. | Ephemeral |
+| `/oe cover on` / `/oe cover on until <date>` / `/oe cover off` / `/oe cover` | Turns **your own** [out-of-office cover](../../capabilities/out-of-office-cover.md) on (from your DM with the agent, members only) or off (anywhere), or shows it. While cover is on, a question that mentions you in a channel the agent is in gets an answer from what that channel already knows, labelled as cover; when cover ends you get one recap in your DM. | Ephemeral |
 | `/oe help` | Lists the commands. | Ephemeral |
 
 Bare `/oe` (no text) defaults to help — the friendliest landing. `/oe budget` alone (no `raise`/
@@ -962,7 +963,7 @@ for why that's a genuine, documented platform grammar difference, not an inconsi
    ```
 
 4. **Short Description**: `Open Everywhere control-plane commands (stop, status, budget) — no model turn.`
-5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | watch [more | less | none] | help`.
+5. **Usage Hint**: `stop | status | budget [raise <usd> | clear] | rate <n> | optout [on | off] | watch [more | less | none] | cover [on | off] | help`.
 6. **Save**, then reinstall the app if Slack prompts you to (a new command is a scope-adjacent change).
 
 No extra env var is needed — the route reuses `SLACK_SIGNING_SECRET` from [Step 2](#step-2--configure-the-environment) to verify every request (the SAME `v0=` HMAC scheme Event Subscriptions uses), and `SLACK_BOT_TOKEN` to post the `raise`/`clear` approval card.

@@ -50,6 +50,7 @@ export const OPERATIONAL_TABLES = [
   "person_opt_out",
   "personal_browser",
   "personal_watch",
+  "personal_cover",
   "ingress_delivery",
   "attention_state",
   "dm_rule",
@@ -818,6 +819,13 @@ export interface PersonalWatchRow {
   readonly updatedAt: string;
 }
 
+export interface PersonalCoverRow {
+  readonly principalKey: string;
+  readonly stateJson: string;
+  readonly version: number;
+  readonly updatedAt: string;
+}
+
 export interface DmAudienceRow {
   readonly address: string;
   readonly firstDmAt?: string;
@@ -1092,6 +1100,9 @@ export interface OperationalStore {
   getPersonalWatch(org: string, principalKey: string): Promise<PersonalWatchRow | null>;
   casPersonalWatch(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
   listPersonalWatches(org: string): Promise<PersonalWatchRow[]>;
+  getPersonalCover(org: string, principalKey: string): Promise<PersonalCoverRow | null>;
+  casPersonalCover(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
+  listPersonalCovers(org: string): Promise<PersonalCoverRow[]>;
   listDmRules(org: string, surfaceKey: string): Promise<readonly DmRuleRow[]>;
   upsertDmRule(row: DmRuleRow): Promise<void>;
   removeDmRule(org: string, surfaceKey: string, ruleId: string): Promise<boolean>;

@@ -88,6 +88,19 @@ export function personalWatchFireAttributes(
   };
 }
 
+export const COVER_RECAP_MARKER_ATTR = "oe_cover_recap";
+
+export function coverRecapFireAttributes(personId: string, questions: number, destAttributes: Readonly<Record<string, string>>, isDm: boolean): Record<string, string> {
+  return {
+    ...destAttributes,
+    [FIRE_UNATTENDED_ATTR]: "true",
+    [FIRE_PRINCIPAL_ATTR]: personId,
+    ...rootDmGrainAttrs(isDm),
+    ...taintedFireAttrs(true),
+    [COVER_RECAP_MARKER_ATTR]: String(questions),
+  };
+}
+
 export const TOKEN_FAMILY_ATTR = "oe_token_family";
 
 export type ControlTokenFamily = "read" | "inject";

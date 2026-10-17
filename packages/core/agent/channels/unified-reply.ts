@@ -17,6 +17,7 @@ import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-g
 import { swallowRoomPost } from "./egress-spoof.js";
 import { postArm, type PostIntent } from "./post-arms.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
+import { coverLabelForReply, recordCoverReply, withCoverLabel } from "../cover/wake.js";
 import type { EditLocus } from "./reply-edit.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
@@ -73,10 +74,12 @@ export async function postUnifiedReply(
   const approvalGuard = guardApprovalClaims(claimGuard.body, audit);
   const requestGuard = guardRequestClaims(approvalGuard.body, audit);
   const provenance = applyReplyProvenance(requestGuard.body, audit);
-  const clean = provenance.body;
+  const cover = await coverLabelForReply(audit?.org, audit?.wakeId);
+  const clean = cover ? withCoverLabel(provenance.body, cover.label) : provenance.body;
   const arm = postArm(origin.platform);
   const nativeReplier = arm?.displayNameCapable ? replier : undefined;
-  const body = replier && !arm?.displayNameCapable ? withReplierPrefix(clean, replier) : clean;
+  const prefixed = (b: string): string => (replier && !arm?.displayNameCapable ? withReplierPrefix(b, replier) : b);
+  const body = prefixed(clean);
   const locus = unifiedDedupeLocus(origin);
   const key = outboundKey({
     surface: origin.platform,
@@ -84,7 +87,7 @@ export async function postUnifiedReply(
     threadTs: locus.threadTs,
     action: "reply.dispatch.unified",
     stableId: audit?.wakeId,
-    payload: body,
+    payload: prefixed(provenance.body),
   });
   const id = await postOnce({
     org: audit?.org,
@@ -111,6 +114,9 @@ export async function postUnifiedReply(
         wake: audit?.wakeId,
       });
       await recordContainerAnswered(audit?.org, origin);
+      if (cover && audit?.wakeId) {
+        await recordCoverReply({ org: audit.org, platform: audit.platform, workspace: audit.workspace ?? "", surface: audit.surface ?? "" }, audit.wakeId, cover, provenance.body);
+      }
       return realId;
     },
     releaseKeyOnFailure: releasePostKeyOnFailure,

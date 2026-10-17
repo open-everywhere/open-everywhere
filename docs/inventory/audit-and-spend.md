@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**712 rows: 709 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**717 rows: 714 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 704 rows are live behaviours and the other five are the retired action
+gives a different number: 709 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 353 | 0 |
+| 4. The audit action vocabulary | 358 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -314,6 +314,11 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `control.oauth_refused` | `packages/core/agent/control/oauth-route.ts:150` | core/control | The control plane refuses an OAuth grant and names the reason. | `docs/security/control-plane.md#control-plane-mcp-over-https-oauth-21` | ? |
 | `control.oauth_token_issued` | `packages/core/agent/control/oauth-route.ts:279` | core/control | The control plane issues an OAuth access token. | `docs/security/control-plane.md#control-plane-mcp-over-https-oauth-21` | ? |
 | `control.service_call` | `packages/core/agent/control/http.ts:74` | core/control | Every authenticated control-plane read audits itself, naming the service principal and the view. | `docs/security/audit-and-provenance.md#properties-that-make-the-log-trustworthy` (+5) | ? |
+| `cover.answered` | `packages/core/agent/cover/wake.ts:166` | core/cover | A reply on an out-of-office cover wake is posted with the host's cover label. | `docs/capabilities/out-of-office-cover.md#audit-rows` (+1) | ? |
+| `cover.recap` | `packages/core/agent/cover/recap.ts:197` | core/cover | The recap of a person's cover goes to their own DM. | `docs/capabilities/out-of-office-cover.md#audit-rows` (+1) | ? |
+| `cover.recap_refused` | `packages/core/agent/cover/recap.ts:200` | core/cover | A cover recap cannot be delivered, and whether the tick gave up. | `docs/capabilities/out-of-office-cover.md#audit-rows` (+1) | ? |
+| `cover.set` | `packages/core/agent/cover/state.ts:162` | core/cover | A person turns their out-of-office cover on or off, or its end date passes. | `docs/capabilities/out-of-office-cover.md#audit-rows` (+1) | ? |
+| `cover.wake` | `packages/core/agent/cover/wake.ts:113` | core/cover | A room wake mentions a person whose cover is on, and carries the cover note. | `docs/capabilities/out-of-office-cover.md#audit-rows` (+1) | ? |
 | `credential.binding_opened` | `packages/core/agent/credentials/binding-pr.ts:175` | core/credentials | A credential binding pull request is opened. | `docs/capabilities/connectors-and-providers.md#taking-a-credential-in` | n/a: unannotated — lane F |
 | `credential.binding_proposed` | `packages/core/agent/credentials/binding-pr.ts:122` | core/credentials | A credential binding is proposed for custody transfer from env to the database. | `docs/deploy/configuration-reference.md#credential-broker` | n/a: unannotated — lane F |
 | `credential.intake_requested` | `packages/core/agent/credentials/intake.ts:77` | core/credentials | A credential intake is requested from an operator. | `docs/capabilities/connectors-and-providers.md#taking-a-credential-in` | ? |

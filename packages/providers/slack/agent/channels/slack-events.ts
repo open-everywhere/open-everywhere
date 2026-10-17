@@ -96,6 +96,7 @@ import {
   dmTrustTtlMs,
   engagedFollowUpContract,
   dispatchNativeWakeWithRetry,
+  coverForWake,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   slackMode,
@@ -1921,6 +1922,10 @@ export interface SupervisorRouteDeps {
   readonly unifiedMeta?: (surfaceKey: string) => { unified: boolean; label?: string; singleWindow?: boolean };
 }
 
+export function slackMentionedUserIds(text: string | undefined): string[] {
+  return [...(text ?? "").matchAll(/<@([UW][A-Z0-9]+)(?:\|[^>]*)?>/g)].map((m) => m[1]!);
+}
+
 export async function routeSupervisorEvent(
   ev: ParsedMessageEvent,
   deps: SupervisorRouteDeps,
@@ -2065,7 +2070,7 @@ export async function routeSupervisorEvent(
   const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[]) => {
     const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
     const trigger = displayNameOpts(names.triggerAuthor);
-    const wake = slackChannelWatchWake(ev, {
+    const watchWake = slackChannelWatchWake(ev, {
       mode: "supervisor",
       trust: wakeTrust,
       engagementTier,
@@ -2083,6 +2088,22 @@ export async function routeSupervisorEvent(
         ? { contextLines: nameDropRendered, contextSource: nameDropContext?.source, readMoreHint: nameDropContext?.readMoreHint }
         : {}),
     });
+    const cover = await coverForWake({
+      org: p.org,
+      platform: "slack",
+      workspace: p.workspace,
+      surface: p.surface,
+      surfaceKey: p.surfaceKey,
+      channelId: ev.channelId,
+      roomPublic: ev.channelType === "channel",
+      wakeId: window?.wakeId,
+      mentionedIds: slackMentionedUserIds(ev.authoredText),
+      ...(ev.userId ? { askerId: ev.userId } : {}),
+      ...(trigger.authorName ? { askerName: trigger.authorName } : {}),
+      text: ev.authoredText,
+      now: new Date(atIso),
+    }).catch(() => ({ covered: [] }) as { systemNote?: string });
+    const wake = cover.systemNote ? { ...watchWake, systemNote: watchWake.systemNote ? `${watchWake.systemNote}\n${cover.systemNote}` : cover.systemNote } : watchWake;
     const rendered = renderWake(
       nameDropTier ? await withholdNameDropContext(wake, externalPolicy, ev.teamId, deps.authorIsMember) : wake,
       deps.now,

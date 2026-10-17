@@ -733,6 +733,7 @@
     "consumeSupervisorReplyMark",
     "contextLineIngestion",
     "contextLinesNotInEnvelope",
+    "coverForWake",
     "credentialEndpointHostVerdict",
     "credentialEndpointProblems",
     "credentialEndpointVerdict",

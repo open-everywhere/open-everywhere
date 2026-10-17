@@ -62,6 +62,7 @@ agent/hooks/wake-turn-start.ts	mounted @open-everywhere/core
 agent/hooks/window-routing.ts	mounted @open-everywhere/core
 agent/lib/providers.generated.ts	providers discord,email,google-chat,github,linear,notion,slack,teams
 agent/schedules/audit-export.ts	mounted @open-everywhere/core
+agent/schedules/cover-recap.ts	mounted @open-everywhere/core
 agent/schedules/directory-sync.ts	mounted @open-everywhere/core
 agent/schedules/dispatch.ts	mounted @open-everywhere/core
 agent/schedules/dream-mode3.ts	mounted @open-everywhere/core

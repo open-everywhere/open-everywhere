@@ -184,6 +184,7 @@ export const CONTRIBUTIONS = {
     { kind: "hook", name: "window-routing", module: "agent/hooks/window-routing.js", summary: "Routing-invariant hook (OPE-121) — audit a wake that landed on a NATIVE seat even though its own domain windows." },
 
     { kind: "schedule", name: "audit-export", module: "agent/schedules/audit-export.js", summary: "The AUDIT-EXPORT schedule (OPE-2437) — the clock half of the SIEM export (audit/siem-export.ts)." },
+    { kind: "schedule", name: "cover-recap", module: "agent/schedules/cover-recap.js", summary: "The COVER-RECAP schedule (OPE-2513) — ends each out-of-office cover whose end date passed, and delivers each due recap of what was asked and answered into the person's own DM." },
     { kind: "schedule", name: "directory-sync", module: "agent/schedules/directory-sync.js", summary: "The DIRECTORY-SYNC SCHEDULE — the clock half of IdP pre-population (P2.3)." },
     { kind: "schedule", name: "dispatch", module: "agent/schedules/dispatch.js", summary: "The routine DISPATCHER — the one bridge from Eve's static cron to the agent's dynamic, NL-created, per-surface routines (Phase 3)." },
     { kind: "schedule", name: "dream-mode3", module: "agent/schedules/dream-mode3.js", summary: "The Mode-3 (\"failure digest\") SCHEDULE — the weekly, harness-level learning pass (sibling to schedules/tidy.ts's daily Mode-2 pass; see memory/dream/mode3.ts for the pure logic this wires up)." },

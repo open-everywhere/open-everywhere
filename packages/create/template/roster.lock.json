@@ -68,6 +68,7 @@
         "hook/wake-turn-start": "mounted",
         "hook/window-routing": "mounted",
         "schedule/audit-export": "mounted",
+        "schedule/cover-recap": "mounted",
         "schedule/directory-sync": "mounted",
         "schedule/dispatch": "mounted",
         "schedule/dream-mode3": "mounted",

@@ -91,6 +91,7 @@ test:sandbox-region
 test:ephemeral-port
 test:ci-max-workers
 test:unified-window
+test:slack-cover
 test:notion-integration
 test:github-spend-gate
 test:github-external-policy-room
