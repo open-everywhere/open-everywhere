@@ -9,6 +9,7 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import type { FetchFn } from "../agent/scm/mint.js";
 import { resetGitHubApp } from "../agent/scm/provider.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { registerSandboxFirewall } from "../agent/sandbox/network-policy.js";
 import { checkoutCommandBrokered, CHECKOUT_OK } from "../agent/scm/git.js";
 import { brokerAuthHeader, mintGitReadBroker, mergeGitReadBroker, withBareAllowHost, GIT_BROKER_HOSTS } from "../agent/scm/broker.js";
@@ -314,6 +315,103 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
 
   eq(await brokerRowCount(), brokerRowsBefore + 1, "🔴 checkout_repo (fallback): still ONE new broker row in total — a path that applies no policy audits none");
 
+  {
+    registerConfig({
+      loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/web", "acme/api"] })],
+      loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
+      pluginRegistry: {},
+      skillContent: {},
+      loadDomains: () => [],
+      loadSilos: () => [],
+      domainsForSurface: () => [],
+      loadAccessRequests: () => ({ configRepo: "acme/web" }) as never,
+    });
+    const TOKEN = "ghp_scm_broker_token_canary";
+    const savedToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = TOKEN;
+    overrideSettingsForTest({ github: { auth: "token" } });
+    try {
+      mintCalls.length = 0;
+      const runCallsC: string[] = [];
+      const policyCallsC: unknown[] = [];
+      const sandboxC = {
+        run: async (opts: { command: string }) => {
+          runCallsC.push(opts.command);
+          return { stdout: CHECKOUT_OK, stderr: "", exitCode: 0 };
+        },
+        setNetworkPolicy: async (policy: unknown) => void policyCallsC.push(policy),
+      };
+      let resultC: { ok: boolean; message: string } | undefined;
+      await contextStorage.run(new ContextContainer(), async () => {
+        stampEnforcement(true);
+        resultC = await checkoutRepoTool.execute({ repo: "acme/web" }, ctxFor(async () => sandboxC) as never);
+      });
+      ok(resultC?.ok === true, "🔴 OPE-2530 checkout_repo (token mode): clones the deployment's own repository with the personal access token");
+      ok(mintCalls.length === 0, "🔴 OPE-2530 checkout_repo (token mode): the App is never used, even with its secrets set — one credential per host");
+      ok(runCallsC.length === 1 && !runCallsC[0].includes("http.extraheader") && !runCallsC[0].includes(TOKEN), "checkout_repo (token mode): the clone command carries no token — it stays at the firewall");
+      ok(resultC!.message.includes("open-everywhere[bot]"), "checkout_repo (token mode): commits are stamped with the product's neutral bot identity, not the App's");
+      const applied = policyCallsC[0] as { allow: Record<string, { match?: { method?: string[]; path?: { startsWith?: string; exact?: string; regex?: string } }; transform?: { headers?: Record<string, string> }[] }[]> };
+      const gh = applied.allow["github.com"] ?? [];
+      const stamp = brokerAuthHeader(TOKEN).Authorization!;
+      eq(
+        gh.map((r) => `${r.match?.method?.join()} ${r.match?.path?.exact ?? r.match?.path?.regex}`).sort(),
+        ["GET ^/acme/web\\.git/info/refs(\\?service=git-upload-pack)?$", "POST /acme/web.git/git-upload-pack"],
+        "🔴 OPE-2530 checkout_repo (token mode): the firewall stamps the token on the two anchored READ requests of the reached repository, and nothing else",
+      );
+      ok(gh.every((r) => r.transform?.[0]?.headers?.Authorization === stamp), "checkout_repo (token mode): each rule carries the token in the broker's header shape");
+      ok(gh.every((r) => r.match?.path?.startsWith === undefined) && !JSON.stringify(gh).includes("receive-pack"), "🔴 checkout_repo (token mode): no prefix rule, and no rule names `git-receive-pack`, so a push from the sandbox carries no token");
+      ok(!JSON.stringify(applied).includes("/acme/api"), "🔴 checkout_repo (token mode): a granted repository the token does not reach gets no stamp");
+
+      runCallsC.length = 0;
+      let threwD: unknown;
+      await contextStorage.run(new ContextContainer(), async () => {
+        stampEnforcement(true);
+        try {
+          await checkoutRepoTool.execute({ repo: "acme/api" }, ctxFor(async () => sandboxC) as never);
+        } catch (err) {
+          threwD = err;
+        }
+      });
+      ok(threwD instanceof Error && threwD.message.includes("does not reach acme/api") && !threwD.message.includes(TOKEN), "🔴 OPE-2530 checkout_repo (token mode): a granted repository outside the token's reach is refused by name, and the refusal carries no token");
+      ok(runCallsC.length === 0, "…and nothing ran in the sandbox");
+
+      overrideSettingsForTest({ github: { auth: "token", tokenRepos: ["acme/api"] } });
+      policyCallsC.length = 0;
+      await contextStorage.run(new ContextContainer(), async () => {
+        stampEnforcement(true);
+        resultC = await checkoutRepoTool.execute({ repo: "acme/api" }, ctxFor(async () => sandboxC) as never);
+      });
+      ok(resultC?.ok === true && JSON.stringify(policyCallsC[0]).includes("/acme/api.git/git-upload-pack"), "OPE-2530 checkout_repo (token mode): a repository named in github.tokenRepos is reached");
+
+      runCallsC.length = 0;
+      let threwE: unknown;
+      await contextStorage.run(new ContextContainer(), async () => {
+        stampEnforcement(false);
+        try {
+          await checkoutRepoTool.execute({ repo: "acme/web" }, ctxFor(async () => sandboxC) as never);
+        } catch (err) {
+          threwE = err;
+        }
+      });
+      ok(threwE instanceof Error && threwE.message.includes("needs the sandbox firewall"), "🔴 OPE-2530 checkout_repo (token mode, no firewall): refuses rather than store a token that can push in the clone");
+      ok(runCallsC.length === 0, "…and nothing ran in the sandbox");
+
+      overrideSettingsForTest({ github: { auth: "app" } });
+      mintCalls.length = 0;
+      policyCallsC.length = 0;
+      await contextStorage.run(new ContextContainer(), async () => {
+        stampEnforcement(true);
+        resultC = await checkoutRepoTool.execute({ repo: "acme/web" }, ctxFor(async () => sandboxC) as never);
+      });
+      ok(resultC?.ok === true && mintCalls.length === 1, "🔴 OPE-2530 the move to the App is one setting: the same checkout mints through the App again");
+      ok(!JSON.stringify(policyCallsC[0]).includes(stamp), "…and the personal access token is no longer stamped anywhere");
+    } finally {
+      resetSettingsForTest();
+      if (savedToken !== undefined) process.env.GITHUB_TOKEN = savedToken;
+      else delete process.env.GITHUB_TOKEN;
+    }
+  }
+
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.OE_GITHUB_APP_ID;
@@ -324,4 +422,4 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   }
 }
 
-console.log(`\n✓ scm-broker: ${n} assertions passed (union-mint per owner, 500-cap, merge-no-duplicate-github-rule, withBareAllowHost push-window swap, checkoutCommandBrokered, enforcement-state seam, checkout_repo enforced-vs-fallback)\n`);
+console.log(`\n✓ scm-broker: ${n} assertions passed (union-mint per owner, 500-cap, merge-no-duplicate-github-rule, withBareAllowHost push-window swap, checkoutCommandBrokered, enforcement-state seam, checkout_repo enforced-vs-fallback, checkout_repo with a personal access token)\n`);

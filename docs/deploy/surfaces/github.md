@@ -212,11 +212,10 @@ same layer the other non-Slack platforms use.
    **By hand.** Without the ops server, create the App at GitHub → **Settings → Developer settings
    → GitHub Apps → New GitHub App**. Point the webhook at `https://<your-deploy-url>/eve/v1/github`,
    set a webhook secret, grant the permissions in the table and subscribe to its events. Then set the
-   environment in step 3 yourself.
+   environment in step 2 yourself.
 
    On the App's settings page, under **Display information**, upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as its logo. The manifest has no logo field. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
-2. **Install the App** on the repos the agent should live on.
-3. **Configure the environment.** The full App writes every name below into `.env.local`, plus
+2. **Configure the environment.** The full App writes every name below into `.env.local`, plus
    the `OE_GITHUB_*` source-control set (`OE_GITHUB_APP_ID`, `OE_GITHUB_APP_SLUG`,
    `OE_GITHUB_APP_PRIVATE_KEY`, `OE_GITHUB_APP_CLIENT_ID`) for the same App. The source-control
    App writes only the `OE_GITHUB_*` set and `GITHUB_WEBHOOK_SECRET`. `OE_GITHUB_BOT_USER_ID` is
@@ -233,6 +232,10 @@ same layer the other non-Slack platforms use.
    # in agent/settings/settings.ts to accept unsigned deliveries locally.
    ```
 
+3. **Install the App** on the repos the agent should live on, ONLY after the redeploy in step 2.
+   The deployment learns the installation from the App's one `installation` delivery. Before the
+   redeploy it does not hold the App's webhook secret, so it refuses that delivery and never learns
+   the installation (OPE-2544).
 4. **Ambient mode is on by default** for a positively private or vouched repo. Add the repo to a
    memory domain (surface key `github/<owner>/<repo>`) to give it a silo — see
    [Memory](../../capabilities/memory.md). To make the repo addressed-only, set
@@ -301,8 +304,10 @@ Three things worth knowing:
   `read_work_channel` / `read_work_thread` mount only when the calling scope grants at least one repo
   ([Connectors § A chat surface can be a work surface too](../../capabilities/connectors-and-providers.md#a-chat-surface-can-be-a-work-surface-too)).
 
-The read runs on the source-control credential — the `OE_GITHUB_*` App installation token, falling
-back to `GITHUB_TOKEN` — so a repo the App is not installed on cannot be read.
+The read runs on the `OE_GITHUB_*` App installation token, with no fallback to `GITHUB_TOKEN`, so a
+repo the App is not installed on cannot be read. The surface is App-only: a deployment that signs
+in with a personal access token (`github.auth: "token"`, OPE-2530) has no GitHub conversation
+surface at all: its webhook route runs only the event-routine fan-out and starts no conversation.
 
 ## Gotchas
 

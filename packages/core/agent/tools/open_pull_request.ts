@@ -6,7 +6,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
 import { principalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { getGitHubApp, repoAllowed } from "../scm/provider.js";
+import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { resolvePrWriteToken } from "../scm/write-token.js";
 import { isSafeBranchName, isSafeCheckoutDir, parseStagedSha, redactSecret, stagePushCommand } from "../scm/git.js";
@@ -15,7 +15,7 @@ import { compileNetworkPolicy } from "../access/egress.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { isEnforced } from "../access/enforcement.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
-import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
+import { sessionGitBroker, mergeGitBrokerRules, withBareAllowHost } from "../scm/broker.js";
 import { auditBrokeredEgressPolicy, type BrokerApplyReason } from "../scm/broker-audit.js";
 import type { BindableContext } from "../identity/binding.js";
 import { applyAndRecordEgressPolicy } from "../hooks/egress.js";
@@ -115,17 +115,16 @@ export default windowGated("open_pull_request", defineTool({
           `checkout_repo the repo, commit on "${input.head}", then retry.`,
       );
     }
-    const brokerApp = getGitHubApp();
+    const broker = isEnforced() ? await sessionGitBroker(access.repos) : null;
     let brokered: SandboxNetworkPolicy | null = null;
-    if (isEnforced() && brokerApp) {
+    if (broker) {
       const basePolicy = await compileNetworkPolicy(
         access,
         resolveHeaders,
         (ids) => narrowByConnectorOverride(ctx, ids),
         resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
       );
-      const { rulesByOwner } = await mintGitReadBroker(brokerApp, access.repos);
-      brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
+      brokered = mergeGitBrokerRules(basePolicy, broker.rules);
     }
     const applyPolicy = async (policy: SandboxNetworkPolicy, reason: BrokerApplyReason): Promise<void> => {
       await applyAndRecordEgressPolicy(policy, { ctx, sessionId: access.scopeKey });

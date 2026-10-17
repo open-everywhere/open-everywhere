@@ -3,7 +3,7 @@ import {
   assertSurfaceAllowed,
   bindFrom,
   prApiHeaders,
-  resolveConversationReadToken,
+  resolveSurfaceReadToken,
   withRetryAfterLoose,
   ChannelScopeError,
   type AdapterReadFetch,
@@ -201,7 +201,7 @@ export const githubReadAdapter = {
   ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel, "github_read_channel");
     const effective = Math.min(limit ?? GITHUB_CHANNEL_DEFAULT_LIMIT, GITHUB_MAX_PAGE);
-    const token = await resolveConversationReadToken(target.repoFull);
+    const token = await resolveSurfaceReadToken(target.repoFull);
     const deadline = (walk.now ?? Date.now)() + READ_WALK_BUDGET_MS;
     const issue = await fetchIssue(fetchFn, token, target, walkRetry(deadline, walk));
     const total = typeof issue.comments === "number" && issue.comments > 0 ? issue.comments : 0;
@@ -223,7 +223,7 @@ export const githubReadAdapter = {
     walk: ReadWalkSeam = {},
   ): Promise<AdapterReadFetch> {
     const target = await admitContainer(ctx, channel, "github_read_thread");
-    const token = await resolveConversationReadToken(target.repoFull);
+    const token = await resolveSurfaceReadToken(target.repoFull);
     const deadline = (walk.now ?? Date.now)() + READ_WALK_BUDGET_MS;
     const { comments, mightBeTruncated } = await fetchReviewComments(fetchFn, token, target, () => walkRetry(deadline, walk));
     const threadAll = reviewThreadLines(comments, threadTs);

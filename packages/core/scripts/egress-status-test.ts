@@ -67,7 +67,21 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
 
   const bare = s.allow[1]!;
   ok(bare.credentialInjected === false, "a bare allow reports credentialInjected:false");
-  ok(bare.methods === undefined && bare.pathPrefixes === undefined, "an unnarrowed host omits the narrowing keys entirely rather than emitting empty arrays");
+  ok(bare.methods === undefined && bare.pathPrefixes === undefined && bare.paths === undefined, "an unnarrowed host omits the narrowing keys entirely rather than emitting empty arrays");
+
+  const tokenHost = summariseEgressPolicy({
+    allow: {
+      "github.com": [
+        { match: { method: ["GET"], path: { regex: "^/acme/bot\\.git/info/refs(\\?service=git-upload-pack)?$" } }, transform: [{ headers: { Authorization: "Basic X" } }] },
+        { match: { method: ["POST"], path: { exact: "/acme/bot.git/git-upload-pack" } }, transform: [{ headers: { Authorization: "Basic X" } }] },
+      ],
+    },
+  } as never).allow[0]!;
+  ok(
+    tokenHost.paths?.join(" ") === "/acme/bot.git/git-upload-pack ^/acme/bot\\.git/info/refs(\\?service=git-upload-pack)?$" && tokenHost.pathPrefixes === undefined,
+    "🔴 OPE-2530: whole-path matchers reach STATUS.json as `paths`, so the token broker's narrowing is not reported as none",
+  );
+  ok(!JSON.stringify(tokenHost).includes("Basic X"), "…and the stamped credential never reaches the summary");
 
   const emptyTransform = summariseEgressPolicy({ allow: { "x.test": [{ transform: [] }] } } as never);
   ok(emptyTransform.allow[0]!.credentialInjected === false, "an EMPTY transform array is not a credential (that is the compiler's bare-allow shape)");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import {
   registerConfig,
   resolveReadAdapter,
@@ -15,7 +16,18 @@ import { GITHUB_OWN_ACCOUNT_VENDOR } from "@open-everywhere/core/agent/adapter-a
 import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson, walkRetry, READ_WALK_BUDGET_MS } from "../agent/channels/github-read.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 
-process.env.GITHUB_TOKEN = "gh-test-token";
+const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+process.env.OE_GITHUB_APP_ID = "1";
+process.env.OE_GITHUB_APP_SLUG = "oe-test";
+process.env.OE_GITHUB_APP_PRIVATE_KEY = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
+delete process.env.GITHUB_TOKEN;
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (url: string | URL, init?: RequestInit) =>
+  String(url).includes("/app/installations/")
+    ? new Response(JSON.stringify({ token: "gh-test-token", expires_at: "2099-01-01T00:00:00Z", repositories: [] }), { status: 201 })
+    : realFetch(url, init)) as typeof fetch;
+try {
 
 registerGithubProvider();
 registerConfig({
@@ -381,3 +393,6 @@ const MAX_REVIEW_PAGES_EXPECTED = 5;
 }
 
 console.log(`✓ github-read: ${passed} assertions passed`);
+} finally {
+  globalThis.fetch = realFetch;
+}

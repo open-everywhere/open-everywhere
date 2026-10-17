@@ -3030,6 +3030,10 @@
       "types": "./dist/agent/scm/contents.d.ts",
       "default": "./dist/agent/scm/contents.js"
     },
+    "./agent/scm/credential.js": {
+      "types": "./dist/agent/scm/credential.d.ts",
+      "default": "./dist/agent/scm/credential.js"
+    },
     "./agent/scm/git.js": {
       "types": "./dist/agent/scm/git.d.ts",
       "default": "./dist/agent/scm/git.js"
@@ -4009,6 +4013,7 @@
     "test:credential-bindings-codemod": "tsx scripts/credential-bindings-codemod-test.ts",
     "test:binding-pr": "NODE_NO_WARNINGS=1 tsx scripts/binding-pr-test.ts",
     "test:config-pr-github": "NODE_NO_WARNINGS=1 tsx scripts/config-pr-github-test.ts",
+    "test:github-credential": "NODE_NO_WARNINGS=1 tsx scripts/github-credential-test.ts",
     "test:telemetry": "NODE_NO_WARNINGS=1 tsx scripts/telemetry-test.ts",
     "test:react": "NODE_NO_WARNINGS=1 tsx scripts/react-test.ts",
     "test:no-reply": "NODE_NO_WARNINGS=1 tsx scripts/no-reply-test.ts",

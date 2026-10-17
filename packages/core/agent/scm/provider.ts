@@ -1,4 +1,5 @@
 import { loadGitHubAppConfig } from "./config.js";
+import { getSettings } from "../settings/settings.js";
 import { GitHubApp } from "./app.js";
 import {
   discoveredGitHubInstallations,
@@ -10,6 +11,7 @@ let cached: GitHubApp | null | undefined;
 let cachedGeneration = -1;
 
 export function getGitHubApp(): GitHubApp | null {
+  if (getSettings().github.auth === "token") return null;
   const generation = discoveredInstallationsGeneration();
   if (cached !== undefined && cachedGeneration === generation) return cached;
   const config = loadGitHubAppConfig();

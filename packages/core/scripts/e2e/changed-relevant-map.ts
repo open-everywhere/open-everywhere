@@ -389,8 +389,14 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "repo-checkout",
     globs: ["packages/core/agent/tools/checkout_repo.ts", "packages/core/agent/scm/broker.ts", "packages/core/agent/scm/broker-audit.ts", "packages/core/agent/scm/git.ts"],
-    scenarios: ["J-PR", "F-QA-REPO"],
-    why: "J-PR clones the fixture repo before it opens a PR; F-QA-REPO clones it to boot the repo's own dev server, and its checkout gate reads the scm.broker egress.policy row that broker-audit.ts writes.",
+    scenarios: ["J-PR", "F-QA-REPO", "S-GH-TOKEN"],
+    why: "J-PR clones the fixture repo before it opens a PR; F-QA-REPO clones it to boot the repo's own dev server, and its checkout gate reads the scm.broker egress.policy row that broker-audit.ts writes. S-GH-TOKEN clones with a personal access token stamped at the firewall (OPE-2530).",
+  },
+  {
+    area: "github-credential",
+    globs: ["packages/core/agent/scm/credential.ts", "packages/core/agent/scm/provider.ts", "packages/core/agent/scm/write-token.ts", "packages/core/agent/scm/pr-status.ts"],
+    scenarios: ["J-PR", "S-PR-SESSION", "J-GH", "S-GH-TOKEN"],
+    why: "credential.ts decides whether a GitHub call presents an App token or the personal access token. J-PR and S-PR-SESSION drive the PR write and read through it in app mode, J-GH drives the conversation surface it gates, and S-GH-TOKEN drives the token mode.",
   },
   {
     area: "engagement-seam",

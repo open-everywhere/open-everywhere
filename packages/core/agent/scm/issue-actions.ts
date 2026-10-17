@@ -1,4 +1,5 @@
 import { getGitHubApp, repoAllowed } from "./provider.js";
+import { resolveRepoToken } from "./credential.js";
 import { resolveAccessFor } from "../access/request.js";
 import { ISSUE_WRITE_PERMISSIONS, expandMintPermissions } from "./mint.js";
 import type { RepoCapability } from "../access/repo-capabilities.js";
@@ -19,15 +20,7 @@ async function resolveIssueWriteToken(
   app = getGitHubApp(),
   capabilities: readonly RepoCapability[] = [],
 ): Promise<string> {
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo], expandMintPermissions(ISSUE_WRITE_PERMISSIONS, capabilities));
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
-  }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) {
-    throw new Error("no GitHub credential: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  }
-  return pat;
+  return resolveRepoToken(repo, expandMintPermissions(ISSUE_WRITE_PERMISSIONS, capabilities), { app });
 }
 
 export interface GithubActionOpts {

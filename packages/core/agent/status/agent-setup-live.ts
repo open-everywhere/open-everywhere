@@ -6,7 +6,7 @@ import { criteriaDomain, domainForChannel } from "../memory/domain.js";
 import { surfaceStatuses } from "../ops/status.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
 import { resolveGitHubInstallationId } from "../scm/installations.js";
-import { githubTokenFallbackSet } from "../scm/write-token.js";
+import { githubAuthMode, githubTokenSet } from "../scm/credential.js";
 import { type AgentSetupFacts, type AskerStanding, type SetupVerdict } from "./agent-setup.js";
 
 export async function gatherAgentSetupFacts(ctx: BindableContext): Promise<AgentSetupFacts> {
@@ -77,7 +77,7 @@ export async function gatherAgentSetupFacts(ctx: BindableContext): Promise<Agent
     surfaces,
     connectors: connectors.filter((c) => !surfaceNames.has(c)),
     repos,
-    github: { appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: githubTokenFallbackSet() },
+    github: { mode: githubAuthMode(), appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: githubTokenSet() },
     configChanges: { ...(repo !== undefined ? { repo } : {}), adminChannel: Boolean(ar?.adminChannel?.trim()), appInstalled, ...(ar?.dryRun === true ? { dryRun: true } : {}) },
   };
 }
@@ -101,7 +101,7 @@ export function seatSetupFacts(domainName: string | undefined): AgentSetupFacts 
     surfaces: [],
     connectors: [],
     repos: [],
-    github: { appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: githubTokenFallbackSet() },
+    github: { mode: githubAuthMode(), appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: githubTokenSet() },
     configChanges: { ...(repo !== undefined ? { repo } : {}), adminChannel: Boolean(ar?.adminChannel?.trim()), appInstalled, ...(ar?.dryRun === true ? { dryRun: true } : {}) },
   };
 }

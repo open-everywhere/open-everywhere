@@ -17,13 +17,71 @@ the bot (`open-everywhere[bot]`), not by a person. OAuth / the web flow is used 
 to the bot's committer identity; the PR links back to the surface and thread it came
 from.
 
-**One fallback breaks that.** Where no App installation covers the repo's owner, the pull-request
-and ticket paths fall back to the `GITHUB_TOKEN` PAT, and the PAT's owner authors the work.
-`checkout_repo` has no such fallback — it requires the App. So configure the App if you want the
-bot to be the author everywhere.
+**There is no fallback.** A deployment signs in to GitHub ONE way, and it says which in
+`github.auth` in `agent/settings/settings.ts` (OPE-2530): `app` (the shipped default) or `token`, a
+personal access token. In `app` mode `GITHUB_TOKEN` is never read, even when it is set, and a repo
+the App is not installed on is refused by name. Until OPE-2530 the pull-request and ticket paths
+silently fell back to the token there. See
+[A personal access token instead of the App](#a-personal-access-token-instead-of-the-app) for the
+other mode.
 
 This mirrors how GitHub Actions authenticates: a clean runner, a per-job scoped token,
 the token dies with the job. Open Everywhere applies the same model per session.
+
+## A personal access token instead of the App
+
+Some organisations will not create a GitHub App, and their only repository is the agent's own. For
+them, set `github: { auth: "token" }` in `agent/settings/settings.ts` and put a personal access
+token in `GITHUB_TOKEN`.
+
+- **The token reaches only the repositories declared for it.** By default that is the deployment's
+  own repository (`OE_ACCESS_CONFIG_REPO`). `github.tokenRepos` names more, each `owner/repo`. A
+  repository is reached only where a bundle ALSO grants it to the room. `list_repos` lists only those.
+- **Checkout, pull requests and the config-change pull requests work there.** `checkout_repo`
+  injects the token at the sandbox firewall on exactly two requests per reached repository: the
+  `GET …/info/refs?service=git-upload-pack` and the `POST …/git-upload-pack` that a clone and a
+  fetch make. Each rule matches the WHOLE path (an exact path, or an anchored pattern), never a
+  prefix, so a path with extra segments after the clone path gets no token. A push's own requests
+  (`service=git-receive-pack` and `git-receive-pack`) match no rule: on Vercel they reach GitHub
+  with no credential and are refused, and the self-host proxy in Tier B (`OE_EGRESS_MITM=1`) denies
+  them. In Tier A the proxy sees no path, so it adds no token anywhere: a push reaches GitHub with
+  no credential and is refused, and a clone gets no token either. So on the self-host proxy, a
+  token-mode checkout needs Tier B (the App's read token has the same limit). The approved publish
+  lifts these rules off `github.com` for its one push, carries the token in that one command, and
+  then re-arms them, as in `app` mode. On a backend without the firewall, `checkout_repo` refuses:
+  there it would have to store the token in the clone, and the token can push.
+- **The App is never used in this mode**, even when its secrets are still set. The GitHub webhook
+  route still verifies each delivery and runs the event-routine fan-out (that needs no GitHub
+  credential), but it starts no conversation: no @mention session, no ambient seat, no stop or
+  reaction leg. GitHub search and GitHub-backed memory are off too.
+- **What the host check is, and what it is not.** The reach list decides which repositories the
+  host presents the token for. The token itself carries whatever its owner gave it, and the work
+  is authored by that owner. Use a **fine-grained** token limited to the declared repositories, with
+  `Contents: read and write` and `Pull requests: read and write`. Then the token's own scope matches
+  the host's list.
+
+**Moving to the App takes four steps, in this order.**
+
+1. Create the App in one click with the ops MCP tool `surface_app_create`
+   ([GitHub § Setup](../deploy/surfaces/github.md#setup)). Pass `variant: "source-control"` to keep
+   what the token mode does today. The default `full` also turns on the GitHub conversation surface.
+2. The tool writes the App's keys into `.env.local` only. Push every name it wrote to the
+   deployment's environment.
+3. Set `github.auth` to `"app"` and redeploy.
+4. Install the App on your repositories. Do this AFTER the redeploy: the deployment learns the
+   installation from the App's `installation` delivery, and a token-mode deployment ignores that
+   delivery. Until this step the agent cannot reach GitHub.
+
+Nothing else changes: the bundle grants are the same in both modes, and `github.tokenRepos` stops
+being read. Delete `GITHUB_TOKEN` afterwards; nothing reads it. An admin who asks the agent about
+its setup gets the same steps.
+
+**The App brings its own `GITHUB_WEBHOOK_SECRET`, and step 2 replaces the deployment's old one.**
+If `.env.local` already holds the old secret, the tool refuses until you pass `replace: true`. A
+repository webhook that feeds your event routines then needs the new secret, or its deliveries are
+refused. With `source-control` the App subscribes to no events, so keep that webhook and give it the
+new secret. With `full` the App subscribes to the same events itself, so delete the repository
+webhook, or each event reaches your routines twice.
 
 ## Two-level scope: installation universe ∩ bundle repos
 
@@ -81,9 +139,8 @@ rights:
   set this repo is declared with and what each one buys. A repo opted into `workflows` shows
   `workflows: write` on its card, so the grant is stated where the click happens. The card
   renders those lines from the same derivation the **App** mint body is built from, so those two
-  cannot drift. The card says so on its last line, because the `GITHUB_TOKEN` PAT fallback above
-  is not an App mint: where no installation covers the repo, the publish uses the PAT and carries
-  the PAT owner's own rights, which no card can name. On the
+  cannot drift. In `token` mode the card names no grade. It says the click uses the personal access
+  token, with its owner's rights, because no derivation can read those rights. On the
   click, the host publishes the real branch **at exactly the frozen sha**
   (fast-forward only) and opens the PR as the bot — entirely host-side, so approval can
   land long after the session's sandbox is gone. Follow-up pushes to a PR branch go

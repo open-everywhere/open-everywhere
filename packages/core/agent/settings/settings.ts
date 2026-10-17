@@ -10,6 +10,8 @@ export type TaintUndeclaredSurface = "clean" | "mark";
 
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
+export type GithubAuthMode = "app" | "token";
+
 export type ExternalAuthorGrain = "taint" | "withhold";
 
 export type ExternalRoomGrain = "engage" | "silent";
@@ -114,6 +116,10 @@ export interface AgentSettings {
   readonly externalPolicy: {
     readonly authorGrain: ExternalAuthorGrain;
     readonly roomGrain: ExternalRoomGrain;
+  };
+  readonly github: {
+    readonly auth: GithubAuthMode;
+    readonly tokenRepos: readonly string[];
   };
   readonly governance: {
     readonly floorTtlMs: number;
@@ -636,6 +642,26 @@ export const SETTINGS = {
       summary:
         "Whether the agent engages in a room the classification calls EXTERNAL — a room the operator declared `public` in the trust registry, a room the vendor reports as spanning another organisation (Slack Connect, a Teams shared channel), or a room whose ingested set contains a refuted author. `silent` (shipped) suppresses the wake and announces at most twice per room — once on join, once on the first wake it suppresses — and never repeats; there is deliberately NO periodic re-announcement. `engage` is the deliberate OPT-OUT: the agent answers in an external room as it does in an internal one. A room that no leg classifies external is never silenced, so a member-only room sees no change. ⚠️ NOT EVERY SURFACE READS IT THE SAME WAY: `silent` suppresses a wake on SLACK, DISCORD, TEAMS, GITHUB and LINEAR. Discord and Teams post the suppressed-wake notice only, because neither surface delivers a join event the agent can hang the join notice on. Slack posts both halves, but its JOIN half fires only where `conversations.info` already refused the channel as not-internal — a channel the operator declared `public` that Slack reports internal is still silenced and still announces at its first suppressed wake, but gets no join notice. GitHub and Linear read the OPERATOR-DECLARED leg and the REFUTED-AUTHOR leg (neither surface has a vendor-external signal) and post NO announcement on either half — neither has a private channel back to a commenter, so an AMBIENT or NAME-DROP wake it silences is a silent drop with an audit row and nothing posted. An explicit @mention still gets the same fixed, identity-blind acknowledgement line every other silenced surface's addressed suppression gets; on Linear it posts as a `response` Agent Activity, which also ends the session. ⚠️ `silent` HAS NO CONFIG-VALIDATION ERROR FOR A HALF-DECLARATION, ONLY A BOOT WARNING: the EXTERNAL classification has three legs and only the OPERATOR-DECLARED one is visible in static config, so a domain that sets `roomGrain: \"silent\"` with no matching `public` trust entry gets a `console.warn` at boot naming the channel, not a boot failure — a vendor-external or guest-present signal can still arm it correctly at runtime, and refusing boot on that shape would be a false positive (`agent/lib/register-config.ts` calls `warnSilentRoomGrainWithoutPublicSignal`, `packages/core/agent/memory/domain.ts`).",
     } satisfies SettingSpec<ExternalRoomGrain>,
+  },
+  github: {
+    auth: {
+      path: "github.auth",
+      shipped: "app" as GithubAuthMode,
+      validate: (v: GithubAuthMode) => (v === "app" || v === "token" ? undefined : 'must be "app" or "token"'),
+      summary:
+        "How this deployment signs in to GitHub (OPE-2530). There is ONE credential and NO fallback between the two. `app` (shipped) — the GitHub App (`OE_GITHUB_APP_*`): every call mints a short-lived token narrowed to its repository and its job, and `GITHUB_TOKEN` is never read, even when it is set. A repository the App is not installed on is refused by name. `token` — the personal access token in `GITHUB_TOKEN`, for an organisation that will not create a GitHub App. It reaches ONLY the deployment's own repository (`OE_ACCESS_CONFIG_REPO`) and the repositories `github.tokenRepos` names, and only where a bundle also grants the repository to the room. Checkout, pull requests and the config-change pull requests work there. The App is never used in this mode: the GitHub webhook route runs only the event-routine fan-out and starts no conversation, and GitHub search and GitHub-backed memory are off. The token cannot be narrowed per session the way an App token is: checkout injects it at the sandbox firewall only on the two exact clone and fetch requests of each repository it reaches (whole-path matches, never a prefix), and refuses on a backend without the firewall. Use a fine-grained token limited to those repositories. TO MOVE TO THE APP, in this order: create it with the ops MCP tool `surface_app_create` (`variant: \"source-control\"` keeps what token mode does); push every name it wrote to `.env.local` to the deployment's environment; set this to `app` and redeploy; then install the App (a token-mode deployment ignores the App's `installation` delivery, so installing first leaves app mode with no installation). The App brings its own `GITHUB_WEBHOOK_SECRET`, which replaces the old one: a repository webhook that feeds event routines needs the new secret, and with `source-control` (no event subscriptions) it stays the only source of those events. With `full`, delete that webhook, or each event reaches your routines twice. Nothing else changes: the grants stay, and `github.tokenRepos` stops being read. See docs/capabilities/source-control.md.",
+    } satisfies SettingSpec<GithubAuthMode>,
+    tokenRepos: {
+      path: "github.tokenRepos",
+      shipped: [] as readonly string[],
+      validate: (v: readonly string[]) =>
+        Array.isArray(v) && v.every((r) => typeof r === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(r))
+          ? undefined
+          : 'must be a list of repositories, each "owner/repo"',
+      summary:
+        "With `github.auth: \"token\"`, the repositories the personal access token reaches BESIDES the deployment's own repository (`OE_ACCESS_CONFIG_REPO`), each `owner/repo`. A repository here is still reached only where a bundle grants it to the room. Empty (shipped) ⇒ the token reaches the deployment's own repository and nothing else. Inert with `github.auth: \"app\"`, where the App's installations decide the reach, so moving to the App needs no edit here.",
+      format: (v) => (v.length > 0 ? v.join(", ") : "(none — the deployment's own repository only)"),
+    } satisfies SettingSpec<readonly string[]>,
   },
   governance: {
     floorTtlMs: {
@@ -1329,6 +1355,10 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     externalPolicy: {
       authorGrain: resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain),
       roomGrain: resolve(SETTINGS.externalPolicy.roomGrain, o.externalPolicy?.roomGrain),
+    },
+    github: {
+      auth: resolve(SETTINGS.github.auth, o.github?.auth),
+      tokenRepos: resolve(SETTINGS.github.tokenRepos, o.github?.tokenRepos),
     },
     governance: {
       floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs),

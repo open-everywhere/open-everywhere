@@ -82,7 +82,7 @@ import {
   OE_ADDRESSED_ATTR,
   dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
+import { githubAuthMode, withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
 const BOT_NAME = process.env.GITHUB_APP_SLUG;
@@ -701,6 +701,10 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     }
     const eventType = req.headers.get("x-github-event") ?? "";
     args.waitUntil(fanOutGitHubDelivery(body, eventType, args.to, req.headers.get("x-github-delivery")));
+    if (githubAuthMode() === "token") {
+      log(`${eventType || "delivery"}: routine fan-out only — the GitHub conversation surface is off while this deployment signs in with a personal access token`);
+      return new Response("ok", { status: 200 });
+    }
     const stop = parseGitHubStopComment(body, eventType);
     if (stop) {
       args.waitUntil(

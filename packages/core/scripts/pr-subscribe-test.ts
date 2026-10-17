@@ -2,6 +2,7 @@ process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -62,6 +63,7 @@ registerConfig({
   domainsForSurface: ({ surface }) => (surface === "C1" ? ["eng"] : []),
 });
 process.env.GITHUB_TOKEN = "test-pat";
+overrideSettingsForTest({ github: { auth: "token", tokenRepos: ["acme/web"] } });
 
 const ctx = (attrOver: Record<string, unknown> = {}): BindableContext =>
   ({
@@ -276,7 +278,7 @@ const routineCtx = (): BindableContext =>
   try {
 
   const res = (await checkPrStatusTool.execute({ repo: "acme/web", number: 42 }, ctx() as never)) as { state: string; summary: string };
-  ok(res.state === "open" && res.summary.startsWith("OPEN"), "check_pr_status: returns the live status via the GITHUB_TOKEN PAT fallback");
+  ok(res.state === "open" && res.summary.startsWith("OPEN"), "check_pr_status: returns the live status via the personal access token in token mode");
 
   await assert.rejects(
     async () => { await checkPrStatusTool.execute({ repo: "acme/ungranted", number: 1 }, ctx() as never); },

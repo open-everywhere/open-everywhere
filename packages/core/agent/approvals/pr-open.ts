@@ -7,6 +7,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 import { resolvePrWriteToken } from "../scm/write-token.js";
+import { githubAuthMode } from "../scm/credential.js";
 import { DEFAULT_PERMISSIONS, expandMintPermissions } from "../scm/mint.js";
 import { REPO_CAPABILITIES, isRepoCapability, type RepoCapability } from "../access/repo-capabilities.js";
 import { QUOTE_MAX, linkSafeLine, plainQuote, plainValue } from "./plain-text.js";
@@ -50,12 +51,13 @@ function mintGradeLines(capabilities: readonly RepoCapability[]): string[] {
     .sort()
     .join(", ");
   const lines =
-    declared.length === 0 && !malformed
-      ? [`Token the approve click mints — ${grades}. This repo declares no capability, so the mint carries the default write set.`]
-      : [`Token the approve click mints — ${grades}.`, ...known.map((cap) => `↳ this repo declares \`${cap}\` — ${REPO_CAPABILITIES[cap].summary}`)];
-  if (unknown.length) lines.push(`⚠ this proposal froze capability names this build does not implement (${unknown.join(", ")}) — the App publish fails instead of minting them`);
-  if (malformed) lines.push("⚠ this proposal's frozen capability list is not a list — the App publish fails instead of minting anything from it");
-  lines.push("These grades are the GitHub App mint. Where no App installation covers this repo, the publish falls back to the `GITHUB_TOKEN` PAT, which carries its own owner's rights instead.");
+    githubAuthMode() === "token"
+      ? ["Token the approve click uses — this deployment's personal access token, which carries its owner's rights, not a narrowed grade."]
+      : declared.length === 0 && !malformed
+        ? [`Token the approve click mints — ${grades}. This repo declares no capability, so the mint carries the default write set.`]
+        : [`Token the approve click mints — ${grades}.`, ...known.map((cap) => `↳ this repo declares \`${cap}\` — ${REPO_CAPABILITIES[cap].summary}`)];
+  if (unknown.length) lines.push(`⚠ this proposal froze capability names this build does not implement (${unknown.join(", ")}) — the publish fails instead of minting them`);
+  if (malformed) lines.push("⚠ this proposal's frozen capability list is not a list — the publish fails instead of minting anything from it");
   return lines;
 }
 

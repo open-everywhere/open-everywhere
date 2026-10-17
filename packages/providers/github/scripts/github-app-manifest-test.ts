@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { agentDisplayName, scmAppPermissionFloor, surfaceAppCreateFlow } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   EVENT_PERMISSION,
@@ -137,6 +138,49 @@ ok(surfaceAppCreateFlow("github") === GITHUB_APP_CREATE_FLOW, "registerGithubOps
     (e: Error) => e.message,
   );
   ok(partial !== undefined && partial.includes("pem"), "a reply without a key is refused, naming the missing field");
+}
+
+{
+  const after = GITHUB_APP_CREATE_FLOW.after;
+  const pushAt = after.findIndex((l) => /push each written name/i.test(l) && /redeploy/i.test(l));
+  const installAt = after.findIndex((l) => /install the app on the repositories/i.test(l));
+  ok(pushAt >= 0 && installAt >= 0, "the manifest flow's next steps name both the env push and the install");
+  ok(pushAt < installAt, "🔴 the manifest flow's next steps push the env and redeploy BEFORE the install");
+
+  const root = new URL("../../../../", import.meta.url);
+  const read = (rel: string) => readFileSync(new URL(rel, root), "utf8");
+  const section = (text: string, from: string, to?: string) => {
+    const a = text.indexOf(from);
+    assert.ok(a >= 0, `section start "${from}" is present`);
+    const b = to === undefined ? -1 : text.indexOf(to, a + from.length);
+    return text.slice(a, b < 0 ? undefined : b);
+  };
+  const order = (label: string, text: string, redeploy: RegExp, install: RegExp) => {
+    const r = text.search(redeploy);
+    const i = text.search(install);
+    ok(r >= 0 && i >= 0, `${label}: names both the redeploy and the install`);
+    ok(r < i, `🔴 ${label}: the redeploy comes BEFORE the install`);
+  };
+  order(
+    "docs/deploy/surfaces/github.md § Setup",
+    section(read("docs/deploy/surfaces/github.md"), "## Setup", "## Multi-org"),
+    /then redeploy/,
+    /\*\*Install the App\*\*/,
+  );
+  order(
+    "docs/deploy/agent-driven-setup.md (the GitHub App step)",
+    section(read("docs/deploy/agent-driven-setup.md"), "For GitHub, the App is one click", "**Which surfaces generate their app.**"),
+    /redeploy/,
+    /install the App on the repositories/,
+  );
+  for (const skill of [".claude/skills/quickstart-open-everywhere/SKILL.md", "packages/create/template/claude/skills/quickstart-open-everywhere/SKILL.md"]) {
+    order(
+      `${skill} (the GitHub App steps)`,
+      section(read(skill), "Offer this step after the first deploy, when the user wants the agent to work in GitHub", "The tool never returns a value"),
+      /then redeploy/,
+      /install the App/,
+    );
+  }
 }
 
 console.log(`✓ github-app-manifest: ${n} assertions passed`);

@@ -183,6 +183,28 @@ function recordingDeps(): { deps: GitHubStopDeps; calls: CancelAnchoredTurnInput
   }
   ok(stopRun === 1, "🔴 REACHABILITY: the real webhook route runs the stop leg on a bare `stop` comment");
   ok(ordinaryRun === 0, "negative control: an ordinary comment runs NO stop leg");
+
+  overrideSettingsForTest({ webhooks: { allowUnverifiedGithub: true }, github: { auth: "token" } });
+  console.log = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+  console.error = () => undefined;
+  lines.length = 0;
+  let tokenStatus = 0;
+  try {
+    const waited: Promise<unknown>[] = [];
+    const res = await route!.handler(
+      new Request("https://example.test/eve/v1/github", { method: "POST", headers: { "x-github-event": "issue_comment", "content-type": "application/json" }, body: commentDelivery() }),
+      { waitUntil: (p: Promise<unknown>) => void waited.push(p), attachSession: () => ({ cancel: async () => ({ status: "accepted" }) }), to: undefined, from: undefined },
+    );
+    tokenStatus = res.status;
+    await Promise.allSettled(waited);
+  } finally {
+    console.log = realLog;
+    console.error = realError;
+    overrideSettingsForTest({ webhooks: { allowUnverifiedGithub: false }, github: { auth: "app" } });
+  }
+  ok(tokenStatus === 200, "🔴 OPE-2530 token mode: the route answers the delivery itself (200), never reaching eve's native channel");
+  ok(!lines.some((l) => l.includes("stop comment on")), "🔴 OPE-2530 token mode: no surface leg runs — the same stop comment runs no stop leg");
+  ok(lines.some((l) => l.includes("routine fan-out only")), "OPE-2530 token mode: the route logs that the conversation surface is off");
 }
 
 console.log(`\n✓ github-stop: ${passed} assertions passed (the narrow directive grammar, the delivery parse across both comment families, the fail-closed author guard with negative controls, the cancel key, the one shared conversation-key derivation, and route reachability)`);

@@ -2,6 +2,8 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { GIT_BROKER_HOSTS, type EgressRule } from "../access/egress.js";
 import type { GitHubApp } from "./app.js";
 import { READ_PERMISSIONS } from "./mint.js";
+import { githubAuthMode, personalTokenValue, tokenReaches } from "./credential.js";
+import { getGitHubApp } from "./provider.js";
 
 export { GIT_BROKER_HOSTS } from "../access/egress.js";
 
@@ -49,11 +51,53 @@ export function mergeGitReadBroker(
   base: SandboxNetworkPolicy,
   rulesByOwner: ReadonlyMap<string, EgressRule>,
 ): SandboxNetworkPolicy {
-  if (rulesByOwner.size === 0) return base;
-  const rules = [...rulesByOwner.values()];
+  return mergeGitBrokerRules(base, [...rulesByOwner.values()]);
+}
+
+export function mergeGitBrokerRules(base: SandboxNetworkPolicy, rules: readonly EgressRule[]): SandboxNetworkPolicy {
+  if (rules.length === 0) return base;
   const allow: Record<string, EgressRule[]> = typeof base === "string" ? {} : { ...(base.allow as Record<string, EgressRule[]>) };
-  for (const host of GIT_BROKER_HOSTS) allow[host] = rules;
+  for (const host of GIT_BROKER_HOSTS) allow[host] = [...rules];
   return { allow };
+}
+
+export function tokenGitReadRules(token: string, repos: readonly string[]): EgressRule[] {
+  const headers = brokerAuthHeader(token);
+  const rules: EgressRule[] = [];
+  for (const repo of repos) {
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo)) continue;
+    const escaped = repo.replace(/\./gu, "\\.");
+    rules.push(
+      {
+        match: {
+          method: ["GET"],
+          path: { regex: `^/${escaped}\\.git/info/refs(\\?service=git-upload-pack)?$` },
+          queryString: [{ key: { exact: "service" }, value: { exact: "git-upload-pack" } }],
+        },
+        transform: [{ headers }],
+      },
+      { match: { method: ["POST"], path: { exact: `/${repo}.git/git-upload-pack` } }, transform: [{ headers }] },
+    );
+  }
+  return rules;
+}
+
+export interface SessionGitBroker {
+  readonly rules: readonly EgressRule[];
+  readonly covers: (repo: string) => boolean;
+}
+
+export async function sessionGitBroker(repos: readonly string[]): Promise<SessionGitBroker | null> {
+  if (githubAuthMode() === "token") {
+    const token = personalTokenValue();
+    if (token === undefined) return null;
+    const reached = repos.filter((r) => tokenReaches(r));
+    return { rules: tokenGitReadRules(token, reached), covers: (repo) => reached.includes(repo) };
+  }
+  const app = getGitHubApp();
+  if (!app) return null;
+  const { rulesByOwner } = await mintGitReadBroker(app, repos);
+  return { rules: [...rulesByOwner.values()], covers: (repo) => rulesByOwner.has(repo.slice(0, repo.indexOf("/"))) };
 }
 
 export function withBareAllowHost(policy: SandboxNetworkPolicy, host: string): SandboxNetworkPolicy {

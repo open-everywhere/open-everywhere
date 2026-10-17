@@ -114,6 +114,21 @@ export class PrApi {
     return Buffer.from(json.content, "base64").toString("utf8");
   }
 
+  async isPrivate(): Promise<boolean> {
+    const json = (await this.api("GET", `/repos/${this.cfg.repo}`)) as { private?: unknown };
+    return json.private === true;
+  }
+
+  async branchExists(head: string): Promise<boolean> {
+    try {
+      await this.api("GET", `/repos/${this.cfg.repo}/git/ref/heads/${encodeURIComponent(head)}`);
+      return true;
+    } catch (err) {
+      if (/→ 404\b/.test(String(err instanceof Error ? err.message : err))) return false;
+      throw err;
+    }
+  }
+
   async closePr(prNumber: number): Promise<void> {
     await this.api("PATCH", `/repos/${this.cfg.repo}/pulls/${prNumber}`, { state: "closed" });
   }

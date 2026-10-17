@@ -4,6 +4,7 @@ import {
   mintInstallationToken,
   CONVERSATION_WRITE_PERMISSIONS,
   loadGitHubAppConfig,
+  githubAuthMode,
   resolveGitHubInstallationId,
   warmCredential,
   markNotApplied,
@@ -66,6 +67,9 @@ function githubAppCreds(): { appId: string; privateKeyPem: string; installations
 }
 
 export async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
+  if (githubAuthMode() === "token") {
+    throw markNotApplied(new Error("reply couldn't post to GitHub — this deployment signs in with a personal access token, and the GitHub conversation surface needs the GitHub App."));
+  }
   const creds = githubAppCreds();
   if (!creds) {
     throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY)."));

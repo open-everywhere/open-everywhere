@@ -1,6 +1,6 @@
 import {
   catchUpSender,
-  resolveConversationReadToken,
+  resolveSurfaceReadToken,
   type NormalizedMessage,
   type PrFetchFn,
   type SeatCatchUpFetch,
@@ -54,7 +54,7 @@ export async function fetchGitHubCatchUpWindow(
 ): Promise<readonly NormalizedMessage[]> {
   const target = parseGithubContainer(req.container);
   if (!target) return [];
-  const token = await (deps.resolveToken ?? resolveConversationReadToken)(target.repoFull);
+  const token = await (deps.resolveToken ?? resolveSurfaceReadToken)(target.repoFull);
   const since = new Date(req.sinceMs).toISOString();
   const url = `${API_BASE}/repos/${target.repoFull}/issues/${target.number}/comments?per_page=${CATCH_UP_PAGE_LIMIT}&since=${encodeURIComponent(since)}`;
   const raw = await getJson<readonly RawTimelineComment[]>(deps.fetchFn, url, token, "issues.listComments");

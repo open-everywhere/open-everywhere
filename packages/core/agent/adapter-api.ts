@@ -68,7 +68,8 @@ export {
 export { getGitHubApp } from "./scm/provider.js";
 export { GitHubContents } from "./scm/contents.js";
 export type { CommitId } from "./scm/contents.js";
-export { resolveReadToken, resolveConversationReadToken } from "./scm/pr-status.js";
+export { resolveReadToken, resolveConversationReadToken, resolveSurfaceReadToken } from "./scm/pr-status.js";
+export { githubAuthMode } from "./scm/credential.js";
 export { CONVERSATION_WRITE_PERMISSIONS } from "./scm/mint.js";
 export { prApiHeaders } from "./scm/pr.js";
 export type { PrFetchFn } from "./scm/pr.js";

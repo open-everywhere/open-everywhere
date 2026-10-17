@@ -203,9 +203,13 @@ the real surface rather than the `OE_*` local stand-ins.
 - **Source control**: register the GitHub App (`OE_GITHUB_APP_*`) so the agent clones
   granted repos and opens PRs under its own bot identity with short-lived,
   repo-scoped installation tokens. See [Source control](../capabilities/source-control.md).
-- **Simple path**: a PAT in `GITHUB_TOKEN` powers the `open_pull_request` tool (the
-  approved push + PR call). The PAT's own scope is a real enforcement boundary — scope it
-  to only what's needed.
+- **Personal access token, for an org with no App**: set `github: { auth: "token" }` in
+  `agent/settings/settings.ts` and the token in `GITHUB_TOKEN`. It reaches only the
+  deployment's own repository (and `github.tokenRepos`); checkout, pull requests and the
+  config-change pull requests work there. It is a declared mode, never a fallback: with the
+  shipped `auth: "app"` the token is not read. The token's own scope is the real boundary,
+  so make it fine-grained and limited to those repositories. Moving to the App later is one
+  setting. See [Source control](../capabilities/source-control.md#a-personal-access-token-instead-of-the-app).
 - **Branch protection is your backstop**: whatever the token can push, what *lands* is
   governed by your repo's protection rules. Require PR + review on sensitive repos so the
   write capability stays a proposal, not a merge.

@@ -3,6 +3,7 @@ import type { PrFetchFn } from "../agent/scm/pr.js";
 
 const { makeGitHubConfigPrProvider } = await import("../agent/credentials/config-pr-github.js");
 const { resetGitHubApp } = await import("../agent/scm/provider.js");
+const { overrideSettingsForTest, resetSettingsForTest } = await import("../agent/settings/settings.js");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -98,11 +99,17 @@ function prFetch(state: PrState): PrFetchFn {
 
   process.env.GITHUB_TOKEN = "ghp_test_pat";
   resetGitHubApp();
-  ok((await provider.resolveWriteToken("acme/config")) === "ghp_test_pat", "resolveWriteToken: falls back to the GITHUB_TOKEN PAT when no App plane is configured");
+  await rejectsWith(() => provider.resolveWriteToken("acme/config"), "GITHUB_TOKEN is set, but this deployment signs in with the GitHub App", "resolveWriteToken: 🔴 app mode never falls back to the GITHUB_TOKEN personal access token");
+
+  overrideSettingsForTest({ github: { auth: "token", tokenRepos: ["acme/config"] } });
+  ok((await provider.resolveWriteToken("acme/config")) === "ghp_test_pat", "resolveWriteToken: token mode returns the personal access token for a repository it reaches");
+  await rejectsWith(() => provider.resolveWriteToken("acme/other"), "the personal access token does not reach acme/other", "resolveWriteToken: 🔴 token mode refuses a repository the token does not reach");
 
   delete process.env.GITHUB_TOKEN;
+  await rejectsWith(() => provider.resolveWriteToken("acme/config"), "no GitHub credential for the config repo", "resolveWriteToken: token mode fails loud with no token set");
+  resetSettingsForTest();
   resetGitHubApp();
-  await rejectsWith(() => provider.resolveWriteToken("acme/config"), "no GitHub credential for the config repo", "resolveWriteToken: fails loud when neither App nor PAT is present");
+  await rejectsWith(() => provider.resolveWriteToken("acme/config"), "no GitHub credential for the config repo", "resolveWriteToken: app mode fails loud when neither App nor token is present");
 
   if (savedApp !== undefined) process.env.OE_GITHUB_APP_ID = savedApp;
   if (savedTok !== undefined) process.env.GITHUB_TOKEN = savedTok;

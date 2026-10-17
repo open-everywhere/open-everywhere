@@ -366,6 +366,8 @@ registerIdentityMapper(PLATFORM, (c) => {
     "packages/core/agent/scm/broker.ts": "the egress broker's mint, reached from checkout_repo, which is gated",
     "packages/core/agent/scm/config-repo-token.ts":
       "WRITE, and the resolver itself — the one mint the eight config-repo bot-PR flows share (OPE-1823); its eight call sites, approvals/access-request.ts, approvals/agent-create.ts, approvals/webhook-declare.ts, approvals/mcp-server-propose.ts, approvals/allow-rule-pr.ts, approvals/email-sender.ts, credentials/config-pr-github.ts and identity/groups-delivery.ts, are named on the same write decision",
+    "packages/core/agent/scm/credential.ts":
+      "the resolver itself — the one GitHub credential choice (OPE-2530) that write-token.ts, pr-status.ts and issue-actions.ts call; it has no requester turn of its own, and every call site is gated or named here",
     "packages/core/agent/scm/issue-actions.ts": "WRITE — issue-write permissions",
     "packages/core/agent/scm/pr-status.ts": "the resolvers themselves, not a call site",
     "packages/core/agent/scm/write-token.ts":

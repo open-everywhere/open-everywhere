@@ -14,6 +14,7 @@ const { actionKind } = await import("../agent/approvals/actions.js");
 const { executePrOpen } = await import("../agent/approvals/pr-open.js");
 const { RateLimitExhaustedError } = await import("../agent/channels/rate-limit-retry.js");
 const { default: openPullRequestGated } = await import("../agent/tools/open_pull_request.js");
+const { overrideSettingsForTest } = await import("../agent/settings/settings.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 const openPullRequestTool = (await resolveWindowGated(openPullRequestGated, { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 const { registerConfig } = await import("../agent/access/config.js");
@@ -125,8 +126,18 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   ok(token!.includes("declares no capability"), "the plain card says the repo declares no capability");
   ok(!lines.some((l) => l.startsWith("↳")), "a plain repo's card carries no capability detail line");
   ok(
-    lines.some((l) => l.includes("GITHUB_TOKEN") && l.includes("GitHub App mint")),
-    "🔴 the card never states the App grades as the ceiling — it names the PAT fallback, whose rights no derivation here can read",
+    !lines.some((l) => l.includes("GITHUB_TOKEN") || l.includes("falls back")),
+    "🔴 OPE-2530: an app-mode card names no token fallback — there is none any more",
+  );
+}
+{
+  overrideSettingsForTest({ github: { auth: "token" } });
+  const lines = kind!.summarize(args({ capabilities: ["workflows"] }));
+  overrideSettingsForTest({ github: { auth: "app" } });
+  ok(!lines.some((l) => l.startsWith("Token the approve click mints") || l.startsWith("↳")), "🔴 a token-mode card names no App grade and no capability detail");
+  ok(
+    lines.some((l) => l.startsWith("Token the approve click uses") && l.includes("personal access token") && l.includes("owner's rights")),
+    "🔴 a token-mode card says the click uses the personal access token, with its owner's rights",
   );
 }
 {
@@ -150,14 +161,14 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   const token = lines.find((l) => l.startsWith("Token the approve click mints"));
   ok(token !== undefined && token!.includes("workflows: write"), "an unimplemented frozen name never hides the grades this build DOES map");
   ok(
-    lines.some((l) => l.includes("gone-in-this-build") && l.includes("App publish fails")),
+    lines.some((l) => l.includes("gone-in-this-build") && l.includes("publish fails")),
     "an unimplemented frozen capability name is named on the card, with the publish failure it causes",
   );
 }
 {
   const lines = kind!.summarize(args({ capabilities: { workflows: true } as unknown as readonly RepoCapability[] }));
   ok(lines.some((l) => l.startsWith("Token the approve click mints")), "a non-list frozen capabilities value still renders the card");
-  ok(lines.some((l) => l.includes("is not a list") && l.includes("App publish fails")), "a non-list frozen capabilities value is named on the card, with the publish failure it causes");
+  ok(lines.some((l) => l.includes("is not a list") && l.includes("publish fails")), "a non-list frozen capabilities value is named on the card, with the publish failure it causes");
   ok(!lines.some((l) => l.includes("workflows: write")), "🔴 a non-list value grades NOTHING — the card falls back to the default write set, never to a guessed expansion");
 }
 {
@@ -166,7 +177,6 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
     "Open pull request — `acme/web`: `fix/issue-9` → `main` (commit `aaaaaaaaaaaa`)",
     "Token the approve click mints — contents: write, metadata: read, pull_requests: write, workflows: write.",
     "↳ this repo declares `workflows` — push branches that add or change GitHub Actions workflow files under .github/workflows",
-    "These grades are the GitHub App mint. Where no App installation covers this repo, the publish falls back to the `GITHUB_TOKEN` PAT, which carries its own owner's rights instead.",
     "*Fix the widget*",
     "```",
     "What changed and why.",

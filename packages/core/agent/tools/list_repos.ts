@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
-import { getGitHubApp } from "../scm/provider.js";
+import { githubAuthMode, githubCredentialConfigured, tokenReaches } from "../scm/credential.js";
 
 export default defineTool({
   description:
@@ -10,11 +10,12 @@ export default defineTool({
   inputSchema: z.object({}),
   outputSchema: z.object({
     repos: z.array(z.string()),
-    sourceControlConfigured: z.boolean().describe("false if no GitHub App is set up — cloning/PRs won't work until it is."),
+    sourceControlConfigured: z.boolean().describe("false if this deployment holds no GitHub credential — cloning/PRs won't work until it does."),
   }),
   approval: never(),
   async execute(_input, ctx) {
     const access = resolveAccessFor(ctx);
-    return { repos: [...access.repos], sourceControlConfigured: getGitHubApp() !== null };
+    const repos = githubAuthMode() === "token" ? access.repos.filter((r) => tokenReaches(r)) : access.repos;
+    return { repos: [...repos], sourceControlConfigured: githubCredentialConfigured() };
   },
 });

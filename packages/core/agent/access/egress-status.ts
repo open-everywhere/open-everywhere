@@ -12,6 +12,7 @@ export interface EgressAllowEntry {
   readonly host: string;
   readonly methods?: readonly string[];
   readonly pathPrefixes?: readonly string[];
+  readonly paths?: readonly string[];
   readonly credentialInjected: boolean;
 }
 
@@ -28,7 +29,7 @@ export interface EgressStatusInput {
 }
 
 interface OpaqueRule {
-  readonly match?: { readonly method?: readonly string[]; readonly path?: { readonly startsWith?: string } };
+  readonly match?: { readonly method?: readonly string[]; readonly path?: { readonly startsWith?: string; readonly exact?: string; readonly regex?: string } };
   readonly transform?: readonly { readonly headers?: Record<string, string> }[];
 }
 
@@ -42,17 +43,20 @@ export function summariseEgressPolicy(policy: SandboxNetworkPolicy): EgressPolic
     const rules = allowMap[host] ?? [];
     const methods = new Set<string>();
     const prefixes = new Set<string>();
+    const paths = new Set<string>();
     let credentialInjected = false;
     for (const rule of rules) {
       for (const m of rule.match?.method ?? []) methods.add(m);
       const prefix = rule.match?.path?.startsWith;
       if (typeof prefix === "string" && prefix.length > 0) prefixes.add(prefix);
+      for (const whole of [rule.match?.path?.exact, rule.match?.path?.regex]) if (typeof whole === "string" && whole.length > 0) paths.add(whole);
       if (ruleStampsCredential(rule)) credentialInjected = true;
     }
     allow.push({
       host,
       ...(methods.size > 0 ? { methods: [...methods].sort() } : {}),
       ...(prefixes.size > 0 ? { pathPrefixes: [...prefixes].sort() } : {}),
+      ...(paths.size > 0 ? { paths: [...paths].sort() } : {}),
       credentialInjected,
     });
   }

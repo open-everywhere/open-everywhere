@@ -4671,6 +4671,87 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-GH-TOKEN",
+    title: "GitHub through a personal access token (OPE-2530): checkout_repo clones the deployment's own repo with the token stamped at the firewall, and a push from the sandbox does not land",
+    requires: ["slack", "pr"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: true,
+    run: async (ctx) => {
+      if (process.env.E2E_GITHUB_TOKEN_MODE !== "1") {
+        ctx.skip("S-GH-TOKEN needs E2E_GITHUB_TOKEN_MODE=1 and a target deployed with github.auth \"token\" whose token reaches E2E_PR_REPO (OPE-2530)");
+      }
+      if (!ctx.auditRead) {
+        ctx.skip("S-GH-TOKEN needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the checkout is proven by its scm.broker egress.policy row");
+      }
+      const slack = ctx.slack!;
+      const repo = ctx.prRepo!;
+      const prApi = ctx.prApi!;
+      const base = (process.env.E2E_PR_BASE ?? "").trim() || "main";
+      if (!(await prApi.isPrivate())) {
+        ctx.fixtureMissing(`S-GH-TOKEN: ${repo} is public, so a clone needs no token and the leg cannot show the firewall stamped one. Point E2E_PR_REPO at a private repo the target's token reaches.`);
+      }
+      const readme = await prApi.fileText("README.md", base);
+      const firstLine = readme?.split("\n").find((l) => l.trim().length > 0)?.trim();
+      if (firstLine === undefined) {
+        ctx.fixtureMissing(`S-GH-TOKEN: ${repo}@${base} has no README.md with a non-empty line to read back. Commit one to ${repo}'s ${base} branch.`);
+      }
+      const run = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const pushRef = `oe-e2e-token-push-${run}`;
+      const start = await presenceSince(ctx, "ghTokenStart", 60_000);
+      const mark = await auditStoreMark(ctx, "S-GH-TOKEN");
+      const { ts } = await slack.post(
+        slack.mention(
+          `Clone ${repo} with checkout_repo. In the clone, print the first non-empty line of README.md. Then make an empty commit and run ` +
+            `\`git push origin HEAD:refs/heads/${pushRef}\` once. Do not open a pull request. Reply with the README line, then quote the push command's error output word for word.`,
+        ),
+      );
+      const deadline = Date.now() + QA_REPO_WAIT;
+      const remaining = (): number => Math.max(deadline - Date.now(), 0);
+      const auditRead = ctx.auditRead!;
+      await pollOptional(
+        async () => {
+          const rows = rowsAboveStoreMark(await auditRead({ sinceIso: start, actions: [DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION] }), mark);
+          return delegationHasReturned(rows) ? true : undefined;
+        },
+        { timeoutMs: remaining(), what: "the delegated checkout worker's task to settle (delegation.task_settled)" },
+      );
+      try {
+        const brokerRows = rowsAboveStoreMark(await auditRead({ sinceIso: start, actions: ["egress.policy"] }), mark).filter((r) => {
+          const d = r.detail as { phase?: unknown; reason?: unknown } | undefined;
+          return d?.phase === "scm.broker" && d.reason === "checkout_repo";
+        });
+        ctx.gate(brokerRows.length >= 1, "checkout: an scm.broker egress.policy row names checkout_repo — the firewall carried the token broker for the clone");
+        const threadText = async (): Promise<string> =>
+          (await slack.replies(ts))
+            .filter((m) => slack.isBotReply(m) && m.ts !== ts && !isFillerAck(m.text))
+            .map((m) => m.text)
+            .join("\n");
+        const named = await pollOptional(async () => {
+          const text = await threadText();
+          return text.includes(firstLine!) ? text : undefined;
+        }, { timeoutMs: Math.max(remaining(), 30_000), what: `a bot post in thread ${ts} that quotes the README's first line` });
+        ctx.gate(named !== undefined, `🔴 clone: the thread quotes the README's first line ("${firstLine}") — only a clone through the token stamp could read it`);
+        const replyText = named ?? (await threadText());
+        ctx.gate(
+          /could not read Username|Authentication failed|Invalid username or (?:password|token)|returned error: 40[13]|\b40[13]\b/i.test(replyText),
+          `🔴 push: the reply quotes git refusing the push for a missing credential (reply: ${JSON.stringify(replyText.slice(0, 240))})`,
+        );
+        ctx.gate(!(await prApi.branchExists(pushRef)), `🔴 push: refs/heads/${pushRef} does not exist — the sandbox push did not land`);
+        await ctx.judgePass(
+          closedQA("Does the reply quote an error from the git push (it was refused, rejected, failed or denied), rather than saying the push worked or was not tried?", {
+            mustNotMatch: [/push (?:worked|succeeded|went through)/i, /did(?: not|n't) (?:run|try|attempt)/i],
+          }),
+          replyText,
+          "push: the reply reports the sandbox push's refusal",
+        );
+      } finally {
+        if (await prApi.branchExists(pushRef).catch(() => false)) await prApi.deleteBranch(pushRef).catch(() => undefined);
+      }
+    },
+  },
+  {
     id: "F-EDIT",
     proves: ["PAR-message-edit-wake"],
     title: "Message-EDIT wake (<previous-body>): an xoxp edit of an engaged message wakes a reply that ANSWERS from the post-edit value (live primary-model wake-envelope probe)",

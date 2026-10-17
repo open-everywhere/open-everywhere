@@ -253,10 +253,13 @@ back to a page on this computer, so the user copies nothing.
    this computer. GitHub opens with the App filled in. They check the name (GitHub App names are
    unique, so they change it if GitHub says it is taken) and confirm.
 3. Call `surface_app_create { surface: "github", action: "status" }`. `state: "done"` lists the
-   env names written to `.env.local` and the App's install link. Ask the user to open the link and
-   install the App on the repositories the agent works in.
+   env names written to `.env.local` and the App's install link. Keep the link for step 5.
 4. On the Vercel route, push each name in `written` exactly as in step 9, then redeploy. On the
    Docker route, add each one to the server's `.env` (Docker step 6), then restart the stack.
+5. Only after that redeploy or restart, ask the user to open the install link and install the App
+   on the repositories the agent works in. The install sends one `installation` delivery, and the
+   deployment learns the installation from it. Before the redeploy the deployment does not hold the
+   App's webhook secret, so it refuses that delivery and never learns the installation.
 
 The tool never returns a value, and it refuses to overwrite names `.env.local` already holds.
 

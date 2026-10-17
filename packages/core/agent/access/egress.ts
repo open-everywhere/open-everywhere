@@ -78,7 +78,11 @@ export type ResolveHeaders = (connection: Connection) => Promise<Record<string, 
 export type NarrowConnections = (connectionIds: readonly string[]) => Promise<readonly string[] | null>;
 
 export type EgressRule = {
-  match?: { method?: string[]; path?: { startsWith?: string } };
+  match?: {
+    method?: string[];
+    path?: { startsWith?: string; exact?: string; regex?: string };
+    queryString?: { key?: { exact?: string }; value?: { exact?: string } }[];
+  };
   transform: { headers?: Record<string, string> }[];
 };
 

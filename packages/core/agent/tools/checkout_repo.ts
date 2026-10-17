@@ -12,7 +12,8 @@ import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { assertGithubActingIdentity } from "../scm/github-acting-identity.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
-import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
+import { sessionGitBroker, mergeGitBrokerRules } from "../scm/broker.js";
+import { appMissingError, githubAuthMode, githubCommitter, personalTokenFor } from "../scm/credential.js";
 import { auditBrokeredEgressPolicy } from "../scm/broker-audit.js";
 import type { BindableContext } from "../identity/binding.js";
 import { applyAndRecordEgressPolicy } from "../hooks/egress.js";
@@ -50,10 +51,14 @@ export default windowGated("checkout_repo", defineTool({
     }
     await assertGithubActingIdentity(ctx as BindableContext, "checkout_repo");
 
+    const tokenMode = githubAuthMode() === "token";
     const app = getGitHubApp();
-    if (!app) {
-      throw new Error("source control isn't configured (no GitHub App). Set OE_GITHUB_APP_* — see .env.example / docs/capabilities/source-control.md.");
+    if (tokenMode) {
+      personalTokenFor(input.repo);
+    } else if (!app) {
+      throw appMissingError();
     }
+    const committer = githubCommitter();
 
     const dir = input.dir ?? input.repo.split("/")[1];
     if (!isSafeCheckoutDir(dir)) {
@@ -76,20 +81,25 @@ export default windowGated("checkout_repo", defineTool({
         (ids) => narrowByConnectorOverride(ctx, ids),
         resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
       );
-      const { rulesByOwner } = await mintGitReadBroker(app, access.repos);
-      if (!rulesByOwner.has(owner)) throw noInstallationError();
-      const brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
+      const broker = await sessionGitBroker(access.repos);
+      if (broker === null || !broker.covers(input.repo)) throw tokenMode ? new Error(`repo "${input.repo}": the personal access token does not reach it.`) : noInstallationError();
+      const brokered = mergeGitBrokerRules(basePolicy, broker.rules);
       await applyAndRecordEgressPolicy(brokered, { ctx, sessionId: access.scopeKey });
       await auditBrokeredEgressPolicy(ctx as BindableContext, access, brokered, "checkout_repo");
-      result = await sandbox.run({ command: checkoutCommandBrokered(input.repo, dir, app.committer()) });
+      result = await sandbox.run({ command: checkoutCommandBrokered(input.repo, dir, committer) });
       if (!result.stdout.includes(CHECKOUT_OK)) {
         throw new Error(`clone failed for "${input.repo}": ${(result.stderr || result.stdout || "unknown error").slice(0, 500)}`);
       }
+    } else if (tokenMode) {
+      throw new Error(
+        `checkout with a personal access token needs the sandbox firewall, and this backend does not enforce it. ` +
+          `Without the firewall the token would sit in the clone, where it can push. Use a backend with the firewall, or the GitHub App.`,
+      );
     } else {
-      const { tokens, ungranted } = await app.tokensForRepos([input.repo], READ_PERMISSIONS);
+      const { tokens, ungranted } = await app!.tokensForRepos([input.repo], READ_PERMISSIONS);
       if (ungranted.length) throw noInstallationError();
       const token = tokens.get(owner)!.token;
-      result = await sandbox.run({ command: checkoutCommand(input.repo, token, dir, app.committer()) });
+      result = await sandbox.run({ command: checkoutCommand(input.repo, token, dir, committer) });
       if (!result.stdout.includes(CHECKOUT_OK)) {
         throw new Error(`clone failed for "${input.repo}": ${redactSecret(result.stderr || result.stdout || "unknown error", token).slice(0, 500)}`);
       }
@@ -134,7 +144,7 @@ export default windowGated("checkout_repo", defineTool({
       skills,
       agents,
       message:
-        `Cloned ${input.repo} into ${dir}/ (authored commits will be ${app.committer().name}). ` +
+        `Cloned ${input.repo} into ${dir}/ (authored commits will be ${committer.name}). ` +
         `Branch and commit there, then open_pull_request — it pushes your branch and opens the PR after approval (plain git push is not authorized).${conventionNote}${skillNote}${agentNote}`,
     };
   },

@@ -1,7 +1,10 @@
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { removeTempDir } from "./_temp-dir.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-propose-venue-"));
@@ -105,6 +108,7 @@ const BINDINGS = [
   { bundle: "coding", scope: { level: "surface" as const, surface: "teams/W1/CONV_PR" } },
 ];
 process.env.GITHUB_TOKEN = "test-pat";
+overrideSettingsForTest({ github: { auth: "token", tokenRepos: ["acme/web"] } });
 
 registerConfig({
   loadConnectorCredentials: () => [
@@ -198,8 +202,13 @@ const sandbox = {
     command.includes("find . -type f")
       ? { exitCode: 0, stdout: "MEMORY.md\n", stderr: "" }
       : { exitCode: 0, stdout: `__OE_STAGED_SHA__ ${STAGED_SHA}`, stderr: "" },
-  setNetworkPolicy: async () => {},
+  setNetworkPolicy: async (policy: unknown) => void appliedPolicies.push(policy),
 };
+const appliedPolicies: unknown[] = [];
+const { registerSandboxFirewall } = await import("../agent/sandbox/network-policy.js");
+registerSandboxFirewall({ carries: "full", environment: {} as never });
+const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+const { ContextContainer, contextStorage } = await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href);
 
 const teamsCtx = (conversationId: string, wideHands?: boolean) =>
   ({
@@ -495,7 +504,8 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(deleted.message.includes("card posted in <#C_OPS>") && deleted.message.includes("confirm the removal"), "325-redirect: …with its own verb");
 
   const prCtx = teamsCtx("CONV_PR", true);
-  const pr = (await (await armed(openPullRequestTool, prCtx, "open_pull_request")).execute({ repo: "acme/web", head: "fix/1", base: "main", title: "Fix the widget", body: "What changed." }, prCtx)) as {
+  const prEntry = await armed(openPullRequestTool, prCtx, "open_pull_request");
+  const pr = (await contextStorage.run(new ContextContainer(), () => prEntry.execute({ repo: "acme/web", head: "fix/1", base: "main", title: "Fix the widget", body: "What changed." }, prCtx))) as {
     pending: boolean;
     pendingId: string;
     message: string;
@@ -505,6 +515,13 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(prRow["channelId"] === "C_OPS" && prRow["postedTo"] === "slack/T1/C_OPS" && prRow["threadTs"] === null, "325-redirect: open_pull_request's card is in the venue, top-level");
   ok(pr.message.includes("card posted in <#C_OPS>") && pr.message.includes("approve the publish"), "325-redirect: …names the venue and the verb");
   ok(JSON.parse(prRow["argsJson"] as string).headSha === STAGED_SHA, "325-redirect: …and the staged sha reached the frozen card args — the venue redirect did not skip the staging push");
+  const swapped = appliedPolicies.at(-2) as { allow?: Record<string, unknown[]> } | undefined;
+  const restored = appliedPolicies.at(-1) as { allow?: Record<string, { match?: { path?: { exact?: string; regex?: string } } }[]> } | undefined;
+  ok(appliedPolicies.length === 2 && swapped?.allow?.["github.com"]?.length === 0, "§2530 🔴 token mode: the staging push lifts the token broker off github.com (the self-host proxy would deny its git-receive-pack)");
+  ok(
+    (restored?.allow?.["github.com"] ?? []).map((r) => r.match?.path?.exact ?? r.match?.path?.regex).join(" ") === "^/acme/web\\.git/info/refs(\\?service=git-upload-pack)?$ /acme/web.git/git-upload-pack",
+    "§2530 token mode: the restore re-arms the token on acme/web's two read requests",
+  );
 }
 
 {

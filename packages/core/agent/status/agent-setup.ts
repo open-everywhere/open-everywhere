@@ -22,6 +22,7 @@ export interface AgentSetupFacts {
   readonly connectors: readonly string[];
   readonly repos: readonly string[];
   readonly github: {
+    readonly mode: "app" | "token";
     readonly appConfigured: boolean;
     readonly appSlug?: string;
     readonly tokenSet: boolean;
@@ -144,12 +145,12 @@ function connectedLines(f: AgentSetupFacts, isAdmin: boolean): string[] {
     const name = surfaceDisplayName(s.platform);
     lines.push(s.installed === "yes" ? `${name}: installed` : s.installed === "no" ? `${name}: not installed yet` : `${name}: set up, but I can't confirm it is installed`);
   }
-  if (f.github.appConfigured) {
+  if (f.github.mode === "token") {
+    lines.push(f.github.tokenSet ? "GitHub: connected with a personal access token, not the app" : "GitHub: not connected");
+  } else if (f.github.appConfigured) {
     const owner = repoOwner(f.configChanges.repo);
     const here = owner !== undefined && f.configChanges.appInstalled === "yes";
     lines.push(here && isAdmin ? `GitHub: the app is installed for ${owner}` : "GitHub: the app is set up");
-  } else if (f.github.tokenSet) {
-    lines.push("GitHub: connected with a personal token, not the app");
   } else {
     lines.push("GitHub: not connected");
   }
@@ -211,15 +212,29 @@ function configGaps(f: AgentSetupFacts, repoWords?: string): { ready: boolean; g
     operator.push("dryRun: false in agent/access/access-requests.ts.");
     return { ready: false, gaps, operator };
   }
-  if (!f.github.appConfigured && !f.github.tokenSet) {
+  if (f.github.mode === "token") {
+    if (!f.github.tokenSet) {
+      gaps.push({
+        what: "Changing my setup from chat needs GitHub, and I'm not connected to it.",
+        step: `Whoever runs this deployment adds a personal access token that can change ${repo}.`,
+      });
+      operator.push("GITHUB_TOKEN: a fine-grained personal access token for this deployment's own repository.");
+      return { ready: false, gaps, operator };
+    }
+    operator.push('To move to the GitHub app: create it with the ops tool surface_app_create (variant "source-control" keeps what you have now), push the names it wrote to .env.local to the deployment\'s environment, set github.auth to "app" in agent/settings/settings.ts and redeploy, then install the app on your repositories. Nothing else changes.');
+    operator.push('The app brings its own GITHUB_WEBHOOK_SECRET. If a repository webhook feeds your routines, then with variant "source-control", give it the new secret. With "full", delete it, or each event reaches your routines twice.');
+    return { ready: true, gaps, operator };
+  }
+  if (!f.github.appConfigured) {
     gaps.push({
       what: `Changing my setup from chat needs GitHub, and I'm not connected to it.`,
       step: `Whoever runs this deployment sets up the GitHub app and installs it on ${repo}.`,
     });
     operator.push("The GitHub app settings: OE_GITHUB_APP_ID, OE_GITHUB_APP_PRIVATE_KEY and OE_GITHUB_APP_SLUG.");
+    if (f.github.tokenSet) operator.push('GITHUB_TOKEN is set but not used, because this deployment signs in with the GitHub app. To use the token instead, set github.auth to "token" in agent/settings/settings.ts.');
     return { ready: false, gaps, operator };
   }
-  if (f.github.appConfigured && c.appInstalled !== "yes" && !f.github.tokenSet) {
+  if (c.appInstalled !== "yes") {
     const page = f.github.appSlug !== undefined ? ` Its install page is https://github.com/apps/${f.github.appSlug}/installations/new.` : "";
     gaps.push({
       what:
@@ -287,7 +302,14 @@ export function renderSeatSetupSection(f: AgentSetupFacts): string {
     "Name an admin by the mention, never by the id. Never look for it in your memory, and never call it a team decision.",
   );
   const config = configGaps(f, "my own repository");
-  const github = f.github.appConfigured ? "the GitHub app is set up" : f.github.tokenSet ? "connected with a personal token" : "not connected";
+  const github =
+    f.github.mode === "token"
+      ? f.github.tokenSet
+        ? "connected with a personal access token"
+        : "not connected"
+      : f.github.appConfigured
+        ? "the GitHub app is set up"
+        : "not connected";
   lines.push("", `GitHub: ${github}.`);
   if (config.ready && config.gaps.length === 0) {
     lines.push(

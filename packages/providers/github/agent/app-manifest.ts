@@ -152,8 +152,8 @@ export const GITHUB_APP_CREATE_FLOW: SurfaceAppCreateFlow = {
   codeProblem: (code) => (/^[A-Za-z0-9_-]{1,128}$/.test(code) ? undefined : "the redirect carried no usable code"),
   exchange: ({ code, variant, fetchFn }) => exchangeGithubManifestCode({ code, variant: isVariant(variant) ? variant : "full", fetchFn }),
   after: [
-    "Install the app on the repositories the agent works in: open the install link.",
     "Push each written name to the deployment's environment, piped from .env.local and never printed (the setup skill's deployment-env step), then redeploy.",
+    "Only after that redeploy, install the app on the repositories the agent works in: open the install link. Installing first sends the app's installation delivery to a deployment that does not hold the new webhook secret yet, and it refuses that delivery.",
     "Optional: on the app's settings page, under Display information, upload the project mark as its logo. The manifest has no logo field.",
   ],
 };

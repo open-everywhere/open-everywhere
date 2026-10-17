@@ -24,7 +24,7 @@ allow("secret", [
   ["DISCORD_BOT_TOKEN", "the Discord bot token — every Discord API call authenticates with it."],
   ["DISCORD_PUBLIC_KEY", "Discord's interaction public key, which the webhook signature check verifies against."],
   ["GITHUB_APP_PRIVATE_KEY", "the GitHub App's PEM private key, which mints installation tokens."],
-  ["GITHUB_TOKEN", "the personal access token the approval and PR paths act with."],
+  ["GITHUB_TOKEN", "the personal access token a deployment signs in to GitHub with when `github.auth` is \"token\" (scm/credential.ts, OPE-2530) — never a fallback from the App."],
   ["GITHUB_WEBHOOK_SECRET", "the GitHub webhook HMAC secret."],
   ["LINEAR_AGENT_ACCESS_TOKEN", "the Linear agent token — the credential resolver's first choice."],
   ["LINEAR_ACCESS_TOKEN", "the second Linear token spelling the resolver accepts."],

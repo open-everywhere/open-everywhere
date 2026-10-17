@@ -1,5 +1,6 @@
 import type { GitHubApp } from "./app.js";
 import { getGitHubApp } from "./provider.js";
+import { githubAuthMode, resolveRepoToken } from "./credential.js";
 import { CONVERSATION_READ_PERMISSIONS, PR_READ_PERMISSIONS } from "./mint.js";
 import type { MintPermissions } from "./types.js";
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
@@ -206,13 +207,17 @@ async function resolveTokenWith(
   permissions: MintPermissions,
   app: GitHubApp | null,
 ): Promise<string> {
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo], permissions);
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
+  return resolveRepoToken(repo, permissions, { app });
+}
+
+export async function resolveSurfaceReadToken(
+  repo: string,
+  app: GitHubApp | null = getGitHubApp(),
+): Promise<string> {
+  if (githubAuthMode() === "token") {
+    throw new Error(
+      `the GitHub conversation surface needs the GitHub App, and this deployment signs in with a personal access token (github.auth "token"), so ${repo} cannot be read here.`,
+    );
   }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) {
-    throw new Error("no GitHub credential: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  }
-  return pat;
+  return resolveRepoToken(repo, CONVERSATION_READ_PERMISSIONS, { app });
 }
