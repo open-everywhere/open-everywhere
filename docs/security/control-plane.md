@@ -116,7 +116,9 @@ stored against the set** — revoked at the provider (RFC 7009, where the provid
 revocation endpoint) and then deleted from the encrypted vault, so offboarding is credential death
 rather than only lost reach. That purge is best-effort *on top of* the revoke, never a gate on it: a
 vault outage cannot block an offboarding, and the audit row records `credentialsPurged` or
-`purgeFailed` so a purge that did not happen is visible. The lever also ends the holdings that live
+`purgeFailed` so a purge that did not happen is visible. A revocation call that the provider refuses
+twice is recorded in `unrevoked` (OPE-2565): the token is deleted here and stays valid at that
+provider until it expires. An identity-provider grant is named as `idp:<issuer host>`. The lever also ends the holdings that live
 outside the vault (OPE-2504): every credential grant a confirmed account on the set lends is revoked,
 and each confirmed account's personal browser is forgotten, saved profile included. A `suggested`
 account keeps both. The row counts them

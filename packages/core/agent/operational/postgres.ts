@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type RoutinePromptProvenance, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
+import { asSurfaceMode, readThreadSeatStateValue, auditSurfaceMode, auditReadOrg, auditDetailKeys, likePrefixPattern, argKeyNeedle, assertIngressDeliveryRetainUntil, assertSpendLimitAmount, assertDomainModelPick, assertHaltAddress, haltAddressColumns, haltAddressFromColumns, framePromoterId, promoterListField, proactiveAddressRow, routinePromptRevisionWrites, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type ClaimedIngressDelivery, type CredentialIntakeRow, type DueIngressDelivery, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type RoutinePromptProvenance, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type SurfaceMode, type TurnAnchorRow, type UsageEventEntry, type ToolUsageEntry, type UsageSummaryFilter, type ModelCallCaptureWrite, type ModelCallCaptureRow, type ModelCallCaptureSessionRow, type MemoryProposalRow, type MemoryProposalWrite, type DmAudienceRow, type PersonOptOutRow, type PersonalBrowserRow, type PersonalWatchRow, type PersonalCoverRow, type QuestionLedgerRow, ATTENTION_COLUMNS, attentionPruneBefore, attentionRowFrom, type AttentionDbRow, DM_RULE_COLUMNS, dmRuleRowFrom, type DmRuleDbRow } from "./store.js";
 import { grantBorrowColumnsProblem, grantFrozenArgsDigest, grantJsonColumn, grantJsonFromColumn, grantRefundTurnOrdinal } from "./credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow, CredentialGrantState } from "./credential-grant-rows.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -2237,9 +2237,14 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.until);
         where.push(`ts <= $${params.length}`);
       }
+      const pairs = auditDetailKeys(filter);
+      for (const [key, value] of pairs) {
+        params.push(`${JSON.stringify(key)}:${JSON.stringify(value)}`);
+        where.push(`strpos(detail, $${params.length}::text) > 0`);
+      }
       const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
       let limitClause = "";
-      if (filter.limit && filter.limit > 0) {
+      if (pairs.length === 0 && filter.limit && filter.limit > 0) {
         params.push(filter.limit);
         limitClause = `LIMIT $${params.length}`;
       }
@@ -2248,7 +2253,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
          FROM audit_entry ${clause} ORDER BY ts DESC, seq DESC ${limitClause}`,
         params,
       );
-      return (rows as {
+      const read = (rows as {
         seq: number | string;
         ts: string;
         org_id: string;
@@ -2271,6 +2276,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         action: r.action,
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
       }));
+      if (pairs.length === 0) return read;
+      const exact = read.filter((r) => pairs.every(([key, value]) => typeof r.detail?.[key] === "string" && r.detail[key] === value));
+      return filter.limit && filter.limit > 0 ? exact.slice(0, filter.limit) : exact;
     },
 
     async listAuditOrgs() {

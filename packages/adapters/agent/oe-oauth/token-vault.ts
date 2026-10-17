@@ -464,19 +464,44 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
     });
   }
 
-  async function forgetIdpGrant(cfg: OeOauthXaaProviderConfig, subject: OeOauthSubject): Promise<boolean> {
+  function idpReportRef(cfg: OeOauthXaaProviderConfig): string {
+    try {
+      return `idp:${new URL(cfg.idpIssuer).host}`;
+    } catch {
+      return "idp:";
+    }
+  }
+
+  async function revokeWithRetry(providerRef: string, call: () => Promise<void>, onUnrevoked: ((providerRef: string) => void) | undefined, what: string): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await call();
+        return;
+      } catch (e) {
+        if (attempt < 2) continue;
+        console.warn(`[oe-oauth] ${what} failed twice for "${providerRef}" (purging locally anyway; the token stays valid there until it expires): ${e instanceof Error ? e.message : String(e)}`);
+        onUnrevoked?.(providerRef);
+        return;
+      }
+    }
+  }
+
+  async function forgetIdpGrant(cfg: OeOauthXaaProviderConfig, subject: OeOauthSubject, onUnrevoked?: (providerRef: string) => void): Promise<boolean> {
     const gRef = idpRef(cfg, subject);
     return vault.withLock(gRef, async () => {
       const grant = await readJson<IdpGrantRecord>(gRef);
       if (grant) {
-        try {
-          const oidc = await oidcFor(cfg);
-          if (oidc.revocationEndpoint) {
-            await revokeTokenConfidential(oidc.revocationEndpoint, { token: grant.refreshToken, tokenTypeHint: "refresh_token" }, await xaaClient(cfg, "idp"), doFetch);
-          }
-        } catch (e) {
-          console.warn(`[oe-oauth] IdP revocation failed for "${cfg.ref}" (purging locally anyway): ${e instanceof Error ? e.message : String(e)}`);
-        }
+        await revokeWithRetry(
+          idpReportRef(cfg),
+          async () => {
+            const oidc = await oidcFor(cfg);
+            if (oidc.revocationEndpoint) {
+              await revokeTokenConfidential(oidc.revocationEndpoint, { token: grant.refreshToken, tokenTypeHint: "refresh_token" }, await xaaClient(cfg, "idp"), doFetch);
+            }
+          },
+          onUnrevoked,
+          "IdP revocation",
+        );
       }
       return vault.delete(gRef);
     });
@@ -521,7 +546,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
     return record;
   }
 
-  async function forget(providerRef: string, subject: OeOauthSubject): Promise<boolean> {
+  async function forget(providerRef: string, subject: OeOauthSubject, onUnrevoked?: (providerRef: string) => void): Promise<boolean> {
     const ref = tokRef(providerRef, subject);
     return vault.withLock(ref, async () => {
       const rec = await readJson<TokenRecord>(ref);
@@ -530,16 +555,20 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
         const client: ClientRecord | null = cfg && isStaticConfidential(cfg) ? staticClient(cfg) : await readJson<DcrClientRecord>(dcrRef(providerRef));
         const token = rec.refreshToken ?? rec.accessToken;
         if (client?.revocationEndpoint && token) {
-          try {
-            const hint = rec.refreshToken ? ("refresh_token" as const) : ("access_token" as const);
-            if (cfg && isStaticConfidential(cfg)) {
-              await revokeTokenConfidential(client.revocationEndpoint, { token, tokenTypeHint: hint }, await confidentialClientFor(cfg), doFetch);
-            } else {
-              await revokeToken(client.revocationEndpoint, { token, clientId: client.clientId, tokenTypeHint: hint }, doFetch);
-            }
-          } catch (e) {
-            console.warn(`[oe-oauth] revocation at the provider failed for "${providerRef}" (purging locally anyway): ${e instanceof Error ? e.message : String(e)}`);
-          }
+          const endpoint = client.revocationEndpoint;
+          const hint = rec.refreshToken ? ("refresh_token" as const) : ("access_token" as const);
+          await revokeWithRetry(
+            providerRef,
+            async () => {
+              if (cfg && isStaticConfidential(cfg)) {
+                await revokeTokenConfidential(endpoint, { token, tokenTypeHint: hint }, await confidentialClientFor(cfg), doFetch);
+              } else {
+                await revokeToken(endpoint, { token, clientId: client.clientId, tokenTypeHint: hint }, doFetch);
+              }
+            },
+            onUnrevoked,
+            "revocation at the provider",
+          );
         }
       }
       return vault.delete(ref);
@@ -579,14 +608,14 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
 
     sweepExpiredPending,
 
-    async forgetAll(subject: OeOauthSubject): Promise<number> {
+    async forgetAll(subject: OeOauthSubject, onUnrevoked?: (providerRef: string) => void): Promise<number> {
       let purged = 0;
       let failures = 0;
       let lastError: unknown;
       const all = providersNow();
       for (const providerRef of all.keys()) {
         try {
-          if (await forget(providerRef, subject)) purged++;
+          if (await forget(providerRef, subject, onUnrevoked)) purged++;
         } catch (e) {
           failures++;
           lastError = e;
@@ -602,7 +631,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
           if (providerRef.length === 0 || providerRef.includes(":") || all.has(providerRef)) continue;
           undeclaredAttempts++;
           try {
-            if (await forget(providerRef, subject)) purged++;
+            if (await forget(providerRef, subject, onUnrevoked)) purged++;
           } catch (e) {
             failures++;
             lastError = e;
@@ -618,7 +647,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
         if (!isXaa(cfg) || seenIdp.has(idpKey(cfg))) continue;
         seenIdp.add(idpKey(cfg));
         try {
-          if (await forgetIdpGrant(cfg, subject)) purged++;
+          if (await forgetIdpGrant(cfg, subject, onUnrevoked)) purged++;
         } catch (e) {
           failures++;
           lastError = e;

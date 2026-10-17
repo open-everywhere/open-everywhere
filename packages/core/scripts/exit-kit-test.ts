@@ -557,6 +557,48 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   ok(lines.slice(beforeG).some((l) => l.includes("left alone: linear/L41 was only suggested onto link-set S4") && l.includes("established it is the same person")), "cli authority: the re-run lists the suggested account as left alone, with the caveat");
   ok((await store.getPersonalBrowser(ORG, "linear/L41")) != null, "cli authority: the suggested account's browser is still untouched");
 
+  await ensureLinkSet({ org: ORG, linkSetId: "S3", handle: "S3" });
+  for (const account of [{ platform: "github", tenant: "", nativeId: "31" }, { platform: "linear", tenant: "", nativeId: "L31" }]) {
+    ok((await suggestLinkedId({ org: ORG, linkSetId: "S3", account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} suggested`);
+    ok((await confirmLinkedId({ org: ORG, account, evidence: { kind: "config-import", note: "test" } })).ok, `fixture: ${account.nativeId} confirmed`);
+  }
+  await seedHoldings("linear/L31", "hl31");
+  ok((await runExitCommand("erase", ["--person", "github/31", "--yes"], { ...io(false), boxBackend: flaky })) === 1, "fixture: the revoke's forget of the other account's browser fails");
+  {
+    const flood = 100_001;
+    const at = new Date().toISOString();
+    const insert = db.prepare("INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail) VALUES (?, 'default', 'control', 'control', 'identity.link.confirmed', ?)");
+    db.exec("BEGIN");
+    for (let i = 0; i < flood; i++) insert.run(at, JSON.stringify({ linkSetId: "SX", linked: [`github/x${i}`] }));
+    db.exec("COMMIT");
+  }
+  const beforeH = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/31", "--yes"], io(true))) === 1, `cli authority: 🔴 past 100,000 newer confirmations of another set, the re-run still stays red (${lines.slice(beforeH).join(" | ").slice(0, 600)})`);
+  ok(lines.slice(beforeH).some((l) => l.includes("linear/L31, a confirmed account on link-set S3, still holds a saved browser profile")), "cli authority: the re-run names the confirmed account's leftover browser as a failure, not as left alone");
+  ok(!lines.slice(beforeH).some((l) => l.includes("left alone: linear/L31")), "cli authority: the confirmed account is not listed as left alone");
+  ok((await runExitCommand("erase", ["--person", "linear/L31", "--yes"], io(true))) === 0, "cli authority: the named command ends the other account's browser");
+
+  const purgeSeam = await import("../agent/credentials/purge.js");
+  purgeSeam.registerCredentialPurgeHook("revoke-refused", {
+    purgeSubject: async (subject: string, report?: import("../agent/credentials/purge.js").CredentialPurgeReport) => {
+      if (subject !== "p:default/github/67") return 0;
+      report?.unrevoked("notion");
+      report?.unrevoked("idp:acme.okta.com");
+      return 1;
+    },
+  });
+  const beforeI = lines.length;
+  ok((await runExitCommand("erase", ["--person", "github/67", "--yes"], io(true))) === 1, `cli authority: 🔴 a refused revocation exits 1 (${lines.slice(beforeI).join(" | ")})`);
+  const refusedLine = lines.slice(beforeI).find((l) => l.includes("not ended:") && l.includes("Notion did not accept the token revocation"));
+  ok(refusedLine !== undefined && refusedLine.includes("stays valid at Notion until it expires") && !refusedLine.includes('"notion"'), `cli authority: the report names the provider by its friendly name and says the token stays valid there (${refusedLine})`);
+  const idpLine = lines.slice(beforeI).find((l) => l.includes("not ended:") && l.includes("The identity provider (acme.okta.com) did not accept the revocation of the person's sign-in grant"));
+  ok(idpLine !== undefined && idpLine.includes("Revoke the grant at the identity provider (acme.okta.com)") && !idpLine.includes("idp:"), `cli authority: 🔴 a refused IdP revocation names the identity provider, not a connection (${idpLine})`);
+  ok(!lines.slice(beforeI).some((l) => l.includes("Fix the cause and run `oe erase` again")), "cli authority: a refused revocation alone does not tell the operator a re-run fixes it");
+  ok(lines.slice(beforeI).some((l) => l.includes("Ended first: no link-set, 1 stored credential(s) purged")), "cli authority: the row still counts as purged");
+  const revokeRow = (await readAudit({ org: ORG, action: EXIT_PERSON_ERASED_ACTION, limit: 1 }))[0];
+  ok(revokeRow?.detail?.["authorityEnded"] === false && revokeRow.detail?.["revocationsFailed"] === 2 && revokeRow.detail?.["authorityFailures"] === 2, `cli authority: 🔴 the erasure row records the failed revocation (${JSON.stringify(revokeRow?.detail)})`);
+  purgeSeam.registerCredentialPurgeHook("revoke-refused", { purgeSubject: async () => 0 });
+
   resetLongLivedBoxBackendForTest();
   await store.casPersonalBrowser(ORG, "github/44", "{ not json", new Date().toISOString(), null);
   const { forgetBrowser } = await import("../agent/personal-browser/lifecycle.js");

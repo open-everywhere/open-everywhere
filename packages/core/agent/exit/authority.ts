@@ -1,7 +1,7 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { purgeLinkSetCredentials, revokeLinkSet } from "../identity/link-store.js";
 import { endPersonHoldings } from "../identity/person-holdings.js";
-import { purgeSubjectsCredentials } from "../credentials/purge.js";
+import { purgeSubjectsCredentials, unrevokedDisplayName, unrevokedSentences } from "../credentials/purge.js";
 import { rawVaultSubject } from "../identity/oauth-vault-share.js";
 import { tryLinkTenantOf } from "../identity/link-tenant.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
@@ -22,6 +22,7 @@ export interface AuthorityEnded {
   readonly credentialsPurged: number;
   readonly grantsRevoked: number;
   readonly browsersForgotten: number;
+  readonly revocationsFailed: readonly string[];
   readonly failures: readonly string[];
   readonly notices?: readonly string[];
 }
@@ -36,7 +37,7 @@ export async function endPersonAuthority(opts: EndPersonAuthorityOptions): Promi
   const ids = personIds(opts.person);
   const parts = ids.key.split("/");
   const named = parts.length === 3 ? parts[1] : undefined;
-  const nothing = { accountsRevoked: 0, credentialsPurged: 0, grantsRevoked: 0, browsersForgotten: 0 };
+  const nothing = { accountsRevoked: 0, credentialsPurged: 0, grantsRevoked: 0, browsersForgotten: 0, revocationsFailed: [] };
   const tenant = tryLinkTenantOf(ids.platform, named);
   const key = tryPrincipalKey(ids.platform, named, ids.nativeId);
   if (tenant === undefined || key === undefined) {
@@ -76,6 +77,7 @@ export async function endPersonAuthority(opts: EndPersonAuthorityOptions): Promi
     const res = await revokeLinkSet({ org: opts.org, linkSetId: row.linkSetId, actor: opts.actor });
     if (res.ok) {
       if (res.purge?.failed) failures.push(`the credential purge for link-set ${row.linkSetId} failed — run \`oe erase\` again, or purge_link_set_credentials`);
+      failures.push(...unrevokedSentences(res.purge?.unrevoked ?? []));
       failures.push(...(res.holdings?.holdingFailures ?? []));
       return {
         linkSet: "revoked",
@@ -84,6 +86,7 @@ export async function endPersonAuthority(opts: EndPersonAuthorityOptions): Promi
         credentialsPurged: res.purge?.purged ?? 0,
         grantsRevoked: res.holdings?.grantsRevoked ?? 0,
         browsersForgotten: res.holdings?.browsersForgotten ?? 0,
+        revocationsFailed: (res.purge?.unrevoked ?? []).map(unrevokedDisplayName),
         failures,
       };
     }
@@ -93,12 +96,14 @@ export async function endPersonAuthority(opts: EndPersonAuthorityOptions): Promi
     const notices: string[] = [];
     const purge = await purgeLinkSetCredentials({ org: opts.org, linkSetId: row.linkSetId, actor: opts.actor });
     if (!purge.ok) failures.push(purge.reason);
+    const setUnrevoked = purge.ok ? (purge.unrevoked ?? []) : [];
+    failures.push(...unrevokedSentences(setUnrevoked));
     const holdings = await endPersonHoldings(opts.org, [account], opts.actor);
     failures.push(...(holdings.holdingFailures ?? []));
     const nowIso = new Date().toISOString();
     try {
       const confirmedOnSet = new Set<string>();
-      for (const r of await store.readAudit({ org: opts.org, action: "identity.link.confirmed", limit: 100_000 })) {
+      for (const r of await store.readAudit({ org: opts.org, action: "identity.link.confirmed", detailEquals: { linkSetId: row.linkSetId } })) {
         if (r.detail?.["linkSetId"] !== row.linkSetId) continue;
         const linked = r.detail?.["linked"];
         if (Array.isArray(linked)) for (const l of linked) if (typeof l === "string") confirmedOnSet.add(l);
@@ -124,12 +129,14 @@ export async function endPersonAuthority(opts: EndPersonAuthorityOptions): Promi
       credentialsPurged: purge.ok ? (purge.purged ?? 0) : 0,
       grantsRevoked: holdings.grantsRevoked,
       browsersForgotten: holdings.browsersForgotten,
+      revocationsFailed: setUnrevoked.map(unrevokedDisplayName),
       failures,
     };
   }
 
   const purge = await purgeSubjectsCredentials([rawVaultSubject(opts.org, account.platform, named, account.nativeId)]);
   if (purge.failed) failures.push(`the credential purge for ${key} failed — run \`oe erase\` again`);
+  failures.push(...unrevokedSentences(purge.unrevoked));
   const holdings = await endPersonHoldings(opts.org, [account], opts.actor);
   failures.push(...(holdings.holdingFailures ?? []));
   return {
@@ -139,6 +146,7 @@ export async function endPersonAuthority(opts: EndPersonAuthorityOptions): Promi
     credentialsPurged: purge.purged,
     grantsRevoked: holdings.grantsRevoked,
     browsersForgotten: holdings.browsersForgotten,
+    revocationsFailed: purge.unrevoked.map(unrevokedDisplayName),
     failures,
   };
 }

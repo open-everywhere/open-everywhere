@@ -148,7 +148,23 @@ export interface AuditFilter {
   readonly principalId?: string;
   readonly since?: string;
   readonly until?: string;
+  readonly detailEquals?: Readonly<Record<string, string>>;
   readonly limit?: number;
+}
+
+const AUDIT_DETAIL_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+
+export function auditDetailKeys(filter: AuditFilter): readonly (readonly [string, string])[] {
+  const pairs: unknown = filter.detailEquals;
+  if (pairs === undefined) return [];
+  if (pairs === null || typeof pairs !== "object" || Array.isArray(pairs)) throw new Error("readAudit: detailEquals must be an object of key → string value");
+  const out: (readonly [string, string])[] = [];
+  for (const [key, value] of Object.entries(pairs)) {
+    if (!AUDIT_DETAIL_KEY.test(key)) throw new Error(`readAudit: detailEquals key "${key.slice(0, 64)}" is not a plain identifier`);
+    if (typeof value !== "string") throw new Error(`readAudit: detailEquals.${key} must be a string`);
+    out.push([key, value]);
+  }
+  return out;
 }
 
 export function auditReadOrg(filter: AuditFilter): string {

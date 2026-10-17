@@ -53,7 +53,9 @@ cannot re-link them) and **destroys the credentials stored against them** — th
 *and* each account's own per-person rows, which is where an AWS Identity Center token lives. That
 purge is best-effort *on top of* the revoke: a vault outage can never block an offboarding, and the
 audit row records `credentialsPurged` / `purgeFailed` so a purge that did not happen is visible and
-can be finished with `purge_link_set_credentials`.
+can be finished with `purge_link_set_credentials`. A revocation call that the provider refuses twice is
+named in `unrevoked` (OPE-2565). That token stays valid at the provider until it expires, and no re-run
+reaches it, because its vault row is gone.
 
 ### `revoke_connector` reaches egress too (OPE-311)
 

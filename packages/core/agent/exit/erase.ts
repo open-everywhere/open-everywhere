@@ -192,6 +192,7 @@ export async function erasePerson(opts: ErasePersonOptions): Promise<ErasePerson
             grantsRevoked: opts.authority.grantsRevoked,
             browsersForgotten: opts.authority.browsersForgotten,
             authorityFailures: opts.authority.failures.length,
+            revocationsFailed: opts.authority.revocationsFailed.length,
           }
         : {}),
     },

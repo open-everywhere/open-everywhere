@@ -80,8 +80,8 @@ runs the same levers the agent runs, so it writes the same audit rows:
   so the erasure does not revoke the set on it.
 
 The `exit.person_erased` row records what ended (`linkSet`, `accountsRevoked`, `credentialsPurged`,
-`grantsRevoked`, `browsersForgotten`, `authorityFailures`). `authorityEnded` is true only when every
-lever ran with no failure. The report prints the counts on the "Ended first" line.
+`grantsRevoked`, `browsersForgotten`, `authorityFailures`, `revocationsFailed`). `authorityEnded` is true
+only when every lever ran with no failure. The report prints the counts on the "Ended first" line.
 
 **How the command reaches the credentials and the browser.** The deployed agent registers the
 credential-purge hooks and the box backend at boot. The operator process registers neither by itself,
@@ -92,14 +92,21 @@ changes anything.
 - **Credentials.** The `oe-oauth` and `aws-sso` purge hooks run. The operator process loads no
   connection module, so the `oe-oauth` hook finds the person's tokens by their stored ref. A token is
   revoked at the provider when the stored client names a revocation endpoint (a discovered server).
-  If that revocation call fails, the command still deletes the token from the vault and prints a
-  warning, and the token stays valid at the provider until it expires.
+  **A revocation call that fails is a recorded failure (OPE-2565).** The holder tries the call once
+  more. If the second call also fails, the command still deletes the token from the vault, because a
+  provider that is down must not keep a secret at rest with us. The token then stays valid at the
+  provider until it expires, so the report prints the provider's name as a failure, the command exits
+  1, `revocationsFailed` counts it and `authorityEnded` is false. A re-run cannot revoke it, because
+  the vault row is gone: remove the app's access in the provider's own settings to end the token now.
+  `oe erase` never reports an IdP grant this way, because it cannot revoke one (see below). The revoke
+  lever in the deployed agent, which declares the `xaa` connections, reports a refused IdP revocation
+  as `idp:<issuer host>`.
   A static client's secret lives in its connection declaration, so its token is deleted from the vault
   but not revoked at the provider. The token stays valid at the provider until it expires. A person's
   IdP grant for `xaa` connections is also deleted from the vault but not revoked at the IdP, because
   the IdP client lives in the connection declaration. It stays valid at the IdP until it expires. Such
-  a token is not a failure: `authorityEnded` means that every lever ran, not that every token is dead
-  at its provider.
+  a token is not a failure, because no revocation call was possible: `authorityEnded` means that every
+  lever ran and every revocation call that ran succeeded, not that every token is dead at its provider.
 - **The saved browser profile.** Name the deployment's box backend with `--box-backend vercel` or
   `--box-backend docker`. The command does not guess it, because a laptop cannot tell which backend the
   deployment runs on. A wrong guess would delete the browser record and leave the profile, with the
@@ -122,8 +129,10 @@ the set is not reached by that re-run. The re-run names each such account. End i
 command reads the `identity.link.confirmed` audit rows to tell which accounts were confirmed. An
 account that was only ever suggested onto the set may be another person: the revoke left its holdings
 alone, and the report lists it as "left alone", not as a failure. Erase it only after you establish
-that it is the same person. A confirmation whose audit row is missing (the audit append is
-best-effort) reads as suggested: its holding is still listed, but as "left alone".
+that it is the same person. The check reads every `identity.link.confirmed` row of the set, at any
+size of the audit log: the store filters the rows by the set's id before it reads them (OPE-2565). A
+confirmation whose audit row is missing (the audit append is best-effort) reads as suggested: its
+holding is still listed, but as "left alone".
 
 **What the erasure removes:**
 

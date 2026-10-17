@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
-import { PROMOTER_LIST_MAX, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
+import { PROMOTER_LIST_MAX, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, type AuditWriteEntry, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 import { pinSuiteStore, pinnedSuiteStorePath } from "./_suite-store.js";
@@ -489,6 +489,46 @@ const store = makeOperationalPostgresStore(client);
   }
   ok((acme[0].detail === undefined) === true || acme[1].detail?.files === 2, "audit: detail round-trips as JSON");
   ok(!("removeAudit" in store) && !("deleteAudit" in store), "audit: store exposes no delete method");
+}
+
+{
+  const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+  const ACME = `dq-acme-${process.pid}-${Date.now()}`;
+  const GLOBEX = `dq-globex-${process.pid}-${Date.now()}`;
+  const rows: AuditWriteEntry[] = [
+    { ts: "2026-06-25T10:00:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: "S1", linked: ["github/1"] } },
+    { ts: "2026-06-25T11:00:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: "S2", linked: ["github/2"] } },
+    { ts: "2026-06-25T12:00:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: "S2", linked: ["github/3"] } },
+    { ts: "2026-06-25T13:00:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: 1 } },
+    { ts: "2026-06-25T13:30:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { nested: { linkSetId: "S1" } } },
+    { ts: "2026-06-25T13:45:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed" },
+    { ts: "2026-06-25T13:50:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: ["S9"] } },
+    { ts: "2026-06-25T13:55:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: { a: 1 } } },
+    { ts: "2026-06-25T09:00:00Z", org: ACME, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: "S7", linked: ["github/nul\u0000", "github/\ud800"] } },
+    { ts: "2026-06-25T14:00:00Z", org: GLOBEX, platform: "control", workspace: "control", action: "identity.link.confirmed", detail: { linkSetId: "S1", linked: ["github/9"] } },
+  ];
+  for (const r of rows) {
+    await store.appendAudit(r);
+    await sqliteOperationalStore.appendAudit(r);
+  }
+  for (const [label, s] of [["pg", store], ["sqlite", sqliteOperationalStore]] as const) {
+    const s1 = await s.readAudit({ org: ACME, action: "identity.link.confirmed", detailEquals: { linkSetId: "S1" } });
+    ok(s1.length === 1 && s1[0].detail?.["linkSetId"] === "S1" && s1.every((r) => r.org === ACME), `audit detailEquals (${label}): reads exactly the set's own row, in its own org`);
+    const capped = await s.readAudit({ org: ACME, action: "identity.link.confirmed", detailEquals: { linkSetId: "S1" }, limit: 1 });
+    ok(capped.length === 1 && capped[0].detail?.["linkSetId"] === "S1", `audit detailEquals (${label}): 🔴 narrows before the limit, so an older row is still read`);
+    ok((await s.readAudit({ org: ACME, action: "identity.link.confirmed", limit: 1 }))[0]?.detail?.["linkSetId"] !== "S1", `audit detailEquals (${label}): negative control — the same limit without the filter does not reach S1's row`);
+    ok((await s.readAudit({ org: ACME, detailEquals: { linkSetId: "S2" } })).length === 2, `audit detailEquals (${label}): every row of the set, newest-first`);
+    ok((await s.readAudit({ org: ACME, detailEquals: { linkSetId: "1" } })).length === 0, `audit detailEquals (${label}): a number never matches its string spelling`);
+    ok((await s.readAudit({ org: ACME, detailEquals: { linkSetId: '["S9"]' } })).length === 0, `audit detailEquals (${label}): 🔴 an array never matches its text spelling`);
+    ok((await s.readAudit({ org: ACME, detailEquals: { linkSetId: '{"a":1}' } })).length === 0, `audit detailEquals (${label}): 🔴 an object never matches its text spelling`);
+    ok((await s.readAudit({ org: ACME, detailEquals: { linkSetId: "S1" } })).every((r) => r.detail?.["nested"] === undefined), `audit detailEquals (${label}): a NESTED key of the same name never matches`);
+    const nul = await s.readAudit({ org: ACME, action: "identity.link.confirmed", detailEquals: { linkSetId: "S7" } });
+    ok(nul.length === 1 && Array.isArray(nul[0].detail?.["linked"]), `audit detailEquals (${label}): 🔴 a row with a NUL and a lone surrogate in detail is read, and the read does not throw`);
+    const refused = async (filter: unknown): Promise<boolean> => s.readAudit(filter as AuditFilter).then(() => false, () => true);
+    ok(await refused({ org: ACME, detailEquals: { "linkSetId') OR 1=1 --": "S1" } }), `audit detailEquals (${label}): 🔴 a key that is not a plain identifier is refused, never dropped`);
+    ok(await refused({ org: ACME, detailEquals: { "a.b": "S1" } }), `audit detailEquals (${label}): a path-shaped key is refused`);
+    ok(await refused({ org: ACME, detailEquals: { linkSetId: 1 } }), `audit detailEquals (${label}): a non-string value is refused`);
+  }
 }
 
 {

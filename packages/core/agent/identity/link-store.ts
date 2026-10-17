@@ -8,7 +8,7 @@ import { linkTenantOf } from "./link-tenant.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
 import type { LinkTransport } from "./link-flow.js";
 import { rawVaultSubject, sharedVaultSubject } from "./oauth-vault-share.js";
-import { purgeSubjectCredentials, purgeSubjectsCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
+import { purgeSubjectCredentials, purgeSubjectsCredentials, unrevokedSentences, type CredentialPurgeOutcome } from "../credentials/purge.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import { endPersonHoldings, type HoldingsEnded } from "./person-holdings.js";
 import type { LinkChallengeRow, LinkChallengeStatus, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
@@ -453,13 +453,14 @@ export async function unlinkOwnId(input: {
     return { ok: false, reason: "that link had already gone." };
   }
   const targetSubject = accountVaultSubject(input.org, target);
-  const purge = targetSubject ? await purgeSubjectCredentials(targetSubject) : { purged: 0, failed: false };
+  const purge = targetSubject ? await purgeSubjectCredentials(targetSubject) : { purged: 0, failed: false, unrevoked: [] };
   await auditLink(input.org, input.actor.platform, undefined, accountLabel(input.actor.platform, input.actor.tenant, input.actor.nativeId), "identity.link.unlinked", {
     linkSetId: row.linkSetId,
     unlinked: accountLabel(target.platform, target.tenant, target.nativeId),
     at,
     credentialsPurged: purge.purged,
     ...(purge.failed ? { purgeFailed: true } : {}),
+    ...(purge.unrevoked.length > 0 ? { unrevoked: purge.unrevoked } : {}),
     ...(await linkSetBlastRadius(input.org, row.linkSetId)),
   });
   return { ok: true, linkSetId: row.linkSetId, note: `unlinked ${accountLabel(target.platform, target.tenant, target.nativeId)}.` };
@@ -511,6 +512,7 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
     tombstoned,
     credentialsPurged: purge.purged,
     ...(purge.failed ? { purgeFailed: true } : {}),
+    ...(purge.unrevoked.length > 0 ? { unrevoked: purge.unrevoked } : {}),
     ...holdings,
   });
   return {
@@ -523,6 +525,7 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
       `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned, ${purge.purged} credential(s) purged, ` +
       `${holdings.grantsRevoked} lent grant(s) revoked, ${holdings.browsersForgotten} personal browser(s) forgotten)` +
       (purge.failed ? " — the credential purge FAILED; the revoke stands, re-run purge_link_set_credentials." : ".") +
+      unrevokedSentences(purge.unrevoked).map((line) => ` ${line}.`).join("") +
       (holdings.holdingFailures ? ` Not every holding ended: ${holdings.holdingFailures.join("; ")}.` : ""),
   };
 }
@@ -537,7 +540,7 @@ async function purgeLinkSetCredentialsBestEffort(org: string, linkSetId: string)
   ]);
 }
 
-export async function purgeLinkSetCredentials(input: { readonly org: string; readonly linkSetId: string; readonly actor: string }): Promise<LinkWriteResult & { readonly purged?: number }> {
+export async function purgeLinkSetCredentials(input: { readonly org: string; readonly linkSetId: string; readonly actor: string }): Promise<LinkWriteResult & { readonly purged?: number; readonly unrevoked?: readonly string[] }> {
   const store = getOperationalStore();
   const set = await store.getLinkSet(input.org, input.linkSetId);
   if (!set) return { ok: false, reason: `no link-set "${input.linkSetId}".` };
@@ -547,9 +550,16 @@ export async function purgeLinkSetCredentials(input: { readonly org: string; rea
     setStatus: set.status,
     credentialsPurged: purge.purged,
     ...(purge.failed ? { purgeFailed: true } : {}),
+    ...(purge.unrevoked.length > 0 ? { unrevoked: purge.unrevoked } : {}),
   });
   if (purge.failed) return { ok: false, reason: `credential purge for link-set "${input.linkSetId}" failed — nothing was destroyed; check the vault/adapter and retry.` };
-  return { ok: true, linkSetId: input.linkSetId, purged: purge.purged, note: `purged ${purge.purged} credential(s) for link-set ${input.linkSetId} (set is ${set.status}).` };
+  return {
+    ok: true,
+    linkSetId: input.linkSetId,
+    purged: purge.purged,
+    unrevoked: purge.unrevoked,
+    note: `purged ${purge.purged} credential(s) for link-set ${input.linkSetId} (set is ${set.status}).` + unrevokedSentences(purge.unrevoked).map((line) => ` ${line}.`).join(""),
+  };
 }
 
 async function linkSetBlastRadius(org: string, linkSetId: string): Promise<{ memberCount: number; vaultArmed: boolean }> {

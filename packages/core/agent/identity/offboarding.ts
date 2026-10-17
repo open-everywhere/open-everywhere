@@ -97,7 +97,7 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
             (purge.failed
               ? `The purge of the deactivated account's own credentials FAILED; re-run it with purge_link_set_credentials or revoke_link_set.`
               : `The deactivated account's own credentials were purged.`),
-          { linkSetId: row.linkSetId, blockedBy, credentialsPurged: purge.purged, ...(purge.failed ? { purgeFailed: true } : {}), ...holdings },
+          { linkSetId: row.linkSetId, blockedBy, credentialsPurged: purge.purged, ...(purge.failed ? { purgeFailed: true } : {}), ...(purge.unrevoked.length > 0 ? { unrevoked: purge.unrevoked } : {}), ...holdings },
         );
       }
       const res = await revokeLinkSet({ org: report.org, linkSetId: row.linkSetId, actor });
@@ -111,6 +111,7 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
       outcome: "purged-unlinked",
       credentialsPurged: purge.purged,
       ...(purge.failed ? { purgeFailed: true } : {}),
+      ...(purge.unrevoked.length > 0 ? { unrevoked: purge.unrevoked } : {}),
       ...holdings,
     });
     return { kind: "purged-unlinked", credentialsPurged: purge.purged };

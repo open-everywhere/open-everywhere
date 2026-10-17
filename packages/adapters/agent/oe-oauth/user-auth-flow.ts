@@ -1,5 +1,5 @@
 import type { TokenResult } from "eve/connections";
-import type { UserAuthFlowProvider, UserAuthSubject, UserTokenMintParams, OeOauthCallbackCompleter, CredentialPurgeHook } from "@open-everywhere/core/agent/adapter-api.js";
+import type { UserAuthFlowProvider, UserAuthSubject, UserTokenMintParams, OeOauthCallbackCompleter, CredentialPurgeHook, CredentialPurgeReport } from "@open-everywhere/core/agent/adapter-api.js";
 import { makeOeOauthTokenVault, type OeOauthProviderSource, type OeOauthVaultDeps, type OeOauthSubject } from "./token-vault.js";
 import { isUserAuthRequiredError } from "./errors.js";
 
@@ -51,8 +51,8 @@ export function makeOeOauth(
   };
 
   const purge: CredentialPurgeHook = {
-    async purgeSubject(subjectId: string): Promise<number> {
-      return vault.forgetAll({ type: "user", id: subjectId });
+    async purgeSubject(subjectId: string, report?: CredentialPurgeReport): Promise<number> {
+      return vault.forgetAll({ type: "user", id: subjectId }, report ? (providerRef) => report.unrevoked(providerRef) : undefined);
     },
   };
 

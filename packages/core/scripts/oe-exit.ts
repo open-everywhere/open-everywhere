@@ -193,7 +193,7 @@ export async function runExitCommand(command: string, args: readonly string[], i
         }
         for (const failure of authority.failures) io.err(`✗ not ended: ${failure}`);
         for (const notice of authority.notices ?? []) io.out(`  ! left alone: ${notice}`);
-        if (authority.failures.length > 0) {
+        if (authority.failures.length > authority.revocationsFailed.length) {
           io.err(
             boxNamed
               ? "  Fix the cause and run `oe erase` again. A holding named on another confirmed account is ended with `oe erase --person <that account>`."

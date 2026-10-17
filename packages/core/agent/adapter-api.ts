@@ -79,7 +79,7 @@ export { encryptedKvVault } from "./credentials/kv-vault.js";
 export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";
 
 export { registerCredentialPurgeHook } from "./credentials/purge.js";
-export type { CredentialPurgeHook, CredentialPurgeOutcome } from "./credentials/purge.js";
+export type { CredentialPurgeHook, CredentialPurgeOutcome, CredentialPurgeReport } from "./credentials/purge.js";
 
 export { captureHandshakeSecret, secretFingerprint, HANDSHAKE_REVEAL_PRINCIPAL } from "./webhooks/handshake-capture.js";
 export type { CaptureHandshakeSecretInput, CaptureHandshakeSecretDeps, CaptureHandshakeSecretOutcome } from "./webhooks/handshake-capture.js";

@@ -386,7 +386,8 @@ approve anybody else's decision. It is best-effort by design: it only reaches ac
 the agent can DM, so a GitHub, Linear or Notion account in the set hears nothing, and a set whose
 only DM-capable account is the one that was compromised hears nothing at all. The audit row
 (`identity.link.confirmed` / `identity.link.unlinked`) carries the set's size and whether link-set
-membership was credential-bearing at the time, which is the trace that survives either way.
+membership was credential-bearing at the time, which is the trace that survives either way. An unlink row also counts the removed account's purged credentials, and it names in `unrevoked` each
+connection whose revocation call at the provider failed twice (OPE-2565).
 
 **These notices are named for a human too, and are plain text.** The account that joined or left is
 resolved the same way the claim notice is (a display name + handle where a platform arm exists, else
@@ -468,8 +469,12 @@ stored OAuth tokens. That is necessary and it is not sufficient — the encrypte
 be sitting in the store, and still live at the provider. So a revoke additionally **purges** them:
 each provider's token is **revoked at the vendor** (RFC 7009, where the authorization server
 publishes a revocation endpoint — it is optional metadata, and a server that publishes none is
-simply skipped) and then **deleted from the vault**. The vendor call is best-effort and the local
-delete is not: a provider being down, or refusing the call, never leaves the secret at rest with us.
+simply skipped) and then **deleted from the vault**. The local delete never waits on the vendor: a
+provider being down, or refusing the call, never leaves the secret at rest with us. A refused call is
+tried once more, and a second refusal is recorded, not only logged (OPE-2565): the audit row names the
+connection in `unrevoked`, and the lever's note says the token stays valid at that provider until it
+expires. A refused revocation of a person's identity-provider grant (an `xaa` sign-in) is named as
+`idp:<issuer host>`, because that grant belongs to the identity provider, not to one connection.
 
 The purge is **best-effort in the other direction too, deliberately**: if the vault is unreachable
 the revoke still stands, because a credential store having a bad day must not be able to stop an org
@@ -664,10 +669,10 @@ credentials. Read them with the [audit trail](../security/audit-and-provenance.m
 | `identity.link.suggested` | A directory sync proposes an account for a set. | The set id and the evidence label. A suggestion is **not** a link: a `suggested` row stays invisible to link resolution until a person confirms it. |
 | `identity.link.suspended` | An operator puts a set on hold. | The set id. The row names the operator as the principal. |
 | `identity.link.reactivated` | An operator lifts that hold. | The set id, from the same writer and the same call. |
-| `identity.link.revoked` | A set is revoked — the terminal offboarding lever. | The set id, how many account ids were tombstoned, how many credentials the purge destroyed, and a `purgeFailed` flag when the purge did not complete. Also how many lent credential grants were revoked (`grantsRevoked`), how many personal browsers were forgotten (`browsersForgotten`), and `holdingFailures` when one of those did not complete. |
-| `identity.link.credentials_purged` | A set's credentials are purged without revoking the set. | The set id, the set's status at the time, the purged count, and the same `purgeFailed` flag. |
-| `identity.offboard.applied` | A surface's deactivation report passed every gate and the lever ran (OPE-2423). | The account, the source (`slack:user_change`), and the outcome: `revoked` with the set id, or `purged-unlinked` with the purge count. Both carry `grantsRevoked`, `browsersForgotten` and, on a failure, `holdingFailures`. A `revoked` outcome also writes `identity.link.revoked`. |
-| `identity.offboard.refused` | A deactivation report was not acted on. | The account, the source, the reason (`external-workspace`, `unadmitted-tenant`, `unconfirmed`, `cross-workspace-set`, `revoke-failed`, `error`), and a sentence that ends by naming the manual lever. A `cross-workspace-set` row also carries the set id, the accounts that blocked the revoke (`blockedBy`), the account's own purge count, and `purgeFailed` when that purge did not complete, plus `grantsRevoked`, `browsersForgotten` and, on a failure, `holdingFailures` for the deactivated account's own holdings. |
+| `identity.link.revoked` | A set is revoked — the terminal offboarding lever. | The set id, how many account ids were tombstoned, how many credentials the purge destroyed, and a `purgeFailed` flag when the purge did not complete. `unrevoked` names each connection whose revocation call at the provider failed twice. Also how many lent credential grants were revoked (`grantsRevoked`), how many personal browsers were forgotten (`browsersForgotten`), and `holdingFailures` when one of those did not complete. |
+| `identity.link.credentials_purged` | A set's credentials are purged without revoking the set. | The set id, the set's status at the time, the purged count, and the same `purgeFailed` flag and `unrevoked` list. |
+| `identity.offboard.applied` | A surface's deactivation report passed every gate and the lever ran (OPE-2423). | The account, the source (`slack:user_change`), and the outcome: `revoked` with the set id, or `purged-unlinked` with the purge count. Both carry `grantsRevoked`, `browsersForgotten` and, on a failure, `holdingFailures`. A `purged-unlinked` row also carries `unrevoked` when a revocation call at the provider failed twice. A `revoked` outcome also writes `identity.link.revoked`. |
+| `identity.offboard.refused` | A deactivation report was not acted on. | The account, the source, the reason (`external-workspace`, `unadmitted-tenant`, `unconfirmed`, `cross-workspace-set`, `revoke-failed`, `error`), and a sentence that ends by naming the manual lever. A `cross-workspace-set` row also carries the set id, the accounts that blocked the revoke (`blockedBy`), the account's own purge count, and `purgeFailed` when that purge did not complete, plus `grantsRevoked`, `browsersForgotten` and, on a failure, `holdingFailures` for the deactivated account's own holdings. It carries `unrevoked` when a revocation call at the provider failed twice. |
 
 🔴 **A control-plane mutation writes two rows, not one.** The store writes the `identity.link.*` row
 above because it is the writer that changed the table. The control plane then writes its own

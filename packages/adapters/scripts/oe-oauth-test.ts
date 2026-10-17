@@ -456,7 +456,7 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
     hint: string | null;
     clientId: string | null;
   }
-  function purgeFetch(opts: { revocation: boolean; status?: number }, calls: RevokeCall[]) {
+  function purgeFetch(opts: { revocation: boolean; status?: number; failFirst?: number }, calls: RevokeCall[]) {
     return async (input: string, init?: RequestInit): Promise<Response> => {
       const method = (init?.method ?? "GET").toUpperCase();
       if (input.endsWith("/.well-known/oauth-protected-resource")) return json({ authorization_servers: [AS] });
@@ -472,7 +472,8 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
       if (input === REVOKE_URL && method === "POST") {
         const form = new URLSearchParams(String(init?.body ?? ""));
         calls.push({ token: form.get("token") ?? "", hint: form.get("token_type_hint"), clientId: form.get("client_id") });
-        return opts.status && opts.status >= 400 ? json({ error: "invalid_request" }, opts.status) : new Response("", { status: 200 });
+        const failing = opts.status !== undefined && opts.status >= 400 && (opts.failFirst === undefined || calls.length <= opts.failFirst);
+        return failing ? json({ error: "invalid_request" }, opts.status) : new Response("", { status: 200 });
       }
       return new Response("unexpected", { status: 404 });
     };
@@ -520,15 +521,42 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
 
     let threw = false;
     let purged: boolean | undefined;
+    const unrevoked: string[] = [];
     try {
-      purged = await vault.forget("notion", { type: "user", id: "U1" });
+      purged = await vault.forget("notion", { type: "user", id: "U1" }, (ref) => unrevoked.push(ref));
     } catch {
       threw = true;
     }
-    ok(!threw, "purge (vendor 4xx): forget does not throw — a vendor failure is advisory, never fatal to the purge");
+    ok(!threw, "purge (vendor 4xx): forget does not throw — a vendor failure never blocks the purge");
     ok(purged === true, "purge (vendor 4xx): the row still went");
-    ok(calls.length === 1, "purge (vendor 4xx): the vendor was attempted before the local delete");
+    ok(calls.length === 2, `purge (vendor 4xx): 🔴 the revocation is retried ONCE before the local delete (OPE-2565) — ${calls.length} call(s)`);
+    ok(unrevoked.join(",") === "notion", `purge (vendor 4xx): 🔴 the failed revocation is REPORTED with the connection ref, not only warned (OPE-2565) — [${unrevoked.join(",")}]`);
     ok((await v.read(tokRef)) === null, "🔴 purge (vendor 4xx): the ciphertext is destroyed anyway");
+  }
+
+  {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: true, status: 503, failFirst: 1 }, calls), redirectUri: () => REDIRECT });
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 });
+    const unrevoked: string[] = [];
+    ok((await vault.forget("notion", { type: "user", id: "U1" }, (ref) => unrevoked.push(ref))) === true, "purge (one 503): the row went");
+    ok(calls.length === 2 && calls[1].token === "RT-live", "purge (one 503): the retry presented the same refresh token");
+    ok(unrevoked.length === 0, "purge (one 503): a retry that succeeded reports nothing — negative control for (c)");
+  }
+
+  {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const { purge } = makeOeOauth(providers, { vault: v, fetch: purgeFetch({ revocation: true, status: 400 }, calls), redirectUri: () => REDIRECT });
+    const vaultOnly = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: true }, []), redirectUri: () => REDIRECT });
+    await vaultOnly.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 });
+    const unrevoked: string[] = [];
+    ok((await purge.purgeSubject("U1", { unrevoked: (p) => void unrevoked.push(p) })) === 1, "purge hook (vendor 4xx): the row still counts as purged");
+    ok(unrevoked.join(",") === "notion", `purge hook (vendor 4xx): 🔴 the hook reports the provider that refused — [${unrevoked.join(",")}]`);
+    ok((await v.read(tokRef)) === null, "purge hook (vendor 4xx): the ciphertext is destroyed anyway");
   }
 
   {

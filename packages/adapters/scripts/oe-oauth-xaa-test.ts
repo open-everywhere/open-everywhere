@@ -80,6 +80,7 @@ interface FakeOptions {
   readonly revoked: Set<string>;
   readonly jagClientId: string;
   appRefuse?: string;
+  readonly revokeFailures?: { left: number };
 }
 
 function fakes(o: FakeOptions) {
@@ -111,6 +112,10 @@ function fakes(o: FakeOptions) {
     if (input === IDP_REVOKE) {
       if (headers.authorization !== basicAuthHeader(IDP_CID, IDP_SECRET)) return json({ error: "invalid_client" }, 401);
       counts.revoke++;
+      if (o.revokeFailures && o.revokeFailures.left > 0) {
+        o.revokeFailures.left--;
+        return json({ error: "temporarily_unavailable" }, 503);
+      }
       revokedRefresh.add(body.get("token") ?? "");
       return new Response(null, { status: 200 });
     }
@@ -231,11 +236,11 @@ const bindIdentity = async ({ principalSubject, signerSubject }: { principalSubj
     ? ({ ok: true, idpNativeId: signerSubject! } as const)
     : ({ ok: false, reason: "the IdP sign-in was completed by a different Okta account" } as const);
 
-function harness(opts: { signer: string; jagClientId?: string; extra?: Record<string, unknown>; signingKey?: KeyObject; appRefuse?: string }) {
+function harness(opts: { signer: string; jagClientId?: string; extra?: Record<string, unknown>; signingKey?: KeyObject; appRefuse?: string; revokeFailures?: { left: number } }) {
   const clock = { t: 1_900_000_000_000 };
   const declared = { now: providers(opts.extra) };
   const refusals: { principalSubject: string; reason: string }[] = [];
-  const f = fakes({ signer: opts.signer, revoked: new Set(), jagClientId: opts.jagClientId ?? APP_CID, ...(opts.appRefuse ? { appRefuse: opts.appRefuse } : {}), ...(opts.signingKey ? { signingKey: opts.signingKey } : {}) });
+  const f = fakes({ signer: opts.signer, revoked: new Set(), jagClientId: opts.jagClientId ?? APP_CID, ...(opts.appRefuse ? { appRefuse: opts.appRefuse } : {}), ...(opts.signingKey ? { signingKey: opts.signingKey } : {}), ...(opts.revokeFailures ? { revokeFailures: opts.revokeFailures } : {}) });
   const vault = memVault();
   let state = 0;
   const oe = makeOeOauth(() => declared.now, {
@@ -490,6 +495,19 @@ function harness(opts: { signer: string; jagClientId?: string; extra?: Record<st
   ok(purged === 3, `§8 the purge removes both app tokens and the IdP grant (got ${purged})`);
   ok(h.f.counts.revoke === 1 && h.f.revokedRefresh.size === 1, "§8 ⭐ the IdP refresh token is revoked at the IdP, once");
   ok(![...h.vault.raw.keys()].some((k) => k.startsWith("oe-oauth:tok:") || k.startsWith("oe-oauth:xaa-idp:")), "§8 no token row is left");
+}
+
+for (const [failures, label] of [[2, "refused twice"], [1, "refused once, then accepted"], [0, "accepted"]] as const) {
+  const h = harness({ signer: ALICE_OKTA, revokeFailures: { left: failures } });
+  await h.signIn(ALICE);
+  await h.mint(ALICE);
+  const unrevoked: string[] = [];
+  const purged = await h.oe.purge.purgeSubject(ALICE, { unrevoked: (p) => void unrevoked.push(p) });
+  ok(purged === 2, `§8b (${label}) the purge still removes the app token and the IdP grant (got ${purged})`);
+  ok(h.f.counts.revoke === Math.min(failures + 1, 2), `§8b (${label}) the IdP revocation is tried at most twice (got ${h.f.counts.revoke})`);
+  const want = failures >= 2 ? `idp:${new URL(ISSUER).host}` : "";
+  ok(unrevoked.join(",") === want, `§8b (${label}) 🔴 the report is [${want}] — the IdP by its host, never a connection (got [${unrevoked.join(",")}])`);
+  ok(![...h.vault.raw.keys()].some((k) => k.startsWith("oe-oauth:xaa-idp:")), `§8b (${label}) the IdP grant row is gone`);
 }
 
 console.log(`✓ oe-oauth-xaa: ${n} assertions passed`);
