@@ -18,10 +18,11 @@ it. The source was read on 2026-10-14 (OPE-2526).
 |---|---|---|---|---|
 | Open Everywhere usage telemetry (this page) | `oe-telemetry.vercel.app` | Boot, turns, and a heartbeat at most once every 6 hours | **On** | `OE_TELEMETRY=off` or `DO_NOT_TRACK=1`. `OE_TELEMETRY_OTLP_URL` sends it to your own collector instead. |
 | eve CLI telemetry | `telemetry.vercel.com` | Each `eve` command (`dev`, `build`, `start`, `info`, …) | **Off in Open Everywhere** | Open Everywhere sets `EVE_TELEMETRY_DISABLED=1` (below). |
-| Model calls | `ai-gateway.vercel.sh` | Each model step | On: this is the product's function | `OE_AI_GATEWAY_URL` moves it to your own gateway. Nothing turns it off. |
+| Model calls | `ai-gateway.vercel.sh` | Each model step | On: this is the product's function | `models.targets.<name>.url` moves it to your own gateway (the deprecated `OE_AI_GATEWAY_URL` still moves the `gateway` target for one release). Nothing turns it off. |
 | eve's model catalog at build | `ai-gateway.vercel.sh/v1/models/catalog` | `eve build`, and `eve dev` or `eve start` when they compile, unless `.eve/cache/model-catalog.json` is at most 5 minutes old | On | No switch. A failed fetch falls back to a stale cache, and `npm run seed:model-catalog` writes one. |
 | eve's model catalog at run time | `ai-gateway.vercel.sh/v1/models/catalog` | A turn whose selected model has no context window | Not reached: every model selection in `agent/agent.ts` gives `contextWindowTokens` | An app that changes its model resolver must keep that field. |
-| Model route probe | `ai-gateway.vercel.sh/v1/models/catalog` | Only when the deployment status is read (`/eve/v1/oe/status`) | On request | `OE_AI_GATEWAY_URL` moves it with the model calls. |
+| Model route probe | `ai-gateway.vercel.sh/v1/models/catalog`, and `/v1/models/<id>/endpoints` for each model the deployment can resolve | Only when the deployment status is read (`/eve/v1/oe/status`); the endpoints reads at most once every 10 minutes | On request | `models.targets.<name>.url` moves it with the model calls. The endpoints reads carry no credential. The status detail names no model or provider. |
+| Model config check | `ai-gateway.vercel.sh/v1/models/<id>/endpoints` | Only when you run `npm run check:model-config` | On request | Do not run it. It carries no credential. |
 | eve workflow state | `api.vercel.com`, `vercel-workflow.com`, `oidc.vercel.com` | Each durable step on a Vercel deployment | On Vercel only | This is Vercel's own platform. Off Vercel, the workflow state stays local. |
 
 `oe build` makes no outbound call. The setup CLI, `@open-everywhere/create`, calls only the

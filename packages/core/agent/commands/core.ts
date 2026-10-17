@@ -37,6 +37,7 @@ import { coverHelpLine, parseCoverTokens, runCover, type CoverCommand } from "./
 import { agentCommandName, agentDisplayName } from "../identity/bot-name.js";
 import { getAppInfo, hasRealAppVersion, registerAppInfo as storeAppInfo, type AppInfo } from "./app-info.js";
 import { dataPolicyWords, type ModelDataPolicy } from "../model/data-policy.js";
+import { modelTargetWords, type ModelTargets } from "../model/targets.js";
 import { getSettings } from "../settings/settings.js";
 import { assertPostgresWiredAtBoot } from "../operational/postgres-wiring.js";
 
@@ -137,6 +138,7 @@ export function renderStatus(
   memoryProviderId: string,
   telemetryStatus = "unknown",
   dataPolicy: ModelDataPolicy = getSettings().models.dataPolicy,
+  targets: ModelTargets = getSettings().models.targets,
 ): string {
   const { contextWindowTokens: windowTokens, compactionThresholdTokens: thresholdTokens } = info;
   return [
@@ -153,6 +155,9 @@ export function renderStatus(
         ]
       : []),
     `• data policy: ${dataPolicyWords(dataPolicy)}`,
+    ...Object.entries(targets)
+      .filter(([, t]) => t.url !== undefined || t.providers !== undefined || Object.keys(targets).length > 1)
+      .map(([name, t]) => `• model target${Object.keys(targets).length > 1 ? ` ${name}` : ""}: ${modelTargetWords(t)}`),
     `• memory: \`${memoryProviderId}\``,
     `• telemetry: \`${telemetryStatus}\``,
   ].join("\n");

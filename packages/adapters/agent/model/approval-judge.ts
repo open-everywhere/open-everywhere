@@ -24,7 +24,7 @@ function gatewayApprovalJudgeCompletion(defaults: GatewayRoutedDefaults): Approv
   return async (prompt, pass) => {
     const s = approvalJudgeCallSettings(pass, defaults);
     const { text } = await generateText({
-      model: gatewayLanguageModel(s.id),
+      model: gatewayLanguageModel(s.id, defaults.via),
       prompt,
       ...(s.maxOutputTokens !== undefined ? { maxOutputTokens: s.maxOutputTokens } : {}),
       ...(s.providerOptions !== undefined

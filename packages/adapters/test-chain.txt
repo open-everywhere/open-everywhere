@@ -10,6 +10,7 @@ test:sandbox-extend
 test:long-lived-box
 test:model-gateway
 test:model-data-policy
+test:model-targets
 test:gateway-probe
 test:dream-judge-gateway
 test:approval-judge-gateway
@@ -26,3 +27,4 @@ test:default-adapters
 test:native-transcripts
 test:transcription-routes
 test:host-plane-union
+test:host-plane-targets

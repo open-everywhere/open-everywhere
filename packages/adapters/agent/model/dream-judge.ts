@@ -30,16 +30,17 @@ export function utilityRouteForScope(scope: string): ModelRoute {
 export function dreamCallSettings(
   route: ModelRoute,
   defaults: GatewayRoutedDefaults,
-): { id: string; reasoning?: ModelRoute["reasoning"]; providerOptions?: Record<string, unknown> } {
+): { id: string; via?: string; reasoning?: ModelRoute["reasoning"]; providerOptions?: Record<string, unknown> } {
   const id = route.id ?? defaults.id;
   const options = applyGatewayOptions(route, {}, { id, defaultId: defaults.id }, defaults.gateway);
-  return { id, reasoning: route.reasoning, providerOptions: options.providerOptions };
+  const via = route.via ?? defaults.via;
+  return { id, ...(via !== undefined ? { via } : {}), reasoning: route.reasoning, providerOptions: options.providerOptions };
 }
 
 export function resolvedDreamCallSettings(
   scope: string,
   defaults: GatewayRoutedDefaults,
-): { id: string; reasoning?: ModelRoute["reasoning"]; providerOptions?: Record<string, unknown> } {
+): { id: string; via?: string; reasoning?: ModelRoute["reasoning"]; providerOptions?: Record<string, unknown> } {
   const s = dreamCallSettings(utilityRouteForScope(scope), defaults);
   stampModelCall(s.id);
   return s;
@@ -49,7 +50,7 @@ function gatewayDreamCompletion(defaults: GatewayRoutedDefaults): DreamCompletio
   return async (scope, prompt) => {
     const s = resolvedDreamCallSettings(scope, defaults);
     const { text } = await generateText({
-      model: gatewayLanguageModel(s.id),
+      model: gatewayLanguageModel(s.id, s.via),
       prompt,
       ...(s.reasoning !== undefined ? { reasoning: s.reasoning } : {}),
       ...(s.providerOptions !== undefined

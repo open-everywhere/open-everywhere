@@ -2542,6 +2542,10 @@
       "types": "./dist/agent/model/stream-drop-retry.d.ts",
       "default": "./dist/agent/model/stream-drop-retry.js"
     },
+    "./agent/model/targets.js": {
+      "types": "./dist/agent/model/targets.d.ts",
+      "default": "./dist/agent/model/targets.js"
+    },
     "./agent/model/turn-closeout.js": {
       "types": "./dist/agent/model/turn-closeout.d.ts",
       "default": "./dist/agent/model/turn-closeout.js"

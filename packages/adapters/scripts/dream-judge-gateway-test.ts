@@ -51,8 +51,8 @@ registerConfig({
   const gw = routed.providerOptions?.gateway as Record<string, unknown>;
   ok(gw.only === undefined && gw.zeroDataRetention === true && gw.caching === "auto", "settings: id change strips the pin, every non-pin key survives");
 
-  const pinned = dreamCallSettings({ providers: ["zai"] }, DEFAULTS);
-  eq((pinned.providerOptions?.gateway as Record<string, unknown>).order, ["zai"], "settings: route providers → gateway `order` preference");
+  const pinned = dreamCallSettings({ providerOrder: ["zai"] }, DEFAULTS);
+  eq((pinned.providerOptions?.gateway as Record<string, unknown>).order, ["zai"], "settings: route providerOrder → gateway `order` preference");
 }
 
 {

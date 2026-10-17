@@ -1,6 +1,6 @@
 import { experimental_transcribe as transcribe } from "ai";
 import { type ModelDataPolicy, dataPolicyActive, dataPolicyRows, getOperatorSecret, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
-import { GATEWAY_TARGET_HOST, gatewayTranscriptionModel, sharedHostPlaneFetch } from "./gateway.js";
+import { gatewayTargetHost, gatewayTranscriptionModel, sharedHostPlaneFetch } from "./gateway.js";
 
 export type TranscriptionVia = "gateway" | "deepinfra" | "self-hosted";
 
@@ -189,7 +189,7 @@ function selfHostedCall(f: typeof fetch) {
 }
 
 export function roleHostPlaneHosts(role: TranscriptionRoleSpec): string[] {
-  const hosts = [GATEWAY_TARGET_HOST];
+  const hosts = [gatewayTargetHost()];
   for (const r of [role.primary, role.fallback]) {
     if (r === undefined || r.via === "gateway") continue;
     const h = routeHost(r);

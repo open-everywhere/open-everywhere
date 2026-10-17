@@ -10,6 +10,7 @@ import {
 
 export interface GatewayVisionDefaults {
   readonly id: string;
+  readonly via?: string;
   readonly gateway?: Record<string, unknown>;
 }
 
@@ -94,7 +95,7 @@ export function gatewayImageDescriber(defaults: GatewayVisionDefaults): ImageDes
       let res: { text: string } & VisionCallTelemetry;
       try {
         res = await generateText({
-          model: gatewayLanguageModel(defaults.id),
+          model: gatewayLanguageModel(defaults.id, defaults.via),
           messages: [
             {
               role: "user",

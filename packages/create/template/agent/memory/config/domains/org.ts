@@ -1,5 +1,5 @@
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
-import { SUPERVISOR_MODEL } from "../../../model/models.js";
+import { SUPERVISOR_MODEL, SUPERVISOR_VIA } from "../../../model/models.js";
 
 export const domain = defineDomain({
   name: "org",
@@ -7,5 +7,5 @@ export const domain = defineDomain({
   memory: "org-brain",
   nameDropWake: true,
   admins: [],
-  models: { supervisor: { id: SUPERVISOR_MODEL, reasoning: "low" } },
+  models: { supervisor: { id: SUPERVISOR_MODEL, via: SUPERVISOR_VIA, reasoning: "low" } },
 });

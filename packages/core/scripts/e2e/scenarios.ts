@@ -420,6 +420,7 @@ export interface OeStatusFacts {
   readonly contextWindowTokens?: number;
   readonly compactionThresholdTokens?: number;
   readonly dataPolicy?: string;
+  readonly modelTarget?: string;
 }
 
 export function decodeSlackEphemeralText(body: string): string {
@@ -438,6 +439,7 @@ export function parseOeStatusFacts(body: string): OeStatusFacts {
   const evePin = /^•\s*eve:\s*`([^`]*)`/mu.exec(body)?.[1];
   const window = /^•\s*context window:\s*`([\d,]+)`\s*tokens\s*—\s*summarised at\s*`([\d,]+)`/mu.exec(body);
   const dataPolicy = /^•\s*data policy:\s*(.+?)\s*$/mu.exec(body)?.[1];
+  const modelTarget = /^•\s*model target(?: [a-z0-9-]+)?:\s*(.+?)\s*$/mu.exec(body)?.[1];
   const num = (raw: string | undefined): number | undefined => {
     if (raw === undefined) return undefined;
     const n = Number(raw.replaceAll(",", ""));
@@ -449,6 +451,7 @@ export function parseOeStatusFacts(body: string): OeStatusFacts {
     ...(num(window?.[1]) !== undefined ? { contextWindowTokens: num(window?.[1]) } : {}),
     ...(num(window?.[2]) !== undefined ? { compactionThresholdTokens: num(window?.[2]) } : {}),
     ...(dataPolicy !== undefined ? { dataPolicy } : {}),
+    ...(modelTarget !== undefined ? { modelTarget } : {}),
   };
 }
 
@@ -2892,6 +2895,37 @@ export const SCENARIOS: readonly Scenario[] = [
         `🔴 the turn is answered under the data policy (${facts.dataPolicy}): a provider that meets the rows served the model — reply: ${JSON.stringify(reply.text.slice(0, 160))}`,
       );
       await assertDmDoorAdmitted(ctx, sinceIso, "S-DATA-POLICY");
+    },
+  },
+  {
+    id: "S-MODEL-TARGET",
+    title: "The model target's provider rows on a live turn (OPE-2556): `/oe status` names the target's `providers.only`, and a DM turn is answered through it",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 690_000,
+    judged: false,
+    run: async (ctx) => {
+      const { teamId } = await ctx.slack!.identity();
+      const res = await ctx.synthetic!.slash("status", { teamId });
+      ctx.gate(res.status === 200, `/oe status answers 200 (got ${res.status})`);
+      const facts = parseOeStatusFacts(decodeSlackEphemeralText(res.body));
+      if (facts.modelTarget === undefined || !facts.modelTarget.includes("only ")) {
+        return ctx.fixtureMissing(
+          "S-MODEL-TARGET needs a target that sets `models.targets.gateway.providers.only` (for example `[\"openai\", \"azure\"]` on the american-closed stack); this one reports no `only` row.",
+        );
+      }
+      ctx.log(`S-MODEL-TARGET: the target is ${facts.modelTarget}`);
+      const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-MODEL-TARGET");
+      const sinceIso = await presenceSince(ctx, "sinceIso", 60_000);
+      const { ts } = await dm.post(fixtureLine("quick one — what's 6*7? reply with just the number"));
+      const reply = await awaitOwnWakeReply(ctx, dm, ts, { what: "S-MODEL-TARGET", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      ctx.gate(
+        reply.text.includes("42"),
+        `🔴 the turn answers with the target's only row set (${facts.modelTarget}): an allowed provider can serve the model — reply: ${JSON.stringify(reply.text.slice(0, 160))}`,
+      );
+      await assertDmDoorAdmitted(ctx, sinceIso, "S-MODEL-TARGET");
     },
   },
   {

@@ -181,6 +181,8 @@ export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsF
 export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode, AdminRoleRule, OktaAppSetting, DirectoryAutoConfirm, SandboxBackendChoice, BlanketTrust } from "./settings/settings.js";
 export { dataPolicyRows, dataPolicyActive } from "./model/data-policy.js";
 export type { ModelDataPolicy, DataPolicyRegion } from "./model/data-policy.js";
+export { DEFAULT_MODEL_VIA, assertRouteTargets, modelTargetFor, resolvableModels, validateModelTargets, viaProblem } from "./model/targets.js";
+export type { ModelTarget, ModelTargets, ModelTargetProviders, ResolvableModel } from "./model/targets.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
 export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./memory/provider.js";
@@ -867,6 +869,7 @@ export { parseSlackCommandText, parseOeCommandTokens } from "./commands/core.js"
 
 export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch, type EgressRefusalCause } from "./access/host-egress.js";
 export { hostPlaneFetch, hostPlanePolicy } from "./access/host-plane-egress.js";
+export { useSelfHostEgress } from "./access/self-host-egress.js";
 export {
   egressAuditFields,
   hostCallAuditFields,

@@ -7,6 +7,7 @@ export interface ModelRoleSpec {
   readonly id: string;
   readonly tier: ModelTier;
   readonly contextWindowTokens: number;
+  readonly via?: string;
 }
 
 export type ModelStack = Readonly<Record<ModelRole, ModelRoleSpec>>;

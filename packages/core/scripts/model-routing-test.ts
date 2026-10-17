@@ -48,33 +48,33 @@ const domains: Domain[] = [
   defineDomain({
     name: "org",
     match: "org",
-    models: { primary: { id: DEFAULT_ID, providers: ["fireworks"], reasoning: "medium" }, utility: { id: "zai/glm-4.5-air" } },
+    models: { primary: { id: DEFAULT_ID, providerOrder: ["fireworks"], reasoning: "medium" }, utility: { id: "zai/glm-4.5-air" } },
   }),
   defineDomain({ name: "txn", reach: [C_TXN], models: { primary: { reasoning: "high" } } }),
 ];
 
 ok(
   JSON.stringify(modelRouteFor("primary", C_OTHER, domains)) ===
-    JSON.stringify({ id: DEFAULT_ID, providers: ["fireworks"], reasoning: "medium" }),
+    JSON.stringify({ id: DEFAULT_ID, providerOrder: ["fireworks"], reasoning: "medium" }),
   "unassigned channel gets the org route",
 );
 const merged = modelRouteFor("primary", C_TXN, domains);
 ok(merged.id === DEFAULT_ID && merged.reasoning === "high", "domain overlay merges FIELD-BY-FIELD (reasoning overridden, id inherited)");
-ok(JSON.stringify(merged.providers) === JSON.stringify(["fireworks"]), "pin survives when the overlay does not change the id");
+ok(JSON.stringify(merged.providerOrder) === JSON.stringify(["fireworks"]), "pin survives when the overlay does not change the id");
 ok(modelRouteFor("utility", C_TXN, domains).id === "zai/glm-4.5-air", "utility role inherits org when domain has no utility route");
 ok(JSON.stringify(modelRouteFor("primary", C_TXN, [])) === "{}", "no domains → empty route (agent static defaults)");
 
 const domains2: Domain[] = [
-  defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID, providers: ["fireworks"] } } }),
+  defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID, providerOrder: ["fireworks"] } } }),
   defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } }),
 ];
 const swapped = modelRouteFor("primary", C_TXN, domains2);
-ok(swapped.id === "anthropic/claude-sonnet-5" && swapped.providers === undefined, "changing id DROPS the inherited pin (an upstream pinned for one model is wrong for another)");
+ok(swapped.id === "anthropic/claude-sonnet-5" && swapped.providerOrder === undefined, "changing id DROPS the inherited pin (an upstream pinned for one model is wrong for another)");
 const repinned = modelRouteFor("primary", C_TXN, [
   domains2[0],
-  defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5", providers: ["anthropic"] } } }),
+  defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5", providerOrder: ["anthropic"] } } }),
 ]);
-ok(JSON.stringify(repinned.providers) === JSON.stringify(["anthropic"]), "a route may pin its own providers with its own id");
+ok(JSON.stringify(repinned.providerOrder) === JSON.stringify(["anthropic"]), "a route may pin its own providers with its own id");
 
 ok(modelRouteFor("primary", C_TXN, [defineDomain({ name: "txn", reach: [C_TXN] })]).id === undefined, "domain without models + no org → empty route");
 
@@ -217,7 +217,7 @@ function slackDmCtx(team: string, dmId: string): BindableContext {
   const r = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, deps);
   ok(r.id === "anthropic/claude-sonnet-5", "resolveRoute: an explicit channel domain routes its model");
   const rOther = await resolveRoute("primary", C_OTHER, undefined, DEFAULT_ID, deps);
-  ok(rOther.id === DEFAULT_ID && JSON.stringify(rOther.providers) === JSON.stringify(["fireworks"]), "resolveRoute: an unassigned channel gets the org route (default id + pin)");
+  ok(rOther.id === DEFAULT_ID && JSON.stringify(rOther.providerOrder) === JSON.stringify(["fireworks"]), "resolveRoute: an unassigned channel gets the org route (default id + pin)");
 }
 {
   const deps = fakeDeps(() => dmDomains, []);
@@ -280,6 +280,34 @@ function slackDmCtx(team: string, dmId: string): BindableContext {
   await m.doGenerate(turnCall);
   await m.doGenerate(turnCall);
   ok(made.filter((id) => id === "anthropic/claude-sonnet-5").length === 1, "makeRoutedModel: inner model construction memoized per id");
+}
+{
+  const made: string[] = [];
+  const calls: FakeCall[] = [];
+  const backend: ModelBackend = {
+    model: (id, via) => {
+      made.push(`${via ?? "-"}:${id}`);
+      return fakeModel(id, calls);
+    },
+    applyOptions: (_r, o) => o,
+  };
+  let route: { id: string; via?: string } = { id: "anthropic/claude-sonnet-5", via: "eu" };
+  const m = makeRoutedModel(() => route, { id: DEFAULT_ID }, backend);
+  await m.doGenerate(turnCall);
+  ok(made.includes("eu:anthropic/claude-sonnet-5"), "makeRoutedModel: a route's via reaches backend.model");
+  route = { id: "anthropic/claude-sonnet-5" };
+  await m.doGenerate(turnCall);
+  ok(made.includes("-:anthropic/claude-sonnet-5"), "makeRoutedModel: a route with no via leaves the backend's default target");
+  await m.doGenerate(turnCall);
+  ok(made.filter((k) => k.endsWith(":anthropic/claude-sonnet-5")).length === 2, "makeRoutedModel: the memo keys on (via, id)");
+}
+{
+  const ds = [
+    defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID, via: "eu", providerOrder: ["azure"] } } }),
+    defineDomain({ name: "exec", reach: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } }),
+  ];
+  const r = modelRouteFor("primary", C_TXN, ds);
+  ok(r.via === "eu" && r.providerOrder === undefined, "via: inherited across an id change, while the providerOrder pin drops");
 }
 
 const PRIMARY_DEFAULTS = { primary: { id: DEFAULT_ID } };

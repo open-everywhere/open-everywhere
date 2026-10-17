@@ -49,7 +49,8 @@ export type ModelTier = "high" | "medium" | "low";
 
 export interface ModelRoute {
   readonly id?: string;
-  readonly providers?: readonly string[];
+  readonly providerOrder?: readonly string[];
+  readonly via?: string;
   readonly reasoning?: ModelReasoning;
   readonly tier?: ModelTier;
 }
@@ -695,8 +696,9 @@ export function modelRouteFor(
     route = {
       id: r.id !== undefined ? r.id : r.tier !== undefined ? undefined : route.id,
       tier: r.tier !== undefined ? r.tier : r.id !== undefined ? undefined : route.tier,
-      providers: r.providers ?? (r.id !== undefined && r.id !== route.id ? undefined : route.providers),
+      providerOrder: r.providerOrder ?? (r.id !== undefined && r.id !== route.id ? undefined : route.providerOrder),
       reasoning: r.reasoning ?? route.reasoning,
+      via: r.via ?? route.via,
     };
   }
   return route;

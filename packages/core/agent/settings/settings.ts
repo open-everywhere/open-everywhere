@@ -2,6 +2,7 @@ import { processRegistrySlot } from "../lib/process-registry.js";
 import { e2eDriversProblem, driverAllowlistProblem, type E2eDriverIdentity } from "../testing/driver-allowlist.js";
 import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
 import { dataPolicyRows, validateDataPolicy, type ModelDataPolicy } from "../model/data-policy.js";
+import { SHIPPED_MODEL_TARGETS, modelTargetWords, validateModelTargets, type ModelTargets } from "../model/targets.js";
 
 export type TaintTierMode = "enforced" | "dryrun";
 
@@ -106,6 +107,7 @@ export interface AgentSettings {
     readonly primary: string;
     readonly force: string;
     readonly dataPolicy: ModelDataPolicy;
+    readonly targets: ModelTargets;
   };
   readonly discord: {
     readonly autoThread: boolean;
@@ -615,6 +617,17 @@ export const SETTINGS = {
         "What EVERY model call demands of its provider, on every target: `{ zeroRetention?, noTraining?, region? }` (OPE-2535). `zeroRetention: true` allows only providers with a zero-data-retention agreement, `noTraining: true` only providers that do not train on prompts, and `region` (`\"eu\"` or `\"us\"`) only providers that run the inference in that region. The model adapter puts the rows on every call it serves: the turn, compaction, the utility judges, the approval judge, the meeting recap, the image describer, gateway transcription, and a bare model id string (a declared subagent's model, eve's `evaluate()`) through the AI SDK default provider the adapter installs. A call cannot remove a row. Two exceptions: under `eve dev`, eve resolves a literal model id string through its own local gateway, and those calls carry no rows; and a default provider another module set first is kept, so under a policy every call through it refuses. FAIL CLOSED: a call that no provider can serve errors and names the rows; it never falls back. With any row set, the `deepinfra` transcription route refuses, because it cannot carry the rows. Empty (shipped) demands nothing.",
       format: (v) => (dataPolicyRows(v).length === 0 ? "{} (no demand)" : dataPolicyRows(v).join(", ")),
     } satisfies SettingSpec<ModelDataPolicy>,
+    targets: {
+      path: "models.targets",
+      shipped: SHIPPED_MODEL_TARGETS,
+      validate: validateModelTargets,
+      summary:
+        "WHERE model calls go (OPE-2556): named targets, `{ <name>: { kind, url?, providers?: { only?, order? }, options? } }`. One kind is implemented, `\"vercel-ai-gateway\"`, and an unknown kind fails config load. A route or a stack role picks a target with `via`; with no `via` it uses the target named `gateway`, which must exist. `url` is the target's base URL (for example a relay or an on-prem gateway); it replaces the `OE_AI_GATEWAY_URL` env var, which still works for the `gateway` target for one release (the process warns once, the first time the process reads the target), and the setting wins when both are set. It is read once, at the target's first call, so a change needs a restart. `providers.only` is a DEMAND: only those providers may serve a call through the target, a call cannot widen the list, and a model with no allowed provider fails closed with an error that names the row. Under `eve dev`, eve resolves a literal model id through its own local gateway, and that call carries no `only` row. `providers.order` is a preference for the order the gateway tries providers in; a route's `providerOrder` wins over it. `options` are gateway options for every call through the target, as a floor (a call's own key wins); an option that a typed row owns (`only`, `order`, `zeroDataRetention`, `disallowPromptTraining`, `inferenceRegion`) fails config load. Shipped: one `gateway` target with no rows, so no request changes.",
+      format: (v) =>
+        Object.entries(v)
+          .map(([name, t]) => `${name}: ${modelTargetWords(t)}`)
+          .join("; "),
+    } satisfies SettingSpec<ModelTargets>,
   },
   discord: {
     autoThread: {
@@ -1379,6 +1392,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       primary: resolve(SETTINGS.models.primary, o.models?.primary),
       force: resolve(SETTINGS.models.force, o.models?.force),
       dataPolicy: resolve(SETTINGS.models.dataPolicy, o.models?.dataPolicy),
+      targets: resolve(SETTINGS.models.targets, o.models?.targets),
     },
     discord: {
       autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread),

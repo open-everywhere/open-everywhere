@@ -160,21 +160,21 @@ throws(
 }
 {
   const domains = [
-    defineDomain({ name: "org", match: "org", models: { primary: { id: "vendor/org-model", providers: ["fireworks"] } } }),
+    defineDomain({ name: "org", match: "org", models: { primary: { id: "vendor/org-model", providerOrder: ["fireworks"] } } }),
     defineDomain({ name: "team", reach: [K], role: "qa" }),
   ];
   const r = modelRouteFor("primary", K, domains, ROLES);
   ok(r.id === "vendor/qa-model", "role rung beats the org layer");
-  ok(r.providers === undefined, "pin-drop asymmetry holds through the role rung: an id change without providers drops the inherited pin");
+  ok(r.providerOrder === undefined, "pin-drop asymmetry holds through the role rung: an id change without providers drops the inherited pin");
 }
 {
-  const pinOnly = defineRole({ name: "pin-only", models: { primary: { providers: ["baseten"] } } });
+  const pinOnly = defineRole({ name: "pin-only", models: { primary: { providerOrder: ["baseten"] } } });
   const domains = [
     defineDomain({ name: "org", match: "org", models: { primary: { id: "vendor/org-model" } } }),
     defineDomain({ name: "team", reach: [K], role: "pin-only" }),
   ];
   const r = modelRouteFor("primary", K, domains, [pinOnly]);
-  ok(r.id === "vendor/org-model" && r.providers?.[0] === "baseten", "role can pin providers while inheriting the org id");
+  ok(r.id === "vendor/org-model" && r.providerOrder?.[0] === "baseten", "role can pin providers while inheriting the org id");
 }
 ok(modelRouteFor("utility", K, [defineDomain({ name: "team", reach: [K], role: "qa" })], ROLES).id === undefined, "role rung is per model-role: qa presets primary only, utility inherits");
 

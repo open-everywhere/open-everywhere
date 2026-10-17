@@ -136,6 +136,14 @@
       "types": "./dist/agent/model/meeting-gateway.d.ts",
       "default": "./dist/agent/model/meeting-gateway.js"
     },
+    "./agent/model/model-config-check.js": {
+      "types": "./dist/agent/model/model-config-check.d.ts",
+      "default": "./dist/agent/model/model-config-check.js"
+    },
+    "./agent/model/target-url.js": {
+      "types": "./dist/agent/model/target-url.d.ts",
+      "default": "./dist/agent/model/target-url.js"
+    },
     "./agent/model/transcription-routes.js": {
       "types": "./dist/agent/model/transcription-routes.d.ts",
       "default": "./dist/agent/model/transcription-routes.js"
@@ -221,8 +229,10 @@
     "test:gateway-probe": "NODE_NO_WARNINGS=1 tsx scripts/gateway-probe-test.ts",
     "test:model-gateway": "tsx scripts/model-gateway-test.ts",
     "test:model-data-policy": "tsx scripts/model-data-policy-test.ts",
+    "test:model-targets": "tsx scripts/model-targets-test.ts",
     "test:transcription-routes": "tsx scripts/transcription-routes-test.ts",
     "test:host-plane-union": "tsx scripts/host-plane-union-test.ts",
+    "test:host-plane-targets": "tsx scripts/host-plane-targets-test.ts",
     "test:dream-judge-gateway": "tsx scripts/dream-judge-gateway-test.ts",
     "test:approval-judge-gateway": "tsx scripts/approval-judge-gateway-test.ts",
     "test:gateway-vision": "tsx scripts/gateway-vision-test.ts",

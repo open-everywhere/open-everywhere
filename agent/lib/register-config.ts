@@ -1,10 +1,11 @@
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
-import { registerSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { getSettings, registerSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { registerModelPricing } from "@open-everywhere/core/agent/spend/pricing.js";
 import { loadModelPricing } from "../spend/model-pricing.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { setRegisteredConnectorCredentials } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
+import { assertRouteTargets } from "@open-everywhere/core/agent/model/targets.js";
 import { assertDomainCredentialsResolvable } from "@open-everywhere/core/agent/access/domain-credentials.js";
 import {
   assertWindowSourcesVouched,
@@ -83,6 +84,7 @@ registerModelAbTest(loadModelAbTest());
 setRegisteredConnectorCredentials(loadConnectorCredentials());
 
 assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());
+assertRouteTargets(loadDomains(), loadRoles(), getSettings().models.targets);
 
 assertWindowSourcesVouched(loadDomains(), isVouchedInternal);
 

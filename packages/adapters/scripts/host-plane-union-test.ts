@@ -29,7 +29,8 @@ try {
     return new Response(JSON.stringify({ text: "ok" }), { status: 200 });
   }) as typeof fetch;
 
-  const { sharedHostPlaneFetch, GATEWAY_TARGET_HOST } = await import("../agent/model/gateway.js");
+  const { sharedHostPlaneFetch, gatewayTargetHost } = await import("../agent/model/gateway.js");
+  const GATEWAY_TARGET_HOST = gatewayTargetHost();
   const { transcribeWithFallback } = await import("../agent/model/transcription-routes.js");
 
   const turnFetch = sharedHostPlaneFetch([]);

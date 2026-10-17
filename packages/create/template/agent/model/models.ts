@@ -4,6 +4,7 @@ import {
   registerDefaultAgentModelId,
 } from "@open-everywhere/core/agent/model/default-model.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { viaProblem, type ModelTargets } from "@open-everywhere/core/agent/model/targets.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { resolveStack, resolveTranscription, type ModelRole, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
@@ -12,6 +13,8 @@ export type { ModelRoleSpec, ModelStack } from "./stacks.js";
 const MODEL_SETTINGS = getSettings(SETTINGS_OVERRIDES).models;
 const STACK_ALIAS = MODEL_SETTINGS.stack;
 const STACK: ModelStack = resolveStack(STACK_ALIAS, {});
+
+assertStackVia(STACK, MODEL_SETTINGS.targets);
 
 registerDefaultAgentModelId(STACK.primary.id);
 
@@ -30,6 +33,7 @@ export const PRIMARY_MODEL = MODELS.primary.id;
 export const UTILITY_MODEL = MODELS.utility.id;
 export const VISION_MODEL = MODELS.vision.id;
 export const SUPERVISOR_MODEL = MODELS.supervisor.id;
+export const SUPERVISOR_VIA = MODELS.supervisor.via;
 export const JUDGE_MODEL = MODELS.judge.id;
 export const PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS = MODELS.primary.contextWindowTokens;
 
@@ -51,4 +55,9 @@ export function allowListForStack(stack: ModelStack, extra: readonly ModelPolicy
 
 export function modelAllowList(extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
   return allowListForStack(MODELS, extra);
+}
+
+export function assertStackVia(stack: ModelStack, targets: ModelTargets): void {
+  const bad = (Object.keys(stack) as ModelRole[]).flatMap((role) => viaProblem(stack[role].via, targets, `stack role "${role}"`) ?? []);
+  if (bad.length > 0) throw new Error(`open-everywhere: ${bad.join("; ")}`);
 }

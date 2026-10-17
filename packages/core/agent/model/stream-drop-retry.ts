@@ -172,7 +172,7 @@ function retryingModel<TModel extends RoutableModel>(model: TModel): TModel {
 export function withStreamDropRetry<TModel extends RoutableModel>(deps: RoutingDeps<TModel>, armed: boolean): RoutingDeps<TModel> {
   if (!armed) return deps;
   const backend: ModelBackend<TModel> = {
-    model: (id: string) => retryingModel(deps.backend.model(id)),
+    model: (id: string, via?: string) => retryingModel(via === undefined ? deps.backend.model(id) : deps.backend.model(id, via)),
     applyOptions: (route, options, ids) => deps.backend.applyOptions(route, options, ids),
   };
   return { ...deps, backend };

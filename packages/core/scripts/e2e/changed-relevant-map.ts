@@ -190,6 +190,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-DATA-POLICY (OPE-2535) is the only leg that runs a turn under `models.dataPolicy`. It reads the policy off `/oe status` and gates that a DM turn is answered under it. `gateway.ts` puts the rows on every model call and names a refusal, and `data-policy.ts` defines and validates them, so a change to either decides whether a turn under a policy is served.",
   },
   {
+    area: "model-targets",
+    globs: ["packages/adapters/agent/model/gateway.ts", "packages/adapters/agent/model/target-url.ts", "packages/core/agent/model/targets.ts"],
+    scenarios: ["S-MODEL-TARGET"],
+    why: "S-MODEL-TARGET (OPE-2556) is the only leg that runs a turn through a target with a `providers.only` row. It reads the target off `/oe status` and gates that a DM turn is answered through it. `gateway.ts` puts the target's rows on every call and builds the provider from its url, `target-url.ts` resolves that url, and `targets.ts` defines and validates the target, so a change to any of them decides whether a turn through the target is served.",
+  },
+  {
     area: "doing-for-you",
     globs: [
       "packages/core/agent/home/doing-home.ts",

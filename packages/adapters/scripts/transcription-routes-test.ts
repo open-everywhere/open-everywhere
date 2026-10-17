@@ -14,7 +14,8 @@ import {
 } from "../agent/model/transcription-routes.js";
 import { registerGatewayMeetingModels, stackTranscriptionRoute, voiceClipTranscriber } from "../agent/model/meeting-gateway.js";
 import { voiceTranscriber } from "@open-everywhere/core/agent/adapter-api.js";
-import { GATEWAY_TARGET_HOST } from "../agent/model/gateway.js";
+import { gatewayTargetHost } from "../agent/model/gateway.js";
+const GATEWAY_TARGET_HOST = gatewayTargetHost();
 
 let n = 0;
 function ok(cond: boolean, label: string): void {

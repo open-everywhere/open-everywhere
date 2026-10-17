@@ -53,7 +53,7 @@ export interface RoutableModel {
 }
 
 export interface ModelBackend<TModel extends RoutableModel = RoutableModel> {
-  model(id: string): TModel;
+  model(id: string, via?: string): TModel;
   applyOptions(
     route: ModelRoute,
     options: RoutedCallOptions,
@@ -191,7 +191,7 @@ export async function resolveRoute(
       const ranId = route.id ?? defaultId;
       stampModelArm({ arm: resolveModelArm(abDecision, ranId), bucketKey: abDecision.bucketKey, modelId: ranId });
     }
-    if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
+    if (route.id !== undefined || route.reasoning !== undefined || route.providerOrder !== undefined || route.via !== undefined) {
       logOnce("log", `${role}: ${surfaceKey} → ${JSON.stringify(route)}`);
     }
     return route;
@@ -202,11 +202,11 @@ export async function resolveRoute(
 }
 
 function isNoOpRoute(route: ModelRoute, defaultId: string): boolean {
-  return (route.id ?? defaultId) === defaultId && route.reasoning === undefined && route.providers === undefined && route.tier === undefined;
+  return (route.id ?? defaultId) === defaultId && route.reasoning === undefined && route.providerOrder === undefined && route.via === undefined && route.tier === undefined;
 }
 
 function routeUnset(route: ModelRoute): boolean {
-  return route.id === undefined && route.tier === undefined && route.providers === undefined && route.reasoning === undefined;
+  return route.id === undefined && route.tier === undefined && route.providerOrder === undefined && route.reasoning === undefined && route.via === undefined;
 }
 
 export function isSupervisorSession(ctx: BindableContext): boolean {
@@ -221,11 +221,12 @@ export function makeRoutedModel<TModel extends RoutableModel>(
   backend: ModelBackend<TModel>,
 ): TModel {
   const inner = new Map<string, TModel>();
-  const modelFor = (id: string): TModel => {
-    let m = inner.get(id);
+  const modelFor = (id: string, via?: string): TModel => {
+    const key = `${via ?? ""}\u0000${id}`;
+    let m = inner.get(key);
     if (!m) {
-      m = backend.model(id);
-      inner.set(id, m);
+      m = via === undefined ? backend.model(id) : backend.model(id, via);
+      inner.set(key, m);
     }
     return m;
   };
@@ -234,7 +235,7 @@ export function makeRoutedModel<TModel extends RoutableModel>(
     const generic = applyRoute(route, options, defaults.id);
     const mapped = backend.applyOptions(route, generic.options, { id: generic.id, defaultId: defaults.id });
     stampModelCall(generic.id);
-    return { model: modelFor(generic.id), options: mapped };
+    return { model: modelFor(generic.id, route.via), options: mapped };
   };
   const fallback = modelFor(defaults.id);
   const routed: RoutableModel = {

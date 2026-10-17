@@ -8,9 +8,13 @@ import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@op
 import { registerGatewayMeetingModels } from "@open-everywhere/adapters/agent/model/meeting-gateway.js";
 import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
+import { registerModelConfigCheck } from "@open-everywhere/adapters/agent/model/gateway-probe.js";
+import { getConfig } from "@open-everywhere/core/agent/access/config.js";
+import { resolvableModels } from "@open-everywhere/core/agent/model/targets.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
 import {
   JUDGE_MODEL,
+  MODELS,
   PRIMARY_MODEL,
   PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS,
   TRANSCRIPTION_ROLE,
@@ -30,11 +34,11 @@ const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
 const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
 const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD_PERCENT);
 
-registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: GATEWAY_DEFAULTS });
-registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: GATEWAY_DEFAULTS });
+registerGatewayDreamJudge({ id: UTILITY_MODEL, via: MODELS.utility.via, gateway: GATEWAY_DEFAULTS });
+registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, via: MODELS.utility.via, gateway: GATEWAY_DEFAULTS });
 
-registerGatewayMeetingModels({ id: UTILITY_MODEL, gateway: GATEWAY_DEFAULTS }, TRANSCRIPTION_ROLE);
-registerGatewayApprovalJudge({ id: JUDGE_MODEL, gateway: GATEWAY_DEFAULTS });
+registerGatewayMeetingModels({ id: UTILITY_MODEL, via: MODELS.utility.via, gateway: GATEWAY_DEFAULTS }, TRANSCRIPTION_ROLE);
+registerGatewayApprovalJudge({ id: JUDGE_MODEL, via: MODELS.judge.via, gateway: GATEWAY_DEFAULTS });
 
 if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
   throw new Error(
@@ -42,7 +46,16 @@ if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
       "check agent/model/policy.ts, or re-point the `vision` role in agent/model/stacks.ts.",
   );
 }
-registerGatewayImageDescriber({ id: VISION_MODEL });
+registerGatewayImageDescriber({ id: VISION_MODEL, via: MODELS.vision.via });
+
+registerModelConfigCheck(() =>
+  resolvableModels(
+    [...Object.values(MODELS), ...[TRANSCRIPTION_ROLE.primary, TRANSCRIPTION_ROLE.fallback].flatMap((r) => (r?.via === "gateway" ? [{ id: r.id }] : []))],
+    getConfig().loadDomains(),
+    getConfig().loadRoles?.() ?? [],
+    getSettings().models.force,
+  ),
+);
 
 function readAppVersion(): string {
   const version = appPackageJson.version;
@@ -86,7 +99,7 @@ export default defineAgent({
   model: defineDynamic({
     events: {
       "step.started": (() => {
-        const resolve = gatewayModelResolver({ id: PRIMARY_MODEL, gateway: GATEWAY_DEFAULTS });
+        const resolve = gatewayModelResolver({ id: PRIMARY_MODEL, via: MODELS.primary.via, gateway: GATEWAY_DEFAULTS });
         return async (event: unknown, ctx: unknown) => primaryModelSelection(await resolve(event, ctx));
       })(),
     },

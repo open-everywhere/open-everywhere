@@ -130,7 +130,7 @@ export function withCapture<TModel extends RoutableModel>(deps: RoutingDeps<TMod
 
 function captureBackend<TModel extends RoutableModel>(backend: ModelBackend<TModel>, site: CaptureSite): ModelBackend<TModel> {
   return {
-    model: (id: string) => captureModel(backend.model(id), site),
+    model: (id: string, via?: string) => captureModel(via === undefined ? backend.model(id) : backend.model(id, via), site),
     applyOptions: (route, options, ids) => backend.applyOptions(route, options, ids),
   };
 }

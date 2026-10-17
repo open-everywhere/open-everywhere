@@ -63,7 +63,7 @@ function gatewayMeetingCompletion(defaults: GatewayRoutedDefaults): MeetingCompl
   return async (scope, prompt) => {
     const s = resolvedDreamCallSettings(scope, defaults);
     const { text } = await generateText({
-      model: gatewayLanguageModel(s.id),
+      model: gatewayLanguageModel(s.id, s.via),
       prompt,
       ...(s.reasoning !== undefined ? { reasoning: s.reasoning } : {}),
       ...(s.providerOptions !== undefined ? { providerOptions: s.providerOptions as Parameters<typeof generateText>[0]["providerOptions"] } : {}),

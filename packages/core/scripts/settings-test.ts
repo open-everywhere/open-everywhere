@@ -208,7 +208,7 @@ console.log("3 — no env seam survives, and no variable OPE-2411 retired moves 
 
   registerSettings(defineSettings({ models: { stack: "registered-alias", primary: "acme/p", force: "acme/f" } }));
   eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "registered-alias", "[3] a registered stack applies, and no variable outvotes it");
-  eq(at({ OE_PRIMARY_MODEL: "x/y", OE_FORCE_MODEL: "x/z" }).models, { stack: "registered-alias", primary: "acme/p", force: "acme/f", dataPolicy: {} }, "[3] …and the two model pins are registered rows too (the data policy keeps its shipped empty value)");
+  eq(at({ OE_PRIMARY_MODEL: "x/y", OE_FORCE_MODEL: "x/z" }).models, { stack: "registered-alias", primary: "acme/p", force: "acme/f", dataPolicy: {}, targets: { gateway: { kind: "vercel-ai-gateway" } } }, "[3] …and the two model pins are registered rows too (the data policy and the targets keep their shipped values)");
   resetSettingsForTest();
 }
 

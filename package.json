@@ -139,6 +139,7 @@
     "check:model-catalog-liveness": "tsx scripts/model-catalog-liveness-check.ts",
     "seed:model-catalog": "tsx scripts/seed-model-catalog-cache.ts",
     "test:model-catalog-snapshot": "NODE_NO_WARNINGS=1 tsx scripts/model-catalog-snapshot-drift-test.ts",
+    "check:model-config": "tsx scripts/model-config-check.ts",
     "probe:models": "tsx scripts/model-route-probe.ts",
     "e2e:stack": "tsx scripts/e2e-stack-lane.ts",
     "pricing:stacks": "tsx scripts/pricing-stacks.ts",

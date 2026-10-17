@@ -68,7 +68,7 @@ allow("secret", [
 allow("connection", [
   ["DATABASE_URL", "the Postgres DSN, which carries its credentials inline."],
   ["EVE_DOCKER_PATH", "where the docker binary sits on this host."],
-  ["OE_AI_GATEWAY_URL", "the model gateway base URL."],
+  ["OE_AI_GATEWAY_URL", "the model gateway base URL. Deprecated: models.targets.gateway.url replaces it (OPE-2556)."],
   ["OE_NEON_WS_PROXY", "the Neon WebSocket proxy host."],
   ["OE_MEMORY_DIR", "the filesystem root of the git memory backing."],
   ["OE_SQLITE_PATH", "the sqlite file path for the memory and operational stores."],
