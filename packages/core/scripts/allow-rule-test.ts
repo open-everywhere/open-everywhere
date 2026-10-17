@@ -20,7 +20,7 @@ const { registerApprovalJudgeCompletion, resetApprovalJudgeCompletion, clearAppr
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { buildHomeView, runHomeAction } = await import("../agent/home/home-view.js");
-const { RULES_HOME_ACTIONS } = await import("../agent/home/rules-home.js");
+const { RULES_HOME_ACTIONS, ruleHomeRef } = await import("../agent/home/rules-home.js");
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import type { HomeViewer } from "../agent/home/home-view.js";
 
@@ -253,11 +253,14 @@ let ruleSource: PendingActionRow | undefined;
   const page = await buildHomeView(viewer);
   const section = page.find((s) => s.id === "rules.dm");
   const item = section?.blocks.find((b) => b.kind === "item");
-  ok(item?.kind === "item" && item.ref === "dm.open-pull-request.open" && item.actions[0]?.id === RULES_HOME_ACTIONS.remove, "home: the rule is listed with a Remove action");
+  ok(item?.kind === "item" && item.ref === ruleHomeRef("dm.open-pull-request.open") && item.actions[0]?.id === RULES_HOME_ACTIONS.remove, "home: the rule is listed with a Remove action");
+  ok(item?.kind === "item" && /^[0-9a-f]{64}$/.test(item.ref ?? ""), "home: the rule's ref is a line digest, the only ref grammar the Slack Home wire accepts");
   const other: HomeViewer = { ...viewer, personal: { ...viewer.personal!, surface: "D_BOB", surfaceKey: "slack/T1/D_BOB" } };
-  const forged = await runHomeAction(other, RULES_HOME_ACTIONS.remove, "dm.open-pull-request.open");
+  const forged = await runHomeAction(other, RULES_HOME_ACTIONS.remove, ruleHomeRef("dm.open-pull-request.open"));
   ok(forged.notice.includes("nothing to remove") && (await dmRules()).length === 1, "home: another person's page cannot remove this person's rule");
-  const removed = await runHomeAction(viewer, RULES_HOME_ACTIONS.remove, "dm.open-pull-request.open");
+  const bare = await runHomeAction(viewer, RULES_HOME_ACTIONS.remove, "dm.open-pull-request.open");
+  ok(bare.notice.includes("nothing to remove") && (await dmRules()).length === 1, "home: a bare rule id is not a ref and removes nothing");
+  const removed = await runHomeAction(viewer, RULES_HOME_ACTIONS.remove, ruleHomeRef("dm.open-pull-request.open"));
   ok(removed.notice.startsWith("Removed.") && (await dmRules()).length === 0, "home: Remove takes the rule away at once");
   ok((await dmRulesForProposal(ORG, DM, "U_ANA")).length === 0, "home: after Remove the judge reads no rule");
   const removedRows = (await readAudit({ org: ORG } as never)).filter((x) => x.action === "approval.rule.removed");
