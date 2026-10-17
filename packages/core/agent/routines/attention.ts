@@ -4,6 +4,8 @@ import { getSettings } from "../settings/settings.js";
 
 export const ROUTINE_ATTENTION_KIND = "routine.attention";
 
+export const ROUTINE_CHECKIN_ACTION = "routine.checkin";
+
 export type AttentionStage = "warn" | "paused";
 
 export interface RoutineAttentionArgs {

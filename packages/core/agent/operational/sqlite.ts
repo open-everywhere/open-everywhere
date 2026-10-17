@@ -802,6 +802,19 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, data_key)
     );
     CREATE INDEX IF NOT EXISTS meeting_data_expiry ON meeting_data (org_id, expires_at);
+    -- routine_report_thread (OPE-2532): the routine a report thread belongs to, so a reply there is a check-in.
+    -- Keyed by the thread a reply carries; ids only. Each row has its OWN expiry, as meeting_data does.
+    CREATE TABLE IF NOT EXISTS routine_report_thread (
+      org_id          TEXT NOT NULL,
+      channel_key     TEXT NOT NULL,      -- unifiedThreadRef(origin).channelKey
+      thread_key      TEXT NOT NULL,      -- unifiedThreadRef(origin).threadKey
+      routine_surface TEXT NOT NULL,      -- the routine's OWNING surface key
+      routine_id      TEXT NOT NULL,
+      created_at      TEXT NOT NULL,      -- ISO-8601
+      expires_at      TEXT NOT NULL,      -- ISO-8601 (lexicographic = chronological); the row is dead at it
+      PRIMARY KEY (org_id, channel_key, thread_key)
+    );
+    CREATE INDEX IF NOT EXISTS routine_report_thread_expiry ON routine_report_thread (org_id, expires_at);
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -3364,6 +3377,24 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async sweepMeetingData(org, now) {
     return Number(getDb().prepare("DELETE FROM meeting_data WHERE org_id = ? AND expires_at <= ?").run(org, now).changes);
+  },
+
+  async putRoutineReportThread(org, row, at, expiresAt) {
+    const handle = getDb();
+    handle.prepare("DELETE FROM routine_report_thread WHERE org_id = ? AND expires_at <= ?").run(org, at);
+    handle
+      .prepare(
+        `INSERT INTO routine_report_thread (org_id, channel_key, thread_key, routine_surface, routine_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, channel_key, thread_key) DO UPDATE SET routine_surface = excluded.routine_surface, routine_id = excluded.routine_id, created_at = excluded.created_at, expires_at = excluded.expires_at`,
+      )
+      .run(org, row.channelKey, row.threadKey, row.routineSurface, row.routineId, at, expiresAt);
+  },
+
+  async getRoutineReportThread(org, channelKey, threadKey, now) {
+    const row = getDb()
+      .prepare("SELECT routine_surface, routine_id FROM routine_report_thread WHERE org_id = ? AND channel_key = ? AND thread_key = ? AND expires_at > ?")
+      .get(org, channelKey, threadKey, now) as { routine_surface?: string; routine_id?: string } | undefined;
+    return typeof row?.routine_surface === "string" && typeof row.routine_id === "string" ? { channelKey, threadKey, routineSurface: row.routine_surface, routineId: row.routine_id } : null;
   },
 
   async putSlackAttachment(org, fileId, rec, at, ttlMs) {

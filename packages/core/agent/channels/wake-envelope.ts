@@ -326,10 +326,12 @@ export function triggerMessageBody(rendered: string): string | undefined {
 
 const FROM_ATTR_RE = /\bfrom="([^"]*)"/;
 const AUTHOR_ID_ATTR_RE = /\bauthor-id="([^"]*)"/;
+const TRUST_ATTR_RE = /\btrust="([^"]*)"/;
 
 export interface TriggerAuthor {
   readonly from: string;
   readonly authorId?: string;
+  readonly trust?: string;
 }
 
 export function triggerAuthors(rendered: string): readonly TriggerAuthor[] {
@@ -338,9 +340,11 @@ export function triggerAuthors(rendered: string): readonly TriggerAuthor[] {
     const attrs = m[1] ?? "";
     if (!TRIGGER_ATTR_RE.test(attrs)) continue;
     const id = AUTHOR_ID_ATTR_RE.exec(attrs)?.[1];
+    const trust = TRUST_ATTR_RE.exec(attrs)?.[1];
     out.push({
       from: unescapeXml(FROM_ATTR_RE.exec(attrs)?.[1] ?? ""),
       ...(id !== undefined && id.length > 0 ? { authorId: unescapeXml(id) } : {}),
+      ...(trust !== undefined && trust.length > 0 ? { trust: unescapeXml(trust) } : {}),
     });
   }
   return out;

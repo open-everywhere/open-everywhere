@@ -1,3 +1,4 @@
+import { recordRoutineReportThreads, reportRoutineOf } from "../routines/report-thread.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import {
   auditReplyPost,
@@ -124,6 +125,8 @@ export async function postUnifiedReply(
         platform: origin.platform,
         wake: audit?.wakeId,
       });
+      const reportRoutine = reportRoutineOf(audit?.routine, audit?.wakeId);
+      if (reportRoutine !== undefined) await recordRoutineReportThreads({ org: audit?.org, origin, messageId: realId, routine: reportRoutine });
       await recordContainerAnswered(audit?.org, origin);
       if (cover && audit?.wakeId) {
         await recordCoverReply({ org: audit.org, platform: audit.platform, workspace: audit.workspace ?? "", surface: audit.surface ?? "" }, audit.wakeId, cover, provenance.body);

@@ -1110,6 +1110,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
         ...(readsToken !== undefined && readsToken.length > 0 ? { readsToken } : {}),
         ...(row.fire?.posture !== undefined ? { invokerPosture: row.fire.posture } : {}),
         ...(row.fire?.creator !== undefined ? { fireCreator: row.fire.creator } : {}),
+        ...(row.fire?.marker !== undefined ? { fireRoutine: { id: row.fire.marker.id, surfaceKey: row.fire.marker.surfaceKey } } : {}),
         ...(memoryWrites.length > 0 ? { memoryWrites } : {}),
         ...(reportOwed ? { reportOwed: true } : {}),
         ...(quietSignIn && row.fire === undefined ? { quiet: true } : {}),

@@ -137,6 +137,17 @@ export function fireResultCreatorId(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, [WORK_FIRE_CREATOR_ATTR]);
 }
 
+export const WORK_FIRE_ROUTINE_ATTR = "oe_work_fire_routine";
+export const WORK_FIRE_ROUTINE_SURFACE_ATTR = "oe_work_fire_routine_surface";
+
+export function fireResultRoutine(ctx: BindableContext): { readonly id: string; readonly surfaceKey: string; readonly requestId: string } | undefined {
+  const attributes = authOf(ctx)?.attributes;
+  const id = attr(attributes, [WORK_FIRE_ROUTINE_ATTR]);
+  const surfaceKey = attr(attributes, [WORK_FIRE_ROUTINE_SURFACE_ATTR]);
+  const requestId = attr(attributes, ["oe_work_result"]);
+  return id && surfaceKey && requestId ? { id, surfaceKey, requestId } : undefined;
+}
+
 export function attestedFireCreatorId(ctx: BindableContext): string | undefined {
   return attestedFirePrincipal(ctx)?.id;
 }

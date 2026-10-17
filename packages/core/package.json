@@ -2914,6 +2914,10 @@
       "types": "./dist/agent/routines/provider-events.d.ts",
       "default": "./dist/agent/routines/provider-events.js"
     },
+    "./agent/routines/report-thread.js": {
+      "types": "./dist/agent/routines/report-thread.d.ts",
+      "default": "./dist/agent/routines/report-thread.js"
+    },
     "./agent/routines/report.js": {
       "types": "./dist/agent/routines/report.d.ts",
       "default": "./dist/agent/routines/report.js"
@@ -3801,6 +3805,7 @@
     "test:slack-room-membership-pagination": "NODE_NO_WARNINGS=1 tsx scripts/slack-room-membership-pagination-test.ts",
     "test:routine-bound": "NODE_NO_WARNINGS=1 tsx scripts/routine-bound-test.ts",
     "test:routine-attention": "NODE_NO_WARNINGS=1 tsx scripts/routine-attention-test.ts",
+    "test:routine-report-reply": "NODE_NO_WARNINGS=1 tsx scripts/routine-report-reply-test.ts",
     "test:routine-test-run": "NODE_NO_WARNINGS=1 tsx scripts/routine-test-run-test.ts",
     "test:routine-policy": "NODE_NO_WARNINGS=1 tsx scripts/routine-policy-test.ts",
     "test:fire-principal": "NODE_NO_WARNINGS=1 tsx scripts/fire-principal-test.ts",

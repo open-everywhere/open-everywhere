@@ -10,6 +10,7 @@ export interface WakeOriginCodec<O extends UnifiedWakeOrigin = UnifiedWakeOrigin
   carryPlacement?(target: O, source: O): O;
   placementRef?(origin: O): string | undefined;
   threadRootMessage?(origin: O): { readonly channelId: string; readonly messageId: string } | undefined;
+  replyThreadUnder?(origin: O, messageId: string): O | undefined;
 }
 
 const WAKE_ORIGIN_CODECS = processRegistryMap<WakeOriginCodec>("wake-origin-codecs.v1");

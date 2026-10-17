@@ -660,6 +660,17 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, data_key)
    )`,
   `CREATE INDEX IF NOT EXISTS meeting_data_expiry ON meeting_data (org_id, expires_at)`,
+  `CREATE TABLE IF NOT EXISTS routine_report_thread (
+     org_id          text NOT NULL,
+     channel_key     text NOT NULL,
+     thread_key      text NOT NULL,
+     routine_surface text NOT NULL,
+     routine_id      text NOT NULL,
+     created_at      text NOT NULL,
+     expires_at      text NOT NULL,
+     PRIMARY KEY (org_id, channel_key, thread_key)
+   )`,
+  `CREATE INDEX IF NOT EXISTS routine_report_thread_expiry ON routine_report_thread (org_id, expires_at)`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -808,6 +819,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE question_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE room_watch ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE meeting_data ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE routine_report_thread ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE dm_rule ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE attention_state ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
@@ -870,6 +882,7 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS question_ledger_org_isolation ON question_ledger`,
   `DROP POLICY IF EXISTS room_watch_org_isolation ON room_watch`,
   `DROP POLICY IF EXISTS meeting_data_org_isolation ON meeting_data`,
+  `DROP POLICY IF EXISTS routine_report_thread_org_isolation ON routine_report_thread`,
   `DROP POLICY IF EXISTS dm_rule_org_isolation ON dm_rule`,
   `DROP POLICY IF EXISTS attention_state_org_isolation ON attention_state`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
@@ -1006,6 +1019,9 @@ const POLICY_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY meeting_data_org_isolation ON meeting_data
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY routine_report_thread_org_isolation ON routine_report_thread
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY dm_rule_org_isolation ON dm_rule
@@ -1591,6 +1607,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   question_ledger: ["SELECT", "INSERT", "DELETE"],
   room_watch: ["SELECT", "INSERT", "UPDATE"],
   meeting_data: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  routine_report_thread: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   dm_rule: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   attention_state: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -4010,6 +4027,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async sweepMeetingData(org, now) {
       const { rows } = await client.query("DELETE FROM meeting_data WHERE org_id = $1 AND expires_at <= $2 RETURNING data_key", [org, now]);
       return rows.length;
+    },
+
+    async putRoutineReportThread(org, row, at, expiresAt) {
+      await client.query("DELETE FROM routine_report_thread WHERE org_id = $1 AND expires_at <= $2", [org, at]);
+      await client.query(
+        `INSERT INTO routine_report_thread (org_id, channel_key, thread_key, routine_surface, routine_id, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (org_id, channel_key, thread_key) DO UPDATE SET routine_surface = EXCLUDED.routine_surface, routine_id = EXCLUDED.routine_id, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at`,
+        [org, row.channelKey, row.threadKey, row.routineSurface, row.routineId, at, expiresAt],
+      );
+    },
+
+    async getRoutineReportThread(org, channelKey, threadKey, now) {
+      const { rows } = await client.query(
+        "SELECT routine_surface, routine_id FROM routine_report_thread WHERE org_id = $1 AND channel_key = $2 AND thread_key = $3 AND expires_at > $4",
+        [org, channelKey, threadKey, now],
+      );
+      const r = (rows as { routine_surface: string; routine_id: string }[])[0];
+      return r ? { channelKey, threadKey, routineSurface: r.routine_surface, routineId: r.routine_id } : null;
     },
 
     async putSlackAttachment(org, fileId, rec, at, ttlMs) {

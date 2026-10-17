@@ -1,4 +1,4 @@
-import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireResultCreatorId, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
+import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireResultCreatorId, fireResultRoutine, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
@@ -56,6 +56,7 @@ export interface ReplyAudit {
   readonly surfaceMode?: SessionMode;
   readonly principalId?: string;
   readonly creatorId?: string;
+  readonly routine?: { readonly id: string; readonly surfaceKey: string; readonly requestId: string };
   readonly sessionId?: string;
   readonly wakeId?: string;
   readonly turnId?: string;
@@ -69,6 +70,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
   const turnId = currentTurnId(ctx);
   const attestedCreatorId = attestedFireCreatorId(ctx);
   const creatorId = attestedCreatorId ?? fireResultCreatorId(ctx);
+  const routine = fireResultRoutine(ctx);
   return {
     org: p.org,
     platform: p.platform,
@@ -84,6 +86,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
             : resultBinding.principalId
           : bindFrom(ctx).principalId,
     ...(creatorId ? { creatorId } : {}),
+    ...(routine ? { routine } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(wakeId ? { wakeId } : {}),
     ...(turnId ? { turnId } : {}),

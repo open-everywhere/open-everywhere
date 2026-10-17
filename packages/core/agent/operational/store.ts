@@ -58,6 +58,7 @@ export const OPERATIONAL_TABLES = [
   "attention_state",
   "dm_rule",
   "meeting_data",
+  "routine_report_thread",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -853,6 +854,13 @@ export interface PersonalWatchRow {
   readonly updatedAt: string;
 }
 
+export interface RoutineReportThreadRow {
+  readonly channelKey: string;
+  readonly threadKey: string;
+  readonly routineSurface: string;
+  readonly routineId: string;
+}
+
 export interface RoomWatchRow {
   readonly surfaceKey: string;
   readonly stateJson: string;
@@ -1218,6 +1226,9 @@ export interface OperationalStore {
   getMeetingData(org: string, key: string, now: string): Promise<string | null>;
   deleteMeetingData(org: string, key: string): Promise<boolean>;
   sweepMeetingData(org: string, now: string): Promise<number>;
+
+  putRoutineReportThread(org: string, row: RoutineReportThreadRow, at: string, expiresAt: string): Promise<void>;
+  getRoutineReportThread(org: string, channelKey: string, threadKey: string, now: string): Promise<RoutineReportThreadRow | null>;
 
   putSlackAttachment(org: string, fileId: string, rec: SlackAttachmentRow, at: string, ttlMs: number): Promise<void>;
   getSlackAttachment(org: string, fileId: string): Promise<SlackAttachmentRow | null>;

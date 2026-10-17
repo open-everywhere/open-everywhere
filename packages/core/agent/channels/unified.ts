@@ -1,10 +1,11 @@
+import { checkInFromReportReply, vouchedReplier } from "../routines/report-thread.js";
 import { auditErrorDetail, scrubAuditText } from "../audit/tool-action.js";
 import { defineChannel, GET, POST } from "eve/channels";
 import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
 import { defineState } from "eve/context";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { auditSurfaceModeStamp, deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, WORK_FIRE_CREATOR_ATTR, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { auditSurfaceModeStamp, deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, WORK_FIRE_CREATOR_ATTR, WORK_FIRE_ROUTINE_ATTR, WORK_FIRE_ROUTINE_SURFACE_ATTR, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../identity/frozen-surface-binding.internal.js";
 import { getConfig } from "../access/config.js";
 import "../access/eve-patch-probe-boot.js";
@@ -686,6 +687,14 @@ export async function divertToUnifiedWindow(
     ...(input.window.addressing ? { addressing: input.window.addressing } : {}),
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
+  const checkInAuthority = target.authority;
+  const checkInMember =
+    input.internalDispatch !== true && checkInAuthority !== undefined && checkInAuthority.requester.kind === "requester" && !checkInAuthority.nonMemberWake
+      ? vouchedReplier(input.message, checkInAuthority.requester.principalId)
+      : undefined;
+  if (checkInMember !== undefined) {
+    await checkInFromReportReply({ org: deploymentOrg(), origin: input.window.origin, principalId: checkInMember });
+  }
   const message = input.message;
   const deliveredAuth = auth;
   try {
@@ -1012,6 +1021,7 @@ export function workResultAttributes(input: {
   readonly readsToken?: string;
   readonly invokerPosture?: InvokerPosture;
   readonly fireCreator?: string;
+  readonly fireRoutine?: { readonly id: string; readonly surfaceKey: string };
   readonly memoryWrites?: readonly DurableMemoryWrite[];
   readonly reportOwed?: boolean;
   readonly quiet?: boolean;
@@ -1021,6 +1031,7 @@ export function workResultAttributes(input: {
     [OE_REQUESTER_ATTR]: input.requester.kind === "requester" ? input.requester.principalId : REQUESTER_UNVERIFIED,
     ...(input.invokerPosture !== undefined ? { [INVOKER_POSTURE_ATTR]: input.invokerPosture } : {}),
     ...(input.fireCreator !== undefined ? { [WORK_FIRE_CREATOR_ATTR]: input.fireCreator } : {}),
+    ...(input.fireRoutine !== undefined ? { [WORK_FIRE_ROUTINE_ATTR]: input.fireRoutine.id, [WORK_FIRE_ROUTINE_SURFACE_ATTR]: input.fireRoutine.surfaceKey } : {}),
   };
   if (input.requester.kind === "unverified" && input.requester.candidates !== undefined) {
     attributes[OE_REQUESTER_CANDIDATES_ATTR] = JSON.stringify(input.requester.candidates);
@@ -1053,6 +1064,7 @@ export async function dispatchWorkResult(input: {
   readonly readsToken?: string;
   readonly invokerPosture?: InvokerPosture;
   readonly fireCreator?: string;
+  readonly fireRoutine?: { readonly id: string; readonly surfaceKey: string };
   readonly memoryWrites?: readonly DurableMemoryWrite[];
   readonly reportOwed?: boolean;
   readonly quiet?: boolean;

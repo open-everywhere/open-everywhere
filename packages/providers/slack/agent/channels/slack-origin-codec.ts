@@ -22,4 +22,9 @@ export const slackWakeOriginCodec: WakeOriginCodec<SlackOrigin> = {
     const ts = typeof origin.threadTs === "string" && origin.threadTs.length > 0 ? origin.threadTs : typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : undefined;
     return ts === undefined ? undefined : { channelId: origin.channelId, messageId: ts };
   },
+  replyThreadUnder: (origin, messageId) => {
+    if (typeof origin.threadTs === "string" && origin.threadTs.length > 0) return undefined;
+    const anchor = typeof origin.replyAnchorTs === "string" && origin.replyAnchorTs.length > 0 ? origin.replyAnchorTs : messageId;
+    return { platform: "slack", channelId: origin.channelId, threadTs: anchor };
+  },
 };

@@ -3,12 +3,12 @@ import { shortUtc } from "./session-grant.js";
 import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { getRoutine, updateRoutine } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
-import { attentionResetPatch, attentionWarnRuns, isPausedForCheckIn, type RoutineAttentionArgs } from "../routines/attention.js";
+import { attentionResetPatch, attentionWarnRuns, isPausedForCheckIn, ROUTINE_CHECKIN_ACTION, type RoutineAttentionArgs } from "../routines/attention.js";
 import { appendAudit } from "../audit/audit.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
-export const ROUTINE_CHECKIN_ACTION = "routine.checkin";
+export { ROUTINE_CHECKIN_ACTION };
 
 const routineAttention: ActionKind<RoutineAttentionArgs> = {
   kind: "routine.attention",

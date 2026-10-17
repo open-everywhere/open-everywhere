@@ -272,15 +272,33 @@ since a person last checked in on it.
   with a **Resume** card. A Resume press starts it again with a fresh count.
 
 A check-in is a press of either card, or a carded `edit_routine`, `add_routine_rule`,
-`remove_routine_rule` or `enable_routine` on that routine. `enable_routine` also lifts the pause. The
+`remove_routine_rule` or `enable_routine` on that routine. `enable_routine` also lifts the pause. A
+member's **reply in the routine's report thread** is a check-in too: it starts the count again, as a
+Keep going press does. The
 count covers `cron`, `interval` and only-on-change routines, durable jobs included, and silent routines
 too: the card is the only sign a silent routine still runs. A one-time routine runs once, and an
 event routine fires because something happened, so neither is counted.
 
 Some limits are deliberate:
 
-- **A reply does not count as a check-in yet.** Nothing maps a routine's post back to the routine, so a
-  reply in its thread cannot be matched to it.
+- **A reply counts only where the agent can hear it.** The reply must come from a person whom the host's
+  trust gate rated `principal` or `peer` on that wake. A bot, an author with no id, and an author in a
+  room the gate did not confirm as internal render `unauth` or `relay` and do not count. In an internal
+  room the gate rates by refutation: on Slack a guest or an outside account is refuted and does not
+  count, but a member lookup that cannot answer leaves the room's verdict in place, so that author
+  counts; on Discord and Notion only the operator's author-trust register refutes an identified person.
+  This is close to the Keep going press's `member` bar, and not the same check. The reply
+  must land in the report's own thread, for 30 days after the report. On Slack that is the thread under
+  the report or the thread that holds it. On GitHub and Notion it is the issue or the discussion the
+  report is in. On Linear a top-level report comment keys on the issue, so a member's top-level comment
+  on that issue counts, and a reply nested under the report does not. A top-level message in a Slack
+  room does not count. In a room that hears only @mentions, only a reply that mentions the agent counts.
+  A Teams or Discord report counts only a reply inside a thread that already holds it. Slack is the one
+  surface a test proves end to end; the other surfaces use the same shared rule.
+- **A reply never resumes a paused routine.** Only Resume or `enable_routine` turns it back on.
+- **A reply counts on the default delegated path only.** A routine fire on a deployment with
+  `delegation.oneshotAgent` off, or in a room with no seat, posts through the per-surface reply door,
+  which records no report thread.
 - **A routine never pauses without a posted warning.** A room that cannot take a card (a Teams
   routine today, or a surface with no approval-card path) gets no warning and so never pauses.
 - **A press decides from the routine as it is now.** A stale Resume card never revives a routine that
@@ -2923,6 +2941,15 @@ over-budget tick is not counted. A pause writes `status: "disabled"` with a host
 `disabledReason` and a `routine.disabled` row that carries `checkIn: true`. A press writes a
 `routine.checkin` row. Both cards are the `routine.attention` approval kind, member tier, with no
 clock expiry.
+
+A reply check-in (OPE-2532, `routines/report-thread.ts`) has two halves. The settlement of a fire's
+work request stamps the routine on the seat's result wake (`oe_work_fire_routine`). When the seat's
+`reply` under that same wake lands, the unified reply door writes one `routine_report_thread` row for
+each thread a reply to the post would carry, keyed like `unifiedThreadRef` and live for 30 days. A
+reply under any other wake records nothing. On the inbound side, `divertToUnifiedWindow` reads the row
+for each thread-scoped wake whose requester is one person with no non-member stamp and whose trigger
+messages carry the `principal` or `peer` trust tier, and clears the record of an active routine. It writes a `routine.checkin` row with `detail.via: "reply"`.
+The rows hold ids only, never a message's words.
 
 ### The self-check-in doctrine is advice, not a bound
 
