@@ -35,6 +35,10 @@ function run(env: Record<string, string>): { code: number; out: string } {
   ok(r.out.includes("dry mode"), "dry mode names itself in the summary line");
   ok(r.out.includes("skip breakdown:"), "the summary carries a skip breakdown line");
   ok(/skip breakdown: \d+ missing-capability$/m.test(r.out), `the dry-mode breakdown names only missing-capability — got:\n${r.out}`);
+  const board = r.out.indexOf("## Ship legs");
+  const reader = r.out.indexOf("## Reader check");
+  ok(board >= 0 && reader > board, `the reader check's section prints after the board — got:\n${r.out}`);
+  ok(/0 posted text\(s\) read on 0 leg\(s\) — 0 flag\(s\)\. Graded by nobody/.test(r.out), "…and a dry run's section says nothing was read");
 }
 
 {

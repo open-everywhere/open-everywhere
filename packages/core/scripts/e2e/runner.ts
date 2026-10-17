@@ -61,6 +61,7 @@ import { measureDeploymentClockSkew, renderClockSkewLine } from "./clock-skew.js
 import { captureWakeEvidence, renderLegWakeEvidence, writeWakeEvidence, type LegWakeEvidence } from "./wake-evidence.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 import { renderObservationSummary, type Observation } from "./observations.js";
+import { PostedTextCollector, calibrateReaderJudge, renderReaderReport, resolveReaderJudge, reviewPostedTexts, wrapScenarioDrivers, type PostedText } from "./reader-check.js";
 import { createPacingGate, paceMaybe, renderPacingLine } from "./pacing.js";
 import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
 import { fmtMs } from "./transcript-timings.js";
@@ -106,6 +107,8 @@ async function main(): Promise<void> {
   const teams = resolveTeams();
   const synthetic = resolveSynthetic();
   const judge = resolveJudge();
+  const readerJudge = resolveReaderJudge();
+  const postedTexts: PostedText[] = [];
 
   const slackPrivate = resolveSlackPrivate();
   const slackChannelB = resolveSlackChannelB();
@@ -416,6 +419,7 @@ async function main(): Promise<void> {
         judgedLlm++;
       }
     };
+    const readerCollector = new PostedTextCollector(scenario.id, scenario.surface);
     const ctx: ScenarioContext = {
       slack: slackDriver,
       discord: discordDriver,
@@ -504,6 +508,9 @@ async function main(): Promise<void> {
       recordTiming(record: TimingsRecord): void {
         timingRecords.push(record);
       },
+      readerText(text: string, opts?: { readonly card?: boolean }): void {
+        readerCollector.add(text, opts);
+      },
     };
 
     const startedAt = Date.now();
@@ -511,7 +518,7 @@ async function main(): Promise<void> {
     const legSinceIso = new Date().toISOString();
     const boardRow = board.length;
     try {
-      await withTimeout(scenario.run(ctx), scenario.timeoutMs);
+      await withTimeout(scenario.run(wrapScenarioDrivers(ctx, readerCollector)), scenario.timeoutMs);
       passed++;
       const judgeTag = judgeBannerTag({ llm: judgedLlm, fallback: judgedFallback, reasons: [...fallbackReasons] });
       const reportTag = reported > 0 ? `, ${reported} judged-reported (${reportedRed} red, non-gating)` : "";
@@ -556,6 +563,8 @@ async function main(): Promise<void> {
       }
     }
 
+    postedTexts.push(...readerCollector.texts());
+
     if (liveRun) {
       const legStatus = board[boardRow]?.status ?? "UNKNOWN";
       if (legStatus === "RED") await new Promise((resolve) => setTimeout(resolve, WAKE_EVIDENCE_SETTLE_MS));
@@ -571,6 +580,15 @@ async function main(): Promise<void> {
 
   const gaps = boardGaps(board);
   for (const line of renderBoard(board)) console.log(line);
+  try {
+    const calibration = readerJudge && postedTexts.length > 0 ? await calibrateReaderJudge(readerJudge) : undefined;
+    const review = await reviewPostedTexts(postedTexts, { ...(readerJudge ? { judge: readerJudge } : {}), ...(calibration ? { calibration } : {}) });
+    console.log("");
+    for (const line of renderReaderReport(review)) console.log(line);
+  } catch (err) {
+    console.log("");
+    console.log(`## Reader check\n\nThe reader check did not complete (${err instanceof Error ? err.message : String(err)}). It never gates, so the run goes on.`);
+  }
   if (gaps.missing.length > 0 || gaps.unknown.length > 0) {
     console.error(
       `✗ e2e driver pack: the board does not match the roster — missing rows: ${gaps.missing.join(", ") || "none"}; ` +

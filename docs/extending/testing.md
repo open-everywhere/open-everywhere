@@ -936,6 +936,48 @@ So the post-deploy smoke is split:
 The rule generalises: **tests prove the logic journey; evals prove the model.** Do not put a judge
 inside a code gate — it makes the suite slow, non-deterministic, and eventually ignored.
 
+### The reader check reads what the agent posted (OPE-2485)
+
+Every live e2e leg sees the agent post text: replies, cards, notices, recaps. The runner collects
+that text per leg and reads it the way an ordinary office worker would. Its flags print as their own
+section, `## Reader check`, directly under the `## Ship legs` board, with the leg, the ruling, the
+quote and why. **A reader flag is a defect to fix. It never reds a leg and never moves the exit
+code.**
+
+- **One rubric file.** `packages/core/scripts/e2e/reader-rubric.ts` holds the six reader rulings, the
+  deterministic rules that cite them, and the judge prompt rendered from them. The shared
+  person-text detector (`agent/channels/person-text.ts`) is one rule in it, not a second copy.
+- **Fixtures prove the rubric.** `reader-fixtures.ts` holds before/after pairs from the text sweep:
+  every "before" must flag and every rewrite must pass. With the rules removed every "before" passes,
+  so the fixtures measure the rubric and nothing else (`npm run test:reader-check`). A new rule
+  needs a fixture that only it catches.
+- **Two graders.** The rules always run, with no key and no network. The judge model (the shipped
+  stack's `utility` role) joins only when `AI_GATEWAY_API_KEY` is reachable, and only after it passes
+  its own fixtures in one calibration call at the start of the read. A judge that misses a "before"
+  or flags a rewrite is dropped for the run, and the section's count line says which fixture it got
+  wrong. After calibration the judge costs at most one call per leg that posted text, and a text
+  already read is not sent again. Each call times out after 60 seconds, and the read stops calling
+  the judge after five minutes, so a stalled gateway cannot hold the run's exit.
+- **What is collected.** Each leg's drivers are wrapped, so every Slack, Discord, Teams and GitHub
+  message the leg reads back counts when its author field marks it as the agent's (`botId`,
+  `authorIsBot`, `fromApplicationId`, `authorType: "Bot"`). A Linear or Notion comment counts when
+  its author is the driver's own `appUserId` or `botUserId`. A driver that `withChannel` returns is
+  wrapped too. Other text a leg reads (an email, a page) it hands in with `ctx.readerText(text)`; no
+  leg does yet. A string of 8 or more characters that a leg passes to a driver call is dropped when a
+  harvested message carries the same words. A short harness post, or one the platform rewrites, is
+  not caught, and the Discord harness posts with a bot token. Another app's bot message in the same
+  room counts too. Both are known false flags.
+- **Room news is not noise.** A recap quotes the room, and a room talks about ledgers, backends and
+  colleagues who will report back. The rules are narrowed toward the agent's own words, and
+  `READER_CONTROLS` pins room-news sentences that must pass.
+- **The instructions get the same pass.** `npm run test:reader-instructions` reads every quoted
+  phrase in the rendered seat and worker instructions, both `instructions.md` copies and every tool
+  description. A phrase the rubric flags must sit in a clause that tells the model not to use it.
+  This test gates, because it reads source, not a model.
+
+The soak tests call the same check. `reviewPostedTexts`, `resolveReaderJudge`,
+`calibrateReaderJudge` and `renderReaderReport` in `reader-check.ts` are its whole surface.
+
 ## The tier no test can reach: deployed state
 
 Every tier above proves something about the CODE. None can prove the deployment holds the state that

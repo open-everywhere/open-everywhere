@@ -130,15 +130,16 @@ export function parseJudgeResponse(content: string): { pass: boolean; reason: st
   return { pass: rec.pass, reason };
 }
 
-export function gatewayTransport(cfg: { key: string; base: string; model: string }): JudgeTransport {
+export function gatewayTransport(cfg: { key: string; base: string; model: string; maxTokens?: number; timeoutMs?: number }): JudgeTransport {
   return async (system, user) => {
     const res = await fetch(`${cfg.base}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${cfg.key}`, "content-type": "application/json" },
+      ...(cfg.timeoutMs !== undefined ? { signal: AbortSignal.timeout(cfg.timeoutMs) } : {}),
       body: JSON.stringify({
         model: cfg.model,
         temperature: 0,
-        max_tokens: 200,
+        max_tokens: cfg.maxTokens ?? 200,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -146,7 +147,8 @@ export function gatewayTransport(cfg: { key: string; base: string; model: string
       }),
     });
     if (!res.ok) throw new Error(`gateway HTTP ${res.status}`);
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const body = (await res.json()) as { choices?: { message?: { content?: string }; finish_reason?: string }[] };
+    if (body.choices?.[0]?.finish_reason === "length") throw new Error("gateway output cut off at max_tokens");
     return body.choices?.[0]?.message?.content ?? "";
   };
 }

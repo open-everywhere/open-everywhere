@@ -3979,6 +3979,7 @@
     "test:decision-wake": "NODE_NO_WARNINGS=1 tsx scripts/decision-wake-test.ts",
     "test:seat-chatter": "NODE_NO_WARNINGS=1 tsx scripts/seat-chatter-test.ts",
     "test:voice": "NODE_NO_WARNINGS=1 tsx scripts/voice-test.ts",
+    "test:reader-instructions": "NODE_NO_WARNINGS=1 tsx scripts/reader-instructions-test.ts",
     "test:self-dispatch": "NODE_NO_WARNINGS=1 tsx scripts/self-dispatch-test.ts",
     "test:transcript-tool": "NODE_NO_WARNINGS=1 tsx scripts/transcript-tool-test.ts",
     "test:source-scoped-mount": "NODE_NO_WARNINGS=1 tsx scripts/source-scoped-mount-test.ts",

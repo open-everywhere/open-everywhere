@@ -354,6 +354,7 @@ export interface ScenarioContext {
   fixtureMissing(reason: string): never;
   log(line: string): void;
   observe(line: string): void;
+  readerText?(text: string, opts?: { readonly card?: boolean }): void;
   recordTiming(record: TimingsRecord): void;
 }
 

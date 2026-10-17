@@ -193,6 +193,7 @@
     "test:roster-build": "NODE_NO_WARNINGS=1 tsx scripts/roster-build-test.ts",
     "test:e2e-runner-zero-scenario": "NODE_NO_WARNINGS=1 tsx scripts/e2e-runner-zero-scenario-test.ts",
     "test:e2e-board": "NODE_NO_WARNINGS=1 tsx scripts/e2e-board-test.ts",
+    "test:reader-check": "NODE_NO_WARNINGS=1 tsx scripts/reader-check-test.ts",
     "test:e2e-pacing": "NODE_NO_WARNINGS=1 tsx scripts/e2e-pacing-test.ts",
     "test:pr-walkthrough-facts": "tsx scripts/pr-walkthrough-facts-test.ts",
     "test:notion-connectors": "tsx scripts/notion-connectors-test.ts",

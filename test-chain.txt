@@ -205,3 +205,4 @@ test:google-chat-integration
 test:personal-browser-fence
 test:personal-browser-recorder
 test:card-budget
+test:reader-check
