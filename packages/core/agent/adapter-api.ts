@@ -220,6 +220,7 @@ export { readPersonOptOut, auditPersonOptOutRefusal, PERSON_OPT_OUT_SHORTCUT_NOT
 export type { PersonOptOutState, PersonOptOutWhere } from "./identity/person-opt-out.js";
 export { RULES_HOME_ACTIONS } from "./home/rules-home.js";
 export { WATCH_HOME_ACTIONS } from "./home/watch-home.js";
+export { DOING_HOME_ACTIONS } from "./home/doing-home.js";
 export { coverForWake } from "./cover/wake.js";
 export { readDomainMemory, renderMemoryMarkdown, domainsNamingSilo, isLineDigest } from "./memory/visible.js";
 export { memoryLineForReader } from "./memory/provenance-mark.js";

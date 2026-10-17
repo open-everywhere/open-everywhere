@@ -175,14 +175,14 @@ Source: `packages/core/agent/access/lean-seat.ts#DM_SEAT_CARVE_IN`,
 Not to be confused with: the roster itself. The carve-in is a property of the SEAT, not of the tool.
 
 **worker** (also **delegated child**) — a `task`-grain child of a conversation's work session. It is
-the **WIDE** surface: the seat's kit plus **94** further tools, with two exact exceptions. It holds
+the **WIDE** surface: the seat's kit plus **95** further tools, with two exact exceptions. It holds
 exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 93 of the 94, and
-it does not hold the whole seat kit (see the worker withheld set). The 94 include `bash`, `aws`, `write_file`,
+it does not hold the whole seat kit (see the worker withheld set). The 95 include `bash`, `aws`, `write_file`,
 `open_pull_request`, `checkout_repo`, `web_fetch`, `request_credential_grant`, `ask_question`
 and every read tool the seat does not hold. It also holds this conversation's own lent `grant__…` tools, which are minted per
 grant row and so appear in no static count. The count is identical for a standing parent and a thread
 parent.
-Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (94 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (94 entries).
+Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (95 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (95 entries).
 Not to be confused with: the **seat**. 🔴 **A top-level session does its real work by DELEGATING.
 The parent does NOT hold the wide toolset.** Any claim that the parent is wide and the child is
 narrow is backwards. Also not to be confused with a **Claude Code subagent**, which is repo

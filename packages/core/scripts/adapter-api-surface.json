@@ -148,6 +148,7 @@
     "DEFAULT_TIMESTAMP_PRECISION_MS",
     "DEFAULT_TOTAL_BUDGET_MS",
     "DEPLOY_HOST_PLACEHOLDER",
+    "DOING_HOME_ACTIONS",
     "DeactivationConfirmation",
     "DeactivationReport",
     "DecisionFeedbackSurface",

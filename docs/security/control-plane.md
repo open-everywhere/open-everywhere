@@ -1357,7 +1357,9 @@ Each item is the card's plain sentence (never its detail lines) and a link to th
 DM-only and reads only the asking person's own queue: it takes no person argument, so the acting
 principal is the query key, and an unattended fire reads nothing. A card is matched on the platform
 it was posted to. A link is not a permission: the click core still refuses a click from outside the
-card's own room.
+card's own room. The person's one list of what the agent does for them, `doing_for_me` and the Home
+tab's "What I do for you" (OPE-2522), carries this queue as its last part. See
+[Everything I do for you](../capabilities/proactivity-and-routines.md#everything-i-do-for-you-one-list-per-person).
 Pending actions lapse after 24 hours by default (`approvals.ttlHours`) and can no longer be
 approved or rejected once expired.
 

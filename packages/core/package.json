@@ -1834,6 +1834,10 @@
       "types": "./dist/agent/email/transport.d.ts",
       "default": "./dist/agent/email/transport.js"
     },
+    "./agent/home/doing-home.js": {
+      "types": "./dist/agent/home/doing-home.d.ts",
+      "default": "./dist/agent/home/doing-home.js"
+    },
     "./agent/home/home-view.js": {
       "types": "./dist/agent/home/home-view.d.ts",
       "default": "./dist/agent/home/home-view.js"
@@ -3138,6 +3142,10 @@
       "types": "./dist/agent/status/attention.d.ts",
       "default": "./dist/agent/status/attention.js"
     },
+    "./agent/status/doing-for-me.js": {
+      "types": "./dist/agent/status/doing-for-me.d.ts",
+      "default": "./dist/agent/status/doing-for-me.js"
+    },
     "./agent/status/status.js": {
       "types": "./dist/agent/status/status.d.ts",
       "default": "./dist/agent/status/status.js"
@@ -3285,6 +3293,10 @@
     "./agent/tools/dm_person.js": {
       "types": "./dist/agent/tools/dm_person.d.ts",
       "default": "./dist/agent/tools/dm_person.js"
+    },
+    "./agent/tools/doing_for_me.js": {
+      "types": "./dist/agent/tools/doing_for_me.d.ts",
+      "default": "./dist/agent/tools/doing_for_me.js"
     },
     "./agent/tools/edit_reply.js": {
       "types": "./dist/agent/tools/edit_reply.d.ts",
@@ -3902,6 +3914,7 @@
     "test:approval-group": "NODE_NO_WARNINGS=1 tsx scripts/approval-group-test.ts",
     "test:allow-rule": "NODE_NO_WARNINGS=1 tsx scripts/allow-rule-test.ts",
     "test:attention-queue": "NODE_NO_WARNINGS=1 tsx scripts/attention-queue-test.ts",
+    "test:doing-for-me": "NODE_NO_WARNINGS=1 tsx scripts/doing-for-me-test.ts",
     "test:scope-key": "NODE_NO_WARNINGS=1 tsx scripts/scope-key-test.ts",
     "test:approval-tools": "NODE_NO_WARNINGS=1 tsx scripts/approval-tools-test.ts",
     "test:purge": "NODE_NO_WARNINGS=1 tsx scripts/purge-test.ts",

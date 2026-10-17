@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { capFixtureFor, resolveCapFixtureCap, roomIdFor } from "./fixture-inventory-lib.js";
 import { A2A_AGENTS_FILE, loadAppA2aAgents, loadAppSpendBudgets } from "./app-config.js";
@@ -6064,6 +6065,62 @@ export const SCENARIOS: readonly Scenario[] = [
       const restore = await synthetic.slash("watch less", { teamId });
       const restoreText = decodeSlackEphemeralText(restore.body);
       ctx.gate(restore.status === 200 && watchDialAnswerSets(restoreText, "less"), `S-WATCH: the dial is restored to less (HTTP ${restore.status}) — answer head: "${restoreText.slice(0, 160)}"`);
+    },
+  },
+
+  {
+    id: "S-DOING",
+    title: "What I do for you (OPE-2522): a signed Home-tab Pause on the person's own watch turns it off, a Pause naming nothing of theirs changes nothing",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 300_000,
+    judged: false,
+    run: async (ctx) => {
+      const synthetic = ctx.synthetic!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-DOING gates on home.publish, personal_watch.dial.set and routine.paused rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const { teamId } = await ctx.slack!.identity();
+      const person = synthetic.adminUserId;
+      const ownRow = (r: AuditWireEntry): boolean => r.principalId === person || r.principalId === `slack/${teamId}/${person}`;
+      const watchRef = createHash("sha256").update("doing:watch:chief-of-staff").digest("hex");
+
+      const reset = await synthetic.slash("watch less", { teamId });
+      ctx.gate(reset.status === 200 && watchDialAnswerSets(decodeSlackEphemeralText(reset.body), "less"), `S-DOING: /oe watch less starts the person's watch (HTTP ${reset.status})`);
+
+      const openedAt = await presenceSince(ctx, "S-DOING open");
+      const opened = await synthetic.homeOpened({ teamId });
+      ctx.gate(opened.status === 200, `S-DOING: the signed app_home_opened is acknowledged (HTTP ${opened.status})`);
+      const published = await pollOptional(
+        async () => (await read({ sinceIso: openedAt, actions: ["home.publish"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["ok"] === true),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-DOING: the person's home.publish row" },
+      );
+      ctx.gate(published !== undefined, "S-DOING: the page with the list was published (a home.publish row with ok:true names the person)");
+
+      const forgedAt = await presenceSince(ctx, "S-DOING forged pause");
+      const forged = await synthetic.homeSubmit({ teamId, action: "doing.pause", ref: "1".repeat(64) });
+      ctx.gate(forged.status === 200, `S-DOING: the forged Pause submission is acknowledged (HTTP ${forged.status})`);
+      const answered = await pollOptional(
+        async () => (await read({ sinceIso: forgedAt, actions: ["home.publish"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["notice"] === true),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-DOING: the republish after the forged Pause" },
+      );
+      ctx.gate(answered !== undefined, "S-DOING: the forged Pause was answered by republishing the page with a notice");
+      const pausedRows = (await read({ sinceIso: forgedAt, actions: ["routine.paused", "personal_watch.dial.set"], limit: 50 })).filter(ownRow);
+      ctx.gate(pausedRows.length === 0, `S-DOING: a digest that names nothing on the person's list paused nothing (${pausedRows.length} routine.paused / personal_watch.dial.set row(s))`);
+
+      const pauseAt = await presenceSince(ctx, "S-DOING pause watch");
+      const pause = await synthetic.homeSubmit({ teamId, action: "doing.pause", ref: watchRef });
+      ctx.gate(pause.status === 200, `S-DOING: the signed Pause on the watch item is acknowledged (HTTP ${pause.status})`);
+      const noneRow = await pollOptional(
+        async () => (await read({ sinceIso: pauseAt, actions: ["personal_watch.dial.set"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["dial"] === "none" && r.detail?.["via"] === "app-home"),
+        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-DOING: the Pause's personal_watch.dial.set row" },
+      );
+      ctx.gate(noneRow !== undefined, "S-DOING: Pause on the person's own watch item turned it off (a personal_watch.dial.set row, dial none, via app-home)");
+
+      const restore = await synthetic.slash("watch less", { teamId });
+      ctx.gate(restore.status === 200 && watchDialAnswerSets(decodeSlackEphemeralText(restore.body), "less"), `S-DOING: the dial is restored to less (HTTP ${restore.status})`);
     },
   },
 

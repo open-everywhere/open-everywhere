@@ -399,7 +399,9 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      not stored. Needs the `reactions:read` scope from Step 2. Omit these and the feature is
      silently off — nothing else changes.
    - `app_home_opened` — **the Home tab page.** When a person opens the agent's Home tab, the agent
-     publishes their private page: what it remembers about them, with Edit, Forget and Export, the
+     publishes their private page: everything it does for them on its own, with Pause and Remove (see
+     [Everything I do for you](../../capabilities/proactivity-and-routines.md#everything-i-do-for-you-one-list-per-person)),
+     what it remembers about them, with Edit, Forget and Export, the
      rules they kept with "Approve, and allow things like this", with Remove (see
      [Pre-approval rules § 7](../../how-it-works/pre-approval-rules.md#7-approve-and-allow-things-like-this)),
      and what their domains know (see [Memory you can see](../../capabilities/memory.md#memory-you-can-see)).

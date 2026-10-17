@@ -16,6 +16,7 @@ export interface HomeViewer {
   readonly platform: string;
   readonly workspace: string;
   readonly principalId: string;
+  readonly enterprise?: string;
   readonly personal?: Partition;
   readonly trust: "internal" | "external";
   readonly domains: readonly HomeDomainMembership[];
@@ -37,7 +38,7 @@ export type HomeBlock =
   | { readonly kind: "heading"; readonly text: string }
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "note"; readonly text: string }
-  | { readonly kind: "item"; readonly text: string; readonly label?: string; readonly ref?: string; readonly actions: readonly HomeItemAction[] }
+  | { readonly kind: "item"; readonly text: string; readonly label?: string; readonly ref?: string; readonly actions: readonly HomeItemAction[]; readonly link?: string }
   | { readonly kind: "buttons"; readonly buttons: readonly HomeButton[] }
   | { readonly kind: "room"; readonly text: string; readonly room: HomeRoom }
   | { readonly kind: "divider" };

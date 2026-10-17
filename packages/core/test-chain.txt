@@ -525,3 +525,4 @@ test:bot-ask
 test:reader-instructions
 test:agent-setup
 test:exit-after-flush
+test:doing-for-me

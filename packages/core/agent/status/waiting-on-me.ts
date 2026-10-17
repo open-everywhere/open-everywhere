@@ -33,6 +33,7 @@ export interface WaitingQueue {
   readonly items: readonly WaitingItem[];
   readonly omitted: number;
   readonly message: string;
+  readonly unread: readonly string[];
 }
 
 export interface WaitingDeps {
@@ -142,5 +143,5 @@ export async function waitingOnPerson(person: WaitingPerson, deps: WaitingDeps =
   const all = [...approvals.sort(newestFirst), ...attention.sort(newestFirst)];
   const items = all.slice(0, WAITING_ITEMS_MAX);
   const omitted = all.length - items.length;
-  return { items, omitted, message: renderWaitingMessage(items, omitted, unread) };
+  return { items, omitted, unread, message: renderWaitingMessage(items, omitted, unread) };
 }

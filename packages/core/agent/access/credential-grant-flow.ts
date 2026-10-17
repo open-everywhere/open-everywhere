@@ -412,7 +412,7 @@ export async function revokeCredentialGrant(
   stamps: GrantAuditStamps,
   grantId: string,
   revokerPrincipalId: string,
-  route: "thread" | "card" | "vault" | "cascade",
+  route: "thread" | "card" | "vault" | "cascade" | "home",
   nowMs: number,
 ): Promise<boolean> {
   const store = getOperationalStore();

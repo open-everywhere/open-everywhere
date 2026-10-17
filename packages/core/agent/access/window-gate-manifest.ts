@@ -101,6 +101,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "unlink_identity",
   "revoke_credential_grant",
   "waiting_on_me",
+  "doing_for_me",
   "request_access",
   "request_credential_grant",
   "create_agent",

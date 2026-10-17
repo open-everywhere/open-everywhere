@@ -156,6 +156,17 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg. The domain memory canvas is NOT here: S-APP-HOME never reads a canvas, so it has its own area below (OPE-2499).",
   },
   {
+    area: "doing-for-you",
+    globs: [
+      "packages/core/agent/home/doing-home.ts",
+      "packages/core/agent/status/doing-for-me.ts",
+      "packages/core/agent/status/waiting-on-me.ts",
+      "packages/core/agent/tools/doing_for_me.ts",
+    ],
+    scenarios: ["S-DOING"],
+    why: "S-DOING (OPE-2522) is the only live leg on the person's one list: a signed Pause on their own watch item turns the watch off, and a Pause naming nothing of theirs changes nothing. The list's reads and the DM tool are driven offline by `test:doing-for-me`.",
+  },
+  {
     area: "slack-side-panel",
     globs: ["packages/providers/slack/agent/channels/slack-side-panel.ts"],
     scenarios: ["S-SIDE-PANEL"],
@@ -186,7 +197,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/hooks/personal-watch-enroll.ts",
       "packages/core/agent/schedules/personal-watch.ts",
     ],
-    scenarios: ["S-WATCH"],
+    scenarios: ["S-WATCH", "S-DOING"],
     why: "S-WATCH (OPE-2422) is the only live leg on the chief-of-staff watch: the person's dial through `/oe watch` and the Home tab, and a forged Not useful that moves no dose. The check itself has no live fixture and is driven offline.",
   },
   {

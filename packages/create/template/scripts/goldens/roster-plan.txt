@@ -97,6 +97,7 @@ agent/tools/delegate_to_agent.ts	mounted @open-everywhere/core
 agent/tools/delete_skill.ts	mounted @open-everywhere/core
 agent/tools/describe_image.ts	mounted @open-everywhere/core
 agent/tools/dm_person.ts	mounted @open-everywhere/core
+agent/tools/doing_for_me.ts	mounted @open-everywhere/core
 agent/tools/edit_reply.ts	mounted @open-everywhere/core
 agent/tools/edit_routine.ts	mounted @open-everywhere/core
 agent/tools/enable_routine.ts	mounted @open-everywhere/core

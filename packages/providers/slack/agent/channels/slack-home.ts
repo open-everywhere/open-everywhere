@@ -158,6 +158,8 @@ function renderBlock(b: HomeBlock): SlackBlock[] {
           action_id: `${HOME_ACTION_PREFIX}item`,
           options: b.actions.map((a) => ({ text: plain(a.label), value: `${a.id}|${b.ref}` })),
         };
+      } else if (b.link && /^https:\/\//u.test(b.link) && b.link.length <= 3000) {
+        section.accessory = { type: "button", action_id: `${HOME_ACTION_PREFIX}link`, text: plain("Open"), url: b.link };
       }
       return [section];
     }
@@ -262,6 +264,7 @@ export async function buildSlackHomeViewer(ids: ParsedHomeInteraction, deps: Sla
     platform: partition.platform,
     workspace: partition.workspace,
     principalId: binding.principalId,
+    ...(ids.enterpriseId ? { enterprise: ids.enterpriseId } : {}),
     ...(dmId ? { personal: partition } : {}),
     trust,
     domains: homeDomainsFor(trust, memberships),

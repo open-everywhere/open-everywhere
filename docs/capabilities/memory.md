@@ -809,7 +809,11 @@ lists the members and checks each one (`users.info`, cached), up to 200 per chan
 ### How the page grows
 
 The page is a list of **sections**, each registered by the module that owns its data
-(`registerHomeSection` in `home/home-view.ts`). Memory registers two, at order 10 and 30. Order 20 is
+(`registerHomeSection` in `home/home-view.ts`). Order 5, the first section, is **What I do for you**
+(OPE-2522, `home/doing-home.ts`): one list of everything the agent does on the person's behalf, with
+Pause and Remove on what they own. See
+[Everything I do for you](./proactivity-and-routines.md#everything-i-do-for-you-one-list-per-person).
+Memory registers two, at order 10 and 30. Order 20 is
 **Your rules** (OPE-2456, `home/rules-home.ts`): the DM rules the person confirmed with "Approve, and
 allow things like this" on an approval card in their DM, each with a Remove button. Remove takes a
 rule away at once. The list reads the viewer's own DM room only. See

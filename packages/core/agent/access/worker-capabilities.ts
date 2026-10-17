@@ -166,6 +166,11 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
     tools: ["waiting_on_me"],
   },
   {
+    id: "what-i-do-for-you",
+    headline: "Tell the person everything you do for them on your own — the routines and watches they set up, the watch over their calendar, what they lend, their rules and what waits on them (DM only)",
+    tools: ["doing_for_me"],
+  },
+  {
     id: "spend-and-telemetry",
     headline: "Report on and move this deployment's own spend, usage and analytics",
     tools: ["session_cost", "spend_report", "usage_report", "query_analytics", "set_spend_limit", "clear_spend_limit"],

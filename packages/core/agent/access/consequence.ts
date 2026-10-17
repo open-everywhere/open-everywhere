@@ -476,6 +476,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "a read of the CALLER's own queue (OPE-2434, OPE-2433): the open approval cards they can decide or that their own work raised, and the jobs that reported themselves blocked on them, each as a code-rendered plain sentence and a link. It decides nothing, posts nothing and writes nothing. What bounds it is the LOOKUP: it takes no person argument, so the acting principal is the query key and a caller cannot read anybody else's queue. Refuses outside a DM (what waits on somebody is not a thing to render in front of their colleagues) and refuses without an ACTING principal, so an unattended fire reads nothing",
   ),
 
+  doing_for_me: open(
+    "a read of the CALLER's own list (OPE-2522): the routines and watches they created, the chief-of-staff watch row under their principal key, the credential grants their own key lends, the DM rules in their own DM room, and their `waiting_on_me` queue, each as a code-rendered plain line. It decides nothing, posts nothing and writes nothing. What bounds it is the LOOKUP: it takes no person argument, so the acting principal is the query key and a caller cannot read anybody else's routines, grants or rules. Refuses outside a DM and refuses without an ACTING principal, so an unattended fire reads nothing",
+  ),
+
   link_identity: open(
     "issues a short-TTL, single-use proof-of-control CODE in the initiator's own DM and writes one challenge row. It links nothing, reaches nobody outside that DM, and changes no behaviour — the code's entire power is to earn its holder a QUESTION in the initiator's DM naming them. Gating it would put a card in front of asking a question. The consequential step is confirm_link, and that step is already a specific identified human answering in their own DM, which no card can improve on",
   ),
@@ -778,6 +782,8 @@ const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
   "packages/core/agent/approvals/routine-attention.ts": "the `routine.attention` click (OPE-2511), a NON_TOOL_ACTION_KIND the dispatcher raises. A verified member click clears the check-in count or lifts the check-in's own pause; it never authors instruction text",
   "packages/core/agent/control/writes.ts": "the control-plane MCP write surface — operator-authenticated over its own transport, not a tool the model can call in a turn",
   "packages/core/agent/control/server.ts": "the control-plane MCP server that mounts those writes; same plane, same reason",
+  "packages/core/agent/home/doing-home.ts":
+    "the person's Home tab (OPE-2522): a Pause or Remove click from the VERIFIED viewer, on a routine in their own DM that they created, delivered by the surface's signed interaction outside any session. It only stops or deletes a routine, and it never authors instruction text, so there is no turn here to be tainted",
 };
 
 const WRITE_DECL = (primitive: string): RegExp => new RegExp(`\\b(?:function|async)\\s+${primitive}\\s*\\(`);

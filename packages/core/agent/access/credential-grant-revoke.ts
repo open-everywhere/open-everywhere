@@ -50,6 +50,7 @@ export async function revokeOwnerGrants(
   ownerPrincipalId: string,
   grantIds: readonly string[] | undefined,
   nowMs: number,
+  route: "thread" | "home" = "thread",
 ): Promise<GrantRevokeOutcome> {
   const holdings = await ownerLiveGrants(stamps.org, ownerPrincipalId, nowMs);
   const wanted = grantIds === undefined ? holdings : holdings.filter((h) => grantIds.includes(h.grant.id));
@@ -57,7 +58,7 @@ export async function revokeOwnerGrants(
   const endedHoldings: GrantRevokedHolding[] = [];
   const notices: GrantNoticeOutcome[] = [];
   for (const holding of wanted) {
-    if (!(await revokeCredentialGrant(stamps, holding.grant.id, ownerPrincipalId, "thread", nowMs))) continue;
+    if (!(await revokeCredentialGrant(stamps, holding.grant.id, ownerPrincipalId, route, nowMs))) continue;
     ended.push(holding.grant);
     const notice = await tellBorrowingRoom(stamps.org, holding.grant, nowMs);
     notices.push(notice);

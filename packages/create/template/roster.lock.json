@@ -108,6 +108,7 @@
         "tool/delete_skill": "mounted",
         "tool/describe_image": "mounted",
         "tool/dm_person": "mounted",
+        "tool/doing_for_me": "mounted",
         "tool/edit_reply": "mounted",
         "tool/edit_routine": "mounted",
         "tool/enable_routine": "mounted",

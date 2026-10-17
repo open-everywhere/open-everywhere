@@ -114,6 +114,10 @@ console.log("§3 rendering");
   ok(JSON.stringify(view.blocks[0]).includes("Saved."), "the notice renders first");
   const item = view.blocks.find((b) => b.type === "section" && (b as { accessory?: unknown }).accessory) as { accessory: { options: { value: string }[] } } | undefined;
   ok(item?.accessory.options[0]?.value === `memory.forget|${SHA}`, "an item's overflow option carries the action and the digest only");
+  const linked = renderHomeView([{ blocks: [{ kind: "item", text: "Post a message", actions: [], link: "https://example.slack.com/archives/C7/p7001" }, { kind: "item", text: "bad", actions: [], link: "javascript:alert(1)" }] }]);
+  const linkAcc = (linked.blocks[0] as { accessory?: { type?: string; url?: string; action_id?: string } }).accessory;
+  ok(linkAcc?.type === "button" && linkAcc.url === "https://example.slack.com/archives/C7/p7001" && linkAcc.action_id === "oe_home:link", "an item with a link renders an Open button to it");
+  ok((linked.blocks[1] as { accessory?: unknown }).accessory === undefined, "NEGATIVE: a link that is not https renders no button");
   const short = renderHomeView([{ blocks: [{ kind: "text", text: "hi" }] }]);
   ok(!JSON.stringify(short).includes("This page is full"), "NEGATIVE: a short page is not marked cut");
 }
@@ -137,6 +141,8 @@ function fakeDeps(over: { member?: boolean | undefined; internal?: (c: string) =
   const internal = fakeDeps({ internal: (c) => c !== "CSHARED" });
   const v = await buildSlackHomeViewer({ userId: USER, teamId: TEAM }, internal);
   ok(v?.trust === "internal" && v.principalId.endsWith(USER), "a full member is internal, keyed to the SIGNED user id");
+  const grid = await buildSlackHomeViewer({ userId: USER, teamId: TEAM, enterpriseId: "E1" }, fakeDeps());
+  ok(grid?.enterprise === "E1" && v?.enterprise === undefined, "the signed enterprise id reaches the viewer, and a delivery with none sets none");
   ok(v?.personal?.surface === "D_ALICE" && v.personal.platform === "slack", "the personal partition is the person's OWN DM, resolved by conversations.open");
   ok(internal.calls.find((c) => c.method === "conversations.open")?.body.users === USER, "…opened for the signed user, never for an id a payload chose");
   ok(v?.domains.length === 1 && v.domains[0]!.domain.name === "platform", "the member is in the platform domain; a memory-less domain is not listed");
