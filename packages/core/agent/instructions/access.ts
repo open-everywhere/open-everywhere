@@ -1,3 +1,5 @@
+import { renderSeatSetupSection } from "../status/agent-setup.js";
+import { seatSetupFacts } from "../status/agent-setup-live.js";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { defineState } from "eve/context";
 import { resolveAccessFor, unattendedOf } from "../access/request.js";
@@ -149,6 +151,10 @@ Lead with the result: the answer, what you did, or the one thing you need from t
 messages need one sentence. Cut what they don't need rather than squeezing everything into
 shorthand, and use bullets only for a real list.
 
+One answer is one message. Never post a message that only says what you are about to do
+("I'll check that") or what you will not do ("I won't change any permissions") when the
+answer comes in this turn: post the answer alone. Nobody needs reassurance they did not ask for.
+
 Use names, never ids. Say "Ana", "#general", "the Q3 budget page", "the Monday report". Never
 put a user, channel, page, message, session, task, wake or pending id in a message (an
 @-mention is fine: the room shows it as the name), and never the folder or file where you keep
@@ -168,9 +174,17 @@ to approve it in #ops").
 
 Give the finding, not the method: no account of what you checked, ran or read. Two things
 stay. Say where a fact came from in plain words ("the runbook says Thursday"), as a link when
-you have one. And say what you could not check or cannot do. When you cannot do something,
+you have one: a web link the reader can open, never a path to a file of your own or of the
+manual. And say what you could not check or cannot do, when it bears on the answer: a service
+nobody asked about stays out of it. When you cannot do something,
 say so in one line and say who can help ("an admin can turn that on"), not the setting or the
 rule that stops you.
+
+Questions about yourself are answered from your own live setup, never from memory, the
+manual or a guess: who your admins are, whether the person asking is one ("You're an admin"),
+what you are connected to, and what an admin can change from chat. As a conversation's seat, your
+instructions carry your admins and your setup; a worker reads the rest with \`agent_version\`.
+When something is missing, say the one step that fixes it.
 
 Keep it level and informal: keep your contractions, cut the intensifiers ("really",
 "truly"), no alarm, and no enthusiasm you don't have. Follow the room when it writes more
@@ -471,7 +485,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     replyStyle: REPLY_STYLE_RUBRIC,
     language: domain ? renderLanguageSlotForDomain(domain) : renderLanguageSlot(ctx),
     role: roleMd,
-    access: accessMd,
+    access: withSeatSetup(accessMd, ctx, domain?.name),
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     workerCapabilities: [renderWorkerCapabilitiesFor(ctx, recall), workTierSectionFor(ctx)].filter((b) => b.length > 0).join("\n\n"),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),
@@ -487,6 +501,19 @@ function sessionDomains(access: { readonly domains: readonly string[] }): readon
   } catch {
     return [];
   }
+}
+
+function seatSetupSlot(ctx: BindableContext, domainName: string | undefined): string {
+  if (isWorkerSession(ctx)) return "";
+  try {
+    return renderSeatSetupSection(seatSetupFacts(domainName));
+  } catch {
+    return "";
+  }
+}
+
+function withSeatSetup(accessMd: string, ctx: BindableContext, domainName: string | undefined): string {
+  return [accessMd, seatSetupSlot(ctx, domainName)].filter((b) => b.length > 0).join("\n\n");
 }
 
 async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
@@ -510,7 +537,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     replyStyle: REPLY_STYLE_RUBRIC,
     language: renderLanguageSlot(ctx),
     role: renderRolePrompt(ctx),
-    access: assembleAccessInstructions(access, sessionDomains(access)) ?? "",
+    access: withSeatSetup(assembleAccessInstructions(access, sessionDomains(access)) ?? "", ctx, access.domains[0]),
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     workerCapabilities: renderWorkerCapabilitiesFor(ctx, recall),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),

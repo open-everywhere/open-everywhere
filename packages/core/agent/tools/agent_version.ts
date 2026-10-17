@@ -2,10 +2,13 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { getAppInfo } from "../commands/app-info.js";
+import type { BindableContext } from "../identity/binding.js";
+import { renderAgentSetup, type AgentSetupAnswer } from "../status/agent-setup.js";
+import { gatherAgentSetupFacts } from "../status/agent-setup-live.js";
 
 export default defineTool({
   description:
-    "State which version of this agent is currently running: the deployment's commit sha, the eve framework version this deployment was built against, the Open Everywhere package version where the build carries one, and this deployment's context window with the token count at which compaction fires. The commit sha is the identity that separates two builds — report it first. Use this to answer \"what version are you on?\", \"how big is your context window?\" or \"when do you compact?\", or to compare against an upstream release before proposing a self-upgrade. Never guesses — \"unknown\" means this deployment does not expose the fact (e.g. running locally, off Vercel), \"unversioned\" means the build carries no package version, so the sha is the only answer, and an ABSENT token count means this deployment registered none.",
+    "State which version of this agent is currently running, and how it is set up for the person asking: the deployment's commit sha, the eve framework version this deployment was built against, the Open Everywhere package version where the build carries one, and this deployment's context window with the token count at which compaction fires. The commit sha is the identity that separates two builds — report it first. Use this to answer \"what version are you on?\", \"how big is your context window?\" or \"when do you compact?\", or to compare against an upstream release before proposing a self-upgrade. Its `setup` part answers \"who are your admins?\", \"am I an admin?\", \"are you connected to GitHub?\" and \"what can an admin change from chat?\" from the live config, in plain words ready to say, with the one step that fixes each gap; say `forOperator` only to an admin who asks how to fix a gap. Never guesses — \"unknown\" means this deployment does not expose the fact (e.g. running locally, off Vercel), \"unversioned\" means the build carries no package version, so the sha is the only answer, and an ABSENT token count means this deployment registered none.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     version: z
@@ -27,16 +30,36 @@ export default defineTool({
       .describe(
         "The absolute token count at which compaction fires: the context window times the configured threshold percent. ABSENT when this deployment registered no window. This is the same number the status control command prints.",
       ),
+    setup: z
+      .object({
+        you: z.string().describe("The asker's own standing, as one direct sentence."),
+        admins: z.string().describe("Who the admins are."),
+        connectedTo: z.array(z.string()).describe("What this deployment is connected to, one line each."),
+        adminCanDoNow: z.array(z.string()).describe("What an admin can do from chat right now. For a non-admin, one line saying an admin does it."),
+        notYet: z.array(z.object({ what: z.string(), step: z.string() })).describe("What an admin cannot do yet, each with the one step that unlocks it."),
+        forOperator: z.array(z.string()).describe("The deployment settings behind each gap. Only for an admin who asks how to fix it."),
+      })
+      .optional()
+      .describe("This deployment's setup for the person asking (OPE-2492). ABSENT when it could not be read."),
   }),
   approval: never(),
-  async execute() {
+  async execute(_input, ctx) {
     const info = getAppInfo();
+    let setup: AgentSetupAnswer | undefined;
+    try {
+      setup = renderAgentSetup(await gatherAgentSetupFacts(ctx as BindableContext));
+    } catch {
+      setup = undefined;
+    }
     return {
       version: info.version,
       deploymentSha: info.deploymentSha,
       evePin: info.evePin,
       contextWindowTokens: info.contextWindowTokens,
       compactionThresholdTokens: info.compactionThresholdTokens,
+      ...(setup !== undefined
+        ? { setup: { ...setup, connectedTo: [...setup.connectedTo], adminCanDoNow: [...setup.adminCanDoNow], notYet: setup.notYet.map((g) => ({ ...g })), forOperator: [...setup.forOperator] } }
+        : {}),
     };
   },
 });

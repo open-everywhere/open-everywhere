@@ -590,7 +590,8 @@ async function pendingVault(): Promise<{ vault: ReturnType<typeof memoryVault>; 
   ok(body.includes(esc('admins: ["slack/T0FAKETEAM/U0FAKEUSER"],')), "the done screen gives the filled-in admins line");
   ok(body.includes("&quot;slack/T0FAKETEAM&quot;"), "the rendered config lines are HTML-escaped");
   ok(body.includes("agent/identity/surfaces.ts") && body.includes("agent/memory/config/domains/org.ts"), "the done screen names both files to edit");
-  ok(body.includes("DM the bot"), "the done screen ends with DM the bot");
+  ok(body.includes("make the two edits by hand and push"), "the done screen says to make the edits by hand");
+  ok(!body.includes("DM the bot") && body.includes("The bot does not change its own admins from chat"), "the done screen does not promise that the bot makes the admin and vouch edits");
   for (const secret of ["fake-client-secret", "fake-signing-secret", "xoxb-fake-bot-token"]) {
     ok(!body.includes(secret), `🔴 the done screen renders no ${secret.slice(0, 12)}…`);
   }

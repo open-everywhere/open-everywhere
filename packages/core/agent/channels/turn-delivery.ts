@@ -119,11 +119,29 @@ function siloRelativePath(url: string): string {
   return idx < 0 ? url : url.slice(idx + MEMORY_MOUNT_SEGMENT.length);
 }
 
+const SLACK_PATH_LINK_RE = /(?<![\w])<(?![#@!]|\/\/|www\.)(?=[^\s|<>:]*[/.])[^\s|<>:]+\|([^<>|\n]*[^<>|\s][^<>|\n]*)>/g;
+
+const MARKDOWN_PATH_LINK_RE = /(?<!!)\[([^\]\n]*[^\]\s][^\]\n]*)\]\((?!#|\/\/|www\.)(?=[^\s():]*[/.])[^\s():]+\)/g;
+
+const CODE_SEGMENT_RE = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+
+export function unwrapPathLinks(text: string): string {
+  const rewrite = (prose: string): string =>
+    prose.replace(SLACK_PATH_LINK_RE, (_m, label: string) => label.trim()).replace(MARKDOWN_PATH_LINK_RE, (_m, label: string) => label.trim());
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(CODE_SEGMENT_RE)) {
+    out += rewrite(text.slice(last, m.index)) + m[0];
+    last = m.index + m[0].length;
+  }
+  return out + rewrite(text.slice(last));
+}
+
 export function truncateMemoryCitationPaths(text: string): string {
   let out = text.replace(MARKDOWN_LINK_RE, (_m, url: string) => siloRelativePath(url));
   out = out.replace(SLACK_LINK_RE, (_m, url: string) => siloRelativePath(url));
   out = out.replace(BARE_MEMORY_REF_RE, (m: string) => siloRelativePath(m));
-  return out;
+  return unwrapPathLinks(out);
 }
 
 export function supervisorRotateQuietGapMs(): number {

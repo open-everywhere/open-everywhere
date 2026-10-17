@@ -187,7 +187,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "own-version",
-    headline: "State which version of this deployment is currently running — package version, commit sha, eve pin",
+    headline: "State which version of this deployment is currently running — package version, commit sha, eve pin — and how it is set up for the person asking: their admin standing, the connections, and what an admin can change from chat",
     tools: ["agent_version"],
   },
 ];

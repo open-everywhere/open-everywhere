@@ -232,6 +232,21 @@ async function runProbe(probe: StatusProbe | undefined): Promise<ProbeAnswer | u
   }
 }
 
+export async function surfaceStatuses(
+  reporters: Readonly<Record<string, () => Promise<Partial<SurfaceStatus>>>> = SURFACE_REPORTERS,
+): Promise<Record<string, SurfaceStatus>> {
+  const surfaces: Record<string, SurfaceStatus> = {};
+  for (const platform of Object.keys(reporters).sort()) {
+    let reported: Partial<SurfaceStatus> = {};
+    try {
+      reported = await reporters[platform]!();
+    } catch {
+    }
+    surfaces[platform] = { ...UNKNOWN_SURFACE, ...reported };
+  }
+  return surfaces;
+}
+
 export async function deploymentStatus(inputs: StatusInputs = {}): Promise<DeploymentStatus> {
   const env = inputs.env ?? process.env;
   const host = hostRoute(inputs.host ?? platformName());
@@ -264,15 +279,7 @@ export async function deploymentStatus(inputs: StatusInputs = {}): Promise<Deplo
     return row;
   });
 
-  const surfaces: Record<string, SurfaceStatus> = {};
-  for (const platform of Object.keys(reporters).sort()) {
-    let reported: Partial<SurfaceStatus> = {};
-    try {
-      reported = await reporters[platform]!();
-    } catch {
-    }
-    surfaces[platform] = { ...UNKNOWN_SURFACE, ...reported };
-  }
+  const surfaces = await surfaceStatuses(reporters);
 
   return {
     contract: CONTRACT_VERSION,

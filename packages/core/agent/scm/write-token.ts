@@ -2,6 +2,10 @@ import { getGitHubApp } from "./provider.js";
 import { DEFAULT_PERMISSIONS, expandMintPermissions } from "./mint.js";
 import type { RepoCapability } from "../access/repo-capabilities.js";
 
+export function githubTokenFallbackSet(): boolean {
+  return (process.env.GITHUB_TOKEN ?? "").length > 0;
+}
+
 export async function resolvePrWriteToken(repo: string, capabilities: readonly RepoCapability[], subject = ""): Promise<string> {
   const app = getGitHubApp();
   if (app) {

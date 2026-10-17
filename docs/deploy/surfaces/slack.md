@@ -194,7 +194,8 @@ That page does the whole install for you (OPE-2231):
 3. You click **Install to Slack**. The OAuth callback stores the bot token. Slack's manifest has no icon field, so set the app icon by hand: **Basic Information** → **Display Information** → **App icon**, and upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png). Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 4. The last screen gives you the **two config edits**, already filled in with your workspace and user
    ids — the vouch in `agent/identity/surfaces.ts` and `admins` in
-   `agent/memory/config/domains/org.ts`. DM the bot and ask it to commit them, or make them by hand.
+   `agent/memory/config/domains/org.ts`. Make them by hand and push. The bot does not change its own
+   admins from chat. Ask it "what can I change from chat?" to see what is ready and what is missing.
 
 Every credential Slack *issues* goes **browser → Slack → your deployment's encrypted credential
 store**: the client secret, the signing secret and the bot token are never seen by a human and never

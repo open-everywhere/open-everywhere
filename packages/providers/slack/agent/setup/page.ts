@@ -202,9 +202,9 @@ function doneScreen(state: SlackInstallState): Response {
       `<pre style="${CODE_BLOCK_STYLE}">${escapeHtml(surfaceLine)}</pre>` +
       `<p><strong>2.</strong> In <code>agent/memory/config/domains/org.ts</code>, replace the <code>admins</code> line:</p>` +
       `<pre style="${CODE_BLOCK_STYLE}">${escapeHtml(adminLine)}</pre>` +
-      `<p><strong>Then DM the bot in Slack.</strong> Ask it to make those two edits and it will open a ` +
-      `pull request against your config repo — the agent configuring itself. Or make them by hand and ` +
-      `push; either way the deploy that lands them is the last step.</p>` +
+      `<p><strong>Then make the two edits by hand and push.</strong> The deploy that lands them is the ` +
+      `last step. The bot does not change its own admins from chat. To see what it can change from ` +
+      `chat, ask it.</p>` +
       `<p>This page is now closed. An administrator can reopen it with the <code>reopen_slack_setup</code> ` +
       `control call.</p>`,
   );

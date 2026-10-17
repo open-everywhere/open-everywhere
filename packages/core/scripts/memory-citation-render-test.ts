@@ -1,3 +1,5 @@
+// proves: REPLY-47
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -140,6 +142,30 @@ eq(
   truncateMemoryCitationPaths("list: https://a.com/x/../y,https://github.com/acme/h/blob/main/workspace/memory/notes.md end"),
   "list: https://a.com/x/../y,https://github.com/acme/h/blob/main/workspace/memory/notes.md end",
   "NEGATIVE CONTROL: a comma-joined pair of URLs is byte-identical too — the crossing is closed for every separator the class admits",
+);
+
+eq(
+  truncateMemoryCitationPaths("Nothing is recorded about admins in <memory/surface/MEMORY.md#L9-L16|personal memory>."),
+  "Nothing is recorded about admins in personal memory.",
+  "🔴 OPE-2492: a Slack link to a relative memory path renders as its label, with no path left",
+);
+eq(
+  truncateMemoryCitationPaths("See <docs/how-it-works/access-and-scoping.md|how access works>, or [the roles page](docs/how-it-works/identity.md)."),
+  "See how access works, or the roles page.",
+  "🔴 OPE-2492: a Slack or Markdown link to a manual path renders as its label",
+);
+eq(
+  truncateMemoryCitationPaths("<https://example.com/a.md|the page> <#C123|general> <@U1> <!here> [top](#top) ![chart](chart.png) [site](https://x.y/a.md) <a.md|> <word|label>"),
+  "<https://example.com/a.md|the page> <#C123|general> <@U1> <!here> [top](#top) ![chart](chart.png) [site](https://x.y/a.md) <a.md|> <word|label>",
+  "OPE-2492 negative control: a scheme link, a Slack mention or command, an anchor, an image, an empty label and a non-path target keep their bytes",
+);
+for (const keep of ["type X = Array<foo.Bar|Baz>", "```\n[docs](./README.md)\n```", "`[a](b/c)`", "[RFC](//example.com/x)", "<www.example.com|site>"]) {
+  eq(truncateMemoryCitationPaths(keep), keep, `OPE-2492 negative control: ${JSON.stringify(keep)} keeps its bytes`);
+}
+eq(
+  truncateMemoryCitationPaths("see <docs/a.md|the doc>, then `<docs/a.md|x>` in code"),
+  "see the doc, then `<docs/a.md|x>` in code",
+  "OPE-2492: prose around a code span is still rewritten, and the span is not",
 );
 
 console.log("2. postReply applies the truncation before dispatch, prefix, dedupe and audit:");
