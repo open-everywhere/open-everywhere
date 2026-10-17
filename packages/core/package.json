@@ -974,6 +974,10 @@
       "types": "./dist/agent/audit/chain.d.ts",
       "default": "./dist/agent/audit/chain.js"
     },
+    "./agent/audit/scrubbed-text.js": {
+      "types": "./dist/agent/audit/scrubbed-text.d.ts",
+      "default": "./dist/agent/audit/scrubbed-text.js"
+    },
     "./agent/audit/siem-export.js": {
       "types": "./dist/agent/audit/siem-export.d.ts",
       "default": "./dist/agent/audit/siem-export.js"
@@ -4025,6 +4029,7 @@
     "test:approval-card-summary": "NODE_NO_WARNINGS=1 tsx scripts/approval-card-summary-test.ts",
     "test:approval-group": "NODE_NO_WARNINGS=1 tsx scripts/approval-group-test.ts",
     "test:allow-rule": "NODE_NO_WARNINGS=1 tsx scripts/allow-rule-test.ts",
+    "test:audit-detail-brand": "NODE_NO_WARNINGS=1 tsx scripts/audit-detail-brand-test.ts",
     "test:attention-queue": "NODE_NO_WARNINGS=1 tsx scripts/attention-queue-test.ts",
     "test:doing-for-me": "NODE_NO_WARNINGS=1 tsx scripts/doing-for-me-test.ts",
     "test:scope-key": "NODE_NO_WARNINGS=1 tsx scripts/scope-key-test.ts",

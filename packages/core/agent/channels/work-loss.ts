@@ -12,6 +12,7 @@ import { foldWorkFire } from "../routines/fire-work-fold.js";
 import { deploymentOrg } from "../identity/binding.js";
 import type { TaskContinuationRefusal } from "./task-provenance.js";
 import { registerContinuationRefusalNotifier } from "../access/work-refusal-notice.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const WORK_REQUEST_REFUSED_ACTION = "work.request_refused";
 
@@ -169,7 +170,7 @@ export async function notifyRefusedWorkRequest(
 ): Promise<boolean> {
   const { org, requestId } = input;
   const audit = deps.audit ?? appendAudit;
-  const record = (detail: Record<string, unknown>) =>
+  const record = (detail: AuditDetail) =>
     audit({ org, platform: "unified", workspace: "delegation", action: WORK_REQUEST_REFUSED_ACTION, detail: { requestId, taskId: input.taskId, reason: input.reason, ...detail } }).catch(() => undefined);
   try {
     const store = deps.store ?? getOperationalStore();

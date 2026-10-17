@@ -5,6 +5,7 @@ import { capBypassFor } from "./bypass.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { CapLayer } from "./spend.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type SpendGateDoor = "mention" | "engagement" | "join" | "window" | "answer";
 
@@ -25,7 +26,7 @@ export interface SpendGateAuditRow {
   readonly surface?: string;
   readonly surfaceMode?: SessionMode;
   readonly action: string;
-  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly detail?: AuditDetail;
 }
 
 export interface SpendGateBadges {

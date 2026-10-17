@@ -11,10 +11,14 @@ export const MIN_PLAUSIBLE_WRITES = 600;
 
 const ERROR_KEY = /^(?:err|error\w*|[a-z]\w*Error\w*)$/;
 
-const NOT_A_WRITE = new Set(["auditErrorDetail", "auditErrorFrames", "readAudit", "scrubForAudit"]);
+const NOT_A_WRITE = new Set(["auditErrorDetail", "auditErrorFrames", "readAudit", "scrubAuditText", "scrubForAudit"]);
+
+export const BRAND_MINT_FILE = "packages/core/agent/audit/tool-action.ts";
+
+const BRAND_CAST = /\bas\s+(?:unknown\s+as\s+)?(?:ScrubbedAuditText|AuditDetail(?:Builder)?)\b|(?:(?<![\w$\])>]\s*)|(?<=(?:(?<!\.\s*)\b(?:return|yield|await|typeof|case|throw|in|of|void|delete|new|else|do)|=>)\s*))<\s*(?:ScrubbedAuditText|AuditDetail(?:Builder)?)\s*>/g;
 
 export interface AuditErrorDetailFinding {
-  readonly rule: "error-field" | "raw-error-text";
+  readonly rule: "error-field" | "raw-error-text" | "brand-cast" | "plain-record-spread";
   readonly file: string;
   readonly line: number;
   readonly key: string;
@@ -101,6 +105,8 @@ export function isAcceptedValue(code: string, original: string, scrubbedNames: R
   if (/^`[^]*`$/.test(v.original) && !v.original.includes("${") && closeQuoteIsLast(v.original)) return true;
   if (/^(?:-?\d[\d_.]*|true|false|null|undefined)$/.test(v.original)) return true;
   if (scrubbedNames.has(v.original)) return true;
+  const scrub = /^scrubAuditText\s*\(/.exec(v.code);
+  if (scrub !== null) return closeOf(v.code, scrub[0].length - 1) === v.code.length;
   const call = /^auditErrorDetail\s*\(/.exec(v.code);
   if (call !== null) {
     const close = closeOf(v.code, call[0].length - 1);
@@ -120,6 +126,10 @@ function closeQuoteIsLast(text: string): boolean {
 
 export function scrubbedNamesIn(code: string): Set<string> {
   const names = new Set<string>();
+  for (const m of code.matchAll(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*scrubAuditText\s*\(/g)) {
+    const open = (m.index ?? 0) + m[0].length - 1;
+    if (/^\s*[;,\n]/.test(code.slice(closeOf(code, open)))) names.add(m[1]!);
+  }
   for (const m of code.matchAll(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*auditErrorDetail\s*\(/g)) {
     const open = (m.index ?? 0) + m[0].length - 1;
     if (/^\s*\.\s*error\s*[;,\n]/.test(code.slice(closeOf(code, open)))) names.add(m[1]!);
@@ -150,7 +160,7 @@ const RAW_ERROR_TEXT = /\.\s*(?:message|stack)\b(?!\s*\.\s*length)|\bString\s*\(
 
 function skippedRanges(code: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
-  const re = /\bauditError(?:Detail|Frames)\s*\(|\{/g;
+  const re = /\b(?:auditError(?:Detail|Frames)|scrubAuditText)\s*\(|\{/g;
   for (let m = re.exec(code); m !== null; m = re.exec(code)) {
     const open = code[m.index] === "{" ? m.index : code.indexOf("(", m.index);
     const close = closeOf(code, open);
@@ -202,14 +212,62 @@ function objectPositions(span: string): boolean[] {
   return out;
 }
 
-export function auditErrorDetailFindings(file: string, source: string): AuditErrorDetailScan {
+export function plainRecordNamesIn(code: string): Set<string> {
+  const names = new Set<string>();
+  for (const m of code.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\??\\s*:\\s*${PLAIN_RECORD_TYPE}`, "g"))) names.add(m[1]!);
+  return names;
+}
+
+const PLAIN_RECORD_TYPE = String.raw`(?:Readonly\s*<\s*)?(?:Record\s*<\s*string\s*,|StoredAuditDetail\b|\{\s*(?:readonly\s+)?\[\s*[A-Za-z_$][\w$]*\s*:\s*string\s*\])`;
+
+export function plainRecordFunctionsIn(code: string): Set<string> {
+  const names = new Set<string>();
+  const returns = new RegExp(String.raw`^\s*:\s*${PLAIN_RECORD_TYPE}`);
+  const declarations = /\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^(]*>)?\s*\(|\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\s*\*?\s*)?(?:<[^(]*>\s*)?\(|(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?:<[^(]*>)?\s*\(/g;
+  for (const m of code.matchAll(declarations)) {
+    const open = (m.index ?? 0) + m[0].length - 1;
+    const name = (m[1] ?? m[2] ?? m[3])!;
+    if (name === "function") continue;
+    if (returns.test(code.slice(closeOf(code, open), closeOf(code, open) + 200))) names.add(name);
+  }
+  return names;
+}
+
+function plainRecordSpreads(span: string, plainNames: ReadonlySet<string>, plainFns: ReadonlySet<string>): Array<{ readonly at: number; readonly name: string }> {
+  const out: Array<{ readonly at: number; readonly name: string }> = [];
+  for (const m of span.matchAll(/\.\.\.\s*\(?\s*((?:[A-Za-z_$][\w$]*\s*\??\.\s*)*[A-Za-z_$][\w$]*)(\s*\()?/g)) {
+    const chain = m[1]!.replace(/\s+/g, "");
+    if (chain === "Object.fromEntries" && m[2] !== undefined) {
+      out.push({ at: m.index ?? 0, name: chain });
+      continue;
+    }
+    if (m[2] !== undefined) {
+      if (plainFns.has(chain.split(/\??\./).pop()!)) out.push({ at: m.index ?? 0, name: `${chain}(…)` });
+      continue;
+    }
+    if (!/^\s*(?:\)|,|\}|\?\?)/.test(span.slice((m.index ?? 0) + m[0].length))) continue;
+    const last = chain.split(/\??\./).pop()!;
+    if (plainNames.has(last)) out.push({ at: m.index ?? 0, name: chain });
+  }
+  return out;
+}
+
+export function auditErrorDetailFindings(file: string, source: string, treePlainFns: ReadonlySet<string> = new Set()): AuditErrorDetailScan {
   const code = blankCommentsAndStrings(source);
+  const plainFns = new Set([...treePlainFns, ...plainRecordFunctionsIn(code)]);
   const scrubbed = scrubbedNamesIn(code);
+  const plainNames = plainRecordNamesIn(code);
   const findings: AuditErrorDetailFinding[] = [];
   const seen = new Set<number>();
   const spans = auditSpans(code);
   for (const [open, close] of spans) {
     const span = code.slice(open, close);
+    for (const spread of plainRecordSpreads(span, plainNames, plainFns)) {
+      const at = open + spread.at;
+      if (seen.has(-at - 1)) continue;
+      seen.add(-at - 1);
+      findings.push({ rule: "plain-record-spread", file, line: source.slice(0, at).split("\n").length, key: spread.name, value: `...${spread.name}` });
+    }
     const inObject = objectPositions(span);
     for (const m of span.matchAll(/[{,]\s*([A-Za-z_$][\w$]*)\s*(?=(:|,|\}))/g)) {
       const key = m[1]!;
@@ -233,6 +291,12 @@ export function auditErrorDetailFindings(file: string, source: string): AuditErr
       }
     }
   }
+  if (file !== BRAND_MINT_FILE) {
+    for (const m of code.matchAll(BRAND_CAST)) {
+      const line = source.slice(0, m.index ?? 0).split("\n").length;
+      findings.push({ rule: "brand-cast", file, line, key: "ScrubbedAuditText", value: m[0].replace(/\s+/g, " ") });
+    }
+  }
   return { findings, writes: spans.length };
 }
 
@@ -248,8 +312,10 @@ export function readScanFiles(repoRoot: string = ROOT): readonly { readonly file
 export function scanTree(files: readonly { readonly file: string; readonly source: string }[]): AuditErrorDetailScan {
   const findings: AuditErrorDetailFinding[] = [];
   let writes = 0;
+  const plainFns = new Set<string>();
+  for (const { source } of files) for (const name of plainRecordFunctionsIn(blankCommentsAndStrings(source))) plainFns.add(name);
   for (const { file, source } of files) {
-    const scan = auditErrorDetailFindings(file, source);
+    const scan = auditErrorDetailFindings(file, source, plainFns);
     findings.push(...scan.findings);
     writes += scan.writes;
   }
@@ -265,7 +331,7 @@ function main(): void {
   if (scan.findings.length > 0) {
     console.error(`lint:audit-error-detail: ${scan.findings.length} audit write(s) store error text that did not go through auditErrorDetail:`);
     for (const f of scan.findings) console.error(`  ${f.file}:${f.line}  [${f.rule}] ${f.key}: ${f.value}`);
-    console.error("Fix: write `error: auditErrorDetail(err).error` (or spread `...auditErrorDetail(err)`). See packages/core/agent/audit/tool-action.ts.");
+    console.error("Fix: write `error: auditErrorDetail(err).error` (or spread `...auditErrorDetail(err)`), or `scrubAuditText(text)` for other upstream text. Never cast to ScrubbedAuditText. See packages/core/agent/audit/tool-action.ts.");
     process.exit(1);
   }
   console.log(`✓ lint:audit-error-detail — ${scan.writes} audit writes read, every error-named field goes through auditErrorDetail`);

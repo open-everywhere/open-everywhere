@@ -7,6 +7,7 @@ import { revokeLinkSet } from "./link-store.js";
 import { endPersonHoldings } from "./person-holdings.js";
 import { rawVaultSubject } from "./oauth-vault-share.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "./principal-key.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const OFFBOARD_APPLIED_ACTION = "identity.offboard.applied";
 export const OFFBOARD_REFUSED_ACTION = "identity.offboard.refused";
@@ -42,7 +43,7 @@ export const OFFBOARD_REFUSAL = {
 
 export async function offboardDeactivatedAccount(report: DeactivationReport): Promise<OffboardOutcome> {
   const account = tryPrincipalKey(report.platform, report.tenant, report.nativeId) ?? `${report.platform} account "${report.nativeId}"`;
-  const refuse = async (reason: string, detail: string, extra: Record<string, unknown> = {}): Promise<OffboardOutcome> => {
+  const refuse = async (reason: string, detail: string, extra: AuditDetail = {}): Promise<OffboardOutcome> => {
     await audit(report, OFFBOARD_REFUSED_ACTION, account, { reason, ...extra, why: `${detail} ${OFFBOARD_MANUAL_LEVER}` });
     return { kind: "refused", reason };
   };
@@ -118,7 +119,7 @@ export async function offboardDeactivatedAccount(report: DeactivationReport): Pr
   }
 }
 
-async function audit(report: DeactivationReport, action: string, account: string, detail: Record<string, unknown>): Promise<void> {
+async function audit(report: DeactivationReport, action: string, account: string, detail: AuditDetail): Promise<void> {
   await appendAudit({
     org: report.org,
     platform: report.platform,

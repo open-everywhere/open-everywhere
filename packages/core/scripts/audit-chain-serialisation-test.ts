@@ -1,3 +1,5 @@
+// proves: auditEraDigest, auditEpochDetail, readAuditEpochSeal, walkAuditChain, walkAuditChain` (null mid-chain), crossEpoch, crossEpoch` (row 0), crossEpoch` (suppression), auditEpochSealFor, breaksByAction, withOrgAuditLock, AuditChainEpochWritten, OperationalStore.appendAudit, OperationalStore.sealAuditChainEpoch, postgres appendAudit, sqlite appendAudit, withAuditChainLock, auditChainLockKey, const AUDIT_CHAIN_LOCK_TIMEOUT_MS, warnIfAuditChainCannotSerialise, readAuditChainRows, postgres sealAuditChainEpoch, sqlite sealAuditChainEpoch, audit.chain_epoch
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +22,7 @@ const {
   walkAuditChain,
 } = await import("../agent/audit/chain.js");
 import type { PgClient } from "../agent/operational/postgres.js";
-import type { AuditChainRow, AuditEntry, OperationalStore } from "../agent/operational/store.js";
+import type { AuditChainRow, AuditWriteEntry, OperationalStore } from "../agent/operational/store.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -34,7 +36,7 @@ function ok(cond: boolean, label: string): void {
 const ORG = "acme";
 const OTHER_ORG = "globex";
 
-function entry(action: string, n: number, org = ORG): AuditEntry {
+function entry(action: string, n: number, org = ORG): AuditWriteEntry {
   return {
     ts: new Date(Date.UTC(2026, 8, 9, 0, 0, n)).toISOString(),
     org,

@@ -3,6 +3,7 @@ import { auditSurfaceModeStamp, bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "./audit.js";
+import type { AuditDetail, ScrubbedAuditText } from "./scrubbed-text.js";
 
 const MAX_AUDIT_ERROR_CHARS = 300;
 
@@ -40,11 +41,13 @@ function scrubForAudit(raw: string): string {
   }
 }
 
-export function auditErrorDetail(err: unknown): { readonly error: string } {
-  const raw = err instanceof Error ? err.message : String(err);
-  let text = scrubForAudit(raw);
-  text = text.replace(/\s+/g, " ").trim();
-  return { error: text.length <= MAX_AUDIT_ERROR_CHARS ? text : `${text.slice(0, MAX_AUDIT_ERROR_CHARS)}…` };
+export function auditErrorDetail(err: unknown): { readonly error: ScrubbedAuditText } {
+  return { error: scrubAuditText(err instanceof Error ? err.message : String(err)) };
+}
+
+export function scrubAuditText(raw: string): ScrubbedAuditText {
+  const text = scrubForAudit(raw).replace(/\s+/g, " ").trim();
+  return (text.length <= MAX_AUDIT_ERROR_CHARS ? text : `${text.slice(0, MAX_AUDIT_ERROR_CHARS)}…`) as ScrubbedAuditText;
 }
 
 const MAX_AUDIT_FRAMES = 8;
@@ -105,7 +108,7 @@ export function auditErrorFrames(err: unknown): string {
 export async function auditToolAction(
   ctx: BindableContext,
   action: string,
-  detail?: Readonly<Record<string, unknown>>,
+  detail?: AuditDetail,
 ): Promise<void> {
   try {
     const p = resolvePartition(ctx);

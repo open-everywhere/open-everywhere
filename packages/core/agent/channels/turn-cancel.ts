@@ -3,6 +3,7 @@ import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolveTurnAnchor, TURN_ANCHOR_TTL_MS, type TurnAnchorQuery } from "./turn-registry.js";
 import { isWorkWindowToken } from "./window-key.js";
 import { stopAnchoredWorkJobsLive } from "./work-cancel.js";
+import type { StoredAuditDetail } from "../audit/scrubbed-text.js";
 
 export const TURN_CANCEL_ACTION = "turn.cancel_requested";
 
@@ -200,7 +201,7 @@ export interface UnpairedStopsQuery {
   readonly now?: number;
 }
 
-function pairKey(detail: Readonly<Record<string, unknown>>): string | undefined {
+function pairKey(detail: StoredAuditDetail): string | undefined {
   const sessionId = detail["sessionId"];
   const turnId = detail["turnId"];
   if (typeof sessionId !== "string" || typeof turnId !== "string" || !sessionId || !turnId) return undefined;

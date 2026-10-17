@@ -1,7 +1,10 @@
+// proves: dream.mode3_report, dream.mode3_tick
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuditEntry } from "../agent/operational/store.js";
+import { auditErrorDetail } from "../agent/audit/tool-action.js";
 import {
   bucketFailures,
   exampleLine,
@@ -307,7 +310,7 @@ function baseConfig(adminChannel: string | undefined) {
 
 {
   registerConfig(baseConfig("C0ADMIN"));
-  await appendAudit({ org: "flakyco", platform: "slack", workspace: "T1", surface: "C1", action: "approval.failed", ts: IN_WINDOW, detail: { kind: "k", error: "e" } });
+  await appendAudit({ org: "flakyco", platform: "slack", workspace: "T1", surface: "C1", action: "approval.failed", ts: IN_WINDOW, detail: { kind: "k", ...auditErrorDetail("e") } });
   const throwingPost = async () => {
     throw new Error("Slack is down");
   };

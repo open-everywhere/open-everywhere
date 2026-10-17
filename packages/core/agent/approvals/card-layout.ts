@@ -90,11 +90,14 @@ function bareHeadline(row: Pick<PendingActionRow, "kind" | "argsJson">): string 
   return plainSummaryForRow(row).replace(/[.!?]$/u, "");
 }
 
-const FAILED_PREFIX = "FAILED:";
+export const FAILED_OUTCOME_PREFIX = "FAILED:";
+const FAILED_PREFIX = FAILED_OUTCOME_PREFIX;
 
 function plainOutcome(outcomeLine: string): string {
   return outcomeLine.startsWith(FAILED_PREFIX) ? "it failed" : finishPlainLine(outcomeLine, DECIDED_OUTCOME_MAX);
 }
+
+const DECLINE_NOT_SAVED = "I could not save the decline";
 
 const DECIDED_OUTCOME_MAX = 200;
 
@@ -104,6 +107,7 @@ export function decidedCardLine(row: Pick<PendingActionRow, "kind" | "argsJson" 
     return `✅ Approved by ${who}: ${outcomeLine === undefined ? bareHeadline(row) : plainOutcome(outcomeLine)}`;
   }
   if (row.status === "rejected") {
+    if (outcomeLine?.startsWith(FAILED_PREFIX) === true) return `❌ Rejected by ${who}: ${bareHeadline(row)} · ${DECLINE_NOT_SAVED}`;
     const declined = outcomeLine === undefined || outcomeLine === "rejected" ? "" : ` · ${plainOutcome(outcomeLine)}`;
     return `❌ Rejected by ${who}: ${bareHeadline(row)}${declined}`;
   }

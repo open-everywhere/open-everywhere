@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { processRegistrySlot } from "../lib/process-registry.js";
-import type { AuditEntry, AuditInput, AuditFilter, AuditReadRow } from "../operational/store.js";
+import type { AuditInput, AuditFilter, AuditReadRow, AuditWriteEntry } from "../operational/store.js";
 
 export type { AuditEntry, AuditInput, AuditFilter, AuditReadRow } from "../operational/store.js";
 
@@ -17,7 +17,7 @@ export function noteAuditDrop(action: string, platform: string): void {
 }
 
 export async function appendAudit(entry: AuditInput): Promise<void> {
-  const record: AuditEntry = { ...entry, ts: entry.ts ?? new Date().toISOString() };
+  const record: AuditWriteEntry = { ...entry, ts: entry.ts ?? new Date().toISOString() };
   try {
     await getOperationalStore().appendAudit(record);
   } catch (firstErr) {

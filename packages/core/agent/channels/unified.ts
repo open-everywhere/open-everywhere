@@ -1,4 +1,4 @@
-import { auditErrorDetail } from "../audit/tool-action.js";
+import { auditErrorDetail, scrubAuditText } from "../audit/tool-action.js";
 import { defineChannel, GET, POST } from "eve/channels";
 import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
 import { defineState } from "eve/context";
@@ -65,6 +65,7 @@ import { unresumableAuditDetail } from "./session-resume.js";
 import { healPrunedDeploymentStrand } from "./stranded-seat.js";
 import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
 import { ingressSpendGate } from "../spend/ingress-gate.js";
+import type { AuditDetail, AuditDetailBuilder } from "../audit/scrubbed-text.js";
 
 function ulog(msg: string): void {
   console.log(`[open-everywhere:unified] ${msg}`);
@@ -262,14 +263,14 @@ export async function auditUnaccountedWakesForTurn(
   }
 }
 
-function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
+function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): AuditDetail {
+  const out: AuditDetailBuilder = {};
   if (typeof code === "string" && code.length > 0) out.code = code;
   if (details && typeof details === "object") {
     for (const k of ["errorId", "name", "statusCode", "generationId", "gatewayName", "gatewayType", "upstreamType", "upstreamStatusCode", "upstreamMessage"]) {
       const v = details[k];
       if (typeof v === "string" && v.length > 0) out[k] = auditErrorDetail(v).error;
-      else if (typeof v === "number" && Number.isFinite(v)) out[k] = String(v);
+      else if (typeof v === "number" && Number.isFinite(v)) out[k] = scrubAuditText(String(v));
     }
   }
   return out;
@@ -771,7 +772,7 @@ export async function divertInboundToUnifiedWindow(
   const ref = unifiedThreadRef(input.window.origin);
   const owner = await resolveThreadOwner(store, org, ref);
   const route = routeThreadMessage(owner, standing.generation, standing.domain);
-  const audit = (detail: Record<string, unknown>) =>
+  const audit = (detail: AuditDetail) =>
     appendAudit({
       org,
       platform: "unified",

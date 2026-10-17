@@ -1,5 +1,6 @@
 import { channelMessagesUrl, fetchGraphPages, liveTeamsGraphRequest, teamsTimedLinesFromRaw, threadRepliesUrl, type TeamsGraphRequester, type TeamsRenderedLine } from "./teams-read.js";
 import { appendAudit, catchUpSender, deploymentOrg, type AuditInput, type NormalizedMessage, type SeatCatchUpFetch } from "@open-everywhere/core/agent/adapter-api.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 const CATCH_UP_LIMIT = 100;
 
@@ -65,7 +66,7 @@ export async function fetchTeamsCatchUpWindow(
   deps: TeamsCatchUpDeps = liveDeps,
 ): Promise<readonly NormalizedMessage[]> {
   const scope = teamsCatchUpScopeFromChannelKey(req.channelKey);
-  const record = async (detail: Readonly<Record<string, unknown>>): Promise<void> => {
+  const record = async (detail: AuditDetail): Promise<void> => {
     try {
       await (deps.audit ?? appendAudit)({
         org: deploymentOrg(),

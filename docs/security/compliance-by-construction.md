@@ -243,15 +243,22 @@ outside text:
   the whole line up to 160. A person outside the deployment can write a title.
 - The `error` field of a row that records a caught error keeps the upstream error text. The writers
   OPE-2545 swept pass that text through `auditErrorDetail`, which strikes the credential shapes it
-  knows and caps the text at 300 characters. `npm run lint:audit-error-detail` refuses a
-  writer that it can see storing error text any other way. 🔴 The lint is a text scan, and it does
-  not see every writer. It misses error text held in a variable under a key that is not
-  error-named, text that a helper renders, a record built under a name with no `detail` in it, a
-  spread of an object built elsewhere, and a template nested in a template. The scrub knows five
-  prefix shapes plus any `auditScrub` arm, so a credential of another shape still lands. The
-  `eve.patch.refused` and `eve.patch.unverifiable` boot rows stay unscrubbed, because their module
-  must take no new import. An `approval.approved` row's `outcome` keeps the act's own result text, and nothing
-  scrubs it.
+  knows and caps the text at 300 characters. Under an error-named key (`err`, `error…`,
+  `…Error…`), a type brand makes `typecheck:all` refuse any text that skipped that reducer
+  (OPE-2549), also through a variable, a helper or a spread. Under any other key, `npm run
+  lint:audit-error-detail` refuses a `.message`, `.stack` or `String(err)` read that it can see.
+  🔴 That lint is a text scan, and it misses error text held in a variable or rendered by a helper
+  under a key that is not error-named. TypeScript also does not check a spread of a plain record
+  next to another key, or a cast of a whole detail to `never` or `any`. The lint refuses that spread
+  when the record's type is in the same file or is a scanned helper's declared return type, and it
+  refuses a cast to `AuditDetail`. It cannot see a plain-record variable imported from another file,
+  or one in a branch of a conditional spread.
+  The scrub
+  knows five prefix shapes plus any `auditScrub` arm, so a credential of another shape still
+  lands. The `eve.patch.refused` and `eve.patch.unverifiable` boot rows stay unscrubbed, because
+  their module must take no new import. The `outcome` of an `approval.approved` or
+  `admin.approval.decide` row keeps the act's own result text, scrubbed the same way and capped at
+  300 characters.
 - The `frames` field of a `delegation.worker_turn_failed` row can carry up to 120 characters of
   chosen text in each of eight frames.
 

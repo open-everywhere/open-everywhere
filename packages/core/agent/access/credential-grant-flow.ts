@@ -46,6 +46,7 @@ import {
   type CredentialGrantRow,
   type GrantJsonObject,
 } from "../operational/credential-grant-rows.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface GrantAuditStamps {
   readonly org: string;
@@ -480,7 +481,7 @@ export async function auditGrant(
     | "grant.mount_refused"
     | "grant.mount_withheld",
   principalId: string | undefined,
-  detail: Readonly<Record<string, unknown>>,
+  detail: AuditDetail,
 ): Promise<void> {
   await appendAudit({
     action,

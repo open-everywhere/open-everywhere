@@ -1,3 +1,5 @@
+import type { AuditDetail, AuditDetailBuilder } from "@open-everywhere/core/agent/adapter-api.js";
+
 export interface GitHubInstallationEvent {
   readonly effect: "learn" | "revoke";
   readonly action: string;
@@ -65,14 +67,14 @@ export interface GitHubInstallationDeps {
     updatedAt: string;
   }) => Promise<void>;
   readonly forget: (owner: string) => Promise<boolean>;
-  readonly audit: (action: string, detail: Record<string, unknown>, workspace: string) => Promise<void>;
+  readonly audit: (action: string, detail: AuditDetail, workspace: string) => Promise<void>;
   readonly now?: () => string;
   readonly log?: (msg: string) => void;
 }
 
 export async function handleGitHubInstallationDelivery(ev: GitHubInstallationEvent, deps: GitHubInstallationDeps): Promise<void> {
   const at = deps.now ? deps.now() : new Date().toISOString();
-  const detail: Record<string, unknown> = {
+  const detail: AuditDetailBuilder = {
     action: ev.action,
     installationId: ev.installationId,
     ...(ev.accountType ? { accountType: ev.accountType } : {}),

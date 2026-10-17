@@ -82,6 +82,7 @@ import {
   clearConnectorAuthRequired,
   freshGrantConfirmed,
 } from "./auth-retry-memo.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 function requesterForAuthority(auth: MemberPlaneAuthLike | undefined) {
   const delegated = delegatedRequesterThisTurn(undefined);
@@ -161,7 +162,7 @@ export type ConnectAuthorizationStarter = (
 
 export const AUTH_URL_TTL_MS = 15 * 60 * 1000;
 
-async function auditMintOutcome(connector: string, detail: Readonly<Record<string, unknown>>): Promise<void> {
+async function auditMintOutcome(connector: string, detail: AuditDetail): Promise<void> {
   const flow = userAuthFlowProvider();
   const oidcEnv = flow ? await flow.environmentClaim() : "unregistered";
   await appendAudit({

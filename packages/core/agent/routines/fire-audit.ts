@@ -4,6 +4,7 @@ import type { TeamsMembershipUnresolved } from "../channels/teams-bridge.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { usageSummary } from "../spend/usage-events.js";
 import { isSilentRoutine, type Routine } from "./routine.js";
+import type { AuditDetail, StoredAuditDetail } from "../audit/scrubbed-text.js";
 
 export const ROUTINE_AUDIT = {
   fire: "routine.fire",
@@ -88,7 +89,7 @@ async function write(entry: AuditInput, deps: RoutineAuditDeps): Promise<void> {
 export async function auditRoutineSkip(
   r: Routine,
   reason: RoutineSkipReason,
-  extra: Readonly<Record<string, unknown>> = {},
+  extra: AuditDetail = {},
   deps: RoutineAuditDeps = {},
 ): Promise<boolean> {
   const nowIso = (deps.now?.() ?? new Date()).toISOString();
@@ -173,7 +174,7 @@ export async function auditRoutineFire(
   r: Routine,
   sessionId: string,
   outcome: string,
-  extra: Readonly<Record<string, unknown>> = {},
+  extra: AuditDetail = {},
   deps: RoutineAuditDeps = {},
 ): Promise<void> {
   await write(
@@ -251,7 +252,7 @@ export async function auditRoutineDisabled(
   reason: string,
   consecutiveFailures: number,
   sessionId: string | undefined,
-  extra: Readonly<Record<string, unknown>> = {},
+  extra: AuditDetail = {},
   deps: RoutineAuditDeps = {},
 ): Promise<void> {
   await write(
@@ -284,7 +285,7 @@ export function emptyRoutineForensics(): RoutineForensics {
   return EMPTY_FORENSICS;
 }
 
-function detailString(detail: Readonly<Record<string, unknown>> | undefined, key: string): string | undefined {
+function detailString(detail: StoredAuditDetail | undefined, key: string): string | undefined {
   const v = detail?.[key];
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }

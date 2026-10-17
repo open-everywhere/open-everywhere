@@ -2,6 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { MemoryWriteRoad } from "../memory/write-road.js";
 import type { SessionMode } from "../access/resolver.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface PersonOptOutState {
   readonly optedOut: boolean;
@@ -67,7 +68,7 @@ export type PersonOptOutRefusedAct = "memory-write" | "message-shortcut";
 export async function auditPersonOptOutRefusal(
   where: PersonOptOutWhere,
   act: PersonOptOutRefusedAct,
-  detail: Readonly<Record<string, string | number | boolean>> = {},
+  detail: AuditDetail = {},
 ): Promise<void> {
   await appendAudit({
     org: where.org,

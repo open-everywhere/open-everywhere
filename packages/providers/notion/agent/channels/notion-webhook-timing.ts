@@ -1,3 +1,5 @@
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
+
 export const NOTION_WEBHOOK_TIMING_ACTION = "notion.webhook_timing";
 
 export type NotionWebhookTimingPhase =
@@ -9,8 +11,7 @@ export type NotionWebhookTimingPhase =
   | "eveSend"
   | "finalAudit";
 
-export interface NotionWebhookTimingDetail {
-  readonly [key: string]: unknown;
+export interface NotionWebhookTimingDetail extends AuditDetail {
   readonly outcome: string;
   readonly failedPhase?: NotionWebhookTimingPhase;
   readonly hmacCredentialMs?: number;

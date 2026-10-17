@@ -1,4 +1,5 @@
 import type { AuditEntry } from "../agent/operational/store.js";
+import { auditErrorDetail } from "../agent/audit/tool-action.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -204,7 +205,7 @@ registerFailureFacetJudge({
 }
 
 {
-  await appendAudit({ org: "busyco", platform: "slack", workspace: "T1", surface: "C1", action: "approval.failed", ts: IN_WINDOW, detail: { kind: "pr.open", error: "github 502" } });
+  await appendAudit({ org: "busyco", platform: "slack", workspace: "T1", surface: "C1", action: "approval.failed", ts: IN_WINDOW, detail: { kind: "pr.open", ...auditErrorDetail("github 502") } });
   const tick = await mode3Tick({ now: NOW, orgs: ["busyco"], post: async () => (posts++, { ok: true }) as never });
   eq(tick, { orgs: 1, reports: 1, posted: 1 }, "loop: NEGATIVE CONTROL — a week with one trace builds and posts a digest");
   ok(facetCalls > 0, "loop: NEGATIVE CONTROL — a non-empty week DOES call the facet model");

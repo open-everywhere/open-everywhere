@@ -8,6 +8,7 @@ import type { ActionKind, PendingActionRow } from "./types.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { plainValue } from "./plain-text.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 const REGISTRY = new Map<string, ActionKind<any>>();
 
@@ -159,7 +160,7 @@ function spendCoverageLines(coverage: SpendCoverage | undefined): string[] {
   }
 }
 
-function spendCoverageDetail(coverage: SpendCoverage | undefined): Record<string, unknown> {
+function spendCoverageDetail(coverage: SpendCoverage | undefined): AuditDetail {
   if (coverage === undefined) return {};
   switch (coverage.measured) {
     case "gap":

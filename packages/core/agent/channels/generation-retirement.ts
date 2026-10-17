@@ -4,6 +4,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { bareTokenFromEveContext } from "./window-key.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const GENERATION_RETIRED_AUDIT_ACTION = "session.generation_retired";
 
@@ -272,7 +273,7 @@ async function auditRetirement(
   p: PendingGenerationRetirement,
   deps: RetirementDeps,
   action: string,
-  extra: Record<string, unknown>,
+  extra: AuditDetail,
 ): Promise<void> {
   const { workspace, surface } = deps.labelsFor(p.token);
   await appendAudit({

@@ -19,6 +19,7 @@ import { inboundAgentCardJson, buildInboundAgentCard } from "./card.js";
 import type { A2aInboundCaller, A2aInboundDeclaration } from "./declaration.js";
 import { inboundLandRefusalMessage, type A2aInboundLandOutcome } from "./land.js";
 import { OperationalA2aTaskStore, writeA2aInboundTask } from "./task-store.js";
+import type { AuditDetail } from "../../audit/scrubbed-text.js";
 
 const A2A_INBOUND_MAX_BODY_BYTES = 256 * 1024;
 
@@ -28,7 +29,7 @@ const A2A_INBOUND_ACCEPTED_ACTION = "a2a.inbound_accepted";
 export interface A2aInboundAuditRow {
   readonly action: typeof A2A_INBOUND_REFUSED_ACTION | typeof A2A_INBOUND_ACCEPTED_ACTION;
   readonly caller?: string;
-  readonly detail: Record<string, unknown>;
+  readonly detail: AuditDetail;
 }
 
 export interface A2aInboundHttpDeps {

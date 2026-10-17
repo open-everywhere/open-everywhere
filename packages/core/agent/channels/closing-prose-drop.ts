@@ -1,4 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const CLOSING_PROSE_DROPPED_ACTION = "turn.supervisor_prose_dropped";
 
@@ -14,7 +15,7 @@ export interface ClosingProseDrop {
   readonly row: ClosingProseDropRow;
   readonly chars: number;
   readonly sessionId?: string;
-  readonly anchor: Record<string, unknown>;
+  readonly anchor: AuditDetail;
   readonly log: (msg: string) => void;
 }
 

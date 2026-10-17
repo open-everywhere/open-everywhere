@@ -51,7 +51,7 @@ export function exampleLine(row: AuditEntry, name?: SurfaceNamer): string {
     case "spend.cap_bypassed":
       return `${where}: spend cap bypassed (${String(d["standing"] ?? "?")})${d["reason"] ? ` — ${String(d["reason"])}` : ""}`;
     case "approval.failed":
-      return `${where}: "${String(d["kind"] ?? "?")}" approval execute() failed — ${String(d["error"] ?? "(no error)")}`;
+      return `${where}: "${String(d["kind"] ?? "?")}" approval ${d["phase"] === "decline" ? "decline()" : "execute()"} failed — ${String(d["error"] ?? "(no error)")}`;
     case "unified.supervisor_turn_failed":
     case "unified.supervisor_session_failed":
       return `${where}: ${row.action === "unified.supervisor_turn_failed" ? "supervisor turn failed" : "supervisor session failed"} — ${String(d["message"] ?? "(no message)")}${failureDiagSuffix(d)}`;

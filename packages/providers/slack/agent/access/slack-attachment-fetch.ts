@@ -7,6 +7,7 @@ import {
   type EgressRefusalCause,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackBotToken } from "../setup/credentials.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 const SLACK_BOT_TOKEN_REF = "SLACK_BOT_TOKEN";
 
@@ -65,7 +66,7 @@ export async function fetchSlackAttachment(ctx: BindableContext, ref: TrustedSla
   if (!token) {
     throw new Error("describe_image: SLACK_BOT_TOKEN is not set — the bot token is required to download a Slack attachment.");
   }
-  const row = (outcome: "allowed" | "failed", extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+  const row = (outcome: "allowed" | "failed", extra: AuditDetail = {}): AuditDetail => ({
     ...hostCallAuditFields({
       host: safe.url.hostname,
       verb: ATTACHMENT_VERB,

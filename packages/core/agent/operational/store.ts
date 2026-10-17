@@ -5,6 +5,7 @@ import type { PendingUnifiedWake, UnifiedWakeRecord } from "../channels/unified-
 import type { SessionTailEntry } from "../channels/session-tail.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow } from "./credential-grant-rows.js";
 import type { AuditEpochSeal } from "../audit/chain.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -103,7 +104,9 @@ export interface AuditEntry {
   readonly detail?: Readonly<Record<string, unknown>>;
 }
 
-export type AuditInput = Omit<AuditEntry, "ts"> & { readonly ts?: string };
+export type AuditInput = Omit<AuditWriteEntry, "ts"> & { readonly ts?: string };
+
+export type AuditWriteEntry = Omit<AuditEntry, "detail"> & { readonly detail?: AuditDetail };
 
 export interface AuditReadRow extends AuditEntry {
   readonly seq: number;
@@ -1035,7 +1038,7 @@ export interface OperationalStore {
   listAllRoutines(): Promise<Routine[]>;
   listRoutinePromptRevisions(org: string, surfaceKey: string, routineId?: string): Promise<RoutinePromptRevisionRow[]>;
 
-  appendAudit(entry: AuditEntry): Promise<void>;
+  appendAudit(entry: AuditWriteEntry): Promise<void>;
   readAudit(filter: AuditFilter): Promise<AuditReadRow[]>;
   listAuditOrgs(): Promise<string[]>;
   readAuditChain(org: string, opts?: AuditChainReadOptions): Promise<AuditChainRow[]>;

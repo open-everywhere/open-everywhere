@@ -2,10 +2,11 @@ import { haltScopeFor, resolveHalt, type HaltDeps } from "../access/halt.js";
 import { auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { routinePartition } from "./partition.js";
 import type { Routine } from "./routine.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export async function routineFireHalted(
   r: Routine,
-  extra: Readonly<Record<string, unknown>> = {},
+  extra: AuditDetail = {},
   deps: { readonly audit?: RoutineAuditDeps; readonly halt?: HaltDeps } = {},
 ): Promise<boolean> {
   const p = routinePartition(r);

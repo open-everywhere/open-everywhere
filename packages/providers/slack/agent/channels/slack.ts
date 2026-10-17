@@ -83,6 +83,7 @@ import { taskCardConfidentiality } from "./slack-task-card.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
 import { stepStatusFor, type StepAction } from "./slack-step-label.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
   if (!channelId) return undefined;
@@ -359,7 +360,7 @@ type InboundOutcome = { readonly auth: OpenEverywhereSlackAuth | null; readonly 
 
 const DROP = null;
 
-function auditWakeDropped(message: SlackMessage, reason: string, detail: Record<string, unknown> = {}): Promise<void> {
+function auditWakeDropped(message: SlackMessage, reason: string, detail: AuditDetail = {}): Promise<void> {
   return holdRouteWork(
     (async () => {
       try {

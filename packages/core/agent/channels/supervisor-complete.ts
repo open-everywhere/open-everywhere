@@ -1,6 +1,7 @@
 import { supervisorTextDelivery, type FinalMessageAction } from "./turn-delivery.js";
 import { appendAudit } from "../audit/audit.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export function consumeSupervisorReplyMark(ctx: unknown): boolean {
   return consumeRepliedThisTurn((ctx as { session?: { turn?: { id?: string } } } | undefined)?.session?.turn?.id);
@@ -23,9 +24,9 @@ export interface SupervisorCompletionSpec {
   readonly repliedAction: string;
   readonly contextRow: SupervisorAuditRow;
   readonly repliedRow: SupervisorAuditRow;
-  readonly silentAnchor: Record<string, unknown>;
-  readonly droppedAnchor: Record<string, unknown>;
-  readonly repliedAnchor: Record<string, unknown>;
+  readonly silentAnchor: AuditDetail;
+  readonly droppedAnchor: AuditDetail;
+  readonly repliedAnchor: AuditDetail;
   readonly log: (msg: string) => void;
 }
 
@@ -82,7 +83,7 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
   );
 }
 
-export async function auditSupervisorFailure(row: SupervisorAuditRow, action: string, detail: Record<string, unknown>): Promise<void> {
+export async function auditSupervisorFailure(row: SupervisorAuditRow, action: string, detail: AuditDetail): Promise<void> {
   await appendAudit({
     org: row.org,
     platform: row.platform,

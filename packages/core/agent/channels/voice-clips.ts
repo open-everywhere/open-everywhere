@@ -7,6 +7,7 @@ import { getSettings } from "../settings/settings.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { recordModelCall } from "../hooks/spend.js";
 import type { WakeAttachment } from "./wake-envelope.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface VoiceClipAudio {
   readonly audio: Uint8Array;
@@ -67,7 +68,7 @@ export interface HearVoiceClipsInput {
   readonly overBudget?: (bindable: BindableContext) => Promise<boolean>;
   readonly deadlineMs?: number;
   readonly record?: typeof recordModelCall;
-  readonly audit?: (detail: Record<string, unknown>) => Promise<void>;
+  readonly audit?: (detail: AuditDetail) => Promise<void>;
 }
 
 async function liveOverBudget(bindable: BindableContext): Promise<boolean> {
@@ -77,7 +78,7 @@ async function liveOverBudget(bindable: BindableContext): Promise<boolean> {
 }
 
 function liveAudit(bindable: BindableContext) {
-  return async (detail: Record<string, unknown>): Promise<void> => {
+  return async (detail: AuditDetail): Promise<void> => {
     const p = resolvePartition(bindable);
     const binding = bindFrom(bindable);
     await appendAudit({
@@ -102,7 +103,7 @@ export async function hearVoiceClips(input: HearVoiceClipsInput): Promise<VoiceC
   if (clips.length === 0) return [];
   const all = (reason: VoiceClipMiss): VoiceClipOutcome[] => clips.map(() => ({ heard: false, reason }));
   const audit = input.audit ?? liveAudit(input.bindable);
-  const note = (detail: Record<string, unknown>): Promise<void> =>
+  const note = (detail: AuditDetail): Promise<void> =>
     audit({ clips: clips.length, ...detail }).catch(() => {
     });
 

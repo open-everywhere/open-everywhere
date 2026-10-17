@@ -27,6 +27,7 @@ import {
 import { CONTROL_ADVERTISED_SCOPES, CONTROL_MCP_PATH, controlMcpResource, controlOAuthIssuer, controlProtectedResourceMetadata } from "./oauth-resource.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const CONTROL_OAUTH_AUTHORIZE_PATH = "/control/v1/oauth/authorize";
 export const CONTROL_OAUTH_TOKEN_PATH = "/control/v1/oauth/token";
@@ -283,6 +284,6 @@ async function issueAccessToken(
   return json(200, { access_token: token, token_type: "Bearer", expires_in: ACCESS_TOKEN_TTL_SECONDS, scope: scopes.join(" ") });
 }
 
-async function audit(action: string, principalId: string, detail: Record<string, unknown>): Promise<void> {
+async function audit(action: string, principalId: string, detail: AuditDetail): Promise<void> {
   await appendAudit({ org: deploymentOrg(), platform: "control", workspace: "control", principalId, action, detail });
 }

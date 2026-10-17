@@ -6,6 +6,7 @@ import { ConfigLoadRefusalError, configOrRefuse } from "./config.js";
 import type { Domain } from "../memory/domain.js";
 import { governanceAdminSet, resolveAudienceFloor, rosterState, type AudienceFloor, type RoomRoster } from "./audience-floor.js";
 import { PaneRedirectError } from "./pane-venue.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type ConnectorDisclosureVerdict =
   | { readonly ok: true }
@@ -32,7 +33,7 @@ function domainsOrNull(): readonly Domain[] | null {
 async function auditDisclosure(
   ctx: BindableContext,
   action: "connector.refused" | "governance.redirected",
-  detail: Readonly<Record<string, unknown>>,
+  detail: AuditDetail,
 ): Promise<void> {
   let org = deploymentOrg();
   let platform = "unknown";

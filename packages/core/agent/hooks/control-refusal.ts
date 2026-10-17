@@ -1,5 +1,6 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const HOOK_CANCELLABLE_EDGES = ["session.started", "turn.started", "step.started"] as const;
 
@@ -12,7 +13,7 @@ export interface HookRefusalInput {
   readonly phase: HookCancellableEdge;
   readonly reason: string;
   readonly message: string;
-  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly detail?: AuditDetail;
 }
 
 export interface HookRefusalDeps {

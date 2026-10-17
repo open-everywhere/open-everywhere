@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import type { AuditDetail } from "../agent/audit/scrubbed-text.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-permfit-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -81,7 +82,7 @@ function ago(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-async function seed(action: string, detail: Record<string, unknown>, days: number, surface = partition.surface): Promise<void> {
+async function seed(action: string, detail: AuditDetail, days: number, surface = partition.surface): Promise<void> {
   await appendAudit({
     org: partition.org,
     platform: partition.platform,

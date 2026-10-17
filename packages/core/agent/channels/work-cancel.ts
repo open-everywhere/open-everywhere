@@ -13,6 +13,7 @@ import { outboundKey, postOnce, type ForgetEventSeen, type MarkEventSeen } from 
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { readAnchoredWorkJobs, readWorkJobStatus } from "../hooks/work-status.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface WorkCancelActor {
   readonly requester: RequesterVerdict;
@@ -107,7 +108,7 @@ export function auditWorkCancel(
   taskId: string,
   cancelId: string,
   workToken: string | undefined,
-  detail: Record<string, unknown>,
+  detail: AuditDetail,
 ): Promise<unknown> {
   const domain = parseWindowToken(row.seatToken)?.domain;
   return deps

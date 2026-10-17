@@ -89,6 +89,7 @@ import { flushDirtyTreeAtTurnEnd, flushSettledMemory, noteTaskDispatched, noteTa
 import { flushWorkSettlement } from "./work-flush.js";
 import { currentSeatToken, isSameWorkSession, workSessionLedgerId, workTokenHoldingTask } from "../channels/work-generation.js";
 import type { MemoryPersistContext } from "./memory.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 const TAINT_VERDICT_ACTION = "taint.verdict";
 
@@ -1007,7 +1008,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   const store = getOperationalStore();
   const requestId = await readWorkTaskRequest(store, org, settled.taskId);
   const row = requestId === undefined ? undefined : await readWorkRequest(store, org, requestId);
-  const audit = (detail: Record<string, unknown>) =>
+  const audit = (detail: AuditDetail) =>
     appendAudit({ org, platform: "unified", workspace: "delegation", action: WORK_RESULT_WAKE_ACTION, detail: { taskId: settled.taskId, ...(requestId !== undefined ? { requestId } : {}), status: settled.status, ...detail } }).catch(() => undefined);
   if (requestId === undefined || row === undefined) {
     await audit({ outcome: "skipped", reason: requestId === undefined ? "no-request-for-task" : "request-row-missing" });

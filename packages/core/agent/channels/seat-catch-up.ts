@@ -9,6 +9,8 @@ import { admissionNameFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getSettings } from "../settings/settings.js";
 import { e2eDriverPrincipals, isE2eDriver } from "../testing/driver-allowlist.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
+import { scrubAuditText } from "../audit/tool-action.js";
 
 export interface SeatCatchUpRequest {
   readonly container: string;
@@ -134,7 +136,7 @@ export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opt
   const scope = seatCatchUpScopeFromChannelKey(platform, req.channelKey);
   const precisionMs = seatCatchUpPrecisionFor(platform);
   const bounds = seatCatchUpBounds(req.sinceMs, req.untilMs, precisionMs);
-  const record = async (outcome: SeatCatchUpOutcome, raw: number, kept: number, extra: Readonly<Record<string, unknown>> = {}): Promise<void> => {
+  const record = async (outcome: SeatCatchUpOutcome, raw: number, kept: number, extra: AuditDetail = {}): Promise<void> => {
     try {
       await (opts.audit ?? appendAudit)({
         org: deploymentOrg(),
@@ -168,7 +170,7 @@ export async function seatCatchUp(platform: string, req: SeatCatchUpRequest, opt
     window = await fetch(boundedReq);
   } catch (err) {
     const status = httpStatusOf(err);
-    await record("failed", 0, 0, { reason: "fetch-threw", errorName: errorNameOf(err), ...(status === undefined ? {} : { httpStatus: status }) });
+    await record("failed", 0, 0, { reason: "fetch-threw", errorName: scrubAuditText(errorNameOf(err)), ...(status === undefined ? {} : { httpStatus: status }) });
     return { messages: [] };
   }
   if (window.length === 0) {

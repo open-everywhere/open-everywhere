@@ -1314,7 +1314,11 @@ notification text is the same visible lines.
 **A decided card is one line**: "✅ Approved by @name: message posted in #general", "❌ Rejected by
 @name: Post a message in #general", "⏰ Expired: Post a message in #general" (`decidedCardLine`).
 The card updates in place to that line. A failed act reads "⚠️ Approved by @name, but it failed", and
-the raw error stays in the `approval.failed` audit row. **A second post repeats the card only where
+a decline that a kind could not record reads "❌ Rejected by @name: … · I could not save the
+decline". No card shows the error text. The error, scrubbed and capped at 300 characters, goes to
+an `approval.failed` audit row (with `phase: "decline"` for a decline) and to the control-plane
+result. A failed act's decision wake carries it too; a reject's wake carries no execution line
+(OPE-2549). **A second post repeats the card only where
 something cannot see the card.** The notice exists for a session whose history does not see a card
 edit (OPE-2473). So it states the outcome, as the decided line, only when the card did not change
 (a Discord or Teams sweep or session-grant release, or a rewrite Slack refused), when no standing seat

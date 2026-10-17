@@ -11,6 +11,7 @@ import { getConfig } from "../access/config.js";
 import { getSettings, type DirectoryAutoConfirm } from "../settings/settings.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
+import type { StoredAuditDetail } from "../audit/scrubbed-text.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:identity/directory-sync] ${msg}`);
@@ -493,10 +494,10 @@ function directorySyncOrgs(): string[] {
   return [...getSettings().schedules.sweepOrgs];
 }
 
-export async function lastDirectorySync(org: string): Promise<{ readonly ts: string; readonly detail: Record<string, unknown> } | null> {
+export async function lastDirectorySync(org: string): Promise<{ readonly ts: string; readonly detail: StoredAuditDetail } | null> {
   const rows = await readAudit({ org, action: DIRECTORY_SYNC_ACTION, limit: 1 });
   const row = rows[0];
-  return row ? { ts: row.ts, detail: { ...(row.detail ?? {}) } } : null;
+  return row ? { ts: row.ts, detail: row.detail ?? {} } : null;
 }
 
 export interface PendingDirectorySuggestion {

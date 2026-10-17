@@ -2,6 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getSettings } from "../settings/settings.js";
 import type { Partition } from "./partition.js";
 import type { MemoryFiles } from "./store.js";
+import type { AuditDetail, AuditDetailBuilder } from "../audit/scrubbed-text.js";
 
 export const MEMORY_SYNC_TIMING_SETTING = "memory.syncTiming";
 
@@ -101,9 +102,9 @@ export const SILO_DETAIL_KEYS = ["silo", "tier", "provider", "readOnly", "loadMs
 
 export const SYNC_DETAIL_KEYS = ["sessionId", "hookMs", "baselineMs", "sandboxMs", "indexMs", "versionsMs", "siloCount", "silos"] as const;
 
-export function toAuditDetail(record: MemorySyncTiming): Record<string, unknown> {
+export function toAuditDetail(record: MemorySyncTiming): AuditDetail {
   const src = record as unknown as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
+  const out: AuditDetailBuilder = {};
   put(out, "sessionId", idString(src["sessionId"]));
   put(out, "hookMs", finiteNumber(src["hookMs"]));
   put(out, "baselineMs", finiteNumber(src["baselineMs"]));

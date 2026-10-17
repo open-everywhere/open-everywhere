@@ -26,6 +26,7 @@ import {
   testRunRefusal,
   type RoutineTestRequest,
 } from "../routines/test-run.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routine-test-run] ${msg}`);
@@ -62,7 +63,7 @@ export interface TestRunTickResult {
   readonly refused: number;
 }
 
-async function auditTestFired(r: Routine, test: RoutineTestRequest, detail: Readonly<Record<string, unknown>>): Promise<void> {
+async function auditTestFired(r: Routine, test: RoutineTestRequest, detail: AuditDetail): Promise<void> {
   const p = routinePartition(r);
   await appendAudit({
     org: p.org,

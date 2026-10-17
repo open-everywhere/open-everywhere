@@ -15,6 +15,7 @@ const { runAuditExport, encodeAuditBatch, exportedRecord, auditExportCursorKey, 
 const { defineSettings } = await import("../agent/settings/settings.js");
 import type { AuditExportTarget } from "../agent/settings/settings.js";
 import type { ExportedAuditRecord } from "../agent/audit/siem-export.js";
+import type { AuditDetail } from "../agent/audit/scrubbed-text.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -39,7 +40,7 @@ let clock = Date.parse("2026-10-11T12:00:00.000Z");
 const now = (): number => clock;
 const iso = (ms: number): string => new Date(ms).toISOString();
 
-async function append(org: string, action: string, ageMs: number, detail?: Record<string, unknown>): Promise<void> {
+async function append(org: string, action: string, ageMs: number, detail?: AuditDetail): Promise<void> {
   await store.appendAudit({ org, ts: iso(clock - ageMs), platform: "slack", workspace: "T1", surface: "C1", principalId: "U1", action, ...(detail ? { detail } : {}) });
 }
 

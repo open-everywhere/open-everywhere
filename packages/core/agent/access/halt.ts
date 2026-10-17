@@ -5,6 +5,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import type { CapLevel, HaltAddress, HaltRow } from "../operational/store.js";
 import { getConfig } from "./config.js";
 import { USER_SCOPE_PREFIX, parseScopeKey, userScopeKey } from "./scope-key.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface HaltScope {
   readonly org: string;
@@ -148,7 +149,7 @@ export function haltAddressFromParts(parts: { readonly orgWide?: boolean; readon
   return { orgWide: false, level: parts.level as CapLevel, scopeKey: parts.scopeKey };
 }
 
-export function haltAddressFields(address: HaltAddress): Record<string, unknown> {
+export function haltAddressFields(address: HaltAddress): AuditDetail {
   return address.orgWide ? { orgWide: true } : { level: address.level, scopeKey: address.scopeKey };
 }
 
@@ -200,7 +201,7 @@ export function haltClickNotice(state: HaltState): string {
   return `⛔ Nothing was decided: an emergency halt is on${why}. Once an admin lifts it, this card works again.`;
 }
 
-export function haltAuditDetail(state: HaltState): Record<string, unknown> {
+export function haltAuditDetail(state: HaltState): AuditDetail {
   if (!state.halted) return {};
   if (state.unreadable !== undefined) return { halt: "unreadable" };
   const a = state.row.address;

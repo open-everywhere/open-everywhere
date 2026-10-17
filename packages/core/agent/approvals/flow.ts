@@ -1,4 +1,4 @@
-import { auditErrorDetail } from "../audit/tool-action.js";
+import { auditErrorDetail, scrubAuditText } from "../audit/tool-action.js";
 import { createHash, randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
@@ -53,7 +53,7 @@ import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
 import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
-import { CLICK_NOTICE, decidedCardLine } from "./card-layout.js";
+import { CLICK_NOTICE, FAILED_OUTCOME_PREFIX, decidedCardLine } from "./card-layout.js";
 import type { BindableContext } from "../identity/binding.js";
 import "./memory-purge.js";
 import "./access-request.js";
@@ -104,6 +104,7 @@ import {
 } from "./routine-permission-offer.js";
 import { ROUTINE_PERMISSION_NO_EXPIRY } from "../routines/declared-permissions.js";
 import { readTurnClock } from "../observability/turn-clock.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 
@@ -1217,7 +1218,7 @@ async function auditClickerDenial(
   clickerId: string,
   reason: ClickerFloorRefusal | "not-admin" | "halted",
   clickSurfaceKey?: string,
-  extraDetail?: Record<string, unknown>,
+  extraDetail?: AuditDetail,
 ): Promise<void> {
   await appendAudit({
     ...whereFromScope(org, row.scopeKey),
@@ -1325,6 +1326,10 @@ async function runSessionGrantRelease(tail: () => Promise<unknown>, waitUntil: (
   }
 }
 
+function failedOutcomeLine(err: unknown): string {
+  return `${FAILED_OUTCOME_PREFIX} ${auditErrorDetail(err).error}`;
+}
+
 export async function resolveApprovalClick(input: ResolveApprovalClickInput): Promise<ApprovalClickResolution> {
   const store = getOperationalStore();
   const row = await store.getPendingAction(input.org, input.id);
@@ -1428,9 +1433,12 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
     let outcomeLine = "rejected";
     if (kindDef.declined) {
-      outcomeLine = await kindDef
-        .declined(JSON.parse(row.argsJson) as unknown, input.clickerId)
-        .catch((err: unknown) => `rejected — ${err instanceof Error ? err.message : String(err)}`);
+      outcomeLine = await kindDef.declined(JSON.parse(row.argsJson) as unknown, input.clickerId).catch(async (err: unknown) => {
+        const error = auditErrorDetail(err).error;
+        console.warn(`[open-everywhere:approvals] the decline of ${row.kind} ${row.id} was not saved: ${error}`);
+        await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, phase: "decline", error } }).catch(() => undefined);
+        return failedOutcomeLine(err);
+      });
     }
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine, executed: "none" };
   }
@@ -1460,14 +1468,13 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   try {
     const args = JSON.parse(row.argsJson) as unknown;
     const outcome = await withArmingApproval({ id: row.id, kind: row.kind }, () => kindDef.execute(args, input.clickerId));
-    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, ...venue, outcome } });
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, ...venue, outcome: scrubAuditText(outcome) } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "approved" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(outcome), executed: "ok" };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, ...venue, ...auditErrorDetail(err) } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
-    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(`FAILED: ${message}`), executed: "failed" };
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: await withRuleLine(failedOutcomeLine(err)), executed: "failed" };
   } finally {
     if (releaseTail) await runSessionGrantRelease(releaseTail, input.waitUntil);
   }

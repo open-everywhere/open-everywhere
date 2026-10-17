@@ -9,6 +9,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildNotionAuth, notionConversationKey } from "./notion-identity.js";
 import type { NotionVia } from "./notion-scope.js";
+import type { AuditDetail, AuditDetailBuilder } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionSeamFacts {
   readonly workspaceId: string | undefined;
@@ -160,8 +161,8 @@ export interface NotionDispatchJoinIds {
   readonly wakeId?: string;
 }
 
-export function notionDispatchJoinDetail(ids: NotionDispatchJoinIds): Record<string, string> {
-  const out: Record<string, string> = {};
+export function notionDispatchJoinDetail(ids: NotionDispatchJoinIds): AuditDetail {
+  const out: AuditDetailBuilder = {};
   if (ids.deliveryId) out.deliveryId = ids.deliveryId;
   if (ids.commentId) out.commentId = ids.commentId;
   if (ids.wakeId) out.wakeId = ids.wakeId;

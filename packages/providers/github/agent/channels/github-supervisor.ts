@@ -21,6 +21,7 @@ import {
   type SessionTailWakeRow,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 const GITHUB_CATCH_UP_REACHBACK_HOURS = 168;
 
@@ -156,7 +157,7 @@ export function githubDispatchAuditDetail(input: {
   readonly wakeId?: string;
   readonly repoPrivate: boolean;
   readonly vouched: boolean;
-}): Readonly<Record<string, unknown>> {
+}): AuditDetail {
   return {
     addressing: input.addressing,
     issueNumber: input.issueNumber,

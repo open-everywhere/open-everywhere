@@ -15,6 +15,7 @@ const { CONTROL_WRITE_TOOL_NAMES } = await import("../agent/control/writes.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { registerActionKind } = await import("../agent/approvals/actions.js");
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
@@ -141,6 +142,43 @@ await client.connect(clientT);
   ok("the executed decision is audited by the shared core (approval.approved)", actions.includes("approval.approved"));
   ok("the deny is audited by the shared core (approval.rejected)", actions.includes("approval.rejected"));
   ok("control-plane provenance is audited (admin.approval.decide) with the actor", audit.some((e) => e.action === "admin.approval.decide" && e.principalId === "admin@example.com"));
+}
+
+{
+  const ECHO = "upstream said: Authorization: Bearer sk-live-abcdefghijklmnop rejected (token xoxb-1234567890-abcdefghijkl)";
+  registerActionKind({
+    kind: "echo.fail",
+    policy: "admin",
+    summarize: () => ["echo"],
+    plainSummary: () => "Echo",
+    async execute() {
+      throw new Error(ECHO);
+    },
+  });
+  await seed("pa-echo", { kind: "echo.fail", argsJson: "{}", scopeKey: "slack/T1/C-ECHO" });
+  const r = await callJson(client, "decide_pending_action", { org: "default", id: "pa-echo", decision: "approve" });
+  const tokenFree = (text: string): boolean => !text.includes("sk-live-abcdefghijklmnop") && !text.includes("xoxb-1234567890");
+  ok(`OPE-2549: the control result carries the failure, scrubbed (got ${r.result})`, r.ok === true && String(r.result).startsWith("FAILED: ") && String(r.result).includes("[redacted]") && tokenFree(String(r.result)));
+  const row = (await readAudit({ org: "default" })).find((e) => e.action === "admin.approval.decide" && e.detail?.id === "pa-echo");
+  const outcome = String(row?.detail?.outcome);
+  ok(`🔴 OPE-2549: the admin.approval.decide row stores no echoed token (got ${outcome})`, row !== undefined && outcome.includes("[redacted]") && tokenFree(outcome));
+  ok("OPE-2549 NEGATIVE CONTROL: the diagnostic text around the token survives", outcome.includes("upstream said"));
+
+  registerActionKind({
+    kind: "echo.ok",
+    policy: "admin",
+    summarize: () => ["echo ok"],
+    plainSummary: () => "Echo ok",
+    async execute() {
+      return `posted, ${ECHO}`;
+    },
+  });
+  await seed("pa-echo-ok", { kind: "echo.ok", argsJson: "{}", scopeKey: "slack/T1/C-ECHO" });
+  const okRes = await callJson(client, "decide_pending_action", { org: "default", id: "pa-echo-ok", decision: "approve" });
+  ok("OPE-2549: the echoing act ran", okRes.ok === true && okRes.outcome === "decided" && okRes.decision === "approved");
+  const okRow = (await readAudit({ org: "default" })).find((e) => e.action === "admin.approval.decide" && e.detail?.id === "pa-echo-ok");
+  const okOutcome = String(okRow?.detail?.outcome);
+  ok(`🔴 OPE-2549: a success line that echoes a token is stored scrubbed (got ${okOutcome})`, okRow !== undefined && okOutcome.startsWith("posted, upstream said") && tokenFree(okOutcome));
 }
 
 {

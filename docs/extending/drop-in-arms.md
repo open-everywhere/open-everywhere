@@ -277,7 +277,8 @@ line an audit row carries. An upstream error string is provider-echoed and
 attacker-influenceable, so it is treated as untrusted text, and a credential shape a provider
 echoes back must not land in our own audit store. The writers OPE-2545 swept go through it, so an
 arm reaches their rows. `npm run lint:audit-error-detail` refuses a writer that
-it can see skipping the reducer (OPE-2545). The lint is a text scan with named limits
+it can see skipping the reducer (OPE-2545), and `typecheck:all` refuses unscrubbed text under an
+error-named key (OPE-2549). The lint is a text scan with named limits
 ([Audit & provenance](../security/audit-and-provenance.md#inside-the-append-path)), so an arm is
 not a promise about every row.
 

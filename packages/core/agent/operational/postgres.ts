@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
+import type { AuditDetailBuilder } from "../audit/scrubbed-text.js";
 
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
@@ -1298,7 +1299,7 @@ async function recordAuditIntegrity(
   heal?: HealActions,
 ): Promise<void> {
   const healedArtifacts = healedAnything(heal);
-  const detail: Record<string, unknown> = { violations, healed, cause: auditIntegrityCause(violations, healedArtifacts) };
+  const detail: AuditDetailBuilder = { violations, healed, cause: auditIntegrityCause(violations, healedArtifacts) };
   if (healedArtifacts) {
     detail.healed_artifacts = heal;
   }

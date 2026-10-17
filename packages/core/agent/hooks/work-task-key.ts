@@ -13,6 +13,7 @@ import { dispatchWorkRequest, dispatchWorkResult } from "../channels/unified.js"
 import { mintWakeId } from "../channels/unified-window.js";
 import { foldWorkFire } from "../routines/fire-work-fold.js";
 import { registerWorkReissuer, type WorkStampFailure, type WorkStampVerdict, workStampVerdict } from "../access/work-step-stamp.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export { gateWorkCallStamp, liveStepDeliveryId, liveWorkRequestStamp, registerWorkReissuer, workStampVerdict, WORK_CALL_NEEDS_REISSUE_MESSAGE, type WorkStampFailure, type WorkStampVerdict } from "../access/work-step-stamp.js";
 
@@ -162,7 +163,7 @@ export async function wakeSeatNeedsReissue(
   }
   const org = deps.org();
   const store = deps.store();
-  const audit = (detail: Record<string, unknown>) =>
+  const audit = (detail: AuditDetail) =>
     deps
       .audit({
         org,

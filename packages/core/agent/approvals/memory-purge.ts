@@ -8,6 +8,7 @@ import type { Partition } from "../memory/partition.js";
 import type { Tier } from "../memory/store.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import type { AuditDetail, AuditDetailBuilder } from "../audit/scrubbed-text.js";
 
 interface MemoryPurgeLocation {
   readonly siloName: string;
@@ -79,7 +80,7 @@ export interface MemoryPurgeResult {
 export async function executeMemoryPurge(
   args: MemoryPurgeArgs,
   decidedBy: string,
-  extra: Readonly<Record<string, unknown>> = {},
+  extra: AuditDetail = {},
 ): Promise<MemoryPurgeResult> {
   const shas = (args.bullets ?? []).map((b) => b.sha256);
   const removedFrom: string[] = [];
@@ -125,6 +126,9 @@ export async function executeMemoryPurge(
     if (commit) commits.push(commit);
   }
 
+  const kept: AuditDetailBuilder = {};
+  for (const [k, v] of Object.entries(extra)) if (!PURGE_DETAIL_KEYS.has(k)) kept[k] = v;
+
   await appendAudit({
     org: args.partition.org,
     platform: args.partition.platform,
@@ -133,7 +137,7 @@ export async function executeMemoryPurge(
     principalId: decidedBy,
     action: "memory.purge",
     detail: {
-      ...Object.fromEntries(Object.entries(extra).filter(([k]) => !PURGE_DETAIL_KEYS.has(k))),
+      ...kept,
       bullets: (args.bullets ?? []).map((b) => ({ sha256: b.sha256, chars: b.chars })),
       removedFrom,
       skipped,

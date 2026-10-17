@@ -22,6 +22,7 @@ import {
   type WakeTrust,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildEmailAuth, type OpenEverywhereEmailAuth } from "./email-identity.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 type EmailOrigin = Extract<UnifiedWakeOrigin, { platform: "email" }>;
 
@@ -59,7 +60,7 @@ export interface EmailFrontDeps {
   readonly wakeTrust: (auth: OpenEverywhereEmailAuth, sender: string) => WakeTrust;
   readonly dispatchRoom: (plan: EmailWakePlan) => Promise<void>;
   readonly dispatchDm: (plan: EmailWakePlan) => Promise<void>;
-  readonly audit: (row: { readonly action: string; readonly workspace: string; readonly surface?: string; readonly principalId?: string; readonly detail: Record<string, unknown> }) => Promise<void>;
+  readonly audit: (row: { readonly action: string; readonly workspace: string; readonly surface?: string; readonly principalId?: string; readonly detail: AuditDetail }) => Promise<void>;
   readonly now?: () => number;
 }
 

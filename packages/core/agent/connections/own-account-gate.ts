@@ -20,6 +20,7 @@ import {
   type OwnAccountAsk,
   type OwnAccountVendor,
 } from "./own-account-ask.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface ConnectorActingIdentityDeps {
   readonly vendor: OwnAccountVendor;
@@ -30,7 +31,7 @@ export interface ConnectorActingIdentityDeps {
   readonly deploymentAdmitsGrant: () => boolean;
   readonly nowIso: string;
   readonly tool: string;
-  readonly audit: (detail: Record<string, unknown>) => Promise<void>;
+  readonly audit: (detail: AuditDetail) => Promise<void>;
   readonly callerCanSpendPersonal?: boolean;
 }
 

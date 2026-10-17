@@ -4,6 +4,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { markSurfaceSession, pinSurfaceSession, surfaceTurnOf, type SurfaceSessionPin, type SurfaceSessionStatus } from "./surface-session-state.js";
 import { WAKE_TARGET_TTL_MS } from "./unified-window.js";
 import { workChildLink } from "./work-stop-note.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const WORK_SURFACE_WAIT_ACTION = "work.surface_wait";
 
@@ -135,7 +136,7 @@ async function writeWaitingJobs(store: WorkWaitStore, org: string, pin: SurfaceS
   else await store.putTaskResult(org, waitKey(pin), JSON.stringify(jobs), atIso, TTL_MS);
 }
 
-function auditWait(deps: WorkWaitDeps, org: string, pin: SurfaceSessionPin, detail: Record<string, unknown>): Promise<unknown> {
+function auditWait(deps: WorkWaitDeps, org: string, pin: SurfaceSessionPin, detail: AuditDetail): Promise<unknown> {
   return deps.audit({ org, platform: pin.platform, workspace: "delegation", action: WORK_SURFACE_WAIT_ACTION, detail }).catch(() => undefined);
 }
 

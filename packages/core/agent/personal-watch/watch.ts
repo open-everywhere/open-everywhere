@@ -14,6 +14,7 @@ import type { WatchDelivery, WatchDeliveryResult } from "./deliver.js";
 import { discoverForPerson, discoveryOn, repeatedWorkSummary, type ProposeRoutine } from "./discovery.js";
 import { roomDiscoveryTick, type ProposeRoomRoutine, type RoomDiscoveryDeps } from "./room-discovery.js";
 import type { PersonConnectorCallRow, QuestionLedgerRow } from "../operational/store.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type PersonalWatchDetectorName = "calendar-conflicts";
 
@@ -128,7 +129,7 @@ async function liveDmStopped(org: string, principalKey: string): Promise<boolean
   return (await readDmAudience(org, personAddress(p.platform, p.id))).stopped;
 }
 
-async function fileSilence(org: string, principalKey: string, reason: WatchSilenceReason, detail: Readonly<Record<string, unknown>>): Promise<boolean> {
+async function fileSilence(org: string, principalKey: string, reason: WatchSilenceReason, detail: AuditDetail): Promise<boolean> {
   const p = parsePrincipalKey(principalKey);
   const platform = p?.platform ?? "unknown";
   const ts = new Date().toISOString();
@@ -163,7 +164,7 @@ export async function checkPerson(org: string, principalKey: string, state: Pers
   const silences: Record<string, WatchSilenceReason> = {};
   const lost: string[] = [];
   let silencedRows = 0;
-  const silence = async (key: string, reason: WatchSilenceReason, detail: Readonly<Record<string, unknown>>, force = false): Promise<void> => {
+  const silence = async (key: string, reason: WatchSilenceReason, detail: AuditDetail, force = false): Promise<void> => {
     if (!force && state.silenced[key] === reason) {
       silences[key] = reason;
       return;

@@ -17,6 +17,7 @@ import {
 import type { ResolvedPreApprovalRule } from "./pre-approval-rules.js";
 import { configOrRefuse } from "./config.js";
 import { resolveAccess } from "./resolver.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type ApproverVerdict = "allow" | "deny" | "ask" | undefined;
 
@@ -465,7 +466,7 @@ export async function resolveApproverChain(
   };
 }
 
-export function chainAuditDetail(req: ApprovalChainRequest, res: ChainResolution): Record<string, unknown> {
+export function chainAuditDetail(req: ApprovalChainRequest, res: ChainResolution): AuditDetail {
   return {
     tool: req.tool,
     ...(req.action !== undefined ? { action: req.action } : {}),

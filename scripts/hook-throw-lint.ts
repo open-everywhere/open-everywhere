@@ -19,9 +19,85 @@ export interface HookThrowFinding {
   readonly detail: string;
 }
 
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|in|of|void|delete|throw|new|yield|await|else|do)$/;
+
+function regexEnd(source: string, open: number, prevSig: number): number | undefined {
+  const k = prevSig;
+  const prev = k < 0 ? "" : source[k]!;
+  const opensRegex = prev === "" || /[(,=:[!&|?{};+\-*%<>~^]/.test(prev) || REGEX_AFTER_WORD.test(source.slice(Math.max(0, k - 8), k + 1));
+  if (!opensRegex) return undefined;
+  let j = open + 1;
+  let inClass = false;
+  while (j < source.length) {
+    const ch = source[j]!;
+    if (ch === "\n") return undefined;
+    if (ch === "\\") {
+      j += 2;
+      continue;
+    }
+    if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) {
+      j++;
+      while (j < source.length && /[a-z]/i.test(source[j]!)) j++;
+      return j;
+    }
+    j++;
+  }
+  return undefined;
+}
+
+function templateEnd(source: string, open: number): number {
+  let j = open + 1;
+  while (j < source.length) {
+    const ch = source[j]!;
+    if (ch === "\\") {
+      j += 2;
+      continue;
+    }
+    if (ch === "`") return j + 1;
+    if (ch === "$" && source[j + 1] === "{") {
+      let sig = j + 1;
+      j += 2;
+      let depth = 1;
+      while (j < source.length && depth > 0) {
+        const d = source[j]!;
+        const two = source.slice(j, j + 2);
+        if (two === "//") {
+          const nl = source.indexOf("\n", j);
+          j = nl === -1 ? source.length : nl;
+        } else if (two === "/*") {
+          const end = source.indexOf("*/", j + 2);
+          j = end === -1 ? source.length : end + 2;
+        } else if (d === "/" && regexEnd(source, j, sig) !== undefined) {
+          j = regexEnd(source, j, sig)!;
+          sig = j - 1;
+        } else if (d === "`") {
+          j = templateEnd(source, j);
+          sig = j - 1;
+        } else if (d === '"' || d === "'") {
+          j++;
+          while (j < source.length && source[j] !== d) j += source[j] === "\\" ? 2 : 1;
+          j++;
+          sig = j - 1;
+        } else {
+          if (d === "{") depth++;
+          else if (d === "}") depth--;
+          if (!/\s/.test(d)) sig = j;
+          j++;
+        }
+      }
+      continue;
+    }
+    j++;
+  }
+  return source.length;
+}
+
 export function blankCommentsAndStrings(source: string): string {
   const out = source.split("");
   let i = 0;
+  let sig = -1;
   const keep = (n: number): void => {
     for (let k = i; k < Math.min(n, out.length); k++) if (out[k] !== "\n") out[k] = " ";
   };
@@ -42,7 +118,23 @@ export function blankCommentsAndStrings(source: string): string {
       continue;
     }
     const c = source[i]!;
-    if (c === '"' || c === "'" || c === "`") {
+    if (c === "/") {
+      const end = regexEnd(source, i, sig);
+      if (end !== undefined) {
+        keep(end);
+        i = end;
+        sig = end - 1;
+        continue;
+      }
+    }
+    if (c === "`") {
+      const j = templateEnd(source, i);
+      keep(j);
+      i = j;
+      sig = j - 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
       let j = i + 1;
       while (j < source.length) {
         if (source[j] === "\\") {
@@ -57,8 +149,10 @@ export function blankCommentsAndStrings(source: string): string {
       }
       keep(j);
       i = j;
+      sig = j - 1;
       continue;
     }
+    if (!/\s/.test(c)) sig = i;
     i++;
   }
   return out.join("");

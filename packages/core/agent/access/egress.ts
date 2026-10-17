@@ -6,6 +6,7 @@ import { extraEgressHosts } from "./extra-hosts.js";
 import { browserEgressHosts, type BrowserHostDeclaration } from "./browser-hosts.js";
 import { GIT_BROKER_HOSTS } from "./reserved-hosts.js";
 import { DEFAULT_NETWORK_ACCESS_LEVEL, TRUSTED_ACCESS_HOSTS, type NetworkAccessLevel } from "./network-access.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export { GIT_BROKER_HOSTS } from "./reserved-hosts.js";
 
@@ -31,7 +32,7 @@ export function normaliseVerbs(verbs: readonly string[] | "any"): readonly strin
   return [...new Set(verbs.map((v) => v.toUpperCase()))].sort();
 }
 
-export function egressAuditFields(row: EgressAuditRow): Record<string, unknown> {
+export function egressAuditFields(row: EgressAuditRow): AuditDetail {
   return {
     plane: row.plane,
     unit: row.unit,
@@ -47,7 +48,7 @@ export function hostCallAuditFields(args: {
   readonly verb: string;
   readonly outcome: EgressOutcome;
   readonly credential?: string | null;
-}): Record<string, unknown> {
+}): AuditDetail {
   return egressAuditFields({
     plane: "host",
     unit: "call",
@@ -62,7 +63,7 @@ export function sandboxPolicyAuditFields(args: {
   readonly host: string;
   readonly verb: readonly string[] | "any";
   readonly credential: string | null;
-}): Record<string, unknown> {
+}): AuditDetail {
   return egressAuditFields({
     plane: "sandbox",
     unit: "policy",
@@ -204,7 +205,7 @@ export function ruleStampsCredential(rule: { readonly transform?: readonly unkno
 
 const WRITE_HOSTS_ROW_CAP = 20;
 
-export function writeHostsAuditFields(writeHosts: readonly OpenWriteHost[]): Record<string, unknown> {
+export function writeHostsAuditFields(writeHosts: readonly OpenWriteHost[]): AuditDetail {
   const listed = writeHosts.slice(0, WRITE_HOSTS_ROW_CAP).map((h) => ({
     ...sandboxPolicyAuditFields({ host: h.host, verb: h.verb, credential: h.credential }),
     credentialed: h.credentialed,

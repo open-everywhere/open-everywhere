@@ -20,6 +20,7 @@ import { getSettings, type ApprovalJudgeMode as SettingsApprovalJudgeMode } from
 import { processRegistrySlot } from "../lib/process-registry.js";
 import { getConfig } from "./config.js";
 import type { Binding, Bundle } from "./bundle.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type ApprovalJudgeMode = SettingsApprovalJudgeMode;
 
@@ -534,7 +535,7 @@ export async function shadowJudgeAuditDetail(
   req: ApprovalChainRequest,
   res: ChainResolution,
   meta?: VendorToolMeta,
-): Promise<Record<string, unknown> | undefined> {
+): Promise<AuditDetail | undefined> {
   if (approvalJudgeMode() !== "shadow") return undefined;
   if (!shadowJudgeEligible(res)) return undefined;
   if (judgeExemption(req.tool, meta).exempt) return undefined;

@@ -9,7 +9,7 @@ const { overrideSettingsForTest } = await import("../agent/settings/settings.js"
 const { registerConfig } = await import("../agent/access/config.js");
 const { registerActionKind } = await import("../agent/approvals/actions.js");
 const { requestApproval, resolveApprovalClick, parseApprovalAction } = await import("../agent/approvals/flow.js");
-const { pendingCardOptions, optionsWithoutConfirm } = await import("../agent/approvals/card-layout.js");
+const { pendingCardOptions, optionsWithoutConfirm, decidedCardLine } = await import("../agent/approvals/card-layout.js");
 const { pendingCardBlocks } = await import("../agent/approvals/card.js");
 const { allowRuleProposalForRow, allowRuleText, widenAllowRuleSubject, ALLOW_RULE_CONFIRM_TEXT_MAX, ALLOW_RULE_LABEL } = await import("../agent/approvals/allow-rule.js");
 const { planAllowRuleClick, dmRulesForProposal } = await import("../agent/approvals/allow-rule-apply.js");
@@ -393,6 +393,59 @@ let ruleSource: PendingActionRow | undefined;
   } finally {
     store["listDmRules"] = list;
   }
+}
+
+{
+  const ECHO = "upstream said: Authorization: Bearer sk-live-abcdefghijklmnop rejected (token xoxb-1234567890-abcdefghijkl)";
+  const tokenFree = (text: string): boolean => !text.includes("sk-live-abcdefghijklmnop") && !text.includes("xoxb-1234567890");
+
+  const failing = await stored(row({ kind: "echo.fail" }));
+  const f = await click(failing, "approve");
+  ok(f.outcome === "decided" && f.outcomeLine.startsWith("FAILED: ") && f.outcomeLine.includes("[redacted]"), `outcome line: a failed act's line carries the scrubbed error (got ${f.outcome === "decided" ? f.outcomeLine : f.outcome})`);
+  ok(f.outcome === "decided" && tokenFree(f.outcomeLine), "outcome line: no echoed token reaches the decision wake or the control result");
+  ok(f.outcome === "decided" && f.outcomeLine.includes("upstream said"), "outcome line (negative control): the diagnostic text around the token survives");
+  const failedCard = f.outcome === "decided" ? decidedCardLine(f.row, f.outcomeLine, "<@U_ANA>") : "";
+  ok(failedCard === "⚠️ Approved by <@U_ANA>, but it failed: Echo", `card: a failed act shows one friendly line and no error text (got ${failedCard})`);
+
+  registerActionKind({
+    kind: "echo.decline",
+    policy: "member",
+    summarize: () => ["echo decline"],
+    plainSummary: () => "Remember the decline",
+    async execute() {
+      return "done";
+    },
+    async declined() {
+      throw new Error(ECHO);
+    },
+  });
+  const declining = await stored(row({ kind: "echo.decline" }));
+  const d = await resolveApprovalClick({ org: ORG, id: declining.id, decision: "reject", clickerId: declining.requestedBy, clickerPlatform: "slack", clickContext: { surfaceKey: declining.postedTo! }, clickerIsGuest: false });
+  ok(d.outcome === "decided" && d.outcomeLine.startsWith("FAILED: ") && tokenFree(d.outcomeLine), `decline: a failed decline is a scrubbed FAILED line (got ${d.outcome === "decided" ? d.outcomeLine : d.outcome})`);
+  const declineCard = d.outcome === "decided" ? decidedCardLine(d.row, d.outcomeLine, "<@U_ANA>") : "";
+  ok(declineCard === "❌ Rejected by <@U_ANA>: Remember the decline · I could not save the decline", `card: a failed decline says so in plain words (got ${declineCard})`);
+  ok(!declineCard.includes("upstream said") && !declineCard.includes("FAILED"), "card: no error text and no FAILED prefix reach the person");
+  const declineRow = (await readAudit({ org: ORG } as never)).find((x) => x.action === "approval.failed" && x.detail?.id === declining.id);
+  const declineError = String(declineRow?.detail?.error);
+  ok(declineRow !== undefined && declineRow.detail?.phase === "decline" && declineError.includes("[redacted]") && tokenFree(declineError), `decline: an approval.failed row (phase decline) keeps the scrubbed cause (got ${declineError})`);
+  ok(declineError.includes("upstream said"), "decline row (negative control): the diagnostic text around the token survives");
+
+  registerActionKind({
+    kind: "echo.ok",
+    policy: "member",
+    summarize: () => ["echo ok"],
+    plainSummary: () => "Echo ok",
+    async execute() {
+      return `posted, ${ECHO}`;
+    },
+  });
+  const passing = await stored(row({ kind: "echo.ok" }));
+  const p = await click(passing, "approve");
+  ok(p.outcome === "decided" && p.executed === "ok", "approved row: the act ran");
+  const approvedRow = (await readAudit({ org: ORG } as never)).find((x) => x.action === "approval.approved" && x.detail?.id === passing.id);
+  const approvedOutcome = String(approvedRow?.detail?.outcome);
+  ok(approvedRow !== undefined && approvedOutcome.includes("[redacted]") && tokenFree(approvedOutcome), `approved row: the outcome is stored scrubbed (got ${approvedOutcome})`);
+  ok(approvedOutcome.startsWith("posted, upstream said"), "approved row (negative control): the rest of the result line survives");
 }
 
 console.log(`allow-rule-test: ${n} assertions passed`);

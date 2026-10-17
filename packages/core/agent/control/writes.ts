@@ -1,4 +1,4 @@
-import { auditErrorDetail } from "../audit/tool-action.js";
+import { auditErrorDetail, scrubAuditText } from "../audit/tool-action.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -407,7 +407,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
               ...whereFromScope(a.org, row.scopeKey),
               principalId: actor,
               action: "admin.approval.decide",
-              detail: { id: a.id, kind: row.kind, decision: res.row.status, outcome: res.outcomeLine },
+              detail: { id: a.id, kind: row.kind, decision: res.row.status, outcome: scrubAuditText(res.outcomeLine) },
             });
             return jsonResult({ ok: true, outcome: "decided", org: a.org, id: a.id, kind: row.kind, decision: res.row.status, decidedBy: res.row.decidedBy, result: res.outcomeLine });
           }

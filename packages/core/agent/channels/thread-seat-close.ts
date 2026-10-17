@@ -6,6 +6,7 @@ import { parseWindowToken } from "./window-key.js";
 import { clearThreadOwner, resolveThreadOwner } from "./thread-ownership.js";
 import { recordThreadSeatClose, threadSeatOrigin } from "./thread-seat-state.js";
 import type { appendAudit } from "../audit/audit.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const THREAD_SEAT_IDLE_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -96,7 +97,7 @@ export async function closeThreadSeat(
     readonly seatToken: string;
     readonly report?: string;
     readonly origin?: UnifiedWakeOrigin;
-    readonly auditDetail?: Readonly<Record<string, unknown>>;
+    readonly auditDetail?: AuditDetail;
   },
   deps: ThreadSeatCloseDeps,
 ): Promise<ThreadSeatCloseOutcome> {

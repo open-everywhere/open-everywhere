@@ -6,6 +6,7 @@ import { dispatchSeatMessage } from "./unified.js";
 import { postUnifiedReply } from "./unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const BOT_ASK_TOOL = "expect_bot_reply";
 
@@ -293,7 +294,7 @@ export interface BotReplyRelayEdges {
   readonly dispatch: (input: { token: string; origin: UnifiedWakeOrigin; wakeId: string; domain: string; message: string; authAttributes: Record<string, unknown> }) => Promise<boolean>;
   readonly post: (origin: UnifiedWakeOrigin, text: string) => Promise<unknown>;
   readonly mintWakeId: () => string;
-  readonly appendAudit: (row: { org: string; platform: string; workspace: string; surface: string; principalId: string; action: string; detail: Record<string, unknown> }) => Promise<void>;
+  readonly appendAudit: (row: { org: string; platform: string; workspace: string; surface: string; principalId: string; action: string; detail: AuditDetail }) => Promise<void>;
 }
 
 export async function relayBotReply(edges: BotReplyRelayEdges, input: { readonly row: BotAskRow; readonly reply: string; readonly slot: number }): Promise<BotReplyRoute> {

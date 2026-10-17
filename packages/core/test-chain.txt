@@ -265,6 +265,7 @@ test:approvals
 test:approval-card-summary
 test:approval-group
 test:allow-rule
+test:audit-detail-brand
 test:attention-queue
 test:scope-key
 test:consequence

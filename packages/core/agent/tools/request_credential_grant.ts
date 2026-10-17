@@ -20,6 +20,7 @@ import { currentSessionId, currentTurnId, delegatedBindingUnresolved, delegation
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { Domain } from "../memory/domain.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 const GRANT_DEFAULT_TOOLS: Readonly<Record<string, string>> = {
   notion: "notion-fetch",
@@ -83,7 +84,7 @@ export function _grantMountAuditSettled(): Promise<void> {
   return lastMountAudit;
 }
 
-function noteMountRefused(ctx: BindableContext, reason: GrantMountRefusal, extra: Readonly<Record<string, string>> = {}): void {
+function noteMountRefused(ctx: BindableContext, reason: GrantMountRefusal, extra: AuditDetail = {}): void {
   try {
     const p = safePartitionOf(ctx);
     if (p === undefined) return;
@@ -114,7 +115,7 @@ function stampsOf(p: ReturnType<typeof resolvePartition>): GrantAuditStamps {
   return { org: p.org, platform: p.platform, workspace: p.workspace, ...(p.surface === undefined ? {} : { surface: p.surface }) };
 }
 
-async function auditVerbRefusal(ctx: BindableContext, gate: string, detail: Readonly<Record<string, unknown>>, principalId?: string): Promise<void> {
+async function auditVerbRefusal(ctx: BindableContext, gate: string, detail: AuditDetail, principalId?: string): Promise<void> {
   const p = safePartitionOf(ctx);
   if (p === undefined) return;
   try {

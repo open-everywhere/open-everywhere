@@ -6,6 +6,7 @@ import { WAKE_TARGET_TTL_MS, type UnifiedWakeOrigin } from "../channels/unified-
 import { turnAnchorKey } from "../channels/turn-registry.js";
 import { setSurfaceReaction } from "../channels/surface-message-ops.js";
 import { STOP_HAND_SLACK_NAME, STOP_HAND_UNICODE } from "../status/status.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const WORK_STATUS_ACTION = "work.status";
 
@@ -122,7 +123,7 @@ const LIVE_DEPS: WorkStatusDeps = {
   now: () => new Date(),
 };
 
-function auditStatus(deps: WorkStatusDeps, org: string, row: WorkRequestRow | undefined, detail: Record<string, unknown>): Promise<unknown> {
+function auditStatus(deps: WorkStatusDeps, org: string, row: WorkRequestRow | undefined, detail: AuditDetail): Promise<unknown> {
   return deps
     .audit({
       org,

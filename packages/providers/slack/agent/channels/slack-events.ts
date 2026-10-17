@@ -136,6 +136,7 @@ import {
   type ReactionIngestOutcome,
   type ReactionVerb,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface SlackEventEnvelope {
   readonly type?: string;
@@ -637,7 +638,7 @@ export interface MessageRouteDeps {
   readonly touch?: (p: ReturnType<typeof resolvePartition>, threadTs: string, atIso: string) => Promise<void>;
   readonly now?: () => string;
   readonly confirmInternal?: (channelId: string) => Promise<boolean>;
-  readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
+  readonly audit?: (action: string, detail: AuditDetail) => Promise<void>;
   readonly resolveProfile?: ResolveProfile;
 }
 
@@ -762,7 +763,7 @@ function wakeState(ev: ParsedMessageEvent, threadTs: string, extra?: Record<stri
   };
 }
 
-async function appendRouteAudit(surfaceKey: string, action: string, detail: Record<string, unknown>): Promise<void> {
+async function appendRouteAudit(surfaceKey: string, action: string, detail: AuditDetail): Promise<void> {
   try {
     const [platform = "slack", workspace = "", surface = ""] = surfaceKey.split("/");
     const bindable = {
@@ -799,15 +800,15 @@ async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, threadRo
   });
 }
 
-function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown> = {}): void {
+function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, detail: AuditDetail = {}): void {
   void holdRouteWork(appendWakeDroppedRow(ev, reason, detail));
 }
 
-async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown>): Promise<void> {
+async function appendWakeDroppedRow(ev: ParsedMessageEvent, reason: string, detail: AuditDetail): Promise<void> {
   await appendWakeRow(ev, "surface.wake_dropped", reason, detail);
 }
 
-async function appendWakeRow(ev: ParsedMessageEvent, action: string, reason: string, detail: Record<string, unknown>): Promise<void> {
+async function appendWakeRow(ev: ParsedMessageEvent, action: string, reason: string, detail: AuditDetail): Promise<void> {
   await appendWakeRowForIds({ teamId: ev.teamId, channelId: ev.channelId, channelType: ev.channelType, userId: ev.userId }, ev.ts, action, reason, detail);
 }
 
@@ -816,7 +817,7 @@ async function appendWakeRowForIds(
   ts: string | null,
   action: string,
   reason: string,
-  detail: Record<string, unknown>,
+  detail: AuditDetail,
 ): Promise<void> {
   try {
     const bindable = bindableForSlackIds(ids);
@@ -1912,7 +1913,7 @@ export interface SupervisorRouteDeps {
     state: unknown;
     window?: UnifiedWindowWake;
   }) => Promise<void>;
-  readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
+  readonly audit?: (action: string, detail: AuditDetail) => Promise<void>;
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
   readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
   readonly markStopped?: (p: Partition, threadTs: string) => Promise<boolean>;

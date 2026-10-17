@@ -13,6 +13,7 @@ import { haltAuditDetail, haltRefusalMessage, haltScopeForCtx, resolveHalt } fro
 import { getSettings } from "../settings/settings.js";
 import { connectorOpTieringEnabled } from "../connections/connector-flags.js";
 import { delegatedBindingAdopted } from "../identity/delegated-binding.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export class ConnectorScopeError extends Error {}
 
@@ -187,7 +188,7 @@ export async function boundConnectorCredential(
 async function auditConnectorGate(
   ctx: BindableContext | null,
   action: "connector.refused" | "connector.use",
-  detail: Readonly<Record<string, unknown>>,
+  detail: AuditDetail,
 ): Promise<void> {
   let org = deploymentOrg();
   let platform = "unknown";

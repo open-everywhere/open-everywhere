@@ -13,6 +13,7 @@ import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import { endPersonHoldings, type HoldingsEnded } from "./person-holdings.js";
 import type { LinkChallengeRow, LinkChallengeStatus, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type { LinkChallengeRow, LinkChallengeStatus, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus };
 
@@ -558,7 +559,7 @@ async function linkSetBlastRadius(org: string, linkSetId: string): Promise<{ mem
   }
 }
 
-async function auditLink(org: string, platform: string, surfaceKey: string | undefined, principalId: string, action: string, detail: Record<string, unknown>): Promise<void> {
+async function auditLink(org: string, platform: string, surfaceKey: string | undefined, principalId: string, action: string, detail: AuditDetail): Promise<void> {
   const parts = surfaceKey?.split("/") ?? [];
   await appendAudit({
     org,

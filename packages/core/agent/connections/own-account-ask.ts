@@ -1,4 +1,5 @@
 import type { CredentialGrantFamily } from "../access/connector-credentials.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface OwnAccountVendor {
   readonly connector: string;
@@ -156,7 +157,7 @@ export const CONNECTOR_OWN_ACCOUNT_ASK_ACTION = "connector.own_account_ask";
 
 const OWN_ACCOUNT_REQUIRED_IDENTITY: CredentialGrantFamily = "human-acting";
 
-export function ownAccountAskAuditDetail(ask: OwnAccountAsk, stamped: boolean): Record<string, unknown> {
+export function ownAccountAskAuditDetail(ask: OwnAccountAsk, stamped: boolean): AuditDetail {
   return {
     askRecognised: true,
     connector: ask.connector,
@@ -166,7 +167,7 @@ export function ownAccountAskAuditDetail(ask: OwnAccountAsk, stamped: boolean): 
   };
 }
 
-export function actingIdentityAuditDetail(verdict: ActingIdentityVerdict, connector: string, tool: string): Record<string, unknown> {
+export function actingIdentityAuditDetail(verdict: ActingIdentityVerdict, connector: string, tool: string): AuditDetail {
   return {
     askRecognised: verdict.askRecognised,
     connector,

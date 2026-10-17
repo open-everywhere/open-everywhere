@@ -10,6 +10,7 @@ import { egressHostsOverlap } from "./bundle.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostCallAuditFields } from "./egress.js";
 import { haltScopeForCtx, resolveHalt } from "./halt.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type HostLookup = (hostname: string) => Promise<readonly string[]>;
 let lookupImpl: HostLookup | undefined;
@@ -238,7 +239,7 @@ export interface ReachDeps {
   readonly hosts?: (ctx: BindableContext) => readonly ReachableHost[];
   readonly narrow?: (ctx: BindableContext, ids: readonly string[]) => Promise<readonly string[] | null>;
   readonly halted?: (ctx: BindableContext) => Promise<boolean>;
-  readonly rowFields?: Readonly<Record<string, unknown>>;
+  readonly rowFields?: AuditDetail;
   readonly withheld?: (ctx: BindableContext) => readonly OwnAccountEgressRefusal[];
 }
 

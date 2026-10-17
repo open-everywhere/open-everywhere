@@ -1,4 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const NAME_DROP_WOKE_ACTION = "surface.name_drop_woke";
 
@@ -25,14 +26,14 @@ export type NameDropAuditAppend = (entry: {
   readonly surface?: string;
   readonly principalId?: string;
   readonly action: string;
-  readonly detail: Readonly<Record<string, unknown>>;
+  readonly detail: AuditDetail;
 }) => Promise<void>;
 
 export function nameDropAuditRow(
   key: NameDropAuditKey,
   action: string,
   reason: string,
-  extra: Readonly<Record<string, unknown>> = {},
+  extra: AuditDetail = {},
 ): {
   readonly org: string;
   readonly platform: string;
@@ -40,7 +41,7 @@ export function nameDropAuditRow(
   readonly surface?: string;
   readonly principalId?: string;
   readonly action: string;
-  readonly detail: Readonly<Record<string, unknown>>;
+  readonly detail: AuditDetail;
 } {
   return {
     org: key.org,

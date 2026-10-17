@@ -14,6 +14,7 @@ import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { DB_BROKER } from "./db-broker.js";
 import { getConfigPrProvider, type ConfigPrProvider } from "./config-pr.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export interface BindingAuditWhere {
   readonly org: string;
@@ -103,7 +104,7 @@ export async function stageCredentialBindingPr(
     return applied;
   };
 
-  const proposedDetail = (extra: Record<string, unknown>) => ({
+  const proposedDetail = (extra: AuditDetail) => ({
     credentialAuditId: args.credentialAuditId,
     connector: args.connector,
     credential: args.credential,

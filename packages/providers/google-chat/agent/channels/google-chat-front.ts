@@ -13,6 +13,7 @@ import { googleChatSurfaceKey, type GoogleChatPolicy } from "../policy.js";
 import { verifyGoogleChatToken, type GoogleChatVerifyDeps } from "./google-chat-auth.js";
 import { buildGoogleChatAuth, type OpenEverywhereGoogleChatAuth } from "./google-chat-identity.js";
 import { isMessageNameIn, isSpaceName, isThreadNameIn } from "./google-chat-rest.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 type GoogleChatOrigin = Extract<UnifiedWakeOrigin, { platform: "google-chat" }>;
 
@@ -60,7 +61,7 @@ export interface GoogleChatFrontDeps extends GoogleChatVerifyDeps {
   readonly wakeTrust: (auth: OpenEverywhereGoogleChatAuth, sender: string) => WakeTrust;
   readonly dispatchRoom: (plan: GoogleChatWakePlan) => Promise<void>;
   readonly dispatchDm: (plan: GoogleChatWakePlan) => Promise<void>;
-  readonly audit: (row: { readonly action: string; readonly workspace: string; readonly surface?: string; readonly principalId?: string; readonly detail: Record<string, unknown> }) => Promise<void>;
+  readonly audit: (row: { readonly action: string; readonly workspace: string; readonly surface?: string; readonly principalId?: string; readonly detail: AuditDetail }) => Promise<void>;
 }
 
 function rec(v: unknown): Record<string, unknown> | undefined {

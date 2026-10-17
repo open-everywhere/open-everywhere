@@ -319,7 +319,7 @@ the pending id, the kind, and ids and enums beside them — never the card's pro
 | `approval.rule.proposed` | The same confirmed option in a domain room opens or updates the domain rule pull request. | The pending id, the kind, the rule id, the domain, `change`, the repository, branch, pull request number and URL, and the requester's id. `dryRun: true` when nothing was opened. |
 | `approval.rule.refused` | The option was clicked, the act was approved, and no rule was written. | The pending id, the kind, the venue and a `reason`: `no-rule-offered`, `no-room`, `guest-clicker`, `not-owner`, `audience-floor`, `cap`, `already-covered` or `write-failed` (with the error message). |
 | `approval.rule.removed` | A person removes one of their DM rules in the Home tab. | The rule id and the door (`slack-app-home`). |
-| `approval.failed` | An approved action's own `execute()` throws. | The pending id, the kind, the venue, and the raw error message, with no scrub and no cap. |
+| `approval.failed` | An approved action's own `execute()` throws, or a rejected kind's durable `declined()` throws (`phase: "decline"`, OPE-2549). | The pending id, the kind, the venue, and the error through `auditErrorDetail`: credential shapes struck, capped at 300 characters. |
 | `approval.expired` | A pending reaches a terminal state with nobody deciding it. | The pending id, the kind, and a `cause` that separates the two ways it happens: `card_post_failed` when the card never reached the surface, and `ttl` when the sweep closed an unclicked card whose clock ran out. The two must never read alike. A `card_post_failed` row also carries `reason` — the surface's own refusal code, token-free — so the record says WHY the room got nothing. |
 | `approval.decision_wake` | A decision wakes the session that asked for it. | The pending id, the kind, the outcome, the domain, whether the wake was delivered, and the wake id. Ids only — never the notice body. |
 | `approval.judge.shadow` | The approval judge runs in shadow mode beside a real card. | The judge's verdict as evidence. 🔴 **It decides nothing.** The row is written only when `approvals.judgeMode` is `shadow`, and no verdict is applied. |
@@ -601,15 +601,36 @@ ordinary writer uses.
   one. Under any other key, it refuses a `.message`, `.stack` or `String(err)` read, also inside a
   template's `${…}`. A truncation is not a scrub, so `String(err).slice(0, 300)` is refused too.
   The log cannot be edited, so a token that lands there stays. 🔴 The lint is a text scan of
-  shapes, not of data flow. Its test pins five shapes it cannot see: error text held in a variable
+  shapes, not of data flow. Its test pins the shapes it cannot see: error text held in a variable
   or a parameter under a key that is not error-named, text a helper renders, a record built under
-  a name with no `detail` in it, a spread of an object built elsewhere, and a template nested in a
-  template. The OPE-2545 review found writers of those shapes by hand and scrubbed each one where
+  a name with no `detail` in it, and a spread of an object built elsewhere. Its text scan tells a
+  regex from a division by the last token before the `/`. A regex that opens a statement after
+  `if (…)` still reads as a division, and a quote inside it hides the rest of its file from the
+  lint. Before OPE-2549 a quoted regex or a nested template did this in seven agent files; on
+  2026-10-14 no scanned file loses a write. The OPE-2545 review found writers of those shapes by hand and scrubbed each one where
   its error text is built, so a green lint is not proof that every row is scrubbed. Two rows stay
   unscrubbed on purpose, both in `access/eve-patch-probe-boot.ts`: `eve.patch.refused` carries text
   the product writes itself, and `eve.patch.unverifiable` carries the `require.resolve` error for
   eve's own install path. That module evaluates first in the import graph, behind a top-level
   `await`, so it takes no new import that could close an init cycle.
+- **An error-named field takes only scrubbed text, and `typecheck:all` checks it (OPE-2549).**
+  `AuditInput.detail` and the store's own `appendAudit` take an `AuditDetail`
+  (`packages/core/agent/audit/scrubbed-text.ts`). Under an error-named key (`err`, `error…`,
+  `…Error…`) it accepts only a `ScrubbedAuditText`, a number, a boolean or `null`. Only
+  `auditErrorDetail` and `scrubAuditText` (`audit/tool-action.ts`) make a `ScrubbedAuditText`, and
+  the lint refuses a cast to it in any other file. So a plain string under such a key fails the
+  typecheck, whether it comes through a variable, a parameter, a helper or a spread.
+  🔴 What the type does not cover. A key that is not error-named (`reason`, `message`, `outcome`)
+  stays open, because most such fields hold codes the product writes. Error text there is still
+  the lint's job, with its limits. TypeScript does not check a spread of a plain record
+  (`Record<string, …>`, `StoredAuditDetail`, an inline index type) next to another key, and
+  `test:audit-detail-brand` pins that gap. In an audit write, the lint's `plain-record-spread` rule
+  refuses a spread of a name the same file types as a plain record, a call to a function the scanned
+  tree declares to return one, and `...Object.fromEntries(…)`. It cannot see a plain-record
+  variable imported from another file, or one in a branch of a conditional spread. A cast of a whole detail bypasses the type: the lint refuses `as AuditDetail`, also
+  through `unknown`, but it cannot tell an `as never` or `as any` from a legitimate one.
+  The two approval rows that store an act's result text, `approval.approved` and
+  `admin.approval.decide`, scrub their `outcome` with `scrubAuditText`.
 - **The backing location is readable.** `auditRoot` reports where the log writes — the SQLite file
   path, or `postgres`. Logs and admin views print it, so a reader can tell which store answered
   before they read an empty result as an empty log.

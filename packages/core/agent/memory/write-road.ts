@@ -6,6 +6,7 @@ import type { MemorySilo } from "./silo.js";
 import type { Partition } from "./partition.js";
 import { tierId, type MemoryFiles, type Tier } from "./store.js";
 import type { SessionMode } from "../access/resolver.js";
+import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export type MemoryWriteRoad =
   | "session-persist"
@@ -39,7 +40,7 @@ export interface MemoryWriteRequest {
   readonly surfaceMode?: SessionMode;
   readonly platform?: string;
   readonly workspace?: string;
-  readonly extra?: Readonly<Record<string, unknown>>;
+  readonly extra?: AuditDetail;
   readonly personOptOut?: PersonOptOutState;
 }
 

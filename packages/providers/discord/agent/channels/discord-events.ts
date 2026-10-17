@@ -1,6 +1,7 @@
 import { POST, type Channel, type RouteHandlerArgs } from "eve/channels";
 import { verifyDiscordInteraction } from "./discord-front.js";
 import { appendAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
+import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const PUBLIC_DISCORD_EVENTS_ROUTE = "/eve/v1/discord/events";
 
@@ -13,7 +14,7 @@ function elog(msg: string): void {
 
 export type DiscordEventDecision =
   | { readonly kind: "ack"; readonly reason: string }
-  | { readonly kind: "audit"; readonly action: string; readonly workspace: string; readonly principalId?: string; readonly detail: Record<string, unknown> };
+  | { readonly kind: "audit"; readonly action: string; readonly workspace: string; readonly principalId?: string; readonly detail: AuditDetail };
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
@@ -66,7 +67,7 @@ export function classifyDiscordEvent(rawBody: string): DiscordEventDecision {
 export interface DiscordEventsOptions {
   readonly publicKey?: string;
   readonly now?: () => number;
-  readonly audit?: (row: { action: string; workspace: string; principalId?: string; detail: Record<string, unknown> }) => Promise<void>;
+  readonly audit?: (row: { action: string; workspace: string; principalId?: string; detail: AuditDetail }) => Promise<void>;
 }
 
 const ACK = () => new Response(null, { status: 204 });
