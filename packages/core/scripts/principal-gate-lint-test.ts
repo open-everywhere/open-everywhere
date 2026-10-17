@@ -16,9 +16,11 @@ import {
   findPrincipalGates,
   findProposeAliasShapeProblems,
   findUnattendedDispatchSites,
+  lexicalViews,
   type PrincipalGate,
 } from "../agent/access/principal-gate-manifest.js";
 import { posixRelative } from "../../../scripts/posix-path.js";
+import { parseSync } from "oxc-parser";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -384,6 +386,149 @@ async function f(ctx) {
 }`;
   ok(sitesIn(twoCalls).length === 2 && sitesIn(twoCalls)[0]!.expr === undefined, "synthetic-r5: 🔴 a value-less call does NOT borrow the next call's — the scan stops at its own closer");
   ok(r5(twoCalls).map((d) => d.rule).join() === "attendedness-missing", "synthetic-r5: …so exactly the first one is red");
+}
+
+{
+  const sitesIn = (src: string) => findAttendednessSites("fixture.ts", src);
+  const r5 = (src: string) => checkAttendednessSites(sitesIn(src));
+  const naked = `
+async function f(ctx) {
+  await requestApproval({ org, kind: "a", postedTo: k }, deps);
+}`;
+  ok(r5(naked).map((d) => d.rule).join() === "attendedness-missing", "OPE-2559 control: the bare propose site with no bag is RED on its own");
+
+  const globAbove = `const GLOB = "src/*";\n${naked}`;
+  ok(r5(globAbove).map((d) => d.rule).join() === "attendedness-missing", "🔴 OPE-2559: a `/*` inside a STRING opens no comment — the propose site below it is still seen, and still RED");
+  const regexAbove = `const SLASHES = /\\/*/;\n${naked}`;
+  ok(r5(regexAbove).map((d) => d.rule).join() === "attendedness-missing", "🔴 OPE-2559: a `/*` inside a REGEX opens no comment either");
+  const templateAbove = `const HELP = \`see src/*.ts\`;\n${naked}`;
+  ok(r5(templateAbove).map((d) => d.rule).join() === "attendedness-missing", "🔴 OPE-2559: …nor inside a TEMPLATE literal");
+  const urlBeside = `
+async function f(ctx) {
+  const where = "https://example.test"; await requestApproval({ org, kind: "a", postedTo: k }, deps);
+}`;
+  ok(r5(urlBeside).map((d) => d.rule).join() === "attendedness-missing", "🔴 OPE-2559: a `//` inside a string blanks nothing after it on the line");
+
+  const regexAfterIfHead = `
+async function f(ctx) {
+  const fn = (() => { if (ready) /'/.test(s); return requestApproval; })();
+  fn({ org, kind: "a", postedTo: k }, deps);
+}`;
+  const shapes = findProposeAliasShapeProblems("fixture.ts", regexAfterIfHead);
+  ok(shapes.length === 1 && shapes[0]!.line === 3, "🔴 OPE-2559: a regex after an `if (…)` head is a REGEX — the binding behind it is SEEN and REPORTED, not blanked");
+  const regexAfterBlock = `
+async function f(ctx) {
+  const fn = (() => { if (ready) {} /'/.test(s); return requestApproval; })();
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", regexAfterBlock).length === 1, "🔴 OPE-2559: …and so is a regex after a BLOCK's closing brace");
+  const regexAfterKeyword = `
+async function f(ctx) {
+  const fn = (() => { return /'/.test(s) ? requestApproval : noop; })();
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", regexAfterKeyword).length === 1, "🔴 OPE-2559: …and a regex after `return`");
+
+  const divisionAfterValue = `
+async function f(ctx) {
+  const fn = (total) / requestApproval / 2;
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", divisionAfterValue).length === 1, "OPE-2559: a division after a parenthesised VALUE stays a division, so the binding is still reported");
+  const divisionAfterPostfix = `
+async function f(ctx) {
+  const fn = i++ / requestApproval / 2;
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", divisionAfterPostfix).length === 1, "🔴 OPE-2559: a division after a POSTFIX `++` stays a division — the old guess read `+` as an operator and opened a regex");
+  const divisionAfterObject = `
+async function f(ctx) {
+  const fn = ({ a: 1 }).a / requestApproval / 2;
+  const gn = { a: 1 } / requestApproval / 2;
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", divisionAfterObject).length === 2, "OPE-2559: a division after an OBJECT literal's closing brace stays a division");
+  const divisionAfterProperty = `
+async function f(ctx) {
+  const fn = opts.return / requestApproval / 2;
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", divisionAfterProperty).length === 1, "OPE-2559: a keyword used as a PROPERTY name is a value, so the `/` after it divides");
+
+  const quotedInTemplate = `
+const HELP = \`
+const fn = requestApproval;
+\`;
+async function f(ctx) {
+  fn(x);
+}`;
+  ok(sitesIn(quotedInTemplate).length === 0, "OPE-2559: a declaration quoted inside a MULTI-LINE template declares no alias");
+  const inHole = `
+async function f(ctx) {
+  const msg = \`\${await requestApproval({ org, kind: "a", postedTo: k }, deps)}\`;
+}`;
+  ok(r5(inHole).map((d) => d.rule).join() === "attendedness-missing", "🔴 OPE-2559: a propose call inside a template's `${…}` hole is still a site");
+  const strayslash = `
+async function f(ctx) {
+  const fn = cond ? /requestApproval : noop;
+}`;
+  ok(findProposeAliasShapeProblems("fixture.ts", strayslash).length === 1, "OPE-2559: an unterminated regex blanks nothing — the scan recovers as a division, the loud direction");
+
+  ok(lexicalViews("const a = function () {} / 2 / 3;").bare[0] === "const a = function () {} /   / 3;", "OPE-2559 LIMIT: a division right after a function EXPRESSION's body reads as a regex");
+  ok(lexicalViews("a = b\n++/'/.lastIndex;").bare[1] === "++/'            ", "OPE-2559 LIMIT: a regex after a prefix `++` that ASI moved onto its own line reads as a division");
+  const spill = lexicalViews("const w = function () {} / 2; const s = `a/b`;\nconst fn = requestApproval;\nfn(x);\n`");
+  ok(spill.bare[1]!.trim() === "", "🔴 OPE-2559 LIMIT: a misread is NOT bounded to its line — the backtick it exposes opens a template, and the alias declaration on the next line is blanked");
+  const commentSpill = (head: string) => `${head} const t = '/'; const u = '/*';
+async function f(ctx) {
+  await requestApproval({ org, kind: "a", postedTo: k }, deps);
+}
+const z = '*/';`;
+  ok(findAttendednessSites("fixture.ts", commentSpill("const w = 1;")).length === 1, "OPE-2559 LIMIT control: with no misread, the propose site below the quoted `/*` is seen");
+  ok(findAttendednessSites("fixture.ts", commentSpill("const w = function () {} / a;")).length === 0, "🔴 OPE-2559 LIMIT: a misread that exposes a `/*` opens a comment in the CODE view too — the propose site below it is not seen by any rule");
+}
+
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+  const providers = join(here, "..", "..", "providers");
+  const providerTrees = readdirSync(providers).map((p) => join(providers, p, "agent"));
+  const scanned = [join(here, "..", "agent"), join(here, "..", "..", "..", "agent"), ...providerTrees].flatMap((d) => {
+    try {
+      return statSync(d).isDirectory() ? tsFilesUnder(d) : [];
+    } catch {
+      return [];
+    }
+  });
+  ok(scanned.length > 100, `real-lex: the parity check read the lints' trees (${scanned.length} files)`);
+  type Node = { readonly type?: string; readonly start: number; readonly end: number; readonly value?: unknown; readonly regex?: { readonly pattern: string }; readonly [k: string]: unknown };
+  const misses: string[] = [];
+  for (const file of scanned) {
+    const source = readFileSync(file, "utf8");
+    const parsed = parseSync(file, source, { lang: "ts" });
+    if (parsed.errors.length > 0) {
+      misses.push(`${file}: the parser refused the file`);
+      continue;
+    }
+    const want = source.split("");
+    const blank = (from: number, to: number): void => {
+      for (let k = from; k < to; k++) if (want[k] !== "\n" && want[k] !== "\r") want[k] = " ";
+    };
+    for (const c of parsed.comments) blank(c.start, c.end);
+    const wantCode = want.join("").split("\n");
+    const walk = (node: unknown): void => {
+      if (node === null || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        for (const child of node) walk(child);
+        return;
+      }
+      const n = node as Node;
+      if (n.type === "Literal" && typeof n.value === "string") blank(n.start + 1, n.end - 1);
+      else if (n.type === "Literal" && n.regex !== undefined) blank(n.start + 1, n.start + 1 + n.regex.pattern.length);
+      else if (n.type === "TemplateElement") blank(n.start + 1, n.start + 1 + ((n.value as { raw: string }).raw.length));
+      for (const key of Object.keys(n)) if (key !== "parent") walk(n[key]);
+    };
+    walk(parsed.program);
+    const expected = want.join("").split("\n");
+    const views = lexicalViews(source);
+    const at = expected.findIndex((line, i) => line !== views.bare[i]);
+    if (at !== -1 || views.bare.length !== expected.length) misses.push(`${posixRelative(here, file)}:${at + 1} (bare)`);
+    const atCode = wantCode.findIndex((line, i) => line !== views.code[i]);
+    if (atCode !== -1 || views.code.length !== wantCode.length) misses.push(`${posixRelative(here, file)}:${atCode + 1} (code)`);
+  }
+  ok(misses.length === 0, `real-lex: 🔴 the lexical scan agrees with the parser on every file the lints read, in both views (${misses.slice(0, 5).join(", ")})`);
 }
 
 {

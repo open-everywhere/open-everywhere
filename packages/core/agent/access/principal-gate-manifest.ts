@@ -43,38 +43,258 @@ export interface PrincipalGateDefect {
   readonly message: string;
 }
 
-function stripComments(lines: readonly string[]): string[] {
-  let inBlock = false;
-  return lines.map((raw) => {
-    let out = "";
-    let i = 0;
-    while (i < raw.length) {
-      if (inBlock) {
-        if (raw.startsWith("*/", i)) {
-          inBlock = false;
-          out += "  ";
-          i += 2;
-        } else {
-          out += " ";
-          i += 1;
-        }
+const EXPRESSION_KEYWORDS: ReadonlySet<string> = new Set([
+  "return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await", "extends",
+]);
+const HEAD_KEYWORDS: ReadonlySet<string> = new Set(["if", "while", "for", "with"]);
+
+interface Frame {
+  readonly kind: "root" | "paren" | "bracket" | "block" | "expr" | "hole";
+  readonly head?: boolean;
+  ternary: number;
+}
+
+export interface LexicalViews {
+  readonly code: string[];
+  readonly bare: string[];
+}
+
+export function lexicalViews(source: string): LexicalViews {
+  const n = source.length;
+  let code = "";
+  let bare = "";
+  const keep = (s: string): void => {
+    code += s;
+    bare += s;
+  };
+  const blank = (s: string): string => s.replace(/[^\n]/g, " ");
+  const stack: Frame[] = [{ kind: "root", ternary: 0 }];
+  const top = (): Frame => stack[stack.length - 1]!;
+  let regexOk = true;
+  let prevWord = "";
+  let afterDot = false;
+  let prevTok = "";
+  let i = 0;
+
+  const templateText = (): void => {
+    while (i < n) {
+      const c = source[i]!;
+      if (c === "\\") {
+        const esc = source.slice(i, i + 2);
+        code += esc;
+        bare += blank(esc);
+        i += esc.length;
         continue;
       }
-      if (raw.startsWith("/*", i)) {
-        inBlock = true;
-        out += "  ";
+      if (c === "`") {
+        keep(c);
+        i += 1;
+        regexOk = false;
+        prevTok = "`";
+        return;
+      }
+      if (c === "$" && source[i + 1] === "{") {
+        keep("${");
         i += 2;
-        continue;
+        stack.push({ kind: "hole", ternary: 0 });
+        regexOk = true;
+        prevTok = "${";
+        return;
       }
-      if (raw.startsWith("//", i)) {
-        out += " ".repeat(raw.length - i);
-        break;
-      }
-      out += raw[i];
+      code += c;
+      bare += c === "\n" ? c : " ";
       i += 1;
     }
-    return out;
-  });
+  };
+
+  while (i < n) {
+    const c = source[i]!;
+    const next = source[i + 1];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v" || c === "\u00a0" || c === "\ufeff") {
+      keep(c);
+      i += 1;
+      continue;
+    }
+    if (c === "/" && next === "/") {
+      const end = source.indexOf("\n", i);
+      const stop = end === -1 ? n : end;
+      const text = blank(source.slice(i, stop));
+      code += text;
+      bare += text;
+      i = stop;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const end = source.indexOf("*/", i + 2);
+      const stop = end === -1 ? n : end + 2;
+      const text = blank(source.slice(i, stop));
+      code += text;
+      bare += text;
+      i = stop;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      keep(c);
+      i += 1;
+      while (i < n) {
+        const d = source[i]!;
+        if (d === "\\") {
+          const esc = source.slice(i, i + 2);
+          code += esc;
+          bare += blank(esc);
+          i += esc.length;
+          continue;
+        }
+        if (d === "\n") break;
+        if (d === c) {
+          keep(d);
+          i += 1;
+          break;
+        }
+        code += d;
+        bare += " ";
+        i += 1;
+      }
+      regexOk = false;
+      afterDot = false;
+      prevWord = "";
+      prevTok = c;
+      continue;
+    }
+    if (c === "`") {
+      keep(c);
+      i += 1;
+      afterDot = false;
+      prevWord = "";
+      templateText();
+      continue;
+    }
+    if (c === "/" && regexOk) {
+      let j = i + 1;
+      let inClass = false;
+      let closed = false;
+      while (j < n && source[j] !== "\n") {
+        const d = source[j]!;
+        if (d === "\\") {
+          if (source[j + 1] === "\n") break;
+          j += 2;
+          continue;
+        }
+        if (d === "[") inClass = true;
+        else if (d === "]") inClass = false;
+        else if (d === "/" && !inClass) {
+          closed = true;
+          break;
+        }
+        j += 1;
+      }
+      if (closed && j < n) {
+        let k = j + 1;
+        while (k < n && /[\w$]/.test(source[k]!)) k += 1;
+        const body = source.slice(i + 1, j);
+        code += source.slice(i, k);
+        bare += `/${blank(body)}/${source.slice(j + 1, k)}`;
+        i = k;
+        regexOk = false;
+        afterDot = false;
+        prevWord = "";
+        prevTok = "/re/";
+        continue;
+      }
+    }
+    if (/[\w$\u0080-\uffff#]/.test(c)) {
+      let j = i + 1;
+      while (j < n && /[\w$\u0080-\uffff]/.test(source[j]!)) j += 1;
+      const word = source.slice(i, j);
+      keep(word);
+      i = j;
+      const isProperty = afterDot;
+      afterDot = false;
+      prevWord = isProperty ? "" : word === "await" && prevTok === "for" ? "for" : word;
+      regexOk = !isProperty && EXPRESSION_KEYWORDS.has(word);
+      prevTok = isProperty ? "name" : word;
+      continue;
+    }
+    const three = source.slice(i, i + 3);
+    const two = source.slice(i, i + 2);
+    let tok: string;
+    if (three === "..." || three === "!==" || three === "===" || three === "**=" || three === "<<=" || three === ">>=" || three === "&&=" || three === "||=" || three === "??=") tok = three;
+    else if (["=>", "?.", "++", "--", "!=", "==", "<=", ">=", "&&", "||", "??", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "**", "<<", ">>"].includes(two)) tok = two;
+    else tok = c;
+    if (tok === "?." && /[0-9]/.test(source[i + 2] ?? "")) tok = "?";
+    keep(tok);
+    i += tok.length;
+    const word = prevWord;
+    prevWord = "";
+    afterDot = false;
+    switch (tok) {
+      case ".":
+      case "?.":
+        afterDot = true;
+        regexOk = false;
+        break;
+      case "(":
+        stack.push({ kind: "paren", head: HEAD_KEYWORDS.has(word), ternary: 0 });
+        regexOk = true;
+        break;
+      case ")": {
+        const f = top().kind === "paren" ? stack.pop()! : undefined;
+        regexOk = f?.head === true;
+        break;
+      }
+      case "[":
+        stack.push({ kind: "bracket", ternary: 0 });
+        regexOk = true;
+        break;
+      case "]":
+        if (top().kind === "bracket") stack.pop();
+        regexOk = false;
+        break;
+      case "{": {
+        const statementStart =
+          prevTok === "" || prevTok === ")" || prevTok === "=>" || prevTok === ";" || prevTok === "{" || prevTok === "}" ||
+          prevTok === "label:" || prevTok === "name" || (/^[\w$#\u0080-\uffff]/.test(prevTok) && !EXPRESSION_KEYWORDS.has(prevTok)) ||
+          prevTok === "else" || prevTok === "do";
+        stack.push({ kind: statementStart ? "block" : "expr", ternary: 0 });
+        regexOk = true;
+        break;
+      }
+      case "}": {
+        const f = stack.length > 1 ? stack.pop()! : top();
+        if (f.kind === "hole") {
+          prevTok = "}";
+          templateText();
+          continue;
+        }
+        regexOk = f.kind !== "expr";
+        break;
+      }
+      case "?":
+        top().ternary += 1;
+        regexOk = true;
+        break;
+      case ":": {
+        const f = top();
+        if (f.ternary > 0) {
+          f.ternary -= 1;
+          tok = "?:";
+        } else if (f.kind === "root" || f.kind === "block") {
+          tok = "label:";
+        }
+        regexOk = true;
+        break;
+      }
+      case "++":
+      case "--":
+        break;
+      case "!":
+        break;
+      default:
+        regexOk = true;
+    }
+    prevTok = tok;
+  }
+  return { code: code.split("\n"), bare: bare.split("\n") };
 }
 
 const ACTING_RE = /\bactingPrincipalIdOf\s*\(|\bactingPrincipalId\s*\(/;
@@ -132,7 +352,7 @@ function markerAbove(lines: readonly string[], line: number): { intent: string; 
 
 export function findPrincipalGates(file: string, source: string): PrincipalGate[] {
   const lines = source.split("\n");
-  const code = stripComments(lines);
+  const { code } = lexicalViews(source);
   const gates: PrincipalGate[] = [];
   const destructured = destructuredPrincipalBindings(code);
 
@@ -203,7 +423,7 @@ const FIRE_AUTH_BUILDER_RE = /FireAttributes\s*\(/;
 const ATTRIBUTES_WINDOW = 40;
 
 export function findUnattendedDispatchSites(file: string, source: string): UnattendedDispatchSite[] {
-  const code = stripComments(source.split("\n"));
+  const { code } = lexicalViews(source);
   const sites: UnattendedDispatchSite[] = [];
   for (let i = 0; i < code.length; i++) {
     if (!SERVICE_PRINCIPAL_RE.test(code[i] ?? "")) continue;
@@ -306,58 +526,10 @@ const REFERENCE_OPERAND = String.raw`[A-Za-z_$][\w$]*(?:\s*\??\.\s*[A-Za-z_$][\w
 
 const PROPOSE_ALIAS_RHS_RE = new RegExp(String.raw`^${REFERENCE_OPERAND}(?:\s*(?:\?\?|\|\|)\s*${REFERENCE_OPERAND})*\s*;?\s*$`);
 
-const REGEX_MAY_OPEN_AFTER: ReadonlySet<string> = new Set(["", "=", "(", ",", ":", "[", "{", ";", "!", "&", "|", "?", "+", "-", "*", "%", "<", ">", "~", "^"]);
-
-function stripLiterals(text: string): string {
-  let out = "";
-  let i = 0;
-  let prev = "";
-  const blankUntil = (close: string, isRegex: boolean): void => {
-    let inClass = false;
-    while (i < text.length) {
-      const c = text[i]!;
-      if (c === "\\") {
-        out += "  ".slice(0, Math.min(2, text.length - i));
-        i += 2;
-        continue;
-      }
-      if (isRegex && c === "[") inClass = true;
-      else if (isRegex && c === "]") inClass = false;
-      else if (c === close && !inClass) break;
-      out += " ";
-      i += 1;
-    }
-    if (i < text.length) {
-      out += close;
-      i += 1;
-    }
-    prev = close;
-  };
-  while (i < text.length) {
-    const ch = text[i]!;
-    if (ch === '"' || ch === "'" || ch === "`") {
-      out += ch;
-      i += 1;
-      blankUntil(ch, false);
-      continue;
-    }
-    if (ch === "/" && REGEX_MAY_OPEN_AFTER.has(prev)) {
-      out += ch;
-      i += 1;
-      blankUntil("/", true);
-      continue;
-    }
-    out += ch;
-    if (ch.trim() !== "") prev = ch;
-    i += 1;
-  }
-  return out;
-}
-
 function proposeAliasOn(line: string): ProposeAliasRead {
   const m = PROPOSE_ALIAS_DECL_RE.exec(line);
   if (!m) return undefined;
-  const rhs = stripLiterals(m[2] ?? "");
+  const rhs = m[2] ?? "";
   if (!/\brequestApproval\b/.test(rhs) || PROPOSE_CALL_RE.test(rhs)) return undefined;
   if (!PROPOSE_ALIAS_RHS_RE.test(rhs.trim())) return { kind: "unclassified" };
   return m[1] === "requestApproval" ? undefined : { kind: "alias", name: m[1]! };
@@ -373,10 +545,10 @@ export interface ProposeAliasShapeProblem {
 
 export function findProposeAliasShapeProblems(file: string, source: string): ProposeAliasShapeProblem[] {
   const lines = source.split("\n");
-  const code = stripComments(lines);
+  const { bare } = lexicalViews(source);
   const problems: ProposeAliasShapeProblem[] = [];
-  for (let i = 0; i < code.length; i++) {
-    if (proposeAliasOn(code[i] ?? "")?.kind === "unclassified") problems.push({ file, line: i + 1, text: (lines[i] ?? "").trim().slice(0, 160) });
+  for (let i = 0; i < bare.length; i++) {
+    if (proposeAliasOn(bare[i] ?? "")?.kind === "unclassified") problems.push({ file, line: i + 1, text: (lines[i] ?? "").trim().slice(0, 160) });
   }
   return problems;
 }
@@ -437,9 +609,9 @@ function derivedNames(code: readonly string[]): Set<string> {
   return names;
 }
 
-function proposeAliases(code: readonly string[]): RegExp | undefined {
+function proposeAliases(bare: readonly string[]): RegExp | undefined {
   const names: string[] = [];
-  for (const line of code) {
+  for (const line of bare) {
     const read = proposeAliasOn(line);
     if (read?.kind === "alias") names.push(read.name);
   }
@@ -448,13 +620,13 @@ function proposeAliases(code: readonly string[]): RegExp | undefined {
 
 export function findAttendednessSites(file: string, source: string): AttendednessSite[] {
   const lines = source.split("\n");
-  const code = stripComments(lines);
-  const aliasCall = proposeAliases(code);
+  const { code, bare } = lexicalViews(source);
+  const aliasCall = proposeAliases(bare);
   const sites: AttendednessSite[] = [];
   const fileDerives = code.some((l) => DERIVATION_CALL_RE.test(l));
   for (let i = 0; i < code.length; i++) {
     const c = code[i] ?? "";
-    if (DECLARATION_RE.test(c) || proposeAliasOn(c) !== undefined) continue;
+    if (DECLARATION_RE.test(c) || proposeAliasOn(bare[i] ?? "") !== undefined) continue;
     if (EVE_APPROVAL_DECL_RE.test(c) || EVE_APPROVAL_RETURN_RE.test(c)) {
       const eveMarker = eveApprovalExemptMarker(lines, i + 1);
       sites.push({

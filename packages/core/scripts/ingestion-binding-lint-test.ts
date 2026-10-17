@@ -26,6 +26,8 @@ const rules = (src: string) => defectsIn(src).map((d) => d.rule);
 {
   const noKind = `noteIngestionVerdict({ label: "x" }, false);`;
   ok(sitesIn(noKind).length === 1, "synthetic: a noteIngestionVerdict call with no kind is still SEEN as a site");
+  ok(rules(`const GLOB = "src/*";\n${noKind}`).join() === "no-kind", "synthetic: 🔴 OPE-2559: a `/*` inside a STRING hides no site below it");
+  ok(rules(`const SLASHES = /\\/*/;\n${noKind}`).join() === "no-kind", "synthetic: 🔴 OPE-2559: …nor does a `/*` inside a REGEX");
   ok(rules(noKind).join() === "no-kind", "synthetic: 🔴 …and it is RED for no-kind (label is present here, so only no-kind fires)");
 
   const withKind = `noteIngestionVerdict({ kind: "webhook", label: "x" }, false);`;

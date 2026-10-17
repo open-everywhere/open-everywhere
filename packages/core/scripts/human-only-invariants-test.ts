@@ -26,6 +26,8 @@ export async function execute(input, ctx) {
 
   const decideDirect = `import { resolveApprovalClick } from "../approvals/flow.js";`;
   ok(sitesIn(decideDirect).length === 1, "synthetic: 🔴 a direct import of resolveApprovalClick from its own module is SEEN");
+  ok(sitesIn(`const GLOB = "src/*";\n${decideDirect}`).length === 1, "synthetic: 🔴 OPE-2559: a `/*` inside a STRING hides no import below it");
+  ok(sitesIn(`const SLASHES = /\\/*/;\n${decideDirect}`).length === 1, "synthetic: 🔴 OPE-2559: …nor does a `/*` inside a REGEX");
   ok(sitesIn(decideDirect)[0]!.name === "resolveApprovalClick", "synthetic: …reported under its own name");
   ok(
     sitesIn(decideDirect)[0]!.group.exportNames.includes("clickerMayDecide"),

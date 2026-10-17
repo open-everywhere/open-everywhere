@@ -1,3 +1,5 @@
+import { lexicalViews } from "./principal-gate-manifest.js";
+
 export interface ProtectedHumanOnlyExportGroup {
   readonly module: string;
   readonly exportNames: readonly string[];
@@ -65,37 +67,7 @@ function groupFor(name: string): ProtectedHumanOnlyExportGroup {
 }
 
 function stripComments(lines: readonly string[]): string[] {
-  let inBlock = false;
-  return lines.map((raw) => {
-    let out = "";
-    let i = 0;
-    while (i < raw.length) {
-      if (inBlock) {
-        if (raw.startsWith("*/", i)) {
-          inBlock = false;
-          out += "  ";
-          i += 2;
-        } else {
-          out += " ";
-          i += 1;
-        }
-        continue;
-      }
-      if (raw.startsWith("/*", i)) {
-        inBlock = true;
-        out += "  ";
-        i += 2;
-        continue;
-      }
-      if (raw.startsWith("//", i)) {
-        out += " ".repeat(raw.length - i);
-        break;
-      }
-      out += raw[i];
-      i += 1;
-    }
-    return out;
-  });
+  return lexicalViews(lines.join("\n")).code;
 }
 
 export interface ProtectedImportSite {
