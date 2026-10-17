@@ -80,7 +80,10 @@ role needs no other change. A clip is one call along the same primary and fallba
 > on meetings. `npm run bakeoff:stt -- --live` runs every candidate over AMI Meeting Corpus meetings
 > in the bot's own chunking, and scores word error rate, damage at chunk seams, and whether the
 > timestamps can place speaker names. It prints the cost of each run. Without `--live` it replays
-> the committed recordings in `scripts/fixtures/stt-bakeoff/`.
+> the committed recordings in `scripts/fixtures/stt-bakeoff/`. The two self-hosted candidates join
+> a live run only when you name your server: `--self-hosted-url` for Qwen3-ASR, and `--voxtral-url`
+> for Voxtral, the `european-open-weights` primary. The Gateway serves no Voxtral id (probed
+> 2026-10-15), so the bake-off has no Gateway route for Voxtral.
 
 What was checked on 2026-10-12, and what was not:
 

@@ -52,8 +52,8 @@ body:
     id: model
     attributes:
       label: Model / provider
-      description: e.g. GLM-5.2 via Vercel AI Gateway → Fireworks (default), or your override.
-      placeholder: zai/glm-5.2 (default)
+      description: The `models.stack` alias (american-closed, chinese-open-weights or european-open-weights) and any per-role override.
+      placeholder: american-closed (default) — openai/gpt-6-luna via Vercel AI Gateway
   - type: input
     id: memory-provider
     attributes:

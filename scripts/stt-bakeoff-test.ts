@@ -173,8 +173,12 @@ ok(JSON.stringify(fixedChunks(130).map((c) => [c.start, c.end])) === "[[0,60],[6
   ok(by("mai").route === TRANSCRIPTION["american-closed"].primary && by("grok").route === TRANSCRIPTION["american-closed"].fallback, "the American candidates are the american-closed routes");
   ok(by("qwen3-asr-deepinfra").route === TRANSCRIPTION["chinese-open-weights"].primary, "the DeepInfra candidate is the chinese-open-weights primary");
   ok(!c.some((x) => x.name === "qwen3-asr-self-hosted"), "the self-hosted candidate needs a URL");
-  const self = candidates("http://localhost:8000/v1").find((x) => x.name === "qwen3-asr-self-hosted")!;
+  const self = candidates({ qwen3Asr: "http://localhost:8000/v1" }).find((x) => x.name === "qwen3-asr-self-hosted")!;
   ok(self.route?.baseUrl === "http://localhost:8000/v1" && self.route.id === TRANSCRIPTION["chinese-open-weights"].fallback.id, "--self-hosted-url points the self-hosted route at the operator's server");
+  ok(!c.some((x) => x.name === "voxtral-self-hosted") && !candidates({ qwen3Asr: "http://localhost:8000/v1" }).some((x) => x.name === "voxtral-self-hosted"), "the Voxtral candidate needs its own URL");
+  const vox = candidates({ voxtral: "http://localhost:8001/v1" }).find((x) => x.name === "voxtral-self-hosted")!;
+  const eow = TRANSCRIPTION["european-open-weights"].primary;
+  ok(vox.route?.via === "self-hosted" && vox.route.id === eow.id && vox.route.baseUrl === "http://localhost:8001/v1" && vox.role === "european-open-weights primary", "--voxtral-url adds the european-open-weights primary (Voxtral) on the operator's server");
   ok(near(listPriceUsd(by("grok"), 60), 60 * 0.000028) && near(listPriceUsd(by("qwen3-asr-deepinfra"), 120), 0.0009), "list price: per second on the Gateway, per minute on DeepInfra");
   ok(listPriceUsd(by("gpt-4o-transcribe"), 60) === undefined, "a token-priced model has no list price by duration");
 }

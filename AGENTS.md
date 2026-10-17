@@ -21,7 +21,8 @@ Open Everywhere is an open, self-hostable autonomous teammate you tag in your ch
 horizons, remembers context per team, and asks before doing anything consequential. It is
 built on **[Vercel Eve](https://eve.dev)** and picks its models from a **named stack**
 (`agent/model/stacks.ts`) via the Vercel AI Gateway. The shipped default is `american-closed`
-(every role on `openai/gpt-6-luna`); an alternative `chinese-open-weights` stack (DeepSeek V4
+(`openai/gpt-6-luna` in four roles, `google/gemini-3.8-flash` for vision). A `european-open-weights`
+stack (Mistral Small 4) ships beside it, and an alternative `chinese-open-weights` stack (DeepSeek V4.1
 Flash) also ships. You run it, you own the data, you pick the model.
 
 Two ideas run through the whole design (see [Core concepts](./docs/introduction/core-concepts.md)):

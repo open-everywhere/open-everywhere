@@ -24,9 +24,15 @@ export interface Candidate {
 export const GEMINI_AUDIO_PROMPT =
   "Transcribe this meeting audio verbatim, in the language spoken. Output only the transcript text, with no speaker labels, no timestamps and no commentary.";
 
-export function candidates(selfHostedUrl?: string): Candidate[] {
+export interface SelfHostedUrls {
+  readonly qwen3Asr?: string;
+  readonly voxtral?: string;
+}
+
+export function candidates(urls: SelfHostedUrls = {}): Candidate[] {
   const ac = TRANSCRIPTION["american-closed"];
   const cow = TRANSCRIPTION["chinese-open-weights"];
+  const eow = TRANSCRIPTION["european-open-weights"];
   const out: Candidate[] = [
     { name: "mai", role: "american-closed primary", route: ac.primary },
     { name: "grok", role: "american-closed fallback", route: ac.fallback },
@@ -34,7 +40,8 @@ export function candidates(selfHostedUrl?: string): Candidate[] {
     { name: "gemini-3.8-flash", role: "baseline (audio as a file)", languageModel: "google/gemini-3.8-flash" },
     { name: "gpt-4o-transcribe", role: "baseline (no ZDR route)", route: { via: "gateway", id: "openai/gpt-4o-transcribe" } },
   ];
-  if (selfHostedUrl !== undefined) out.push({ name: "qwen3-asr-self-hosted", role: "chinese-open-weights fallback / fully local", route: { ...cow.fallback, baseUrl: selfHostedUrl } });
+  if (urls.qwen3Asr !== undefined) out.push({ name: "qwen3-asr-self-hosted", role: "chinese-open-weights fallback / fully local", route: { ...cow.fallback, baseUrl: urls.qwen3Asr } });
+  if (urls.voxtral !== undefined) out.push({ name: "voxtral-self-hosted", role: "european-open-weights primary", route: { ...eow.primary, baseUrl: urls.voxtral } });
   return out;
 }
 

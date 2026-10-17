@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AMI_ANNOTATIONS_URL, AMI_ATTRIBUTION, AMI_AUDIO_URL, mergeSpeakers, parseAmiWords, wordsInWindow, type RefWord } from "./stt-bakeoff/ami.js";
-import { candidateCall, candidates, CATALOGUE_PATH, listPriceUsd, type Candidate } from "./stt-bakeoff/candidates.js";
+import { candidateCall, candidates, CATALOGUE_PATH, listPriceUsd, type Candidate, type SelfHostedUrls } from "./stt-bakeoff/candidates.js";
 import { chunkAudio, type Chunk, type ChunkingMode } from "./stt-bakeoff/chunking.js";
 import { scoreRun, type ChunkResult, type Score } from "./stt-bakeoff/score.js";
 import { durationSeconds, encodeWav, parseWav, slicePcm } from "./stt-bakeoff/wav.js";
@@ -138,7 +138,7 @@ interface LiveOptions {
   readonly to?: number;
   readonly chunking: readonly ChunkingMode[];
   readonly only?: readonly string[];
-  readonly selfHostedUrl?: string;
+  readonly selfHosted: SelfHostedUrls;
   readonly cache: string;
   readonly record?: string;
 }
@@ -146,7 +146,7 @@ interface LiveOptions {
 async function runLive(o: LiveOptions): Promise<Row[]> {
   mkdirSync(o.cache, { recursive: true });
   const deepinfraKey = process.env.DEEPINFRA_API_KEY?.trim() || undefined;
-  const pool = candidates(o.selfHostedUrl).filter((c) => o.only === undefined || o.only.includes(c.name));
+  const pool = candidates(o.selfHosted).filter((c) => o.only === undefined || o.only.includes(c.name));
   const runnable: Candidate[] = [];
   for (const c of pool) {
     if (c.route?.via === "deepinfra" && deepinfraKey === undefined) console.log(`skip ${c.name}: DEEPINFRA_API_KEY is not set`);
@@ -231,6 +231,7 @@ async function main(): Promise<void> {
   const to = arg("--to");
   const only = arg("--candidates");
   const self = arg("--self-hosted-url");
+  const voxtral = arg("--voxtral-url");
   const record = arg("--record");
   const rows = await runLive({
     meetings: (arg("--meetings") ?? DEFAULT_MEETINGS.join(",")).split(",").map((s) => s.trim()).filter(Boolean),
@@ -239,7 +240,7 @@ async function main(): Promise<void> {
     ...(from !== undefined ? { from: Number(from) } : {}),
     ...(to !== undefined ? { to: Number(to) } : {}),
     ...(only !== undefined ? { only: only.split(",") } : {}),
-    ...(self !== undefined ? { selfHostedUrl: self } : {}),
+    selfHosted: { ...(self !== undefined ? { qwen3Asr: self } : {}), ...(voxtral !== undefined ? { voxtral } : {}) },
     ...(record !== undefined ? { record } : {}),
   });
   console.log("\n" + renderReport(rows));
