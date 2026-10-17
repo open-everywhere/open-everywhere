@@ -944,7 +944,8 @@ is the Messages tab and the side panel:
 | **Their own title.** The person can rename a session at any time. | Slack applies a title only when a call creates the session, so OE never overwrites a rename. |
 | **Working, with a Stop button.** | A turn's start sets the session `processing`. Slack then shows its Stop button, because the app subscribes to `agent_session_stopped`. |
 | **Stop.** | A press takes the same road as the ✋ reaction and `/oe stop`: it is decided at ingress, before any model call, so it is free and works over a spend cap. It stops the turn of the session's thread. In the DM it falls back to the DM's newest turn, because a top-level DM message keys its turn by the channel alone. The audit row is `turn.cancel_requested` with `via: "stop-button"`. Slack does not move the status itself, so OE sets the session `active`. |
-| **"Needs you".** | When the seat's turn reported through `update_status` that it waits on the person (`needs_input` or `blocked`), the agent session parks `suspended`. Otherwise it parks `active`. Any new turn clears it: the person's answer, and also a job's settlement turn. That turn sets `processing`, then parks `active` unless it reports again that it waits on the person. |
+| **"Needs you".** | When the seat's turn reported through `update_status` that it waits on the person (`needs_input` or `blocked`), the agent session parks `suspended`. Otherwise it parks `active`. The person's next message clears it: that turn sets `processing`, then parks `active` unless it reports again that it waits on the person, or a job of the session still waits (next row). A job's result turn sets no state: the result wake names no agent session. |
+| **"Needs you", for a job.** | A job the DM seat forwards can end waiting on the person: its worker asked a question in the DM (`ask_room`) and finished, or it needs the person's own sign-in. The work session has no `update_status`, so the host sets the agent session the job came from `suspended` when the job's task settles. While the job waits, every turn of that session parks `suspended`. When the person answers and the seat forwards the answer to the same task, the job moves on in the session it came from, whichever agent session of the DM the answer came from. That session then parks `active`, unless another of its jobs still waits. After a sign-in, the resume forward sets the session `active`. The audit row is `work.surface_wait`: ids, the state and the reason, never the question. |
 
 **Limits.**
 
@@ -960,20 +961,27 @@ is the Messages tab and the side panel:
 - The DM seat serves every agent session of the DM. A Stop pressed in one agent session while the
   seat works on a message from another agent session of the same DM stops that work. Both are the
   same person's.
-- A forwarded job's `needs_input` or `blocked` does not set the agent session `suspended`. Only the
-  seat holds `update_status`: a job runs in the work session, whose worker has no such tool, and the
-  work session sets no agent-session state. The job's own ✋ stops it.
+- A forwarded job shows its wait only when the host can see it: an `ask_room` question followed by
+  a completed task, or a sign-in the job can resume after. A job that only says in its result that it
+  waits sets nothing. A job that nobody answers stops showing its wait to OE 6 hours after its
+  settlement. Slack keeps the session `suspended` until the next turn of that session.
+- The seat's own `cancel_work` on a job that already settled does not clear its wait. The person's
+  next message in that session parks `suspended` again, for up to 6 hours after the job's settlement.
 - The title and the state are best-effort calls. A workspace without Slack's agent features answers
   an error, which OE logs and ignores.
 - Slack shows the Stop button only after the operator pastes the manifest again (App Manifest →
   Save Changes), because the subscription is part of it.
 
 **What the tests prove.** The unit packs `test:slack-agent-session` (packages/providers/slack) and
-`test:surface-session-state` (packages/core) pin the title, the setter and the hook. The integration
+`test:surface-session-state` (packages/core) pin the title, the setter and the hook.
+`test:work-surface-wait` (packages/core) pins a forwarded job's wait, its move-on and the hook's park. The integration
 test `tests/integration/channels/slack-agent-session.test.ts` drives a booted agent through the
 signed DM door: the title before `processing`, `suspended` after `update_status(needs_input)`,
 `active` after the answer, no title for a forward with no typed text, and a signed Stop press that
-stops a held turn and sets the session `active`. The live e2e scenario
+stops a held turn and sets the session `active`. The integration test
+`tests/integration/channels/slack-job-wait.test.ts` forwards a DM job whose worker asks with
+`ask_room`: the session goes `suspended` at the job's settlement, another message keeps it so, and the
+answer forwarded to the same task parks it `active`. The live e2e scenario
 `S-SESSION-STOP` forges a signed press on a real deployment. No API can press the real button, so no
 test proves that Slack itself shows it.
 

@@ -7,6 +7,7 @@ import { postSurfaceTextStrict } from "../channels/surface-message-ops.js";
 import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "../audit/audit.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
+import { rememberWorkAsked } from "../channels/work-surface-wait.js";
 
 export const WORK_QUESTION_TOOL = "ask_room";
 
@@ -76,6 +77,7 @@ export default defineTool({
       key: outboundKey({ surface: where.platform, channel: where.channelId, threadTs: where.threadTs, action: `${where.platform}.ask_room`, stableId: callId, payload: text }),
       run: () => postSurfaceTextStrict(where.platform, { channelId: where.channelId, text, ...(where.threadTs ? { threadTs: where.threadTs } : {}) }),
     });
+    await rememberWorkAsked(c);
     await appendAudit({
       org: p.org,
       platform: p.platform,

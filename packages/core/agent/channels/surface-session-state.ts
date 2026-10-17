@@ -6,15 +6,40 @@ export type SurfaceSessionStatus = "processing" | "active" | "suspended";
 
 export type SurfaceSessionSetter = (attributes: Readonly<Record<string, unknown>>, status: SurfaceSessionStatus) => Promise<string | undefined>;
 
-const setters = new Map<string, SurfaceSessionSetter>();
+export type SurfaceSessionPinner = (attributes: Readonly<Record<string, unknown>>) => { readonly id: string; readonly attributes: Readonly<Record<string, string>> } | undefined;
 
-export function registerSurfaceSessionState(platform: string, setter: SurfaceSessionSetter): void {
+export interface SurfaceSessionPin {
+  readonly platform: string;
+  readonly id: string;
+  readonly attributes: Readonly<Record<string, string>>;
+}
+
+const setters = new Map<string, SurfaceSessionSetter>();
+const pinners = new Map<string, SurfaceSessionPinner>();
+
+export function registerSurfaceSessionState(platform: string, setter: SurfaceSessionSetter, pinner?: SurfaceSessionPinner): void {
   if (!admitProviderRegistration(platform, "surface-session-state")) return;
   setters.set(platform, setter);
+  if (pinner) pinners.set(platform, pinner);
+  else pinners.delete(platform);
 }
 
 export function _resetSurfaceSessionStateForTest(): void {
   setters.clear();
+  pinners.clear();
+}
+
+export function pinSurfaceSession(turn: SurfaceTurn | undefined): SurfaceSessionPin | undefined {
+  if (!turn) return undefined;
+  const pinner = pinners.get(turn.platform);
+  if (!pinner) return undefined;
+  try {
+    const pinned = pinner(turn.attributes);
+    return pinned && pinned.id.length > 0 ? { platform: turn.platform, id: pinned.id, attributes: { ...pinned.attributes } } : undefined;
+  } catch (err) {
+    console.warn(`[open-everywhere:surface-session] ${turn.platform} pin failed: ${String(err)}`);
+    return undefined;
+  }
 }
 
 export function hasSurfaceSessionSetter(platform: string | undefined): boolean {

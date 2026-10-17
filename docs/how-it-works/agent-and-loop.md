@@ -2192,7 +2192,16 @@ cannot page a stranger.
   for `needs_input` or `blocked`, and `active` otherwise. Slack registers a setter for the person's DM
   with the app. In such a session, any new turn resets the slot, a job's settlement turn included; a
   turn that still waits on its person reports it again. Every other session reads and writes no such
-  slot.
+  slot. A job's result turn resets the slot but sets no conversation state, because the result wake
+  names no conversation.
+- **A forwarded job's wait (OPE-2536).** The work session has no `update_status`, so the host carries a
+  job's wait itself (`channels/work-surface-wait.ts`). The forward records the conversation the job
+  came from, as the platform's pin: ids only. When the job's task settles waiting on the person (its
+  worker asked the room with `ask_room` and completed, or it can resume after the person's own
+  sign-in), the host lists the job on that conversation and sets it `suspended`. The park reads that
+  list, so every turn of the conversation parks `suspended` while the job waits. A forward of the same
+  task (the answer, or the resume after a sign-in) moves the job on. The rows live in the operational
+  store, never in a session slot. Each change writes one `work.surface_wait` audit row.
 - **Where it shows.** `needs_input` and `blocked` rows are in the person's
   [one queue](../security/control-plane.md#in-slack-approvals) beside their open approval cards, so the
   DM seat answers "what is waiting on me" with both.

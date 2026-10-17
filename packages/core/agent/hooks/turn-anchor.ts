@@ -16,7 +16,8 @@ import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.j
 import { domainKeyOf } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
-import { markSurfaceSession, parkedSurfaceStatus, surfaceTurnOf } from "../channels/surface-session-state.js";
+import { markSurfaceSession, parkedSurfaceStatus, pinSurfaceSession, surfaceTurnOf } from "../channels/surface-session-state.js";
+import { conversationHasWaitingJob } from "../channels/work-surface-wait.js";
 import { resetSessionAttention, sessionNeedsPerson } from "../status/attention.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
 
@@ -429,7 +430,8 @@ async function startTurnSession(ctx: HookContext): Promise<void> {
 async function parkTurnSession(ctx: HookContext): Promise<void> {
   const turn = surfaceTurnOf(ctx);
   if (!turn) return;
-  const status = parkedSurfaceStatus(sessionNeedsPerson());
+  const needsPerson = sessionNeedsPerson();
+  const status = parkedSurfaceStatus(needsPerson || (await conversationHasWaitingJob(pinSurfaceSession(turn))));
   const parkedId = await markSurfaceSession(turn.platform, turn.attributes, status);
   let started: { readonly platform: string; readonly id: string; readonly attributes: Readonly<Record<string, unknown>> } | null = null;
   try {
@@ -440,7 +442,8 @@ async function parkTurnSession(ctx: HookContext): Promise<void> {
   }
   if (started === null) return;
   if (started.platform === turn.platform && started.id === parkedId) return;
-  await markSurfaceSession(started.platform, started.attributes, status);
+  const startedStatus = parkedSurfaceStatus(needsPerson || (await conversationHasWaitingJob(pinSurfaceSession({ platform: started.platform, attributes: started.attributes }))));
+  await markSurfaceSession(started.platform, started.attributes, startedStatus);
 }
 
 export default defineHook({

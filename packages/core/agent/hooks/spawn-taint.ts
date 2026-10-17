@@ -8,6 +8,7 @@ import { noteWorkJobSettled, noteWorkJobStarted, settledWorkJobStateFor } from "
 import { currentWorkSessionToken } from "../access/lean-seat-state.js";
 import { forgetWorkStop, readWorkStop } from "../channels/work-stop-note.js";
 import { forgetSignInMarkers, forgetWorkSignIn, readWorkSignIn } from "../channels/work-sign-in-note.js";
+import { forgetWorkAsked, noteJobSettledWait, readWorkAsked, settledJobWaitReason } from "../channels/work-surface-wait.js";
 import { settleSignIn } from "../channels/work-sign-in-resume.js";
 import { claimWorkCall, workRequestsThisTurn } from "../access/work-request-turn.js";
 import { keyWorkTask, readWorkTaskKey, wakeSeatNeedsReissue } from "./work-task-key.js";
@@ -1033,6 +1034,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   const signIn = stop === undefined && signInRow?.delivered === true && signInRow.detourId !== undefined && !signInCancelled && row.fire === undefined ? signInRow : undefined;
   if (signInCancelled && signInRow?.detourId !== undefined) await forgetSignInMarkers(org, signInRow.detourId);
   const quietSignIn = signIn !== undefined && signIn.sameConversation;
+  const asked = childToken === undefined ? false : await readWorkAsked(org, childToken);
   const readsToken = status === "completed" && stop === undefined ? childToken : undefined;
   const wakeId = row.fire !== undefined ? row.wakeId : mintWakeId();
   const seatToken = await currentSeatToken(org, row.seatToken, store);
@@ -1068,6 +1070,16 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
         return;
       }
       if (silentFire) return;
+      if (row.fire === undefined) {
+        const waits = settledJobWaitReason({
+          signInResumable: signIn !== undefined,
+          asked,
+          status,
+          stopped: stop !== undefined,
+          cancelRedeemed: asked && status === "completed" && (await workCancelTicketRedeemed(org, store, row, settled)),
+        });
+        await noteJobSettledWait({ requestId, taskId: settled.taskId, waits });
+      }
       reportOwed = row.fire === undefined && !quietSignIn && (await workReportPromised(store, org, requestId));
       delivered = await dispatchWorkResult({
         seatToken,
@@ -1114,6 +1126,7 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
     detourId: signInRow?.detourId,
     file: signIn?.detourId !== undefined ? { requestId, taskId: settled.taskId, connector: signIn.connector } : undefined,
   });
+  if (ran && childToken !== undefined && asked) await forgetWorkAsked(org, childToken);
   await audit(
     !ran
       ? { outcome: "replay-skipped" }

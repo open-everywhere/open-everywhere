@@ -6080,6 +6080,52 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(partner.action === "turn.cancelled", `S-SESSION-STOP: the turn really stopped — its own process wrote turn.cancelled (got ${partner.action})`);
     },
   },
+
+  {
+    id: "S-JOB-WAIT",
+    title: "A forwarded DM job's wait on the person (OPE-2536): a job that asks with ask_room sets the person's Slack agent session suspended, and the answer forwarded to the same task moves it on",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_500_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-JOB-WAIT gates on the work.question_posted and work.surface_wait audit rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-JOB-WAIT");
+      const askAt = await presenceSince(ctx, "S-JOB-WAIT ask");
+      const { ts: sessionTs } = await dm.post(
+        fixtureLine(
+          "e2e S-JOB-WAIT: hand this to a background job with `work`. The job writes one sentence about a colour, but it must first ask me with `ask_room` " +
+            "which colour to use, blue or green, then finish and wait for my answer. Do not pick the colour yourself.",
+        ),
+      );
+
+      await pollUntil(
+        async () => (await read({ sinceIso: askAt, actions: ["work.question_posted"], limit: 200 }))[0],
+        { timeoutMs: FILE_REPLY_WAIT, what: "a work.question_posted row — the job's worker asked with ask_room (none means the seat answered in-seat or the worker chose not to ask)" },
+      );
+      ctx.log("S-JOB-WAIT: the job's worker asked the room with ask_room");
+      const waiting = await pollUntil(
+        async () => (await read({ sinceIso: askAt, actions: ["work.surface_wait"], limit: 200 })).find((r) => dS(r, "state") === "suspended"),
+        { timeoutMs: FILE_REPLY_WAIT, what: "a work.surface_wait row with state suspended — W's settlement showed the wait on the DM's agent session" },
+      );
+      ctx.gate(dS(waiting, "reason") === "asked", `S-JOB-WAIT: the session waits because the job asked the person (reason "${String(dS(waiting, "reason"))}")`);
+      const taskId = dS(waiting, "taskId");
+      ctx.gate(taskId !== undefined, "S-JOB-WAIT: the wait row names the job's task");
+
+      const answerAt = await presenceSince(ctx, "S-JOB-WAIT answer");
+      await dm.post(fixtureLine("blue"), sessionTs);
+      const movedOn = await pollUntil(
+        async () => (await read({ sinceIso: answerAt, actions: ["work.surface_wait"], limit: 200 })).find((r) => dS(r, "state") === "moved-on" && dS(r, "taskId") === taskId),
+        { timeoutMs: FILE_REPLY_WAIT, what: `a work.surface_wait row with state moved-on for task ${String(taskId)} — the seat forwarded the answer to the same task` },
+      );
+      ctx.gate(dS(movedOn, "left") === "none", `S-JOB-WAIT: no job of the session still waits after the answer (left "${String(dS(movedOn, "left"))}")`);
+    },
+  },
   {
     id: "S-REPLY-FEEDBACK",
     title: "Native thumbs on an answer (OPE-2520): a DM answer carries Slack's feedback_buttons, and a signed thumbs-down on it writes one reply.feedback row naming the rater, the rating and the message",

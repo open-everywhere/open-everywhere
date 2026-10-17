@@ -6,6 +6,7 @@ import {
   routeAgentSessionStop,
   setSlackSessionStatus,
   slackAgentSessionOf,
+  slackSurfaceSessionPin,
   slackSurfaceSessionSetter,
   slackSessionStatusForm,
   slackSessionTitle,
@@ -148,7 +149,13 @@ console.log("§5 the state setter");
   const register = readFileSync(new URL("../agent/register.ts", import.meta.url), "utf8");
   const body = /export function registerSlackProvider\(\)[\s\S]*?\n\}/.exec(register)?.[0] ?? "";
   ok(body.length > 0, "scan sanity: registerSlackProvider's body is found");
-  ok(/registerSurfaceSessionState\("slack", slackSurfaceSessionSetter\(\)\)/.test(body), "registerSlackProvider registers the Slack session setter with core");
+  ok(/registerSurfaceSessionState\("slack", slackSurfaceSessionSetter\(\), slackSurfaceSessionPin\)/.test(body), "registerSlackProvider registers the Slack session setter AND its pinner with core");
+
+  const pin = slackSurfaceSessionPin({ team_id: "T1", channel_id: "D0PARK", channel_type: "im", user_id: "U7", agent_session_ts: "9.9", oe_wake: "w-1" });
+  eq(pin, { id: "D0PARK:9.9", attributes: { channel_id: "D0PARK", channel_type: "im", agent_session_ts: "9.9" } }, "the pin is the setter's id and three ids: no wake stamp, no person id");
+  eq(await slackSurfaceSessionSetter(recorder)(pin!.attributes, "suspended"), pin!.id, "the pinned bag names the same session to the setter");
+  eq(slackSurfaceSessionPin({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }), undefined, "a channel thread pins nothing");
+  eq(slackSurfaceSessionPin({ channel_id: "D0PARK", channel_type: "im", oe_work_result: "r-1" }), undefined, "a result wake's bag names no session, so it pins nothing");
 }
 
 console.log(`\n✓ slack-agent-session: ${passed} checks passed`);

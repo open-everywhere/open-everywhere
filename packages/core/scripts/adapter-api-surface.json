@@ -519,6 +519,7 @@
     "SurfaceKeyEntry",
     "SurfaceMessageOps",
     "SurfaceParityDeclaration",
+    "SurfaceSessionPinner",
     "SurfaceSessionSetter",
     "SurfaceSessionStatus",
     "SurfaceStatus",

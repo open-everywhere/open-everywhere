@@ -529,6 +529,7 @@ test:reader-instructions
 test:agent-setup
 test:exit-after-flush
 test:surface-session-state
+test:work-surface-wait
 test:voice-clips
 test:doing-for-me
 test:reply-source-links

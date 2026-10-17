@@ -23,6 +23,7 @@ import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import { requesterAsksForWake } from "../access/requester-messages.js";
 import { auditTaskContinuation, continuationAdmitted, taskContinuationRefusalMessage } from "../channels/task-provenance.js";
 import { NO_HANDOFF_NARRATION_RULE } from "../instructions/seat-prompt.js";
+import { noteJobForwarded } from "../channels/work-surface-wait.js";
 
 function quietResultWake(ctx: BindableContext): boolean {
   const v = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[OE_WORK_RESULT_QUIET_ATTR];
@@ -130,6 +131,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     atIso,
     ...(requesterAsks.length > 0 ? { requesterAsks } : {}),
   });
+  await noteJobForwarded({ requestId, ctx: c, ...(openingRequest !== undefined ? { openingRequestId: openingRequest } : {}), ...(input.taskId !== undefined ? { taskId: input.taskId } : {}) });
   if (input.taskId !== undefined && quietResultWake(c)) await rememberWorkReportPromised(store, org, requestId, atIso).catch(() => undefined);
   await rememberWorkBrief(store, org, requestId, input.message, atIso);
   await noteGenerationDelegation(org, seatToken, workLedgerId(requestId));

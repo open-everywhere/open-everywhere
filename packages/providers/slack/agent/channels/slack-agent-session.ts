@@ -5,6 +5,7 @@ import {
   turnChannelKey,
   type AttachSessionForCancel,
   type CancelResult,
+  type SurfaceSessionPinner,
   type SurfaceSessionSetter,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { bindableForSlackIds, slackForm, type SlackEventEnvelope } from "./slack-events.js";
@@ -75,6 +76,15 @@ export function slackAgentSessionOf(attributes: Readonly<Record<string, unknown>
   if (typeof channelId !== "string" || channelId.length === 0 || typeof stamped !== "string" || stamped.length === 0) return undefined;
   return { channelId, threadTs: stamped };
 }
+
+export const slackSurfaceSessionPin: SurfaceSessionPinner = (attributes) => {
+  const session = slackAgentSessionOf(attributes);
+  if (!session) return undefined;
+  return {
+    id: `${session.channelId}:${session.threadTs}`,
+    attributes: { channel_id: session.channelId, channel_type: "im", [AGENT_SESSION_TS_ATTRIBUTE]: session.threadTs },
+  };
+};
 
 export function slackSurfaceSessionSetter(form: SlackFormCall = slackForm): SurfaceSessionSetter {
   return async (attributes, status) => {

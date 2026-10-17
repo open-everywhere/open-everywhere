@@ -201,6 +201,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's native Stop button. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn, and `surface-session-state.ts` drives the session state the button appears on.",
   },
   {
+    area: "work-surface-wait",
+    globs: ["packages/core/agent/channels/work-surface-wait.ts", "packages/core/agent/tools/ask_room.ts"],
+    scenarios: ["S-JOB-WAIT"],
+    why: "S-JOB-WAIT (OPE-2536) is the only live leg on a forwarded job's wait: a DM job whose worker asks with ask_room writes a work.surface_wait suspended row at its settlement, and the answer forwarded to the same task writes the moved-on row. `work-surface-wait.ts` owns both rows, and `ask_room.ts` writes the mark the settlement reads.",
+  },
+  {
     area: "reply-feedback",
     globs: [
       "packages/providers/slack/agent/channels/slack-reply-blocks.ts",

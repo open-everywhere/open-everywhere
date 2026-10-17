@@ -1482,6 +1482,10 @@
       "types": "./dist/agent/channels/work-stop-note.d.ts",
       "default": "./dist/agent/channels/work-stop-note.js"
     },
+    "./agent/channels/work-surface-wait.js": {
+      "types": "./dist/agent/channels/work-surface-wait.d.ts",
+      "default": "./dist/agent/channels/work-surface-wait.js"
+    },
     "./agent/channels/work.js": {
       "types": "./dist/agent/channels/work.d.ts",
       "default": "./dist/agent/channels/work.js"
@@ -3907,6 +3911,7 @@
     "test:oe-status": "NODE_NO_WARNINGS=1 tsx scripts/oe-status-test.ts",
     "test:update-status": "NODE_NO_WARNINGS=1 tsx scripts/update-status-test.ts",
     "test:surface-session-state": "NODE_NO_WARNINGS=1 tsx scripts/surface-session-state-test.ts",
+    "test:work-surface-wait": "NODE_NO_WARNINGS=1 tsx scripts/work-surface-wait-test.ts",
     "test:turn-cancel": "NODE_NO_WARNINGS=1 tsx scripts/turn-cancel-test.ts",
     "test:spend": "tsx scripts/spend-test.ts",
     "test:checkpoint": "NODE_NO_WARNINGS=1 tsx scripts/checkpoint-test.ts",
