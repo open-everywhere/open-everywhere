@@ -56,7 +56,7 @@ additive for capabilities (a narrower scope *adds*) and single-valued for creden
 scope *replaces*). See **[Access & scoping](../how-it-works/access-and-scoping.md)**.
 
 **Domain** — the channel-grouping unit, narrower than a workspace and wider than one channel. A
-domain ties together the channels that share one brain and *where* that brain lives (a memory silo,
+domain ties together the channels that share one memory and *where* that memory lives (a memory silo,
 by name). *What* those channels can do is not a field on the domain — a **binding** names the
 domain (`{ level: "domain", domain: "payments" }`), so grants stay in one reviewed list. A channel
 belongs to **at most one** domain (enforced at config load), so a newly-written fact has exactly
@@ -96,7 +96,7 @@ attributes-to-human for *audit*. See **[Identity](../how-it-works/identity.md)**
 physically live. `provider` is required (`sqlite`, `postgres`, `git`, `github` or `notion`);
 `container` and `path` narrow it and are provider-specific. A silo is self-describing (it
 carries a description and, for read-only sources, the skill that teaches how to update it) and is
-defined once, referenced by name from one or more domains — a shared silo means one brain. Every
+defined once, referenced by name from one or more domains — a shared silo means one memory. Every
 silo is *materialised* to on-disk files the agent reads with file tools; an external source read
 live is a connector, not a silo. See **[Memory](../capabilities/memory.md)** and
 **[Memory backings](../extending/memory-backings.md)**.

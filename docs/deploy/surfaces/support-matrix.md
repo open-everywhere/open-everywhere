@@ -10,7 +10,7 @@ For per-surface install and config, see the setup guides:
 [Slack](./slack.md) · [Teams](./teams.md) · [Discord](./discord.md).
 (Linear and Notion are also surfaces, but they're issue-/comment-based rather than chat-based, so
 they're out of scope here — see [Linear](./linear.md), [Notion](./notion.md), and [GitHub](./github.md). Notion is
-**ambient-judged**: a standing per-doc supervisor reads every comment and replies only when it
+**ambient-judged**: the page's standing seat reads every comment and replies only when it
 clearly adds value, staying audibly silent otherwise.)
 
 ## Legend
@@ -65,7 +65,7 @@ Two surface-wide notes before the rows:
 | --- | :-: | :-: | :-: |
 | Identity binding (workspace / surface / mode, fail-closed) | ✅ | ✅ ²⁰ | ✅ |
 | Per-surface memory silo | ✅ | 🔧 | ✅ |
-| Domain/org-brain sharing (gated by trust, not public/private) | ✅ | 🚧 ¹⁰ | 🚧 ¹¹ |
+| Domain/org memory sharing (gated by trust, not public/private) | ✅ | 🚧 ¹⁰ | 🚧 ¹¹ |
 | External/guest trust gate, positively verified | ✅ | 🚧 ¹² | 🚧 ¹² |
 | DM-partner verification (unlocks the shared `dm` layer) | ✅ | 🔧 ²⁸ | ❌ |
 | Memory admin tools from any channel/DM | ✅ | 🔧 ¹³ | 🔧 ¹³ |
@@ -128,10 +128,10 @@ Two surface-wide notes before the rows:
    path, and it stops the *current turn* rather than the following. See
    [Stopping it following](./discord.md#stopping-it-following).
 10. Inbound Teams activities rarely carry `membershipType`, so `teamsTrust` can't positively
-    confirm in-tenant membership and channels fail closed to `external` — no domain/org brain
+    confirm in-tenant membership and channels fail closed to `external` — no domain or org memory
     — until a Graph-API enrichment supplies it, or the deploy vouches the tenant/channel.
 11. Discord has no guild-membership/guest check yet, so every guild starts `external` (no
-    domain/org brain) until the operator vouches the guild via `identity.blanketTrust: "internal"` or a
+    domain or org memory) until the operator vouches the guild via `identity.blanketTrust: "internal"` or a
     `surfaces.ts` entry — see [the Discord guide](./discord.md#how-the-silo-model-maps).
 12. No positive membership verification exists yet on this platform, so unverifiable surfaces
     bind `external` (shared/org memory gated off) unless the deploy vouches for them
@@ -329,7 +329,7 @@ Two surface-wide notes before the rows:
   deliver ambient messages to an HTTP endpoint; Discord DMs have no threads) — no amount of
   project work changes those, only workarounds like the Gateway relay. ❌, by contrast, is
   honest backlog: possible, not built.
-- **Fail-closed partials are deliberate.** Several 🚧 cells (shared-brain and trust rows) are
+- **Fail-closed partials are deliberate.** Several 🚧 cells (shared-memory and trust rows) are
   the security model working as designed: when a platform can't positively prove a surface is
   public or internal, memory stays narrow. See [Memory](../../capabilities/memory.md) and the
   [security model](../../security/security-model.md).

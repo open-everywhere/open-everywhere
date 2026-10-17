@@ -5,7 +5,7 @@ one or more named **silos**, all reached through file tools and never dumped int
 the model's context.
 
 Memory is **opt-in and explicitly controlled**. There is no automatic
-`org → workspace → channel → DM` tier stack that conjures a separate brain for
+`org → workspace → channel → DM` tier stack that conjures a separate memory for
 every channel. You declare *where* memory lives and *who shares it*, and the agent
 only ever sees the slice that belongs to the channel it's answering in.
 
@@ -22,7 +22,7 @@ Two declarations carry the whole system.
   go to?" ambiguity: a new note has exactly one home.
 - A **silo** is a named, reusable backing — the durable place a domain's memory
   lives. A silo is referenced by name, so **many domains can point at the same
-  silo**, and a silo referenced by N domains is genuinely **one brain**: written
+  silo**, and a silo referenced by N domains is genuinely **one memory**: written
   once, read by all.
 
 ```ts
@@ -134,8 +134,12 @@ full domain toolkit (multiple silos, per-silo read/write, `includeOrg`) and can 
 named by an access binding like any other domain.
 
 - **`org`** — the catch-all for internal channels in no explicit domain. An
-  unassigned channel is *unknown trust*, so it gets a shared brain only when you opt
-  in. A read-only curated baseline is the recommended default, but it's the silo's
+  unassigned channel is *unknown trust*, so it gets shared memory only when you opt
+  in: it reads the `org` silos only when `org` declares `memory`. 🔴 `org` decides an
+  undeclared channel's memory and its wake rule (`ambientSupervisor`), never how many
+  channels share a seat. Every undeclared channel has its own solo standing seat,
+  because config load refuses `mode` and `windows` on `org`. See
+  [Wake, seat, memory: three independent axes](../deploy/configuration-reference.md#wake-seat-memory-three-independent-axes). A read-only curated baseline is the recommended default, but it's the silo's
   own `readOnly` flag — you can mix a read-only baseline with a deliberately-writable
   org silo. An explicit domain does **not** auto-inherit `org`; to share it, list its
   silos or use `includeOrg`.
@@ -238,7 +242,7 @@ connector that already reaches the source, declares a memory capability on it, a
 the **prefetch invariant** — a domain may project exactly what its connector grants reach, and a
 silo naming a connector the domain doesn't hold, or a container outside that grant (a `github`
 silo on an ungranted repo), is a **fail-loud config error at load**, not a runtime surprise. A
-shared brain is always materialised with the connection's **app-principal** credential, never a
+shared memory is always materialised with the connection's **app-principal** credential, never a
 user-subject OAuth token. Full detail — including the three declarable modes — in
 [Memory backings](../extending/memory-backings.md#connector-owned-memory).
 
@@ -261,7 +265,7 @@ the mount does not.
 whole memory write path, with no confirmation card in front of it — deliberately, because a
 write that waits on a click nobody gives is a write that never happens. Any session holding
 the sandbox file tools (a delegated worker, for instance) could otherwise rewrite the whole
-brain on its way out. Three things stop it. Persist is a **union** over what the store
+memory on its way out. Three things stop it. Persist is a **union** over what the store
 already holds, so a file deleted inside the sandbox is never deleted from the store; a
 **destructive-write floor** refuses an overwrite that drops more than half of a file's
 existing lines **and at least three of them**, so a small subtraction always lands; and the
@@ -282,7 +286,7 @@ how to add a backing of your own — lives in
 An org admin can inspect and, if needed, directly edit any silo's files — list every
 silo they're allowed to see, read one file, or write/delete one — through the control
 plane's MCP, no database console required. See
-[The control plane: Memory-admin](../security/control-plane.md#memory-admin-inspecting-and-editing-the-org-brain-without-sql).
+[The control plane: Memory-admin](../security/control-plane.md#memory-admin-inspecting-and-editing-org-memory-without-sql).
 
 ## Memory content is reached through tools, never injected into context
 
@@ -566,7 +570,7 @@ instructions and seeded into every new silo's `MEMORY.md`:
 changing them. A `match` phrase is swept across **every writable silo** the session holds — all
 their files, not one — and every distinct bullet it resolves to is frozen for removal. Zero
 matches errors rather than guessing, and a runaway match (more than 25 distinct bullets) errors
-too, so one click can never empty a brain.
+too, so one click can never empty a silo.
 
 **What a purge actually achieves is the silo's BACKING, not the verb.** The purge rewrites the
 file through the backing's normal write, so there are three outcomes. A `sqlite` or `postgres`
@@ -621,7 +625,7 @@ conversation): the card is
 posted into a card-capable channel in the **same domain** and the agent tells you where, which
 matters more here than for most verbs — the card is the only place the bullets appear verbatim,
 and the domain boundary is what keeps that text in front of the audience that already shared the
-brain it came from.
+memory it came from.
 
 `purge_memory` also **redacts by construction**: the pending card is the only place a resolved
 bullet appears verbatim. Everything durable the flow writes — the frozen approval args, the audit
@@ -633,7 +637,7 @@ freehand deletion. See
 
 **File-level deletion is a different, narrower operation** and stays control-plane-only:
 `memory_delete_file` removes a whole file from a silo and is an org-admin, direct edit — see
-[The control plane: Memory-admin](../security/control-plane.md#memory-admin-inspecting-and-editing-the-org-brain-without-sql).
+[The control plane: Memory-admin](../security/control-plane.md#memory-admin-inspecting-and-editing-org-memory-without-sql).
 `purge_memory` only ever trims bullets out of files that survive.
 
 `memory_write_file` similarly stamps an in-file **human-edit marker** (`edited_by`/`edited_at`, a

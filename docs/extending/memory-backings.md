@@ -46,7 +46,7 @@ that one fails CLOSED inside the backing.
 call omits it (the safety floor against a caller that read a partial subset accidentally
 wiping the rest). `deleteFile` is the dedicated, OPTIONAL single-file removal primitive for
 a backend that needs to express "remove exactly this file" (today: the control plane's
-`memory_delete_file` — see [The control plane](../security/control-plane.md#memory-admin-inspecting-and-editing-the-org-brain-without-sql)).
+`memory_delete_file` — see [The control plane](../security/control-plane.md#memory-admin-inspecting-and-editing-org-memory-without-sql)).
 `git`/`sqlite`/`postgres` implement it; a backing that doesn't causes that one call to fail
 loud rather than silently no-op.
 
@@ -123,7 +123,7 @@ First-party silos are skipped by construction: the deployment holds their creden
 
 `subject` is the literal type `"app-principal"` — nothing else is expressible, and registration
 throws on anything else. With `connectors.userPrincipal` armed a connection can carry
-user-subject OAuth tokens; a **shared** domain brain materialised through one person's token
+user-subject OAuth tokens; a **shared** domain memory materialised through one person's token
 would bake their personal access into a cache every session in that domain then reads.
 Materialisation also runs host-side at `session.started`, outside any session, where the
 app-principal arm is the only thing resolvable anyway. Same route, narrower subject, by

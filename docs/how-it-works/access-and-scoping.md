@@ -225,7 +225,7 @@ access before the diff is even opened.
 
 ## Domains: the channel-grouping unit
 
-A **domain** ties together the channels that share one brain — *where* that brain lives (a
+A **domain** ties together the channels that share one memory — *where* that memory lives (a
 [memory silo](../capabilities/memory.md)) and *what* those channels can do (an access
 bundle). It sits between `tenant` and `surface` in the specificity ladder — but it is *not*
 contained by a tenant: a domain is a curated grouping and its channels may span several
@@ -406,7 +406,7 @@ binding like any other domain:
   org-wide default).
 - **`match: "public"`** — externally-shared / guest channels, and external DM partners. The
   trust gate routes here instead of returning nothing, so external surfaces get a read-only,
-  deliberately-curated baseline and *never* an internal domain's brain.
+  deliberately-curated baseline and *never* an internal domain's memory.
 - **`match: "dm"`** — the shared read layer an *internal* DM partner gets on top of their
   always-present per-user store.
 

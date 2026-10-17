@@ -52,7 +52,7 @@ Every GitHub App webhook delivery hits **`POST /eve/v1/github`** and feeds up to
    [event inventory](../../capabilities/proactivity-and-routines.md#the-event-inventory--what-each-vendor-can-send-and-how-far-we-carry-it)
    for what every other event does and does not carry.
 3. **The ambient-supervisor leg** (on by default). Every *non-mention* issue/PR-timeline comment on an
-   ambient-on repo is judged by a **standing per-repo supervisor session** — the same ambient
+   ambient-on repo wakes the repo's **standing seat** — the same ambient
    judge Slack channels and Notion docs use — which replies into the triggering issue/PR or
    stays audibly silent (a `github.no_reply` audit row, reason included).
 
@@ -89,6 +89,10 @@ somebody already wrote.
   the same flag that governs Slack, Linear and Notion ambient. Unset, it inherits the `org`
   domain's value, and an unset `org` means on (OPE-2409). With `ambientSupervisor: false`,
   non-mention comments do nothing. The private-repo floor below holds either way.
+- **The flag decides what wakes the repo's standing seat, nothing else.** It does not decide
+  how many repos share one seat (`mode`, `windows`) or which memory the seat reads (`memory`). A
+  repo in no explicit domain has its own solo seat, even with `ambientSupervisor` on at `org`.
+  See [Wake, seat, memory: three independent axes](../configuration-reference.md#wake-seat-memory-three-independent-axes).
 - **A positively private repo, or any repo the operator vouched internal — fail-closed.** On a
   private repo every commenter was invited. On an unvouched public repo any drive-by stranger
   could buy judged model turns (an uninvited spend + prompt-injection surface). So the ambient

@@ -32,7 +32,7 @@ docs are detail:
    platform-agnostic identity, so the agent core behaves identically everywhere and adding a
    platform is one small mapper.
 2. **Domains & bundles — what it's allowed to reach.** A *domain* groups the channels that
-   share one brain; an access *bundle* is a named set of credentials, repos, reachable hosts,
+   share one memory; an access *bundle* is a named set of credentials, repos, reachable hosts,
    connectors, and standing instructions. Bundles bind to scopes (`org` → `tenant` →
    `domain` → `surface`) and a deterministic resolver computes exactly what one session may
    touch — **narrowest-wins, default-deny, no fallback**.

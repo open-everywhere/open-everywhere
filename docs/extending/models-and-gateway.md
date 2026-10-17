@@ -14,7 +14,7 @@ Config in this repo refers to a **role**, never a model id:
 | `primary` | every conversational turn, and the declared subagents |
 | `utility` | the dream judge/distiller, mode-3 digests |
 | `vision` | `describe_image`'s out-of-band describer — the only role that must be vision-capable |
-| `supervisor` | the always-on ambient channel-supervisor session |
+| `supervisor` | every turn on a seat-shaped token: a standing seat, a task worker (`t/`), a thread seat or a container supervisor. A DM seat runs on `primary`, and a routine that names its own model role overrides this (`isSupervisorSession`) |
 | `judge` | the LLM approval judge |
 
 A **stack** fills all five at once. Every model id in the deployment lives in **one file**,
@@ -193,7 +193,7 @@ can be printed and pinned per stack.
 | `PRIMARY_MODEL` | `primary` | The conversational turn. |
 | `UTILITY_MODEL` | `utility` | Every non-conversational call — the cheap model. |
 | `VISION_MODEL` | `vision` | A call carrying an image. |
-| `SUPERVISOR_MODEL` | `supervisor` | The always-on ambient channel-supervisor session. |
+| `SUPERVISOR_MODEL` | `supervisor` | Every turn on a seat-shaped token: a standing seat, a task worker (`t/`), a thread seat or a container supervisor. A DM seat runs on `primary`, and a routine that names its own model role overrides this (`isSupervisorSession`). |
 | `JUDGE_MODEL` | `judge` | The approval judge and the memory judge. |
 
 **Four of the five are that stack's own declared id, and no environment variable rewrites them** — to
@@ -451,7 +451,7 @@ the stronger seat today.
 `chinese-open-weights` is the answer to frontier lock-in. Open weights mean you can leave the
 gateway entirely — the same checkpoints run on your own hardware, so the ceiling on "what if
 the vendor changes the deal" is a migration rather than a rewrite. It is also markedly cheaper,
-which is what makes the ambient/always-on surfaces (channel supervisors, compaction, dream
+which is what makes the ambient/always-on surfaces (standing seats, compaction, dream
 cycles) affordable to leave running — and leaving them running is what the product actually is.
 
 **Compaction runs on `primary`, not on `utility`.** eve cannot summarise with an authored

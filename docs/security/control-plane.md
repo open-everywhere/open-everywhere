@@ -299,7 +299,7 @@ is how you read it without a database connection.
 See [`domain_skill_revisions`](../extending/database.md#what-a-domain-skills-history-is-doing-in-here)
 in the database reference for the table's own append-only posture.
 
-## Memory-admin: inspecting and editing the org brain without SQL
+## Memory-admin: inspecting and editing org memory without SQL
 
 `memory_list` / `memory_read` / `memory_write_file` / `memory_delete_file` let an admin
 browse and fix the DB-backed shared memory (silos referenced by domains — see
@@ -310,7 +310,7 @@ browse and fix the DB-backed shared memory (silos referenced by domains — see
   for what *should* exist, so `memory_list` walks that instead.
 - **Row-level scope gating, not all-or-nothing.** A `domain:<name>` role sees only the
   silos an *explicit* domain of that name references; `admin` sees every silo. The
-  conventional org-wide brain (silo `org-brain`, referenced by the `org` pseudo-domain)
+  conventional org-wide memory (silo `org-brain`, referenced by the `org` pseudo-domain)
   — and any silo referenced only by the `org`/`public`/`dm` pseudo-domains, or by no
   domain at all — stays **admin-only**, even for a caller holding a matching
   `domain:org`-style role: a pseudo-domain never counts as a covering domain.

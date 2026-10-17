@@ -92,7 +92,7 @@ act on. Your line normalizer supplies the evidence it reads: set `authorId` on a
 `bot: true` on a machine one. Both stop at the adapter boundary and never reach the model.
 
 Plus the provider-neutral turn-delivery helpers (`channels/turn-delivery.ts` — `isNoReply`,
-`finalMessageAction`, bare-stop detection, name-drop matching, supervisor session rotation) that
+`finalMessageAction`, bare-stop detection, name-drop matching, standing-seat rotation) that
 every chat-surface bundle imports rather than reimplementing; they were lifted out of
 `slack-events.ts` in OPE-114 Stage 0 for exactly this reason.
 

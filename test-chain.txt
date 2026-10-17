@@ -211,3 +211,5 @@ test:card-budget
 test:reader-check
 test:docs-generate-merge
 test:slack-credential-probe
+lint:seat-vocabulary
+test:seat-vocabulary-lint

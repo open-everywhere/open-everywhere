@@ -593,7 +593,7 @@ outright, even though Teams fires perfectly well.
 It isn't refused any more. If the room you ask in can't host a card, the card is **posted
 into a card-capable channel in the same domain**, and the agent tells you where it went
 ("I've put the card in #ops for someone to arm"). The domain is the boundary: a card never
-leaves it, because a domain is already the set of rooms sharing one brain, one memory silo
+leaves it, because a domain is already the set of rooms sharing one memory silo
 and one audience.
 
 A redirect destination is checked the same way the asking room would be: a channel the
@@ -2580,7 +2580,7 @@ Discord, and Teams (see [Surface coverage](#surface-coverage)); event
 subscriptions (with a built GitHub
 webhook path) and generic webhook triggers are live; status reactions and a pinned
 cross-thread status message are live; spend caps are live. **Untagged channel ingestion is
-live, and it is on by default.** The ambient supervisor wakes a domain's standing seat on
+live, and it is on by default.** The ambient supervisor wakes a channel's standing seat on
 messages that do not mention the agent. The seat replies only where it adds something, and
 it audits every silence. A domain turns this off with `ambientSupervisor: false`. The room
 then becomes addressed-only, and its ambient talk reaches the seat as context on the next
@@ -2589,7 +2589,9 @@ vouched GitHub repositories, Linear teams and Notion pages. The flag lifts no fe
 per-surface trust checks and the spend caps still apply. Discord and Teams do not read this
 flag. On Discord an untagged message arrives only over the Gateway relay. On Teams it arrives
 only where a team owner granted the resource-specific consent. Each surface page says which
-untagged messages wake the agent there. See
+untagged messages wake the agent there. The flag decides only what wakes a seat. It does not
+decide how many channels share a seat, or which memory a seat reads: see
+[Wake, seat, memory: three independent axes](../deploy/configuration-reference.md#wake-seat-memory-three-independent-axes). See
 [`ambientSupervisor`](../deploy/configuration-reference.md) and the
 [surface support matrix](../deploy/surfaces/support-matrix.md).
 

@@ -182,7 +182,7 @@ domain. Its sibling `create_agent` uses the same
 propose → member-card → bot-PR → admin-merge flow to stand up a **whole channel-resident
 agent** in one reviewable diff. In Open Everywhere an "agent" is not a distinct object — it
 is the composition of three existing config primitives: a memory **domain** (the channel
-that shares one brain), a memory **silo** (where that brain's data lives), and an access
+that shares one memory), a memory **silo** (where that memory's data lives), and an access
 **bundle** + a domain-scoped **binding** (its standing instructions + connectors). Asking
 *"make this channel a support agent backed by our Notion handbook"* freezes an `AgentSpec`,
 posts the member card, and — on the tap — opens one PR writing the machine-owned
@@ -197,7 +197,7 @@ before the PR and again at the merge gate, merge-is-the-gate, deploy backstop) p
   fire may not stand up an agent in the person it is attributed to.
 - **The exposure invariant.** Pass `exposed: true` for an agent a wider, less-trusted
   audience will reach; it is then forced **curated read-only** — it may only read a
-  read-only silo and never inherits the org brain — enforced at propose time and re-asserted
+  read-only silo and never inherits the org memory — enforced at propose time and re-asserted
   at every config load, so an exposed agent provably cannot leak internal memory outward.
 
 The channel binding is taken from the verified surface key (never model input); a name

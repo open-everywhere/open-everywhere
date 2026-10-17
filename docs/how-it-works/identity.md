@@ -723,12 +723,12 @@ genuinely independent — but only one of them decides what reaches shared memor
   unverified surface on a platform with no membership check yet)? **This is the memory gate**
   ([the resolver](../capabilities/memory.md#the-trust-gate-the-security-keystone) reads only
   this): an `external` surface routes to the read-only `public`
-  [pseudo-domain](./access-and-scoping.md), never to an explicit domain or the org brain.
+  [pseudo-domain](./access-and-scoping.md), never to an explicit domain's or the org's memory.
 - **`visibility`** (`public` / `private`) — is this surface a confirmed world/team-visible
   channel? Anything not positively confirmed is `private`. It's tracked per surface (and
   shown alongside `trust` in each [surface guide](../deploy/surfaces/support-matrix.md)) but
   the memory resolver never reads it — a **private**, internally-trusted channel shares its
-  domain's brain exactly like a public one does.
+  domain's memory exactly like a public one does.
 
 A private channel is still internal; an externally-shared channel is external even if it's
 "public" within the workspace — don't infer one from the other. Whenever trust can't be
@@ -805,7 +805,7 @@ no network call enters that gate. A `public` declaration on the page still refus
 `identity.blanketTrust: "internal"` blanket the window floor admits every page **first**, above the `public`
 demotion — as every platform's floor does — while the binding plane keeps the demotion above the
 blanket. Under the blanket, a `public`-declared page therefore joins the shared window while its
-org-brain binding stays external.
+org-memory binding stays external.
 
 **`subtree` is refused wherever it would grant nothing** — the registry never accepts a line it then
 ignores. Each of these is a boot error:
@@ -1481,7 +1481,7 @@ A platform is a *mapper*; a **bot identity is a channel instance**. Eve namespac
 session key by the channel file's name, so mounting a second channel file for the same
 platform (`slack-qabot.ts` alongside `slack.ts`) gives that identity its own sessions,
 engagement and state with no key-format change — this is the designed path to multiple
-addressable bots sharing one deployment and one brain. A channel slug of the form
+addressable bots sharing one deployment and one memory. A channel slug of the form
 `<platform>-<anything>` collapses to its platform for identity binding, but only for the platforms
 `identity/platform.ts` lists — `slack`, `discord`, `teams` and `linear` — plus the explicit alias
 table. Add a new platform to that list in the same diff that mounts a prefixed instance file, or

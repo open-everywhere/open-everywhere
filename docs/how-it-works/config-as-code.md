@@ -110,7 +110,7 @@ the suite pins the count in each.
 Discord guild, the GitHub org, the Microsoft 365 tenant — is a `defineSurface` line in
 `agent/identity/surfaces.ts`, and a workspace identifier is an identifier, not a credential. That
 matters most where the temptation is strongest: a vouch is a **trust wall**, so an environment
-variable naming one surface would let a hosting dashboard grant that channel the shared org brain
+variable naming one surface would let a hosting dashboard grant that channel the shared org memory
 with no diff and no review. Env is for infrastructure the code cannot know — a database connection
 string — and the rule holds even when the identifier names your own organisation.
 
