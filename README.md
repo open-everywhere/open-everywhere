@@ -125,6 +125,8 @@ A running app sends anonymous usage telemetry by default. Turn it off with `OE_T
 `DO_NOT_TRACK=1`. The events never carry message content, memory, DM data, or a workspace, channel or user id.
 [docs/deploy/telemetry.md](./docs/deploy/telemetry.md) discloses every event, and
 `OE_TELEMETRY_DEBUG=1` prints each payload instead of sending it.
+eve's own CLI telemetry is off: every npm script that runs `eve`, and the Dockerfile, set
+`EVE_TELEMETRY_DISABLED=1`. The same page lists every outbound call the app makes by default.
 
 ## Status
 

@@ -1309,7 +1309,7 @@ free-tier setup.
 
 ### Telemetry
 
-Anonymous usage telemetry — **default ON**, closed 6-event vocabulary, fail-open. See
+Anonymous usage telemetry — **default ON**, closed vocabulary of ten runtime events, fail-open. See
 [Telemetry](./telemetry.md) for the full disclosure (every event/attribute, the
 never-collected list, retention, one example payload).
 
@@ -1320,6 +1320,7 @@ never-collected list, retention, one example payload).
 | `OE_TELEMETRY_DEBUG` | — | `1` prints every would-be payload to the console **without sending it**. |
 | `OE_TELEMETRY_OTLP_URL` | Our default collector | Any OTLP/HTTP logs endpoint. **A FULL redirect — 100% of the payload goes there, nothing is ever teed to the default.** |
 | `OE_TELEMETRY_OTLP_HEADERS` | — | `Name=value,Name2=value2` — auth headers for a redirected, authed collector. |
+| `EVE_TELEMETRY_DISABLED` | `1`, set by Open Everywhere | **eve's** switch for its own CLI telemetry, not Open Everywhere's. Every npm script that runs `eve` sets it, and so does each stage of the Dockerfile. So `eve dev`, `eve build` and `eve start` send nothing to `telemetry.vercel.com` (OPE-2526). `OE_TELEMETRY` does not change it. `npm run lint:eve-telemetry` pins it. See [Telemetry § Every default outbound call](./telemetry.md#every-default-outbound-call). |
 
 ### Test & eval harness (no env var arms a test seam)
 

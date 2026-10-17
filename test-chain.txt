@@ -220,3 +220,4 @@ test:docs-generate-merge
 test:slack-credential-probe
 lint:seat-vocabulary
 test:seat-vocabulary-lint
+lint:eve-telemetry

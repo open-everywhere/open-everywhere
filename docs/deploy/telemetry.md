@@ -8,6 +8,63 @@ you're a DPO/security reviewer evaluating a deploy, this page — plus
 
 **Opt out with one env var: `OE_TELEMETRY=off` (or `DO_NOT_TRACK=1`) — full stop, forever.**
 
+## Every default outbound call
+
+This table lists each call that Open Everywhere and eve 0.71.0 make by default to a host that you
+did not configure. A call to a service you connect (Slack, Notion, GitHub, your database) is not in
+it. The source was read on 2026-10-14 (OPE-2526).
+
+| Call | Host | When | Default | How to turn it off |
+|---|---|---|---|---|
+| Open Everywhere usage telemetry (this page) | `oe-telemetry.vercel.app` | Boot, turns, and a heartbeat at most once every 6 hours | **On** | `OE_TELEMETRY=off` or `DO_NOT_TRACK=1`. `OE_TELEMETRY_OTLP_URL` sends it to your own collector instead. |
+| eve CLI telemetry | `telemetry.vercel.com` | Each `eve` command (`dev`, `build`, `start`, `info`, …) | **Off in Open Everywhere** | Open Everywhere sets `EVE_TELEMETRY_DISABLED=1` (below). |
+| Model calls | `ai-gateway.vercel.sh` | Each model step | On: this is the product's function | `OE_AI_GATEWAY_URL` moves it to your own gateway. Nothing turns it off. |
+| eve's model catalog at build | `ai-gateway.vercel.sh/v1/models/catalog` | `eve build`, and `eve dev` or `eve start` when they compile, unless `.eve/cache/model-catalog.json` is at most 5 minutes old | On | No switch. A failed fetch falls back to a stale cache, and `npm run seed:model-catalog` writes one. |
+| eve's model catalog at run time | `ai-gateway.vercel.sh/v1/models/catalog` | A turn whose selected model has no context window | Not reached: every model selection in `agent/agent.ts` gives `contextWindowTokens` | An app that changes its model resolver must keep that field. |
+| Model route probe | `ai-gateway.vercel.sh/v1/models/catalog` | Only when the deployment status is read (`/eve/v1/oe/status`) | On request | `OE_AI_GATEWAY_URL` moves it with the model calls. |
+| eve workflow state | `api.vercel.com`, `vercel-workflow.com`, `oidc.vercel.com` | Each durable step on a Vercel deployment | On Vercel only | This is Vercel's own platform. Off Vercel, the workflow state stays local. |
+
+`oe build` makes no outbound call. The setup CLI, `@open-everywhere/create`, calls only the
+deployment that you give it with `--host`. The pages the app serves load no external script, font
+or stylesheet.
+
+### eve's CLI telemetry is off
+
+eve collects its own CLI usage telemetry, and in eve it is **on by default**. Each `eve` command
+posts these keys:
+
+- `version` (the eve version), `platform`, `arch` and `stdin_is_tty`.
+- `command` (an allowlisted command name, never your input) and `outcome`.
+- `identity_kind`, `installation_id` (a random id) and `project_id`.
+
+`eve dev` also sends `target` (local or remote) and `ui`. The `eve init` and setup flows also send
+their `setup_*` steps, `registry_selected_count` and failure codes. Each event also carries a random
+event id and a timestamp, and each request carries a random session id. The project id is a salted SHA-256 hash of the git remote
+URL, of `REPOSITORY_URL`, or of the working directory. eve sends no prompt, transcript or config.
+In CI or inside Docker the ids are new for each run. Elsewhere they persist in your eve config file,
+so the project id is stable for one repository. A Vercel function never runs the eve CLI, so a turn
+on Vercel sends none.
+
+Open Everywhere turns it off where it starts eve (OPE-2526):
+
+- Every npm script that runs `eve`, in this repository and in the scaffold, starts with
+  `EVE_TELEMETRY_DISABLED=1`. Vercel's remote build runs the `build` script, so the build on Vercel
+  carries it too.
+- Each stage of the `Dockerfile`, in this repository and in the scaffold, declares
+  `ENV EVE_TELEMETRY_DISABLED=1`. The image's `npx eve start` inherits it.
+- The integration tier's `eve build` (`tests/integration/prepare.ts`) and the quickstart test's
+  `eve build` (`scripts/quickstart-test.ts`) set it too.
+
+The script prefix is POSIX shell syntax. On Windows, use WSL or set npm's `script-shell` to a POSIX
+shell. An app scaffolded before 0.8.0 has no prefix: `packages/core/UPGRADING.md` gives the manual
+step.
+
+`OE_TELEMETRY` does not change eve's switch: the two are separate. `npm run lint:eve-telemetry`
+pins every script, Dockerfile stage and source file that starts eve. It also runs the installed eve
+with `EVE_TELEMETRY_DEBUG=1` and proves that the switch still stops the payload. So an eve upgrade
+that renames the switch fails the test. When you run `eve` by hand, set `EVE_TELEMETRY_DISABLED=1`
+yourself, or run `eve telemetry disable` once.
+
 ## Why default-on, and why this should be trustworthy
 
 Open Everywhere is a **self-hosted server**, not an end-user tool: the person who
@@ -268,6 +325,7 @@ payload, not just a promise on this page.
 | `OE_TELEMETRY_DEBUG` | — | `1` prints every would-be payload to the console **without sending it** — inspect exactly what would go out before you decide whether to opt out. Costs nothing to check. |
 | `OE_TELEMETRY_OTLP_URL` | Our default collector | Any OTLP/HTTP logs endpoint. **Setting this redirects 100% of the payload — nothing is ever teed to the default collector.** Point it at your own Grafana/Axiom/collector and the identical payload lands there instead. |
 | `OE_TELEMETRY_OTLP_HEADERS` | — | `Name=value,Name2=value2` — auth headers for a redirected, authed collector (mirrors `OTEL_EXPORTER_OTLP_HEADERS`). |
+| `EVE_TELEMETRY_DISABLED` | `1`, set by Open Everywhere | eve's switch for its own CLI telemetry, not Open Everywhere's. See [eve's CLI telemetry is off](#eves-cli-telemetry-is-off). |
 
 Precedence: `OE_TELEMETRY=off` > `DO_NOT_TRACK` > the redirect URL. Same never-throw,
 never-block contract as the rest of Open Everywhere's observability seams (see

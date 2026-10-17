@@ -47,6 +47,12 @@ never ships. Every event and attribute is listed in the
 [telemetry disclosure](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md).
 The `@open-everywhere/create` CLI sends none.
 
+eve, the framework under the app, has its own CLI telemetry, ON by default in eve. This app turns it
+off: the `dev`, `build` and `start` scripts and both stages of the `Dockerfile` set
+`EVE_TELEMETRY_DISABLED=1`. Keep that prefix on any script you add that runs `eve`. The `dev`,
+`build` and `start` scripts use the POSIX form `NAME=value command`. On Windows, use WSL, or set
+npm's `script-shell` to a POSIX shell such as Git Bash.
+
 ## Develop locally
 
 After the deploy, `npm run dev` runs the agent on this machine and talks to it in a terminal UI.

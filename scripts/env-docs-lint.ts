@@ -124,6 +124,10 @@ const REVERSE_SCAN_ROOTS = ["agent", "packages", "scripts", "tests", "deploy"];
 
 const REVERSE_EXEMPT = new Map<string, string>([
   [
+    "EVE_TELEMETRY_DISABLED",
+    "read by eve's own CLI telemetry (node_modules/eve/dist/src/cli/telemetry/index.js, `isEnabled`). This repo only sets it, in package.json scripts and the Dockerfiles; `npm run lint:eve-telemetry` pins both (OPE-2526).",
+  ],
+  [
     "LINEAR_WEBHOOK_SECRET",
     "read by eve's own bundled Linear channel handler (node_modules/eve/dist/src/public/channels/linear/auth.js) — the native webhook signature check is eve's, not this repo's source.",
   ],

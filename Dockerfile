@@ -1,6 +1,14 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 
+# eve collects its own CLI usage telemetry, ON by default. Each `eve` command posts the command name,
+# the eve version, the platform, a random installation id and a salted hash of the git remote URL or
+# of the working directory to telemetry.vercel.com (docs/deploy/telemetry.md lists every key).
+# Open Everywhere turns it OFF (OPE-2526). `EVE_TELEMETRY_DISABLED=1` is eve's switch, both stages set
+# it, and `npm run lint:eve-telemetry` pins it. Open Everywhere's own telemetry has its own switch,
+# `OE_TELEMETRY` (docs/deploy/telemetry.md).
+ENV EVE_TELEMETRY_DISABLED=1
+
 RUN apk add --no-cache git
 
 COPY package.json package-lock.json ./
@@ -31,6 +39,7 @@ RUN npm run build
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+ENV EVE_TELEMETRY_DISABLED=1
 RUN apk add --no-cache git openssh-client ca-certificates docker-cli
 
 # 🔴 THE IMAGE RUNS justbash (OPE-2407), because it is the only template this image carries (see the

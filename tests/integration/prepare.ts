@@ -73,7 +73,7 @@ function runEveBuild(root: string): void {
   const inherited = process.env.NODE_OPTIONS ?? "";
   const nodeOptions = inherited.includes("--max-old-space-size") ? inherited : [inherited, "--max-old-space-size=6144"].filter(Boolean).join(" ");
   const [npx, npxArgs] = npxCommand(["eve", "build"]);
-  execFileSync(npx, npxArgs, { cwd: root, stdio: "inherit", env: { ...process.env, NODE_OPTIONS: nodeOptions } });
+  execFileSync(npx, npxArgs, { cwd: root, stdio: "inherit", env: { ...process.env, NODE_OPTIONS: nodeOptions, EVE_TELEMETRY_DISABLED: "1" } });
 }
 
 async function mintTemplateForShards(root: string): Promise<string> {

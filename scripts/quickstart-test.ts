@@ -28,6 +28,7 @@ const CHILD_ENV: NodeJS.ProcessEnv = {
     Object.entries(process.env).filter(([k]) => !/AI_GATEWAY_API_KEY|AI_GATEWAY_KEY/.test(k) && k !== "VERCEL" && k !== "DOCKER_CONTEXT"),
   ),
   DOCKER_HOST: "unix:///nonexistent/oe-quickstart-no-docker.sock",
+  EVE_TELEMETRY_DISABLED: "1",
 };
 
 function run(cmd: string, args: readonly string[], cwd: string): { code: number; out: string } {
