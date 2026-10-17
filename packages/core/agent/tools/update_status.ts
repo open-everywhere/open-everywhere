@@ -9,7 +9,8 @@ import { writeMemoryTier } from "../memory/write-road.js";
 import { writeTierFile } from "../memory/sandbox-sync.js";
 import { withMemoryRootWritable } from "../memory/root-fence.js";
 import { statusItemLine, upsertStatusItem, statusSeed, type WorkState } from "../status/status.js";
-import { attentionWhereOf, recordAttention } from "../status/attention.js";
+import { attentionWhereOf, noteSessionAttention, recordAttention } from "../status/attention.js";
+import { surfaceTurnOf } from "../channels/surface-session-state.js";
 import type { BindableContext } from "../identity/binding.js";
 
 export default defineTool({
@@ -52,6 +53,7 @@ export default defineTool({
       extra: { state: input.state, sessionId },
     });
 
+    if (surfaceTurnOf(ctx) !== undefined) noteSessionAttention(input.state as WorkState);
     await recordAttention(attentionWhereOf(bindFrom(ctx as BindableContext), p.surfaceKey), sessionId, input.state as WorkState, input.summary);
 
     return { updated: true, state: input.state };

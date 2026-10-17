@@ -649,7 +649,7 @@ export function bindableFor(ev: ParsedMessageEvent): BindableContext {
   return bindableForSlackIds({ teamId: ev.teamId, channelId: ev.channelId, channelType: ev.channelType, userId: ev.userId });
 }
 
-function bindableForSlackIds(ids: {
+export function bindableForSlackIds(ids: {
   readonly teamId?: string | undefined;
   readonly channelId: string;
   readonly channelType?: string | undefined;

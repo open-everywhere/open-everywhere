@@ -71,6 +71,7 @@ const REQUIRED_IDS = [
   "S-ROUTINE-CONNECTOR-WRITE",
   "S-DM-STOP-GRANT",
   "S-SIDE-PANEL",
+  "S-SESSION-STOP",
   "J-ENGAGED-slack",
   "J-ENGAGED-github",
   "J-ENGAGED-notion",

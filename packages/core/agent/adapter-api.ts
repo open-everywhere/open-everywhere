@@ -581,6 +581,9 @@ export { cancelAnchoredTurn, isStopDirective, TURN_CANCEL_ACTION } from "./chann
 export type { AttachSessionForCancel, CancelAnchoredTurnInput, CancelResult, CancelOutcome } from "./channels/turn-cancel.js";
 export { turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "./channels/turn-registry.js";
 
+export { registerSurfaceSessionState } from "./channels/surface-session-state.js";
+export type { SurfaceSessionSetter, SurfaceSessionStatus } from "./channels/surface-session-state.js";
+
 export {
   registerCardPoster,
   cardPosterFor,

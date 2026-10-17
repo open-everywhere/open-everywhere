@@ -39,7 +39,7 @@ export interface CancelAnchoredTurnInput {
   readonly platform: string;
   readonly workspace: string;
   readonly requestedBy?: string;
-  readonly via: "reaction" | "command";
+  readonly via: "reaction" | "command" | "stop-button";
   readonly query: TurnAnchorQuery;
   readonly attachSession: AttachSessionForCancel;
   readonly stopForwardedJobs?: (input: ForwardedJobStopInput) => Promise<ForwardedJobStopResult>;

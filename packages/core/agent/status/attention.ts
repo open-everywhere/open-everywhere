@@ -1,3 +1,4 @@
+import { defineState } from "eve/context";
 import { getOperationalStore } from "../operational/provider.js";
 import type { AttentionRow, AttentionStateName } from "../operational/store.js";
 import { appendAudit } from "../audit/audit.js";
@@ -42,6 +43,34 @@ export function attentionWhereOf(binding: SurfaceBinding, surfaceKey: string): A
     ...(binding.principalId ? { personId: binding.principalId } : {}),
     dm: binding.mode === "dm",
   };
+}
+
+function attentionNeedsPerson(state: AttentionStateName | null | undefined): boolean {
+  return state === "needs_input" || state === "blocked";
+}
+
+const sessionAttentionSlot = defineState<AttentionStateName | null>("open-everywhere.attention.session-state", () => null);
+
+export function noteSessionAttention(state: AttentionStateName): void {
+  try {
+    sessionAttentionSlot.update(() => state);
+  } catch {
+  }
+}
+
+export function resetSessionAttention(): void {
+  try {
+    sessionAttentionSlot.update(() => null);
+  } catch {
+  }
+}
+
+export function sessionNeedsPerson(): boolean {
+  try {
+    return attentionNeedsPerson(sessionAttentionSlot.get());
+  } catch {
+    return false;
+  }
 }
 
 export interface AttentionDeps {

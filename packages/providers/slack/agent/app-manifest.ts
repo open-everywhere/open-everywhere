@@ -138,6 +138,7 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "channel_shared",
             "user_change",
             "app_context_changed",
+            "agent_session_stopped",
           ],
         },
         interactivity: {

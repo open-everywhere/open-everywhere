@@ -5939,6 +5939,68 @@ export const SCENARIOS: readonly Scenario[] = [
   },
 
   {
+    id: "S-SESSION-STOP",
+    title: "Slack's native Stop button (OPE-2519): a signed agent_session_stopped press stops the person's running DM turn through the ✋ arm's cancel road",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-SESSION-STOP gates on the turn.cancel_requested and turn.cancelled audit rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const slack = ctx.slack!;
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic!;
+      const { userId: personId, teamId } = await slack.identity();
+      ctx.log(
+        "S-SESSION-STOP: the Stop press is FORGED, so this leg proves the host's stop road and not the board app's manifest. " +
+          "A real person also needs the app manifest re-applied with the bot event agent_session_stopped, or Slack shows no Stop button.",
+      );
+
+      await fenceDmSeat(ctx, "S-SESSION-STOP");
+      const askAt = await presenceSince(ctx, "S-SESSION-STOP ask");
+      const { ts: sessionTs } = await dm.post(
+        fixtureLine("e2e S-SESSION-STOP: list the first 400 prime numbers, one per line, each with its square, then reply once with the whole list."),
+      );
+
+      const started = await pollUntil(
+        async () => {
+          const rows = await read({ sinceIso: askAt, actions: [WAKE_TURN_START_ACTION], limit: 200 });
+          const ids = rows.map((r) => dS(r, "turnId")).filter((id): id is string => id !== undefined);
+          return ids.length > 0 ? ids : undefined;
+        },
+        { timeoutMs: AUDIT_ROW_WAIT, what: "a wake.turn_start row for the S-SESSION-STOP ask" },
+      );
+
+      const pressed = await synthetic.sessionStop({ channelId: dm.channelId, threadTs: sessionTs, userId: personId, teamId });
+      ctx.gate(pressed.status === 200, `S-SESSION-STOP: the signed Stop press is acknowledged (${pressed.label}, HTTP ${pressed.status})`);
+
+      const requested = await pollUntil(
+        async () => (await read({ sinceIso: askAt, actions: ["turn.cancel_requested"], limit: 200 })).find((r) => dS(r, "via") === "stop-button"),
+        { timeoutMs: AUDIT_ROW_WAIT, what: "a turn.cancel_requested row with via stop-button" },
+      );
+      ctx.gate(requested.principalId === personId, `S-SESSION-STOP: the cancel request names the person who pressed Stop (${String(requested.principalId)})`);
+      const outcome = dS(requested, "outcome");
+      ctx.gate(
+        outcome === "requested",
+        `S-SESSION-STOP: the press reached a running turn (outcome "${String(outcome)}"). "no_turn_found" means the turn ended before the press, and proves nothing about the stop`,
+      );
+      const turnId = dS(requested, "turnId");
+      ctx.gate(turnId !== undefined && started.includes(turnId), `S-SESSION-STOP: the stopped turn is the one this leg's ask started (${String(turnId)} in ${started.join(", ")})`);
+
+      const partner = await pollUntil(
+        async () => (await read({ sinceIso: askAt, actions: ["turn.cancelled", "turn.stop_ignored"], limit: 200 })).find((r) => dS(r, "turnId") === turnId),
+        { timeoutMs: FILE_REPLY_WAIT, what: `the turn's own turn.cancelled or turn.stop_ignored row for ${String(turnId)}` },
+      );
+      ctx.log(`S-SESSION-STOP: the turn's own process wrote ${partner.action}${partner.action === "turn.stop_ignored" ? " — eve accepted the cancel and never applied it (turn-cancel.ts TURN_STOP_IGNORED_ACTION)" : ""}`);
+      ctx.gate(partner.action === "turn.cancelled", `S-SESSION-STOP: the turn really stopped — its own process wrote turn.cancelled (got ${partner.action})`);
+    },
+  },
+
+  {
     id: "S-MEMORY-CANVAS",
     title: "Domain memory canvas (OPE-2499): a taught fact appears in the internal channel's canvas, and in no canvas of a shared or guest channel of the same domain",
     requires: ["slack"],

@@ -151,6 +151,7 @@ const EVENT_SCOPES: Record<string, readonly string[]> = {
   channel_shared: ["channels:read", "groups:read"],
   user_change: ["users:read"],
   app_context_changed: ["assistant:write"],
+  agent_session_stopped: ["chat:write"],
 };
 for (const event of subscribed) {
   const scopes = EVENT_SCOPES[event];

@@ -44,6 +44,10 @@
       "types": "./dist/agent/app-manifest.d.ts",
       "default": "./dist/agent/app-manifest.js"
     },
+    "./agent/channels/slack-agent-session.js": {
+      "types": "./dist/agent/channels/slack-agent-session.d.ts",
+      "default": "./dist/agent/channels/slack-agent-session.js"
+    },
     "./agent/channels/slack-attachments.js": {
       "types": "./dist/agent/channels/slack-attachments.d.ts",
       "default": "./dist/agent/channels/slack-attachments.js"
@@ -273,7 +277,8 @@
     "test:slack-wake-drop-hold": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-drop-hold-test.ts",
     "test:slack-surface-evidence": "NODE_NO_WARNINGS=1 tsx scripts/slack-surface-evidence-test.ts",
     "test:slack-home": "NODE_NO_WARNINGS=1 tsx scripts/slack-home-test.ts",
-    "test:slack-side-panel": "NODE_NO_WARNINGS=1 tsx scripts/slack-side-panel-test.ts"
+    "test:slack-side-panel": "NODE_NO_WARNINGS=1 tsx scripts/slack-side-panel-test.ts",
+    "test:slack-agent-session": "NODE_NO_WARNINGS=1 tsx scripts/slack-agent-session-test.ts"
   },
   "dependencies": {
     "@open-everywhere/core": "0.7.0",

@@ -21,7 +21,9 @@ import {
   registerDomainMembershipProbe,
   registerFriendlyNameResolver,
   registerBotAskProbe,
+  registerSurfaceSessionState,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackSurfaceSessionSetter } from "./channels/slack-agent-session.js";
 import { slackFriendlyNameResolver } from "./channels/slack-friendly-names.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { slackSurfaceStatus } from "./status.js";
@@ -64,6 +66,7 @@ export function registerSlackProvider(): void {
   registerReadAdapter(slackReadAdapter);
   registerSeatCatchUp("slack", slackSeatCatchUpFetch, { timestampPrecisionMs: SLACK_TIMESTAMP_PRECISION_MS });
   registerReactionSurface("slack");
+  registerSurfaceSessionState("slack", slackSurfaceSessionSetter());
   registerBotDisplayName("slack", botDisplayName);
   registerAccountDisplayName("slack", (nativeId) => fetchUserProfileNames(nativeId));
   registerAccountDirectory("slack", () => fetchWorkspaceRoster());

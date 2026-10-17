@@ -49,3 +49,4 @@ test:slack-surface-evidence
 test:slack-home
 test:slack-side-panel
 test:slack-bot-ask
+test:slack-agent-session

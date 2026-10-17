@@ -26,6 +26,7 @@ import {
   bindableFor,
   bindableForJoin,
   bindableForReaction,
+  bindableForSlackIds,
   slackSingleWindowMentionPolicy,
   slackDomainUsesUnifiedWindow,
   slackFrontTenantFenceDeclined,
@@ -90,6 +91,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { botReplyCandidate, slackBotReplyFacts } from "./slack-bot-ask.js";
 import { sidePanelViewedRoom, slackDmSystemNote } from "./slack-side-panel.js";
+import { parseAgentSessionStopped, routeAgentSessionStop, setSlackSessionStatus, slackSessionTitle } from "./slack-agent-session.js";
 import {
   renderWakeMessage,
   slackChannelFactsFor,
@@ -149,7 +151,8 @@ export type FrontDecision =
   | { readonly kind: "home-open"; readonly reason: string; readonly open: ParsedHomeOpen }
   | { readonly kind: "home-click"; readonly reason: string; readonly click: ParsedHomeClick }
   | { readonly kind: "home-submit"; readonly reason: string; readonly submission: ParsedHomeSubmission }
-  | { readonly kind: "context-change"; readonly reason: string };
+  | { readonly kind: "context-change"; readonly reason: string }
+  | { readonly kind: "session-stop"; readonly reason: string; readonly env: SlackEventEnvelope };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
   const raw = new URLSearchParams(rawBody).get("payload");
@@ -315,6 +318,9 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
   }
   if (eventType === "app_context_changed") {
     return { kind: "context-change", reason: "app_context_changed — the room rides the next side-panel message; nothing to wake" };
+  }
+  if (eventType === "agent_session_stopped") {
+    return { kind: "session-stop", reason: "agent_session_stopped — stop the session's running turn", env };
   }
   if (eventType === "user_change") {
     return { kind: "user-change", reason: "user_change — a deactivation report candidate", env };
@@ -756,7 +762,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       ev: ParsedMessageEvent,
       dmKind: "im" | "mpim",
       driverAdmitted = false,
+      agentSessionTypedText?: string,
     ): Promise<void> => {
+      const opensAgentSession = agentSessionTypedText !== undefined;
       if (slackFrontTenantFenceDeclined(ev, `dm-${dmKind}`, "scheduleDmWake")) return;
       const p = resolvePartition(bindableFor(ev));
       const atIso = new Date(now()).toISOString();
@@ -795,6 +803,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           channelType: dmKind,
           isPrivate: true,
           ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
+          ...(opensAgentSession && !isGroup ? { agentSessionTs: ev.threadTs ?? ev.ts } : {}),
           ...(roomFacts?.extShared === undefined ? {} : { isExternal: roomFacts.extShared }),
           ...(roomFacts?.trustChecked === undefined ? {} : { trustChecked: roomFacts.trustChecked }),
         }),
@@ -820,6 +829,11 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         wakeId,
         ...(seat.freshGeneration && seat.tail.length > 0 ? { backscroll: seat.tail } : {}),
       });
+
+      if (opensAgentSession && !isGroup && !ev.threadTs && ev.ts) {
+        const title = slackSessionTitle(agentSessionTypedText);
+        if (title) await setSlackSessionStatus({ channelId: ev.channelId, threadTs: ev.ts, status: "active", title });
+      }
 
       const origin = { platform: "slack" as const, channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) };
       await divertInboundToUnifiedWindow(args.to, {
@@ -927,7 +941,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
           const heard = await hearVoice(dev);
-          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted));
+          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted, decision.dmKind === "im" ? dev.authoredText : undefined));
           console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );
@@ -1258,6 +1272,45 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(
         routeUserDeactivation(deactivation).then((outcome) =>
           console.log(`[open-everywhere:slack-front] user_change ${deactivation.userId}: offboarding ${outcome.kind}${outcome.kind === "refused" ? ` (${outcome.reason})` : ""}`),
+        ),
+      );
+      return OK();
+    }
+
+    if (decision.kind === "session-stop") {
+      const stop = parseAgentSessionStopped(decision.env);
+      if (!stop) return OK();
+      const stopEnterpriseId = slackEnterpriseIdFromEnvelope(decision.env);
+      if (
+        slackInteractivityTenantFenceDeclined(
+          {
+            ...(stop.teamId === undefined ? {} : { teamId: stop.teamId }),
+            ...(stopEnterpriseId === undefined ? {} : { enterpriseId: stopEnterpriseId }),
+            channelId: stop.channelId,
+            userId: stop.userId,
+          },
+          "session-stop",
+          "front-session-stop-branch",
+        )
+      ) {
+        return fencedAck(OK());
+      }
+      const skey = wakeKey(decision.env, stop.channelId, stop.eventTs ?? stop.threadTs);
+      if (dedupe.seen(skey, now())) return OK();
+      dedupe.mark(skey, now());
+      try {
+        const org = resolvePartition(bindableForSlackIds({ teamId: stop.teamId, channelId: stop.channelId, userId: stop.userId })).org;
+        if (!(await markEventSeen(org, skey, new Date(now()).toISOString()))) return OK();
+      } catch {
+      }
+      if (!args.attachSession) {
+        console.warn(`[open-everywhere:slack-front] session stop ${stop.channelId}/${stop.threadTs}: no cancel door on this route — nothing stopped`);
+        return OK();
+      }
+      const attachSession = args.attachSession;
+      args.waitUntil(
+        routeAgentSessionStop(stop, { attachSession }).then((r) =>
+          console.log(`[open-everywhere:slack-front] session stop ${stop.channelId}/${stop.threadTs}: ${r.outcome}`),
         ),
       );
       return OK();

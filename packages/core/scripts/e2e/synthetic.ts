@@ -204,10 +204,38 @@ export function buildSidePanelMessageEnvelope(input: SidePanelMessageInput): Rec
   };
 }
 
+export const AGENT_SESSION_STOPPED_EVENT_TYPE = "agent_session_stopped";
+
+export interface SessionStopInput {
+  readonly channelId: string;
+  readonly threadTs: string;
+  readonly userId: string;
+  readonly teamId: string;
+  readonly eventId?: string;
+}
+
+export function buildAgentSessionStoppedEnvelope(input: SessionStopInput, nowMs: number = Date.now()): Record<string, unknown> {
+  const eventTs = `${Math.floor(nowMs / 1_000)}.${String((nowMs % 1_000) * 1_000).padStart(6, "0")}`;
+  return {
+    type: "event_callback",
+    team_id: input.teamId,
+    event_id: input.eventId ?? `EvE2EStop${eventTs.replace(".", "")}`,
+    event_time: Math.floor(nowMs / 1_000),
+    event: {
+      type: AGENT_SESSION_STOPPED_EVENT_TYPE,
+      channel: input.channelId,
+      thread_ts: input.threadTs,
+      user: input.userId,
+      event_ts: eventTs,
+      streaming_message_ts: [],
+    },
+  };
+}
+
 export interface SyntheticResult {
   readonly status: number;
   readonly body: string;
-  readonly label: "synthetic click" | "synthetic command" | "synthetic mention" | "synthetic side-panel message";
+  readonly label: "synthetic click" | "synthetic command" | "synthetic mention" | "synthetic side-panel message" | "synthetic stop press";
 }
 
 export function buildHomeOpenedEnvelope(input: { readonly userId: string; readonly teamId: string }): Record<string, unknown> {
@@ -319,6 +347,11 @@ export class SyntheticSlack {
   async sidePanelMessage(input: SidePanelMessageInput): Promise<SyntheticResult> {
     const rawBody = JSON.stringify(buildSidePanelMessageEnvelope(input));
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic side-panel message", "application/json");
+  }
+
+  async sessionStop(input: SessionStopInput): Promise<SyntheticResult> {
+    const rawBody = JSON.stringify(buildAgentSessionStoppedEnvelope(input));
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic stop press", "application/json");
   }
 
   async connectClick(input: Omit<ConnectClickInput, "userId" | "org"> & { userId?: string; org?: string }): Promise<SyntheticResult> {

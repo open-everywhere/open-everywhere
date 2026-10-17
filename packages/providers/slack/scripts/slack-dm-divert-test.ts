@@ -944,6 +944,29 @@ overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "en
   const msg = both.dispatched[0]!.message;
   ok(msg.includes("context below") && msg.indexOf("context below") < msg.indexOf("[voice clip] chase order 4417 please"), "typed text first, then the transcript");
 
+  {
+    const sessionCalls: URLSearchParams[] = [];
+    const realFetch = globalThis.fetch;
+    const hadToken = process.env.SLACK_BOT_TOKEN;
+    process.env.SLACK_BOT_TOKEN = "xoxb-dm-divert-title-test";
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.endsWith("/agents.sessions.setStatus")) sessionCalls.push(new URLSearchParams(String(init?.body ?? "")));
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      await runFront(dmEnvelope("EvVoiceTitle1", { ts: "1768686434.000100", text: "", subtype: "file_share", files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: hear } });
+      eq(sessionCalls.filter((c) => c.has("title")).length, 0, "🔴 a DM that is only a voice clip opens its agent session with NO title — a transcript is not typed text");
+      sessionCalls.length = 0;
+      await runFront(dmEnvelope("EvVoiceTitle2", { ts: "1768686434.000200", text: "Plan the launch review", subtype: "file_share", files: [clipFile] }), { partnerTrust: "internal", extra: { hearVoiceClips: hear } });
+      eq(sessionCalls.map((c) => [c.get("thread_ts"), c.get("title")]), [["1768686434.000200", "Plan the launch review"]], "typed words beside a clip title the session with those words alone");
+    } finally {
+      globalThis.fetch = realFetch;
+      if (hadToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = hadToken;
+    }
+  }
+
   const failing = (ev: Parameters<typeof withSlackVoiceClips>[0]) =>
     withSlackVoiceClips(ev, {
       pull: async () => new Uint8Array([1]),

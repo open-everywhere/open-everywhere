@@ -219,4 +219,38 @@ const stored = (): MemoryFiles => ({ ...(durable.get(surfaceTierId) ?? {}) });
   for (const call of dbWriteCalls) eq(Object.keys(call.files), ["STATUS.md"], "the DB write also names exactly one file");
 }
 
+{
+  const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
+  const { sessionNeedsPerson, resetSessionAttention } = await import("../agent/status/attention.js");
+  const { registerSurfaceSessionState, _resetSurfaceSessionStateForTest } = await import("../agent/channels/surface-session-state.js");
+  registerSurfaceSessionState("slack", async () => "D1:1.1");
+  const dmCtx = {
+    agent: { name: "test" },
+    channel: { kind: "slack" },
+    getSandbox: async () => new FakeSandbox(),
+    session: { id: "sess-slot", auth: { current: { principalId: "U7", principalType: "slack-user", attributes: { team_id: "T1", channel_id: "D1", channel_type: "im", dm_partner_trust: "internal", user_id: "U7" } } } },
+  } as unknown as BindableContext;
+  const session = new FakeEveContext();
+  for (const [state, want] of [["needs_input", true], ["working", false], ["blocked", true], ["done", false]] as const) {
+    const needs = await inEveContext(session, async () => {
+      await runStatus({ state, summary: `S6-${state}` }, dmCtx as never);
+      return sessionNeedsPerson();
+    });
+    eq(needs, want, `update_status(${state}) → the session ${want ? "waits" : "does not wait"} on its person`);
+  }
+  const afterReset = await inEveContext(session, async () => {
+    await runStatus({ state: "needs_input", summary: "S6-reset" }, dmCtx as never);
+    resetSessionAttention();
+    return sessionNeedsPerson();
+  });
+  eq(afterReset, false, "a reset (the next turn's start) clears it");
+  eq(await inEveContext(new FakeEveContext(), async () => sessionNeedsPerson()), false, "another session's slot is untouched");
+  _resetSurfaceSessionStateForTest();
+  const bare = new FakeEveContext();
+  await inEveContext(bare, async () => {
+    await runStatus({ state: "needs_input", summary: "S6-no-setter" }, dmCtx as never);
+  });
+  eq(bare.has({ name: "open-everywhere.attention.session-state" }), false, "with no setter for the platform, update_status creates no attention slot key");
+}
+
 console.log(`✅ update_status durable-write tests passed (${n} assertions)`);

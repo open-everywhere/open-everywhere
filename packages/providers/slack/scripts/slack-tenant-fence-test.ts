@@ -481,7 +481,7 @@ async function dropRows(ts: string) {
         `TOTALITY(click): the "${arm.name}" branch runs no model turn and still decides something, so it must consult the tenant fence`,
       );
     }
-    ok(fenced === 8, `…and the scan really found all eight deciding branches (six clicks, the OPE-2423 user-change branch and the OPE-2451 channel-shared canvas recheck) (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
+    ok(fenced === 9, `…and the scan really found all nine deciding branches (six clicks, the OPE-2423 user-change branch, the OPE-2451 channel-shared canvas recheck and the OPE-2519 Stop press) (${fenced}) — a renamed or deleted arm must red this, never silently empty it`);
     const homeAt = frontCode.indexOf('if (decision.kind === "home-open" || decision.kind === "home-click" || decision.kind === "home-submit") {');
     ok(homeAt >= 0, "the Home tab arm is present, under its three decision kinds");
     const homeBody = frontCode.slice(homeAt, frontCode.indexOf("\n    if (decision.kind ===", homeAt + 1));

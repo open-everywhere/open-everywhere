@@ -176,7 +176,8 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "app_home_opened",
         "channel_shared",
         "user_change",
-        "app_context_changed"
+        "app_context_changed",
+        "agent_session_stopped"
       ]
     },
     "interactivity": {

@@ -184,6 +184,12 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-SIDE-PANEL (OPE-2505) is the only live leg on the Slack side panel. It forges a signed side-panel message that names the e2e channel as the viewed room, and gates that the person's DM seat answers in the panel thread, that the seat's wake carries the host note naming the room, and that no tool call of the turn reads the room: none names it by id or name, apart from the answer tools and the name lookup, and no no-target read returns it. `slack-side-panel.ts` parses the room, runs the strictest-default gates and writes the note, so a change to it changes all three answers.",
   },
   {
+    area: "slack-agent-session",
+    globs: ["packages/providers/slack/agent/channels/slack-agent-session.ts", "packages/core/agent/channels/surface-session-state.ts"],
+    scenarios: ["S-SESSION-STOP"],
+    why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's native Stop button. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn, and `surface-session-state.ts` drives the session state the button appears on.",
+  },
+  {
     area: "domain-memory-canvas",
     globs: [
       "packages/providers/slack/agent/channels/slack-memory-canvas.ts",

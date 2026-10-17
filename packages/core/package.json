@@ -1306,6 +1306,10 @@
       "types": "./dist/agent/channels/surface-message-ops.d.ts",
       "default": "./dist/agent/channels/surface-message-ops.js"
     },
+    "./agent/channels/surface-session-state.js": {
+      "types": "./dist/agent/channels/surface-session-state.d.ts",
+      "default": "./dist/agent/channels/surface-session-state.js"
+    },
     "./agent/channels/task-provenance.js": {
       "types": "./dist/agent/channels/task-provenance.d.ts",
       "default": "./dist/agent/channels/task-provenance.js"
@@ -3834,6 +3838,7 @@
     "test:deploy-contract": "NODE_NO_WARNINGS=1 tsx scripts/deploy-contract-test.ts",
     "test:oe-status": "NODE_NO_WARNINGS=1 tsx scripts/oe-status-test.ts",
     "test:update-status": "NODE_NO_WARNINGS=1 tsx scripts/update-status-test.ts",
+    "test:surface-session-state": "NODE_NO_WARNINGS=1 tsx scripts/surface-session-state-test.ts",
     "test:turn-cancel": "NODE_NO_WARNINGS=1 tsx scripts/turn-cancel-test.ts",
     "test:spend": "tsx scripts/spend-test.ts",
     "test:checkpoint": "NODE_NO_WARNINGS=1 tsx scripts/checkpoint-test.ts",

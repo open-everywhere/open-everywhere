@@ -16,6 +16,8 @@ import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.j
 import { domainKeyOf } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
+import { markSurfaceSession, parkedSurfaceStatus, surfaceTurnOf } from "../channels/surface-session-state.js";
+import { resetSessionAttention, sessionNeedsPerson } from "../status/attention.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
 
 export { TURN_CANCELLED_ACTION, TURN_STOP_IGNORED_ACTION };
@@ -408,6 +410,39 @@ async function onTurnEnded(turnId: string, ctx: HookContext | undefined, endedAs
   }
 }
 
+const startedSurfaceSession = defineState<{ readonly platform: string; readonly id: string; readonly attributes: Readonly<Record<string, unknown>> } | null>(
+  "open-everywhere.turn-anchor.surface-session",
+  () => null,
+);
+
+async function startTurnSession(ctx: HookContext): Promise<void> {
+  const turn = surfaceTurnOf(ctx);
+  if (!turn) return;
+  resetSessionAttention();
+  const id = await markSurfaceSession(turn.platform, turn.attributes, "processing");
+  try {
+    startedSurfaceSession.update(() => (id === undefined ? null : { ...turn, id }));
+  } catch {
+  }
+}
+
+async function parkTurnSession(ctx: HookContext): Promise<void> {
+  const turn = surfaceTurnOf(ctx);
+  if (!turn) return;
+  const status = parkedSurfaceStatus(sessionNeedsPerson());
+  const parkedId = await markSurfaceSession(turn.platform, turn.attributes, status);
+  let started: { readonly platform: string; readonly id: string; readonly attributes: Readonly<Record<string, unknown>> } | null = null;
+  try {
+    started = startedSurfaceSession.get();
+    if (started !== null) startedSurfaceSession.update(() => null);
+  } catch {
+    return;
+  }
+  if (started === null) return;
+  if (started.platform === turn.platform && started.id === parkedId) return;
+  await markSurfaceSession(started.platform, started.attributes, status);
+}
+
 export default defineHook({
   events: {
     "turn.started": async (event, ctx: HookContext) => {
@@ -416,6 +451,7 @@ export default defineHook({
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.started failed: ${String(err)}`);
       }
+      await startTurnSession(ctx);
       try {
         await drainDueIgnoredStops();
       } catch (err) {
@@ -476,7 +512,8 @@ export default defineHook({
         console.warn(`[open-everywhere:turn-anchor] turn.cancelled failed: ${String(err)}`);
       }
     },
-    "session.waiting": async () => {
+    "session.waiting": async (_event, ctx: HookContext) => {
+      await parkTurnSession(ctx);
       try {
         await drainDueIgnoredStops();
       } catch (err) {
