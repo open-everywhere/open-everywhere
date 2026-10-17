@@ -14,11 +14,11 @@ export type ModelStack = Readonly<Record<ModelRole, ModelRoleSpec>>;
 
 export const STACKS = {
   "chinese-open-weights": {
-    primary: { id: "deepseek/deepseek-v4-flash-0731", tier: "high", contextWindowTokens: 1_000_000 },
-    utility: { id: "deepseek/deepseek-v4-flash-0731", tier: "low", contextWindowTokens: 1_000_000 },
+    primary: { id: "deepseek/deepseek-v4.1-flash", tier: "high", contextWindowTokens: 1_000_000 },
+    utility: { id: "deepseek/deepseek-v4.1-flash", tier: "low", contextWindowTokens: 1_000_000 },
     vision: { id: "alibaba/qwen3-vl-instruct", tier: "low", contextWindowTokens: 131_072 },
-    supervisor: { id: "deepseek/deepseek-v4-flash-0731", tier: "low", contextWindowTokens: 1_000_000 },
-    judge: { id: "deepseek/deepseek-v4-flash-0731", tier: "low", contextWindowTokens: 1_000_000 },
+    supervisor: { id: "deepseek/deepseek-v4.1-flash", tier: "low", contextWindowTokens: 1_000_000 },
+    judge: { id: "deepseek/deepseek-v4.1-flash", tier: "low", contextWindowTokens: 1_000_000 },
   },
   "american-closed": {
     primary: { id: "openai/gpt-6-luna", tier: "high", contextWindowTokens: 1_050_000 },
@@ -26,6 +26,13 @@ export const STACKS = {
     vision: { id: "google/gemini-3.8-flash", tier: "low", contextWindowTokens: 1_000_000 },
     supervisor: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
     judge: { id: "openai/gpt-6-luna", tier: "low", contextWindowTokens: 1_050_000 },
+  },
+  "european-open-weights": {
+    primary: { id: "mistral/mistral-small", tier: "high", contextWindowTokens: 262_144, via: "mistral" },
+    utility: { id: "mistral/mistral-small", tier: "low", contextWindowTokens: 262_144, via: "mistral" },
+    vision: { id: "mistral/mistral-small", tier: "low", contextWindowTokens: 262_144, via: "mistral" },
+    supervisor: { id: "mistral/mistral-small", tier: "low", contextWindowTokens: 262_144, via: "mistral" },
+    judge: { id: "mistral/mistral-small", tier: "low", contextWindowTokens: 262_144, via: "mistral" },
   },
 } as const satisfies Record<string, ModelStack>;
 
@@ -68,6 +75,10 @@ export const TRANSCRIPTION = {
   "american-closed": {
     primary: { via: "gateway", id: "microsoft/mai-transcribe-2" },
     fallback: { via: "gateway", id: "spacexai/grok-stt" },
+  },
+  "european-open-weights": {
+    primary: { via: "self-hosted", id: "mistralai/Voxtral-Mini-3B-2507", baseUrl: "http://voxtral:8000/v1" },
+    fallback: { via: "self-hosted", id: "Qwen/Qwen3-ASR-1.7B", baseUrl: "http://qwen3-asr:8000/v1" },
   },
 } as const satisfies Record<StackAlias, TranscriptionRoleSpec>;
 

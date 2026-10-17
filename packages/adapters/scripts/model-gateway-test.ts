@@ -13,7 +13,7 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const DEFAULT_ID = "zai/glm-5.2";
+const DEFAULT_ID = "openai/gpt-6-luna";
 const IDS_SAME = { id: DEFAULT_ID, defaultId: DEFAULT_ID };
 const IDS_CHANGED = { id: "anthropic/claude-sonnet-5", defaultId: DEFAULT_ID };
 const STATIC_GATEWAY = { only: ["fireworks"], zeroDataRetention: true, caching: "auto" };

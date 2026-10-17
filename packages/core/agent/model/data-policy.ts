@@ -43,3 +43,16 @@ export function dataPolicyWords(p: ModelDataPolicy): string {
   if (p.region !== undefined) words.push(`region ${p.region.toUpperCase()}`);
   return words.length > 0 ? words.join(", ") : "none";
 }
+
+export function mergeDataPolicy(base: ModelDataPolicy, add: ModelDataPolicy | undefined): ModelDataPolicy {
+  if (add === undefined || !dataPolicyActive(add)) return base;
+  if (base.region !== undefined && add.region !== undefined && base.region !== add.region) {
+    throw new Error(`models.dataPolicy (region ${base.region}) and the target's dataPolicy (region ${add.region}) cannot both be met, so the call refuses`);
+  }
+  const region = add.region ?? base.region;
+  return {
+    ...(base.zeroRetention === true || add.zeroRetention === true ? { zeroRetention: true } : {}),
+    ...(base.noTraining === true || add.noTraining === true ? { noTraining: true } : {}),
+    ...(region !== undefined ? { region } : {}),
+  };
+}

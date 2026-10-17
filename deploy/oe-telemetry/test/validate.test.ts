@@ -31,7 +31,7 @@ function makeEnvelope(logRecords: unknown[], resourceAttrs: { key: string; value
         attributes: [
           kv("oe.surface", { stringValue: "slack" }),
           kv("oe.kind", { stringValue: "channel" }),
-          kv("gen_ai.request.model", { stringValue: "zai/glm-5.2" }),
+          kv("gen_ai.request.model", { stringValue: "openai/gpt-6-luna" }),
           kv("oe.tokens.bucket", { stringValue: "10-100k" }),
           kv("oe.steps.bucket", { stringValue: "2-5" }),
           kv("oe.latency.bucket", { stringValue: "5-15s" }),
@@ -41,7 +41,7 @@ function makeEnvelope(logRecords: unknown[], resourceAttrs: { key: string; value
     [
       kv("service.name", { stringValue: "open-everywhere" }),
       kv("service.version", { stringValue: "0.4.0" }),
-      kv("service.instance.id", { stringValue: "00000000-0000-4000-8000-000000000002" }),
+      kv("service.instance.id", { stringValue: "b3f1c2a0-6e9d-4a7a-8b2e-1e9f9a2d4c11" }),
       kv("deployment.environment.name", { stringValue: "production" }),
       kv("oe.host", { stringValue: "vercel" }),
       kv("oe.node.major", { intValue: "24" }),
@@ -50,7 +50,7 @@ function makeEnvelope(logRecords: unknown[], resourceAttrs: { key: string; value
   const result = validateOtlpLogsJson(envelope);
   ok(result.ok, "valid envelope (the exact docs/deploy/telemetry.md example) is accepted");
   if (result.ok) {
-    ok(result.envelope.instanceId === "00000000-0000-4000-8000-000000000002", "instance id extracted from resource attrs");
+    ok(result.envelope.instanceId === "b3f1c2a0-6e9d-4a7a-8b2e-1e9f9a2d4c11", "instance id extracted from resource attrs");
     ok(result.envelope.records.length === 1, "one record extracted");
     ok(result.envelope.records[0].attributes["oe.surface"] === "slack", "attribute flattened to a plain scalar");
   }
@@ -65,7 +65,7 @@ function makeEnvelope(logRecords: unknown[], resourceAttrs: { key: string; value
         kv("oe.surfaces", { arrayValue: { values: [{ stringValue: "slack" }, { stringValue: "webhooks" }] } }),
         kv("oe.memory_provider", { stringValue: "sqlite" }),
         kv("oe.operational_provider", { stringValue: "sqlite" }),
-        kv("oe.model.primary", { stringValue: "zai/glm-5.2" }),
+        kv("oe.model.primary", { stringValue: "openai/gpt-6-luna" }),
         kv("oe.model.utility", { stringValue: "deepseek/deepseek-v4-flash" }),
         kv("oe.domains.bucket", { stringValue: "1" }),
         kv("oe.telemetry.dropped", { intValue: "0" }),

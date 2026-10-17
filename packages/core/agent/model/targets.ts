@@ -1,4 +1,5 @@
 import type { Domain, ModelRoute, NamedKnobLayer } from "../memory/domain.js";
+import { type ModelDataPolicy, dataPolicyActive, dataPolicyWords, validateDataPolicy } from "./data-policy.js";
 
 const MODEL_TARGET_KINDS = ["vercel-ai-gateway"] as const;
 export type ModelTargetKind = (typeof MODEL_TARGET_KINDS)[number];
@@ -14,6 +15,7 @@ export interface ModelTarget {
   readonly kind: ModelTargetKind;
   readonly url?: string;
   readonly providers?: ModelTargetProviders;
+  readonly dataPolicy?: ModelDataPolicy;
   readonly options?: Readonly<Record<string, unknown>>;
 }
 
@@ -21,7 +23,7 @@ export type ModelTargets = Readonly<Record<string, ModelTarget>>;
 
 export const SHIPPED_MODEL_TARGETS: ModelTargets = { [DEFAULT_MODEL_VIA]: { kind: "vercel-ai-gateway" } };
 
-const TARGET_KEYS = ["kind", "url", "providers", "options"] as const;
+const TARGET_KEYS = ["kind", "url", "providers", "dataPolicy", "options"] as const;
 const PROVIDER_KEYS = ["only", "order"] as const;
 const TARGET_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
@@ -44,7 +46,7 @@ function providerListProblem(v: unknown, where: string): string | undefined {
 
 function validateModelTarget(name: string, v: unknown): string | undefined {
   const at = `target "${name}"`;
-  if (v === null || typeof v !== "object" || Array.isArray(v)) return `${at} must be an object: { kind, url?, providers?, options? }`;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return `${at} must be an object: { kind, url?, providers?, dataPolicy?, options? }`;
   const o = v as Record<string, unknown>;
   for (const k of Object.keys(o)) {
     if (!(TARGET_KEYS as readonly string[]).includes(k)) return `${at}: unknown key "${k}" — valid keys: ${TARGET_KEYS.join(", ")}`;
@@ -79,6 +81,10 @@ function validateModelTarget(name: string, v: unknown): string | undefined {
       const outside = (po["order"] as string[]).filter((s) => !(po["only"] as string[]).includes(s));
       if (outside.length > 0) return `${at}: providers.order names ${outside.map((s) => `"${s}"`).join(", ")}, which providers.only does not allow`;
     }
+  }
+  if (o["dataPolicy"] !== undefined) {
+    const problem = validateDataPolicy(o["dataPolicy"]);
+    if (problem !== undefined) return `${at}: dataPolicy ${problem}`;
   }
   if (o["options"] !== undefined) {
     const opt = o["options"];
@@ -150,6 +156,7 @@ export function modelTargetWords(t: ModelTarget): string {
   }
   if (t.providers?.only !== undefined) words.push(`only ${t.providers.only.join(", ")}`);
   if (t.providers?.order !== undefined) words.push(`order ${t.providers.order.join(", ")}`);
+  if (t.dataPolicy !== undefined && dataPolicyActive(t.dataPolicy)) words.push(dataPolicyWords(t.dataPolicy));
   return words.join(", ");
 }
 

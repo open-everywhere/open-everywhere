@@ -52,7 +52,7 @@ export function registerModelConfigCheck(models: () => readonly ResolvableModel[
 }
 
 function publicConfigWords(r: ConfigCheckResult): string {
-  if (r.met === "no") return "the model config has a models.dataPolicy or providers.only demand that no provider can serve for at least one model — run `npm run check:model-config` for the names";
+  if (r.met === "no") return "the model config has a models.dataPolicy, providers.only or target dataPolicy demand that no provider can serve for at least one model — run `npm run check:model-config` for the names";
   if (r.met === "unknown" && r.findings.every((f) => f.row.endsWith(".providers.only"))) {
     return "the model config can be served; a providers.only name serves none of the checked models — run `npm run check:model-config` for the names";
   }

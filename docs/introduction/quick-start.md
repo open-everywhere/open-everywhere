@@ -91,7 +91,8 @@ fits your update cadence) is worth adopting.
    invocations. Postgres is the deploy baseline, not an upgrade.
 3. **Model auth is automatic.** On a linked Vercel project the AI Gateway authenticates via
    OIDC — no model key to paste. The agent runs the `american-closed` stack out of the box, one
-   env var away from switching to `chinese-open-weights` (DeepSeek V4 Flash) or back — see
+   setting (`models.stack`) away from `chinese-open-weights` (DeepSeek V4.1 Flash) or
+   `european-open-weights` (Mistral Small 4), and back — see
    [Models & the AI Gateway](../extending/models-and-gateway.md).
 4. **Connect one surface.** This is the only inherently manual step: create a Slack (or Teams /
    Discord / Linear / Notion / GitHub) app and paste its secrets into your Vercel env. App creation is

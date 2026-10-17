@@ -400,12 +400,20 @@ for (const [rel, mod] of loaded) {
   }
   const pairs = settings.wake.driverAllowlist;
   if (pairs.length !== 3) problems.push(`SETTINGS: wake.driverAllowlist resolves ${pairs.length} pairs after boot, not the three agent/settings/settings.ts declares.`);
+  const targets = settings.models.targets;
+  const mistral = targets["mistral"];
+  if (targets["gateway"]?.kind !== "vercel-ai-gateway" || targets["gateway"]?.providers !== undefined) {
+    problems.push(`SETTINGS: models.targets.gateway resolves ${JSON.stringify(targets["gateway"])} after boot, not the bare shipped target.`);
+  }
+  if (JSON.stringify(mistral?.providers?.only) !== JSON.stringify(["mistral"]) || mistral?.dataPolicy?.zeroRetention !== true) {
+    problems.push(`SETTINGS: models.targets.mistral resolves ${JSON.stringify(mistral)} after boot, not the provider pin and zero-retention row agent/settings/settings.ts declares.`);
+  }
 
   const { SETTINGS_OVERRIDES } = await import("../agent/settings/settings.js");
   const declaredKeys = Object.entries(SETTINGS_OVERRIDES as Record<string, Record<string, unknown> | undefined>)
     .flatMap(([group, values]) => (values === undefined ? [] : Object.keys(values).map((key) => `${group}.${key}`)))
     .sort();
-  const watchedKeys = [...Object.keys(expected), "wake.e2eDrivers", "wake.driverAllowlist"].sort();
+  const watchedKeys = [...Object.keys(expected), "wake.e2eDrivers", "wake.driverAllowlist", "models.targets"].sort();
   for (const key of declaredKeys) {
     if (!watchedKeys.includes(key)) problems.push(`SETTINGS: agent/settings/settings.ts declares ${key} and nothing in this block watches it — add it to the list above.`);
   }
@@ -429,3 +437,5 @@ console.log(
     `the routine permission card offerer is registered by the agent tree`,
 );
 process.exit(0);
+
+// proves: DEP-06, DEP-07, DEP-08, DEP-09, DEP-10, DEP-11

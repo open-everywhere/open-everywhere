@@ -14,7 +14,7 @@ function ok(cond: boolean, label: string): void {
 }
 const eq = (a: unknown, b: unknown, label: string) => ok(JSON.stringify(a) === JSON.stringify(b), label);
 
-const DEFAULTS = { id: "zai/glm-5.2", gateway: { only: ["fireworks"], zeroDataRetention: true, caching: "auto" } };
+const DEFAULTS = { id: "openai/gpt-6-luna", gateway: { only: ["fireworks"], zeroDataRetention: true, caching: "auto" } };
 
 {
   eq(utilityRouteForScope("payments-brain"), {}, "route: no config registered → empty route (static defaults, fail quiet)");

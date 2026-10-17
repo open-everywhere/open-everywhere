@@ -1,4 +1,4 @@
-import type { ModelDataPolicy, ModelTarget } from "@open-everywhere/core/agent/adapter-api.js";
+import { type ModelDataPolicy, type ModelTarget, mergeDataPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 
 const DEFAULT_GATEWAY_ORIGIN = "https://ai-gateway.vercel.sh";
 
@@ -85,18 +85,29 @@ export function judgeModelEndpoints(id: string, eps: readonly EndpointFacts[], t
     findings.push({ met: "no", model: id, row: `models.targets.${via}.providers.only`, detail: `providers.only: no allowed provider serves ${id}` });
     return findings;
   }
-  const rows = rowJudges(policy, eps);
+  let merged: ModelDataPolicy;
+  try {
+    merged = mergeDataPolicy(policy, target.dataPolicy);
+  } catch {
+    findings.push({ met: "no", model: id, row: `models.targets.${via}.dataPolicy region`, detail: `region: models.dataPolicy and target ${via} name two different regions` });
+    return findings;
+  }
+  const rows = rowJudges(merged, eps);
   if (rows.length === 0) return findings;
   const joint = any(candidates.map((e) => rows.reduce<CheckVerdict>((v, r) => and(v, r.judge(e)), "yes")));
   if (joint === "yes") return findings;
   const alone = rows.map((r) => ({ label: r.label, v: any(candidates.map(r.judge)) }));
   const failing = alone.filter((r) => r.v === joint);
   const named = failing.length > 0 ? failing.map((r) => r.label) : [rows.map((r) => r.label).join(" + ")];
+  const ownRows = rowJudges(policy, eps).map((r) => r.label);
   for (const label of named) {
     findings.push({
       met: joint,
       model: id,
-      row: `models.dataPolicy ${label}`,
+      row: label
+        .split(" + ")
+        .map((l) => (ownRows.includes(l) ? `models.dataPolicy ${l}` : `models.targets.${via}.dataPolicy ${l}`))
+        .join(" + "),
       detail: joint === "no" ? `${label}: no provider for ${id}` : `${label}: the gateway does not say whether a provider of ${id} meets it`,
     });
   }

@@ -5,7 +5,7 @@ works — Slack, Teams, Discord, Linear, Notion and GitHub. It runs multi-step t
 horizons, remembers context per team, and asks before doing anything consequential.
 It is built on [Vercel Eve](https://eve.dev) and runs on a **named model stack** through the
 Vercel AI Gateway — one alias picks every role at once, and switching between a closed stack and
-an open-weights one (DeepSeek V4 Flash) is one word, proven live rather than asserted. You run
+an open-weights one is one word, proven live (on DeepSeek V4 Flash) rather than asserted. You run
 it, you own the data, you pick the model.
 
 These docs are organised top-to-bottom: read them in order for a complete mental

@@ -18,11 +18,15 @@ function close(a: number, b: number): boolean {
   return Math.abs(a - b) < 1e-9;
 }
 
-const SHIPPED_STACK_IDS = ["openai/gpt-6-luna", "alibaba/qwen3-vl-instruct", "deepseek/deepseek-v4-flash-0731", "google/gemini-3.8-flash"];
+const SHIPPED_STACK_IDS = ["openai/gpt-6-luna", "alibaba/qwen3-vl-instruct", "deepseek/deepseek-v4.1-flash", "google/gemini-3.8-flash", "mistral/mistral-small"];
+const RETIRED_EVIDENCE_IDS = ["deepseek/deepseek-v4-flash-0731"];
 for (const id of SHIPPED_STACK_IDS) {
   ok(stackModelRateBand(id) !== undefined, `coverage: "${id}" (named by a shipped stack) has a measured rate band`);
 }
-ok(stackPricedModelIds().length === SHIPPED_STACK_IDS.length, "coverage: the priced table has exactly the shipped ids, no stragglers");
+ok(
+  [...stackPricedModelIds()].sort().join(",") === [...SHIPPED_STACK_IDS, ...RETIRED_EVIDENCE_IDS].sort().join(","),
+  "coverage: the priced table has exactly the shipped ids and the retired evidence id, no stragglers",
+);
 
 const luna = stackModelRateBand("openai/gpt-6-luna");
 ok(luna !== undefined && luna.in.minPerMtok === luna.in.maxPerMtok && luna.in.minPerMtok === 0.125, "point band: luna's IN rate is a degenerate band at the measured $0.125/Mtok");

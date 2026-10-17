@@ -31,6 +31,8 @@ const STACK_RATES: Readonly<Record<string, ModelRateBand>> = {
     in: { minPerMtok: 0.09, maxPerMtok: 0.14 },
     out: { minPerMtok: 0.18, maxPerMtok: 0.28 },
   },
+  "deepseek/deepseek-v4.1-flash": { in: point(0.3), out: point(1.2) },
+  "mistral/mistral-small": { in: point(0.15), out: point(0.6) },
 };
 
 export function stackModelRateBand(modelId: string): ModelRateBand | undefined {

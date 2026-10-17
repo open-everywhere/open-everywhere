@@ -148,6 +148,7 @@ model returns them, for placing speaker names.
 |---|---|---|
 | `american-closed` | MAI-Transcribe-2, AI Gateway | Grok STT, AI Gateway |
 | `chinese-open-weights` | Qwen3-ASR-1.7B, DeepInfra (states zero retention) | Qwen3-ASR-1.7B, your own server |
+| `european-open-weights` | Voxtral Mini (Mistral), your own server | Qwen3-ASR-1.7B, a second server of your own |
 | fully local | Qwen3-ASR-1.7B, your own server | none |
 
 ### Chunks

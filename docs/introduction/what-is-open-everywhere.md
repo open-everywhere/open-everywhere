@@ -11,7 +11,7 @@ and it asks before it does anything consequential.
 It is built on **[Vercel Eve](./built-on-eve.md)** (the agent framework) and runs on a **named
 model stack** through the Vercel AI Gateway — the model layer is a genuine market now, not one
 vendor's monopoly, and Open Everywhere is the harness built to actually use it: the same
-deployment runs green end-to-end on an all-closed stack and an all-open-weights one (DeepSeek V4
+deployment has run green end-to-end on an all-closed stack and an all-open-weights one (DeepSeek V4
 Flash), a config flip apart. You run it. You own the data. You pick the model. One-click deploy
 to Vercel + Neon, or self-host the whole thing. Apache-2.0 licensed, and an independent project —
 not affiliated with Anthropic, Vercel, or any chat vendor.

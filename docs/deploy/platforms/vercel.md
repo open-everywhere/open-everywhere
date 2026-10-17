@@ -12,7 +12,7 @@ agent, its database, its secrets, and its scheduler in one deploy.
 | Memory backing | Neon Postgres (selected by `DATABASE_URL`) | Built |
 | Credential brokers | `env` (always) + `db` (when `OE_CREDENTIAL_ENCRYPTION_KEY` armed); each credential names its home `broker`. OAuth connectors via the built-in own-rolled flow | Built |
 | Scheduler | Scheduled cron → the routine dispatcher | Built |
-| Model | Vercel AI Gateway (`american-closed` default; `chinese-open-weights` one config flip away) | Built |
+| Model | Vercel AI Gateway (`american-closed` default; `chinese-open-weights` and `european-open-weights` one config flip away) | Built |
 | Source control | GitHub App | Built |
 
 ## What's automatic

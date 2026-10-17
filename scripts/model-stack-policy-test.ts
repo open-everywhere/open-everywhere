@@ -2,6 +2,7 @@ import {
   SHIPPED_STACK,
   STACKS,
   STACK_ALIASES,
+  TRANSCRIPTION,
   compactionThresholdTokens,
   isStackAlias,
   resolveStack,
@@ -20,6 +21,7 @@ import {
   UTILITY_MODEL,
   VISION_MODEL,
   allowListForStack,
+  assertStackVia,
   modelAllowList,
 } from "../agent/model/models.js";
 import { loadModelPolicy } from "../agent/model/policy.js";
@@ -249,6 +251,46 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
   }
 }
 
+{
+  const percent = getSettings(SETTINGS_OVERRIDES).agent.compactionThresholdPercent;
+  const targets = getSettings(SETTINGS_OVERRIDES).models.targets;
+
+  for (const alias of STACK_ALIASES) {
+    let problem = "";
+    try {
+      assertStackVia(resolveStack(alias), targets);
+    } catch (e) {
+      problem = (e as Error).message;
+    }
+    ok(problem === "", `[${alias}] a switch to this stack fails config load against this app's models.targets: ${problem}`);
+  }
+
+  const cn = resolveStack("chinese-open-weights");
+  for (const role of TEXT_ROLES) {
+    ok(cn[role].id === "deepseek/deepseek-v4.1-flash", `[chinese-open-weights] ${role} runs "${cn[role].id}", expected "deepseek/deepseek-v4.1-flash"`);
+  }
+  ok(cn.vision.id === "alibaba/qwen3-vl-instruct", `[chinese-open-weights] vision runs "${cn.vision.id}" — it stays on the lane-proven describer until a lane run proves V4.1`);
+
+  ok(isStackAlias("european-open-weights"), "the european-open-weights stack ships");
+  if (isStackAlias("european-open-weights")) {
+    const eu = resolveStack("european-open-weights");
+    for (const role of [...TEXT_ROLES, "vision"] as readonly ModelRole[]) {
+      ok(eu[role].id === "mistral/mistral-small", `[european-open-weights] ${role} runs "${eu[role].id}", expected "mistral/mistral-small"`);
+      ok(eu[role].via === "mistral", `[european-open-weights] ${role} goes via "${eu[role].via ?? "gateway"}", expected "mistral" — the provider pin must travel with the stack`);
+    }
+    ok(eu.primary.contextWindowTokens === 262_144, `[european-open-weights] the primary declares ${eu.primary.contextWindowTokens} tokens, expected 262144 (live-checked 2026-10-15)`);
+    const t = compactionThresholdTokens(eu.primary.contextWindowTokens, percent);
+    ok(t === 131_072, `[european-open-weights] compacts at ${t} tokens, expected 131072 (262144 × ${percent})`);
+    const stt = TRANSCRIPTION["european-open-weights"];
+    ok(stt.primary.via === "self-hosted" && stt.fallback.via === "self-hosted", "[european-open-weights] both transcription routes are self-hosted, so no audio goes to a US or Chinese provider");
+  }
+
+  const mistral = targets["mistral"];
+  ok(JSON.stringify(mistral?.providers?.only) === JSON.stringify(["mistral"]), `models.targets.mistral allows ${JSON.stringify(mistral?.providers?.only)}, expected only ["mistral"]`);
+  ok(mistral?.dataPolicy?.zeroRetention === true, "models.targets.mistral demands zero retention on every call through it");
+  ok(JSON.stringify(targets["gateway"]) === JSON.stringify({ kind: "vercel-ai-gateway" }), `models.targets.gateway is ${JSON.stringify(targets["gateway"])}, expected the bare shipped target`);
+}
+
 if (reds.length > 0) {
   console.error(`✗ model-stacks: ${reds.length} failure(s) across ${Object.keys(STACKS).length} stack(s):\n`);
   for (const r of reds) console.error(`  • ${r}`);
@@ -261,3 +303,6 @@ console.log(
     `a stale domain pick fails soft onto the role's own model, and the compaction threshold is derived from each ` +
     `stack's primary window.`,
 );
+
+// proves: SET-001, SET-031, MOD-01, MOD-02, MOD-03, MOD-04, MOD-05, MOD-06, MOD-07, MOD-08, MOD-09, MOD-10
+// proves: MOD-11, MOD-12, MOD-13, MOD-15, MOD-16, MOD-17, MOD-18, MOD-19, MOD-23, MOD-24, MOD-25, MOD-26, MOD-27, MOD-28

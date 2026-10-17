@@ -5,6 +5,7 @@ import {
   type ModelTargets,
   assertRouteTargets,
   defineSettings,
+  mergeDataPolicy,
   overrideSettingsForTest,
   resolvableModels,
   settingDocs,
@@ -107,6 +108,37 @@ const MODEL = "openai/gpt-6-luna";
 }
 
 {
+  const refuses = (v: unknown, needle = "models.targets"): boolean => throws(() => defineSettings({ models: { targets: v as ModelTargets } }), needle);
+  const MISTRAL: ModelTarget = { ...GW, providers: { only: ["mistral"] }, dataPolicy: { zeroRetention: true } };
+  ok(!refuses({ gateway: GW, mistral: MISTRAL }), "target policy: a target with its own dataPolicy is valid");
+  ok(refuses({ gateway: GW, mistral: { ...GW, dataPolicy: { zeroRetention: "yes" } } }, `target "mistral": dataPolicy zeroRetention must be true or false`), "target policy: a malformed row fails config load and names the target");
+  ok(refuses({ gateway: GW, mistral: { ...GW, dataPolicy: { region: "asia" } } }, "dataPolicy region must be one of"), "target policy: an unknown region fails config load");
+  ok(refuses({ gateway: GW, mistral: { ...GW, dataPolicy: { retention: true } } }, `dataPolicy unknown row "retention"`), "target policy: an unknown row fails config load");
+
+  const call = { prompt: [], providerOptions: { gateway: { caching: "auto" } } };
+  const rows = withTargetRows(call, MISTRAL, {});
+  ok(gwOf(rows).zeroDataRetention === true && json(gwOf(rows).only) === json(["mistral"]), "target policy: a call through the target carries its zero-retention row and its provider pin");
+  const weakened = withTargetRows({ providerOptions: { gateway: { zeroDataRetention: false } } }, MISTRAL, {});
+  ok(gwOf(weakened).zeroDataRetention === true, "target policy: a call's own `zeroDataRetention: false` cannot remove the target's row");
+  ok(withTargetRows(call, GW, {}) === call, "target policy: a target with no rows still changes no request byte");
+  const plusGlobal = withTargetRows(call, MISTRAL, { noTraining: true });
+  ok(gwOf(plusGlobal).zeroDataRetention === true && gwOf(plusGlobal).disallowPromptTraining === true, "target policy: the target's rows and models.dataPolicy ride the same call");
+
+  ok(json(mergeDataPolicy({}, { zeroRetention: true })) === json({ zeroRetention: true }), "merge: a target row is added");
+  ok(json(mergeDataPolicy({ zeroRetention: true }, { zeroRetention: false })) === json({ zeroRetention: true }), "merge: a target's false never removes a deployment row");
+  ok(json(mergeDataPolicy({ region: "eu" }, { region: "eu", noTraining: true })) === json({ noTraining: true, region: "eu" }), "merge: the same region twice is one region");
+  ok(throws(() => mergeDataPolicy({ region: "eu" }, { region: "us" }), "cannot both be met"), "merge: two different regions refuse, they never pick one");
+  ok(
+    throws(() => withTargetRows(call, { ...GW, dataPolicy: { region: "us" } }, { region: "eu" }, "mistral"), "models.targets.mistral.dataPolicy: models.dataPolicy (region eu)"),
+    "target policy: a call under two different regions refuses before it is sent",
+  );
+
+  const live = Object.assign(new Error("No available providers match the 'only' filter"), { statusCode: 400, isRetryable: false });
+  const named = dataPolicyCallError(MODEL, {}, live, { ...GW, dataPolicy: { zeroRetention: true } }, "mistral") as Error;
+  ok(named !== live && named.message.startsWith(`models.targets.mistral.dataPolicy (zeroRetention): no provider serves "${MODEL}"`), `target policy: a refusal names the target's own row — got ${named.message}`);
+}
+
+{
   const only: ModelTarget = { ...GW, providers: { only: ["openai"] } };
   const live = Object.assign(new Error("No available providers match the 'only' filter"), { statusCode: 400, isRetryable: false });
   const e = dataPolicyCallError(MODEL, {}, live, only, "gateway") as Error;
@@ -167,6 +199,7 @@ overrideSettingsForTest({
     targets: {
       gateway: { kind: "vercel-ai-gateway", url: "https://relay.example.invalid/v4/ai", providers: { only: ["openai", "azure"] } },
       eu: { kind: "vercel-ai-gateway", url: "https://eu-gateway.example.invalid/v4/ai", providers: { order: ["azure"] }, options: { caching: "auto" } },
+      mistral: { kind: "vercel-ai-gateway", url: "https://relay.example.invalid/v4/ai", providers: { only: ["mistral"] }, dataPolicy: { zeroRetention: true } },
     },
   },
 });
@@ -180,6 +213,12 @@ await withGateway(textReply, async (calls) => {
   await generateText({ model: gatewayLanguageModel(MODEL, "eu"), prompt: "hi" });
   ok(new URL(calls[0]!.url).host === "eu-gateway.example.invalid", "wire: via picks the target, and its url");
   ok(json(bodyGw(calls[0]!).order) === json(["azure"]) && bodyGw(calls[0]!).caching === "auto" && bodyGw(calls[0]!).only === undefined, "wire: the via target's own rows ride the call, not the gateway target's");
+});
+await withGateway(textReply, async (calls) => {
+  await generateText({ model: gatewayLanguageModel("mistral/mistral-small", "mistral"), prompt: "hi" });
+  await generateText({ model: gatewayLanguageModel(MODEL), prompt: "hi" });
+  ok(bodyGw(calls[0]!).zeroDataRetention === true && json(bodyGw(calls[0]!).only) === json(["mistral"]), "wire: a call via the mistral target carries its zero-retention row and its provider pin");
+  ok(bodyGw(calls[1]!).zeroDataRetention === undefined && json(bodyGw(calls[1]!).only) === json(["openai", "azure"]), "wire: a call via the gateway target carries none of the mistral target's rows");
 });
 await withGateway(textReply, async (calls) => {
   const backend = gatewayModelBackend({ caching: "auto" }, "eu");
@@ -268,6 +307,19 @@ const DEEPSEEK = {
   ok(together.length === 1 && together[0]!.detail.startsWith("zeroRetention + region us: no provider"), "check: rows that different providers meet, but none meets together, are named together");
   const none = judgeModelEndpoints(MODEL, luna, { ...GW, providers: { only: ["vertex"] } }, {});
   ok(none.length === 1 && none[0]!.detail === `providers.only: no allowed provider serves ${MODEL}`, "check: a model no allowed provider serves is named");
+  const targetZdr = judgeModelEndpoints(MODEL, luna, { ...GW, providers: { only: ["bedrock"] }, dataPolicy: { zeroRetention: true } }, {}, "eu-only");
+  ok(targetZdr.length === 1 && targetZdr[0]!.met === "no" && targetZdr[0]!.detail.startsWith("zeroRetention: no provider"), "check: a target's own zero-retention row is judged against its allowed providers");
+  ok(targetZdr[0]!.row === "models.targets.eu-only.dataPolicy zeroRetention", `check: a row only the target demands names the target's row — got ${targetZdr[0]!.row}`);
+  const globalZdr = judgeModelEndpoints(MODEL, luna, { ...GW, providers: { only: ["bedrock"] } }, { zeroRetention: true });
+  ok(globalZdr[0]!.row === "models.dataPolicy zeroRetention", `check: a row the deployment demands keeps the models.dataPolicy name — got ${globalZdr[0]!.row}`);
+  const mixed = judgeModelEndpoints(MODEL, luna, { ...GW, providers: { only: ["azure", "bedrock"] }, dataPolicy: { region: "us" } }, { zeroRetention: true }, "eu-only");
+  ok(
+    mixed.length === 1 && mixed[0]!.row === "models.dataPolicy zeroRetention + models.targets.eu-only.dataPolicy region us",
+    `check: a joint label names each row by its own origin — got ${mixed[0]?.row}`,
+  );
+  ok(judgeModelEndpoints(MODEL, luna, { ...GW, dataPolicy: { zeroRetention: true } }, {}).length === 0, "check: a target's zero-retention row a provider meets is no finding");
+  const clash = judgeModelEndpoints(MODEL, luna, { ...GW, dataPolicy: { region: "us" } }, { region: "eu" }, "mistral");
+  ok(clash.length === 1 && clash[0]!.met === "no" && clash[0]!.detail.includes("two different regions"), "check: two different regions on one target are a 'no', never a pass");
   const unknownOnly: EndpointFacts[] = [{ provider: "x", zdr: undefined, noTraining: undefined, regions: undefined }];
   ok(judgeModelEndpoints(MODEL, unknownOnly, GW, { zeroRetention: true, region: "eu" })[0]?.met === "unknown", "check: unknown fields are unknown, never a pass");
   ok(modelEndpointsUrl(MODEL) === `https://ai-gateway.vercel.sh/v1/models/${MODEL}/endpoints`, "check: the default endpoints URL");

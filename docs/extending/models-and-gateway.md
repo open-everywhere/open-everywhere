@@ -1,8 +1,8 @@
 # Models & the AI Gateway
 
 Open Everywhere runs on a **named model stack** through the Vercel AI Gateway: one alias picks
-a coherent model for every role at once, and switching stacks is a one-word change. Two ship —
-`american-closed` (the default) and `chinese-open-weights`. This is one of the
+a coherent model for every role at once, and switching stacks is a one-word change. Three ship —
+`american-closed` (the default), `chinese-open-weights` and `european-open-weights`. This is one of the
 [swappable seams](./adapter-model.md).
 
 ## Roles, and the stacks that fill them
@@ -24,7 +24,8 @@ consts the rest of the config imports:
 | Stack | primary / utility / supervisor / judge | vision |
 |---|---|---|
 | `american-closed` *(default)* | `openai/gpt-6-luna` | `google/gemini-3.8-flash` |
-| `chinese-open-weights` | `deepseek/deepseek-v4-flash-0731` | `alibaba/qwen3-vl-instruct` |
+| `chinese-open-weights` | `deepseek/deepseek-v4.1-flash` | `alibaba/qwen3-vl-instruct` |
+| `european-open-weights` | `mistral/mistral-small` (Mistral Small 4) | `mistral/mistral-small` |
 
 The reason the unit is a stack rather than five independent roles is that the interesting
 question is "which family of weights is this instance running", and five separate knobs cannot
@@ -36,9 +37,14 @@ Coherence is **convention, not validation**. There is no per-id `openWeights` fl
 import-time check that an "open" stack contains no closed model: the grouping *is* the control,
 and a stack that mixes families is visible in one screenful of `stacks.ts`.
 
-`chinese-open-weights` splits vision off the family because DeepSeek V4 Flash is text-only.
+`chinese-open-weights` splits vision off the family. Its first pin, DeepSeek V4 Flash 0731, was
+text-only. DeepSeek V4.1 Flash (the pin since OPE-2531) passed the vision probe, but
+`alibaba/qwen3-vl-instruct` stays until a lane run proves V4.1 as the describer.
+`european-open-weights` runs one model in all five roles. Its roles go through the `mistral`
+target, so the provider pin and the zero-retention demand travel with the stack (see
+[the European stack](#the-european-stack)).
 An American open-weights stack is deliberately **absent** rather than stubbed — the open
-American checkpoints are not competitive with these two today, and an alias nobody should pick
+American checkpoints are not competitive with these three today, and an alias nobody should pick
 is worse than no alias. Adding one is an entry in `STACKS`; nothing else changes.
 
 The org **allow-list** in `agent/model/policy.ts` is *derived* from the resolved roles, and the
@@ -67,6 +73,7 @@ role needs no other change. A clip is one call along the same primary and fallba
 |---|---|---|
 | `american-closed` | `microsoft/mai-transcribe-2` through the AI Gateway (Azure, ZDR) | `spacexai/grok-stt` through the AI Gateway (xAI, ZDR) |
 | `chinese-open-weights` | `Qwen/Qwen3-ASR-1.7B` on DeepInfra (states zero retention) | `Qwen/Qwen3-ASR-1.7B` on your own server |
+| `european-open-weights` | `mistralai/Voxtral-Mini-3B-2507` (Mistral's Voxtral) on your own server | `Qwen/Qwen3-ASR-1.7B` on a second server of your own |
 | fully local (`TRANSCRIPTION_PLACEMENT = "local"`) | `Qwen/Qwen3-ASR-1.7B` on your own server | none |
 
 > **These defaults are pending the bake-off.** They follow published word error rates, not a test
@@ -91,6 +98,12 @@ What was checked on 2026-10-12, and what was not:
   Use `Qwen/Qwen3-ASR-0.6B` if the 1.7B model is too slow on CPU.
 - `openai/gpt-4o-transcribe` and `google/gemini-3.5-transcribe` have no ZDR route on the Gateway.
   They are bake-off baselines only.
+- The Gateway lists no Mistral speech model (checked 2026-10-15), and a call to Mistral's own API
+  needs a credential this repo does not hold. So the European stack sends audio to your own servers
+  only: Voxtral at `http://voxtral:8000/v1`, then the Qwen3-ASR server at `http://qwen3-asr:8000/v1`.
+  vLLM serves Voxtral on the same OpenAI-compatible path. No call
+  was made: whether that server returns segment or word timestamps is not confirmed. Without them
+  the text still arrives, but a recap cannot place speaker names.
 
 🔴 **The `deepinfra` and `self-hosted` routes do not pass through the AI Gateway.** The gateway's
 ZDR policy and its Provider Allowlist do not apply to them: meeting audio on those routes goes to
@@ -406,10 +419,13 @@ What a keyed probe through the gateway showed on 2026-10-14:
   (`deepseek/deepseek-v4-flash-0731`, `alibaba/qwen3-vl-instruct`). No provider of either model
   serves the EU. The `american-closed` stack's `openai/gpt-6-luna` and `google/gemini-3.8-flash`
   answered under `region: "eu"`. The transcription models were not probed.
+- On 2026-10-15, `region: "eu"` also refused `mistral/mistral-small`, the `european-open-weights`
+  model: "No provider for mistral/mistral-small supports the requested inference region". A European
+  lab is not an EU region. See [the European stack](#the-european-stack).
 - `zeroRetention: true` does **not** exclude China-hosted providers: under it,
   `deepseek/deepseek-v4-flash-0731` was served by `alibaba`. To fence a jurisdiction, set
   [`providers.only`](#model-targets-where-calls-go) on the target.
-- `noTraining: true` was met for all four language models of both stacks.
+- `noTraining: true` was met for all four language models of both stacks probed that day.
 - A zero-retention route can carry a surcharge. On 2026-07-13 the gateway charged one for
   `deepseek/deepseek-v4-flash-0731` (see the note in `agent/agent.ts`).
 
@@ -432,6 +448,7 @@ export default defineSettings({
         kind: "vercel-ai-gateway",
         url: "https://gateway.example.com/v4/ai", // optional: a relay or an on-prem gateway
         providers: { only: ["openai", "azure"], order: ["azure"] }, // optional
+        dataPolicy: { zeroRetention: true }, // optional: rows this target adds to models.dataPolicy
         options: { caching: "auto" }, // optional: Vercel-only passthrough
       },
     },
@@ -445,6 +462,7 @@ export default defineSettings({
 | `url` | The target's base URL. It replaces the `OE_AI_GATEWAY_URL` env var (see below). The adapter reads it once, at the target's first call, so a change needs a restart. |
 | `providers.only` | A **demand**: only these providers may serve a call through this target. A call cannot widen the list. A call that sets its own `only` gets the intersection, and an empty intersection refuses. |
 | `providers.order` | A **preference**: the order the gateway tries providers in. A route's `providerOrder` wins over it. Every name in `order` must also be in `only`, when `only` is set. |
+| `dataPolicy` | Rows (`zeroRetention`, `noTraining`, `region`) that every call through this target demands **on top of** `models.dataPolicy` (OPE-2531). A target adds a row and never removes one: a `false` here does not turn off a deployment row. Two different regions cannot both be met, so a call under them refuses, and the live config check names it. |
 | `options` | Gateway options for every call through the target, as a floor: a call's own key wins. An option that a typed row owns (`only`, `order`, `zeroDataRetention`, `disallowPromptTraining`, `inferenceRegion`) fails config load. |
 
 **`providers.only` fails closed, as the data policy does.** It rides every call the adapter sends
@@ -583,9 +601,75 @@ not just this app. The exception is the meeting bot's `deepinfra` and `self-host
 transcription routes: they send audio around the gateway, so this fence does not cover them (see
 [the transcription role](#the-transcription-role-speech-to-text-with-a-fallback)).
 
-## Choosing between the two stacks
+## The European stack
 
-Both are capable enough to run the product; the choice is about lock-in, cost and where
+`european-open-weights` (OPE-2531) runs Mistral Small 4 in every role, vision included. The weights
+are Apache 2.0 and come from a European lab, so a buyer is never stuck with the US or the Chinese
+bloc. Switch to it with one word: `models: { stack: "european-open-weights" }`.
+
+**The route travels with the stack.** Every role names `via: "mistral"`. The app's settings declare
+that target, in this repo and in the template:
+
+```ts
+models: {
+  targets: {
+    gateway: { kind: "vercel-ai-gateway" },
+    mistral: { kind: "vercel-ai-gateway", providers: { only: ["mistral"] }, dataPolicy: { zeroRetention: true } },
+  },
+},
+```
+
+So every call through a stack role (the turn, compaction, the dream and facet judges, the meeting
+recap, the approval judge and the image describer) goes only to the `mistral` provider and demands
+zero retention. A role with no `via` uses `gateway`, so the target changes no call of the other
+stacks.
+
+🔴 **Two call paths do not go through the `mistral` target.** A declared subagent's bare
+`model: "<id>"` string (`fresh_eyes_review` uses the primary's id) and eve's own `evaluate()`
+resolve through the default provider, which is the `gateway` target. Those calls carry neither the
+provider pin nor the zero-retention row. Today the gateway lists one provider for the model, so the
+provider is the same, but nothing enforces it. When zero retention must cover every call, also set
+`models: { dataPolicy: { zeroRetention: true } }`: that row rides every call on every target. If your app
+replaces `models.targets`, keep the `mistral` entry, or a switch to the stack fails config load and
+names the missing target.
+
+What a probe through this repo's own transport showed on 2026-10-15:
+
+| Check | `mistral/mistral-small` (Small 4) | `mistral/mistral-large-4` (Large 4) |
+|---|---|---|
+| a text reply | yes | yes |
+| a two-tool chain, 3 runs | 3/3 | 3/3 |
+| the 32×32 vision fixture, 3 runs | 3/3 | 0/3 (it called the red square black, then white) |
+| price per 1M tokens, in / out | $0.15 / $0.60 | $0.68 / $2.09 |
+| weights published | yes (Apache 2.0) | no, a preview |
+
+Small 4 is the pick in every role. Large 4 fails the vision fixture, costs about 4× as much, and is
+not open weights yet. The judged quality comparison needs the live lane
+(`npm run e2e:stack -- european-open-weights`); it has not run.
+
+- **The window is 262,144 tokens, checked live.** A 238,918-token prompt answered, and a
+  348,918-token prompt was refused at "262144 maximum context length". Compaction fires at half the
+  window, 131,072 tokens, under the shipped `agent.compactionThresholdPercent`.
+- **One provider.** The gateway lists one endpoint for the model, `mistral`, with zero retention. A
+  call with the stack's rows routed with "ZDR requested: all 1 attempts support ZDR". One provider is
+  also one outage: there is no failover.
+- **The reply cap.** The catalog lists a 4,000-token reply cap. A request for 8,000 tokens was
+  accepted, and the longest reply seen stopped on its own at 3,844 tokens, so the cap is not proven
+  to bind.
+- **The id is undated.** `mistral/mistral-small` is an alias that Mistral can move to a later Small.
+  Re-probe after a move.
+
+**EU-region inference is not available through the gateway.** The gateway documents no EU routing
+for Mistral, and `region: "eu"` refuses the model (see [the data policy](#data-governance-the-data-policy)).
+The stack fixes who serves its role calls (Mistral, under zero retention; see the two call paths
+above that skip the target), not where the inference runs.
+To pin EU-region inference you need your own contract and key with Mistral, on Mistral's own EU
+endpoint, outside the gateway. This repo has no target kind for that today: only
+`"vercel-ai-gateway"` exists. The other option is to run the open weights on your own servers.
+
+## Choosing between the stacks
+
+All three are capable enough to run the product; the choice is about lock-in, cost and where
 inference happens, not about one being "the good one".
 
 `american-closed` is the shipped default and what this project's own deployment runs. One
@@ -597,6 +681,20 @@ gateway entirely — the same checkpoints run on your own hardware, so the ceili
 the vendor changes the deal" is a migration rather than a rewrite. It is also markedly cheaper,
 which is what makes the ambient/always-on surfaces (standing seats, compaction, dream
 cycles) affordable to leave running — and leaving them running is what the product actually is.
+
+The bump to DeepSeek V4.1 Flash (OPE-2531) changed that cost. The 0731 pin measured $0.09 to $0.14
+in and $0.18 to $0.28 out per 1M tokens. V4.1 Flash measured $0.30 in and $1.20 out, all on
+`baseten`, which is about 2.1× the input and 4.3× the output of the old upper bound. Cache reads are
+cheaper on V4.1 ($0.007 against $0.028 per 1M on `baseten`). On the illustrative month of
+`npm run pricing:stacks`, which prices no cache read, the stack goes from $3.72–$5.76 to $15.03.
+The catalog lists cheaper ZDR upstreams outside China, for example `deepinfra` at $0.14 / $0.42 and
+`morph` at $0.022 / $0.60; your gateway's Provider Allowlist decides which one serves you.
+
+`european-open-weights` is the answer to bloc lock-in. It is open weights, as the Chinese stack is,
+from a European lab, and every stack role is served by that lab under zero retention (two call
+paths skip the target; see [the European stack](#the-european-stack)). At $0.15 / $0.60 it sits between
+the other two on the illustrative month ($7.53). It has one provider and a 262,144-token window, a
+quarter of the other stacks' windows.
 
 **Compaction runs on `primary`, not on `utility`.** eve cannot summarise with an authored
 compaction model while this agent's turn model is dynamic — it resolves that slot through the

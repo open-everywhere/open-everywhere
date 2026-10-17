@@ -972,6 +972,7 @@
     "mayReceiveReply",
     "memoryLineForReader",
     "memoryRefs",
+    "mergeDataPolicy",
     "mintInstallationToken",
     "mintRotationToken",
     "mintWakeId",

@@ -9,6 +9,7 @@ import {
   DEFAULT_MODEL_VIA,
   dataPolicyActive,
   dataPolicyRows,
+  mergeDataPolicy,
   getSettings,
   hostPlaneFetch,
   hostPlanePolicy,
@@ -118,7 +119,7 @@ export function withDataPolicy<T extends ProviderOptionsCarrier>(options: T, p: 
 }
 
 function demandsAnything(t: ModelTarget | undefined, p: ModelDataPolicy): boolean {
-  return dataPolicyActive(p) || (t?.providers?.only?.length ?? 0) > 0;
+  return dataPolicyActive(p) || (t?.providers?.only?.length ?? 0) > 0 || (t?.dataPolicy !== undefined && dataPolicyActive(t.dataPolicy));
 }
 
 export function demandLabel(p: ModelDataPolicy, t?: ModelTarget, via: string = DEFAULT_MODEL_VIA): string {
@@ -126,13 +127,20 @@ export function demandLabel(p: ModelDataPolicy, t?: ModelTarget, via: string = D
   if (dataPolicyActive(p)) parts.push(`models.dataPolicy (${dataPolicyRows(p).join(", ")})`);
   const only = t?.providers?.only;
   if (only !== undefined && only.length > 0) parts.push(`models.targets.${via}.providers.only (${only.join(", ")})`);
+  if (t?.dataPolicy !== undefined && dataPolicyActive(t.dataPolicy)) parts.push(`models.targets.${via}.dataPolicy (${dataPolicyRows(t.dataPolicy).join(", ")})`);
   return parts.join(" + ");
 }
 
-export function withTargetRows<T extends ProviderOptionsCarrier>(options: T, t: ModelTarget | undefined, p: ModelDataPolicy, via: string = DEFAULT_MODEL_VIA): T {
+export function withTargetRows<T extends ProviderOptionsCarrier>(options: T, t: ModelTarget | undefined, global: ModelDataPolicy, via: string = DEFAULT_MODEL_VIA): T {
   const floor = t?.options;
   const only = t?.providers?.only;
   const order = t?.providers?.order;
+  let p: ModelDataPolicy;
+  try {
+    p = mergeDataPolicy(global, t?.dataPolicy);
+  } catch (err) {
+    throw new Error(`models.targets.${via}.dataPolicy: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
   if (floor === undefined && only === undefined && order === undefined && !dataPolicyActive(p)) return options;
   const gw = (options.providerOptions?.["gateway"] ?? {}) as Record<string, unknown>;
   const merged: Record<string, unknown> = { ...floor, ...gw };
@@ -141,7 +149,7 @@ export function withTargetRows<T extends ProviderOptionsCarrier>(options: T, t: 
     const own = Array.isArray(gw["only"]) ? (gw["only"] as unknown[]) : undefined;
     const allowed = own === undefined ? [...only] : own.filter((s): s is string => typeof s === "string" && only.includes(s));
     if (allowed.length === 0) {
-      throw new Error(`${demandLabel(p, t, via)}: the call's own provider list (${(own ?? []).join(", ")}) shares no provider with the target's, so it refuses`);
+      throw new Error(`${demandLabel(global, t, via)}: the call's own provider list (${(own ?? []).join(", ")}) shares no provider with the target's, so it refuses`);
     }
     merged["only"] = allowed;
   }
