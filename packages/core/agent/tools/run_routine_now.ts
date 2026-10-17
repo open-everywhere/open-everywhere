@@ -17,7 +17,7 @@ function runNowThrottleKey(routineId: string): string {
 
 export default defineTool({
   description:
-    "Run an existing routine ONCE right now, off its schedule, without changing the schedule. Get the id from list_routines. Use when someone wants to test a routine they just set up, or wants today's run early ('run the digest now'). It does NOT run instantly: it moves the routine to due, and the scheduler picks it up within a few minutes — say that in plain words rather than claiming it has run. The routine keeps its cadence, its history and its run state; the next scheduled run is unaffected. Rate-limited to one manual run per routine per few minutes.",
+    "Run an existing routine ONCE right now, off its schedule, without changing the schedule. Get the id from list_routines. Use when someone wants a REAL run early ('run the digest now'): it posts and writes for real. To try a routine they just set up or edited without it changing anything, use test_routine instead. It does NOT run instantly: it moves the routine to due, and the scheduler picks it up within a few minutes — say that in plain words rather than claiming it has run. The routine keeps its cadence, its history and its run state; the next scheduled run is unaffected. Rate-limited to one manual run per routine per few minutes.",
   inputSchema: z.object({
     id: z.string().min(1).describe("The routine id, e.g. 'r-1a2b3c4d' (from list_routines)."),
   }),
@@ -34,6 +34,7 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const id = input.id.trim();
 
+    // principal-gate: presence — the documented loop guard. A fire re-triggering a fire is a loop with no
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(

@@ -18,6 +18,7 @@ import { auditFireAttrsSent } from "../routines/fire-carriage.js";
 import { checkBound } from "../routines/bound.js";
 import { attentionCountPatch, countsTowardCheckIn } from "../routines/attention.js";
 import { applyRoutineAttention, type RoutineAttentionDeps } from "./routine-attention.js";
+import { dispatchTestRuns, type TestRunPost } from "./routine-test-run.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
 import { getRoutine, listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
@@ -75,6 +76,7 @@ export async function dispatchTick(
     readonly confirmTeamsCreatorActive?: TeamsAccountActiveCheck;
     readonly fireWindow?: FireWindowDeps;
     readonly attention?: RoutineAttentionDeps;
+    readonly testRunPost?: TestRunPost;
   },
 ): Promise<void> {
   const { to, waitUntil, appAuth } = args;
@@ -88,6 +90,23 @@ export async function dispatchTick(
     log(`tick skipped — store read failed: ${String(err)}`);
     return;
   }
+
+  const tests = await dispatchTestRuns(all, {
+    to,
+    waitUntil,
+    appAuth,
+    now,
+    cap: routineMaxConcurrency(),
+    confirmInternal,
+    ...(args.confirmCreatorInternal ? { confirmCreatorInternal: args.confirmCreatorInternal } : {}),
+    ...(args.confirmRoomMembership ? { confirmRoomMembership: args.confirmRoomMembership } : {}),
+    ...(args.confirmCreatorActive ? { confirmCreatorActive: args.confirmCreatorActive } : {}),
+    ...(args.testRunPost ? { post: args.testRunPost } : {}),
+  }).catch((err: unknown) => {
+    log(`test runs skipped: ${String(err)}`);
+    return { fired: 0, refused: 0 };
+  });
+  if (tests.fired + tests.refused > 0) log(`tick: ${tests.fired} test run(s) started, ${tests.refused} refused`);
 
   const due = all
     .filter((r) => r.status === "active" && isClockScheduled(r.trigger) && isDue(r.nextRunAt, now))

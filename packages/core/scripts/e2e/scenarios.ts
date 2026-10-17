@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
 import { capFixtureFor, resolveCapFixtureCap, roomIdFor } from "./fixture-inventory-lib.js";
 import { A2A_AGENTS_FILE, loadAppA2aAgents, loadAppSpendBudgets } from "./app-config.js";
@@ -6220,6 +6220,83 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const restore = await synthetic.slash("watch less", { teamId });
       ctx.gate(restore.status === 200 && watchDialAnswerSets(decodeSlackEphemeralText(restore.body), "less"), `S-DOING: the dial is restored to less (HTTP ${restore.status})`);
+    },
+  },
+
+  {
+    id: "S-ROUTINE-TEST",
+    title: "Routine test run (OPE-2515): a requested test runs the routine once in its own thread, blocks its write, posts a summary of it, and moves nothing on the routine",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 2_400_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-ROUTINE-TEST gates on routine.test_fired, routine.test_blocked and routine.fire rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const dbUrl = process.env.DATABASE_URL;
+      if (!dbUrl) {
+        return ctx.fixtureMissing("S-ROUTINE-TEST seeds its routine through the operational store. Set DATABASE_URL to the deployment's database — the same URL the window rotate uses.");
+      }
+      const store = await wireNeonOperationalStore(dbUrl);
+      const slack = ctx.slack!;
+      const org = process.env[ENV.org]?.trim() || "default";
+      const { userId, teamId } = await slack.identity();
+      const word = factToken("rtest");
+      const posted = distinctFactToken("rtpost", [word]);
+      const now = new Date();
+      const nextRunAt = new Date(now.getTime() + 365 * 24 * 60 * 60_000).toISOString();
+      const id = newRoutineId();
+      const testId = `t-${randomBytes(4).toString("hex")}`;
+      const sinceIso = await presenceSince(ctx, "S-ROUTINE-TEST seed");
+      await store.addRoutine({
+        id,
+        org,
+        surfaceKey: `slack/${teamId}/${slack.channelId}`,
+        target: { channelId: slack.channelId },
+        trigger: { kind: "interval", everyMinutes: 1440 },
+        prompt: `Use the post_message tool to post the word ${posted} into this channel. Then answer with the single word ${word}.`,
+        createdBy: userId,
+        createdAt: now.toISOString(),
+        status: "active",
+        nextRunAt,
+        consecutiveFailures: 0,
+        testRun: { id: testId, requestedBy: userId, requestedAt: now.toISOString() },
+      });
+      ctx.log(`S-ROUTINE-TEST: seeded routine ${id} with test ${testId}, next real run ${nextRunAt}`);
+      try {
+        const started = await pollOptional(
+          async () => (await read({ sinceIso, actions: ["routine.test_fired"], limit: 50 })).find((r) => r.detail?.["test"] === testId),
+          { timeoutMs: 1_500_000, initialDelayMs: 30_000, maxDelayMs: 60_000, what: "S-ROUTINE-TEST: the routine.test_fired row" },
+        );
+        ctx.gate(started !== undefined, "S-ROUTINE-TEST: the dispatcher took the test request within two ticks (a routine.test_fired row)");
+        ctx.gate(started!.detail?.["started"] === true, `S-ROUTINE-TEST: the test started (routine.test_fired started:true, reason ${String(started!.detail?.["reason"] ?? "none")})`);
+
+        const root = (await slack.history((Date.parse(sinceIso) / 1000).toFixed(6))).find((m) => m.text.startsWith("🧪 Test run of"));
+        ctx.gate(root !== undefined, "S-ROUTINE-TEST: the host posted the test's thread root in the routine's channel");
+        const summary = await pollOptional(
+          async () => (await slack.replies(root!.ts)).find((m) => m.text.startsWith("🧪 Test run of") && m.ts !== root!.ts),
+          { timeoutMs: 600_000, initialDelayMs: 10_000, maxDelayMs: 20_000, what: "S-ROUTINE-TEST: the summary in the test thread" },
+        );
+        ctx.gate(summary !== undefined, "S-ROUTINE-TEST: the test thread ends with the host-written summary");
+        const thread = await slack.replies(root!.ts);
+        ctx.gate(thread.some((m) => m.text.includes(word)), "S-ROUTINE-TEST: the run's answer landed in the test thread");
+
+        const blocked = (await read({ sinceIso, actions: ["routine.test_blocked"], limit: 100 })).filter((r) => r.detail?.["test"] === testId);
+        ctx.gate(blocked.some((r) => r.detail?.["tool"] === "post_message"), `S-ROUTINE-TEST: the run's post_message call was blocked and recorded (${blocked.length} routine.test_blocked row(s))`);
+        ctx.gate(summary!.text.includes("post message"), "S-ROUTINE-TEST: the summary names the blocked post");
+        const topLevel = (await slack.history((Date.parse(sinceIso) / 1000).toFixed(6))).filter((m) => m.threadTs === undefined || m.threadTs === m.ts);
+        ctx.gate(!topLevel.some((m) => m.text.includes(posted)), "S-ROUTINE-TEST: the blocked post never reached the channel");
+
+        const fires = (await read({ sinceIso, actions: ["routine.fire"], limit: 100 })).filter((r) => r.detail?.["routineId"] === id);
+        ctx.gate(fires.length === 0, `S-ROUTINE-TEST: a test is not a run — no routine.fire row (${fires.length})`);
+        const row = (await store.listRoutines(org, `slack/${teamId}/${slack.channelId}`)).find((r) => r.id === id);
+        ctx.gate(row?.nextRunAt === nextRunAt && row?.lastRunAt === undefined && row?.testRun === undefined, "S-ROUTINE-TEST: the schedule did not move, and the request was consumed");
+      } finally {
+        await store.updateRoutine(org, `slack/${teamId}/${slack.channelId}`, id, { status: "disabled", disabledReason: "e2e: S-ROUTINE-TEST cleanup", nextRunAt: null }).catch(() => undefined);
+      }
     },
   },
 

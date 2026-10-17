@@ -69,6 +69,9 @@ import { recordConsentDetour, type ConsentOrigin, type ConsentResumeRecord } fro
 import { rememberWorkSignIn, type WorkSignInNote } from "../channels/work-sign-in-note.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
 import { currentSessionId } from "../identity/binding.js";
+import { routineTestStamped, testRunBlockedMessage } from "../routines/test-run.js";
+import { recordBlockedCall, type BlockedCallRecorder } from "../access/test-run-fence.js";
+import { noteTestRunBlocked } from "../access/test-run-state.js";
 import { delegatedNonMemberWakeThisTurn, delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
 import {
   connectorAuthRequiredThisTurn,
@@ -745,6 +748,7 @@ export interface UnattendedConnectorFenceDeps {
   readonly audit?: typeof appendAudit;
   readonly tainted?: () => boolean;
   readonly toolHints?: typeof connectorOpToolHints;
+  readonly recordTestBlocked?: BlockedCallRecorder;
 }
 
 async function routinePermissionExists(org: string, grantKey: string, kind: string, nowIso: string): Promise<boolean> {
@@ -827,6 +831,12 @@ export function withUnattendedConnectorFence(
     const seamTier = effectiveConnectorOpTier(ctx.toolName, undefined, hints);
     const tier = joinConnectorOpTiers(baseTier, seamTier);
     if (tier === "read") return decision;
+    const testRun = routineTestStamped((ctx.session?.auth?.current ?? ctx.session?.auth?.initiator)?.attributes);
+    if (testRun !== null) {
+      noteTestRunBlocked();
+      await callAsync(() => (deps.recordTestBlocked ?? recordBlockedCall)(testRun, ctx.toolName, ctx.toolInput), undefined);
+      return { type: "denied", reason: testRunBlockedMessage(ctx.toolName) };
+    }
     const seamBelowBuiltIn = tier !== seamTier;
     if (!decisionWouldPrompt(decision) && !seamBelowBuiltIn) return decision;
     const poisoned = taintedOrPoisoned(tainted);

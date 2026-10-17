@@ -26,6 +26,8 @@ const NATIVE_QUESTION_TOOL = "ask_question";
 const WORK_QUESTION_TOOL = "ask_room";
 import { restrictToolsetForWorkerSeat } from "./worker-seat.js";
 import { currentHaltStamp } from "./halt-state.js";
+import { currentTestRun } from "./test-run-state.js";
+import { fenceToolsetForTestRun } from "./test-run-fence.js";
 import { currentWorkerWake } from "./worker-seat-state.js";
 import { restrictToolsetForInvokerPosture } from "./invoker-posture.js";
 import { currentInvokerPosture } from "./invoker-posture-state.js";
@@ -277,6 +279,9 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
       };
     }
   }
+
+  const testRun = currentTestRun();
+  if (testRun !== null) fenceToolsetForTestRun(toolset, testRun);
 }
 
 const HOOK_KEY = "__oeToolResultProjection";

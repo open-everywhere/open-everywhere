@@ -21,6 +21,7 @@ import type { Partition } from "../memory/partition.js";
 import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
+import { testRunOffer } from "../routines/test-run.js";
 
 const CARD_PROMPT_CHARS = 600;
 
@@ -98,7 +99,7 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
         ...(isJobRoutine(updated) ? { jobSeatRotated: true } : {}),
       },
     });
-    return `${routineWords(args.description)} now follows the new instruction; it asks again before anything it was allowed before`;
+    return `${routineWords(args.description)} now follows the new instruction; it asks again before anything it was allowed before${testRunOffer(updated)}`;
   },
 };
 

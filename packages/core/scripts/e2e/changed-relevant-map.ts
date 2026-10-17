@@ -102,8 +102,19 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "routines",
     globs: ["packages/core/agent/routines/**", "packages/core/agent/tools/*_routine*.ts", "packages/core/agent/tools/*routine*.ts"],
-    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE"],
-    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/declared-permissions.ts), so a change to the grant key or the declare vocabulary reds it.",
+    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-ROUTINE-TEST"],
+    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/declared-permissions.ts), so a change to the grant key or the declare vocabulary reds it; S-ROUTINE-TEST (OPE-2515) is the only leg on a test run, so a change to the test stamp or the allow list (routines/test-run.ts) reds it.",
+  },
+  {
+    area: "routine-test-run",
+    globs: [
+      "packages/core/agent/schedules/routine-test-run.ts",
+      "packages/core/agent/hooks/routine-test-run.ts",
+      "packages/core/agent/access/test-run-fence.ts",
+      "packages/core/agent/access/test-run-state.ts",
+    ],
+    scenarios: ["S-ROUTINE-TEST"],
+    why: "S-ROUTINE-TEST (OPE-2515) is the only live leg on a routine test run: the dispatcher starts it in its own thread, the toolset fence blocks the run's write on a real model turn, and the hook posts the summary. `test:routine-test-run` drives the same road offline.",
   },
   {
     area: "webhooks",

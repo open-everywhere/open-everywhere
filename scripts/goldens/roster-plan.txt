@@ -49,6 +49,7 @@ agent/hooks/requester-identity.ts	mounted @open-everywhere/core
 agent/hooks/requester-messages.ts	mounted @open-everywhere/core
 agent/hooks/routine-outcome.ts	mounted @open-everywhere/core
 agent/hooks/routine-silence.ts	mounted @open-everywhere/core
+agent/hooks/routine-test-run.ts	mounted @open-everywhere/core
 agent/hooks/sandbox-lifecycle.ts	mounted @open-everywhere/adapters
 agent/hooks/session-park.ts	mounted @open-everywhere/core
 agent/hooks/spawn-taint.ts	mounted @open-everywhere/core
@@ -179,6 +180,7 @@ agent/tools/spawn_thread_session.ts	mounted @open-everywhere/core
 agent/tools/spend_report.ts	mounted @open-everywhere/core
 agent/tools/stand_down.ts	mounted @open-everywhere/core
 agent/tools/subscribe_pr.ts	mounted @open-everywhere/core
+agent/tools/test_routine.ts	mounted @open-everywhere/core
 agent/tools/unlink_identity.ts	mounted @open-everywhere/core
 agent/tools/update_status.ts	mounted @open-everywhere/core
 agent/tools/usage_report.ts	mounted @open-everywhere/core

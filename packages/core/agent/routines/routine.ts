@@ -4,6 +4,7 @@ import { ROUTINE_PERMISSION_PREFIX } from "./permission-key.js";
 import type { RoutinePolicyRule } from "./policy.js";
 import type { RoutineFollowUp } from "./follow-ups.js";
 import type { ModelRole } from "../memory/domain.js";
+import type { RoutineTestRequest } from "./test-run.js";
 
 export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
@@ -65,6 +66,7 @@ export interface Routine {
   disabledReason?: string;
   promptGeneration?: number;
   manualRunAt?: string;
+  testRun?: RoutineTestRequest;
   nextRunAt?: string | null;
   lastRunAt?: string;
   lastOutcome?: RunOutcome;

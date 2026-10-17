@@ -49,6 +49,7 @@ cancel-and-recreate they replace:
 | Ask | Verb | What happens |
 | --- | --- | --- |
 | "show me what it'll actually say" | *(no verb needed)* | `create_routine` returns a **preview**: the exact message the first fire will receive, protocol block and all, rendered by the same code the dispatcher uses. |
+| "test it first — what would it post?" | `test_routine` | Runs the routine **once as a test**, in a new thread in this room. The real reads and the real model run, but every write is blocked and nothing is posted outside that thread. The thread ends with a list of the writes it would have made. See [Test it before it runs](#test-it-before-it-runs). |
 | "run the digest now, don't wait for 9am" | `run_routine_now` | Brings the next run forward without touching the schedule. It isn't instant — the routine becomes *due* and the scheduler picks it up **within about 10 minutes** — and it's limited to one manual run per routine per few minutes. |
 | "change what it says" | `edit_routine` | Proposes a card showing the **old and new text side by side**. Confirming rewrites the instruction and keeps the schedule, the id, the run history, a watch's baseline and a job's progress. ⚠️ It also **revokes any standing approvals** the routine had built up, so it goes back to asking. |
 | "start it again, I've fixed the problem" | `enable_routine` | Proposes a card naming **why it stopped**. Confirming re-arms it in place, clears the strike counter, and keeps everything it had learned. |
@@ -62,6 +63,50 @@ Two deliberate refusals worth knowing: a **finished job** (one that called `comp
 re-armed or edited — completion is terminal, not a pause — and a **spent one-shot** can't be
 re-armed either, because there is no future instant left for it to fire at. In both cases the answer
 is a fresh routine.
+
+### Test it before it runs
+
+A routine runs with nobody watching, and it was written before anybody saw it run. So when a routine
+is created or edited, the confirmation ends with *say “test it” to run it once with every write
+blocked*. Ask for it, and `test_routine` runs the routine **once as a test**:
+
+- It starts within one dispatcher tick (about 10 minutes), like `run_routine_now`. It starts whether
+  or not the routine is due, and it also works on a routine that is turned off.
+- It posts a thread root in the routine's own room — *🧪 Test run of the routine …, asked by you* — and
+  runs the routine into that thread. The routine's real [pre-run reads](#pre-run-data-collection)
+  and the real model run, with the fire message a real run gets. If its
+  [condition gate](#condition-gates) says the real run would skip now, the root says so, and the test
+  runs anyway.
+- **It blocks every write.** Only reads run: reads of rooms, threads, files, tickets and pages,
+  connector operations whose tier is `read`, and the answer in the test thread itself. Every other tool
+  call is stopped before it runs, and the run is told to carry on as if it had worked. That includes a
+  write the routine has a [declared permission](#what-a-routine-may-do-on-its-own) for, `bash`, a file
+  edit, a file post, a reaction, a status update, and the routine's own bookkeeping
+  (`record_watch_state`, `report_run_failed` and the rest). A blocked connector write posts no
+  permission card. A tool that eve runs as a workflow, such as `ask_question`, cannot be stopped at
+  the call, so the test takes it away instead, and the list does not name it.
+- **It ends with a host-written list** in the thread: *It would have made these writes. I blocked all
+  of them, so nothing was changed*, with one line for each write and a short quote of what it would
+  have written. When the run tried no writes, it says that instead. When the list cannot be read back,
+  it says that, and never "it tried no writes".
+- **A test that cannot start says so in the room**, in one top-level line that names why: the routine
+  cannot be tested, its creator is no longer in the room, the deployment is halted, or its spending
+  limit is reached. The creator check is the one a real run meets.
+- **It changes nothing on the routine.** The schedule, the last run, the run count, the
+  [check-in](#when-nobody-checks-in-keep-going-or-it-pauses) count and the failure count stay as they
+  were. A failed test is not a strike.
+
+Some limits are deliberate:
+
+- **Slack only, for now.** The test needs a thread of its own to run in, and the durable-job thread is
+  the same Slack-only mechanism.
+- **An event routine cannot be tested.** It runs on an event, and a test has no event to give it.
+- **A finished job cannot be tested.** Completion is terminal.
+- **One test per routine per dispatcher tick.** A second request inside that window is refused.
+- **A person asks for a test.** A routine fire has no acting sender, so it cannot start a test of
+  itself or of another routine.
+- **What it reads is real.** A test reads the same rooms, pages and tickets a real run reads, and it
+  spends model tokens under the same [spend cap](#spend-caps). It does not change them.
 
 ### When nobody checks in: Keep going, or it pauses
 
@@ -174,7 +219,8 @@ on a card.
 files the same way an attended turn does. Read the rest of this section as being about **connector
 ops**, the gate this page describes in detail.
 
-**This includes a fire you asked for yourself.** `run_routine_now` does not run the routine in your
+**This includes a fire you asked for yourself.** (To see what a run would do without letting it do
+it, use a [test run](#test-it-before-it-runs) instead.) `run_routine_now` does not run the routine in your
 conversation — it moves the schedule forward, and the dispatcher fires it exactly as the clock would.
 That fire carries the same unattended marker, so it refuses on the same terms even though you are
 sitting right there. Declare the permission on the creation card, or do the work in the conversation.
@@ -1588,6 +1634,7 @@ and asking the agent `list_routines` reads them back:
 | `routine.skip` | it was due/matched but not dispatched | It didn't run, and why: `over_budget`, `unresolved_target` (no wired channel), `fanout_cap` (an event matched more routines than the per-delivery cap, `routines.eventMaxFanout`, shipped 3), `filter_invalid`, `grant_refused`, `grant_drift`, `audience_floor`, `creator_removed_from_room` (the clock leg, Slack and Teams — the creator is no longer a member of the room this fire posts into), `creator_account_inactive` (the clock leg, Slack and Teams — the creator's account is deactivated/deleted, or on Teams disabled in Entra), `halted` (a break-glass halt covers this routine's address — the deployment's posture, not the routine's mistake, so the routine stays armed and fires again once an admin runs `resume`), or `condition_gate` (its declared condition gate said no — the row names the gate and the one line the predicate gave, and it is the only place a human learns why a healthy-looking routine has not run). |
 | `routine.eligibility_unresolved` | a creator-eligibility check could not answer, so it did not block the fire | This fire was **not** really checked, which check it was, and why. Today the Teams room-membership check writes it, with a closed-set cause: `read_error` (a Graph call that failed — network, 5xx, or a permission the install lacks), `team_id_unresolved` (the Bot Connector could not give the team's Microsoft 365 group id), `roster_incomplete` (the roster is past the probe's page bound, so the creator was neither found nor ruled out), `malformed_response`, `no_provider`, or `missing_ids`. A fire that WAS checked writes nothing, so the row's presence is the signal — without it a fail-open and a pass leave the same trace, which is none. The row says the fire was not CHECKED, never that it ran: a later gate on the same tick (the spend cap) can still decline it, and that decline writes its own `routine.skip`. Throttled like `routine.skip`. |
 | `routine.run_now` | somebody asks for a fire with `run_routine_now` | Who asked, and when. It records the REQUEST. The fire that follows writes its own `routine.fire` row carrying `manual: true`, so a request that never becomes a run is visibly a request with no fire. |
+| `routine.test_requested` / `routine.test_fired` / `routine.test_blocked` | somebody asks for a [test run](#test-it-before-it-runs), the dispatcher starts it, and the test blocks a write | Who asked; whether the test started, or why not (`not-testable`, `unresolved-target`, `halted`, `creator_removed_from_room`, `creator_account_inactive`, `over-budget`, `root-post-failed`); and one row per blocked write, with the tool and a short description. A test writes no `routine.fire` row, because it is not a run. |
 | `routine.collect_failed` | a fire's declared [pre-run collectors](#pre-run-data-collection) did not all collect | The run could not look. Names each collector and a closed-set reason — refused for a permission the routine does not hold, unknown to this deployment's config, broken at the read, or broken AROUND the reads before this collector ran (the collection step itself failed) — plus the recorded cause of a read that threw. The fire still happened, unless the routine also declares a condition gate: a collection that broke as a whole fails that gate closed, and this row is then the only record. Throttled like `routine.skip`. |
 | `routine.fire_lost` | the delivery itself was rejected | It was dispatched but never started — an archived channel, a kicked bot, an API failure. The row says explicitly that there is no session id. |
 | `routine.stalled` | a fire was refused a consequential tool by a [cost checkpoint](../security/spend-and-cost.md) | It ran but couldn't act, and which tool it was refused. One row per blocked fire, not per refused tool. Without it a job's second and later blocked fires wrote nothing at all — `checkpoint.trip` is once per session, and a durable job's fires share one session. |
@@ -2522,6 +2569,37 @@ fire then dry-runs: nothing is posted and the schedule does not advance.
 
 `canDispatchRoutinesOn` is the create-time half. Creation **refuses** a routine on a platform with no
 registered post-back resolver, so a routine that could only ever dry-run is never armed.
+
+### The test fire
+
+`dispatchTestRuns` (`packages/core/agent/schedules/routine-test-run.ts`) runs first in every tick. It
+takes each routine whose row carries a `testRun` request, claims it with a compare-and-set on the
+test id (so two overlapping ticks cannot both start it), clears the request on the live row, and
+meets the same halt, creator check, live trust recheck and spend gate a real fire meets. It then runs `runPreFire`,
+posts the thread root, and sends the fire NATIVE into that thread. It never takes the window divert,
+because a test needs a session that is a test from its first turn to its last.
+
+The bag is the real fire bag from `routineFireAttributes`, plus `thread_ts` and two host-set stamps:
+`open_everywhere_routine_test` (the test id) and `open_everywhere_routine_test_by` (the asker). The
+stamps drive four things:
+
+- `hooks/routine-test-run.ts` marks the session at `turn.started`. The mark is sticky, so a later reply
+  in the test thread stays fenced. A mark that cannot be written cancels the turn.
+- `access/test-run-fence.ts` runs at the toolset projection before every model call. It replaces
+  `execute` on every tool outside `TEST_RUN_OPEN_TOOLS` (`routines/test-run.ts`) with a stub that
+  writes a `routine.test_blocked` row and throws. The list is default-deny: a tool it does not name is
+  blocked. `connection_execute` is decided per call, by the tier of the operation it names, and a
+  reserved `grant__…` name is always blocked. A blocked tool with no `execute` (a workflow tool) is
+  removed from the toolset.
+- The connector fence (`connections/connector-auth.ts`) refuses a connector write or delete from a
+  test fire before a declared permission can lift it or a permission card can post.
+- `hooks/routine-outcome.ts` folds no outcome for a test fire, and `spend/checkpoint.ts` records no
+  stall for one.
+
+At the end of the root turn, the hook reads the test's `routine.test_blocked` rows and posts the
+summary into the thread. A compare-and-set on the test id makes it once per test, across a redelivered
+turn end too. The root session also counts the calls it blocked. When that count is larger than the
+rows read back, the summary says how many could not be listed.
 
 ## Pre-fire collection and the gate, in order
 

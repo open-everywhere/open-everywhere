@@ -21,6 +21,7 @@ import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import type { ModelRole } from "../memory/domain.js";
 import { registerActionKind } from "./actions.js";
+import { testRunOffer } from "../routines/test-run.js";
 import type { ActionKind } from "./types.js";
 
 export interface RoutineCreateArgs {
@@ -188,7 +189,8 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
     return (
       `routine started, runs ${triggerWords(args.trigger)}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
       `${armed.length > 0 ? `; may use ${armed.map(toolWords).join(", ")} without asking` : ""}` +
-      `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}`
+      `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}` +
+      testRunOffer(routine)
     );
   },
 };

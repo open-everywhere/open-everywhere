@@ -5,8 +5,8 @@ manual that documents each one. It is an audit artefact, not a guide. It reads f
 outward, so a behaviour the manual never mentions still gets a row. A row marked **UNDOCUMENTED**
 is a gap in the manual, never a gap in the code. No row carries that mark today.
 
-229 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
-(113 rows), the machinery that registers and checks that roster (20), per-seat tool availability
+230 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
+(114 rows), the machinery that registers and checks that roster (20), per-seat tool availability
 (21), the two MCP servers — control with 40 verbs and 11 HTTP routes, ops with 9 verbs — and the
 `/oe` commands (7). Three sections carry rows beyond their verbs: the route section adds one for the token
 family that arms the read routes, the ops section four for server-wide properties, and the command
@@ -197,6 +197,7 @@ page states them as plain text instead.
 | TOOL-subscribe_pr | `subscribe_pr` | Subscribe this channel to a GitHub pull request: re-checks it on an interval (default 15 min) and posts here when something changes — reviews, comments, new commits, CI going red or green, merged or… | `packages/core/agent/tools/subscribe_pr.ts:249` | open | worker only | `docs/capabilities/connectors-and-providers.md#a-notion-read-never-answers-use-my-own-account-with-the-team-integration` (+5) | ? |
 | TOOL-task_cancel | `task_cancel` | Stop delegated work this session itself spawned. eve validates the ids against this session's own receipts. | eve framework | open | lean seat | `docs/how-it-works/agent-and-loop.md#stopping-a-turn` (+2) | ? |
 | TOOL-task_wait | `task_wait` | Park this turn until one of this session's own tasks settles. eve injects it beside `task_cancel` on every session that can start a task and instructs it by name in its own task prompt, so OE exempts it from the per-wake filters as harness-internal rather than stripping half the plumbing. Its own copy still tells a seat not to wait. | eve framework (session-injected) | open | lean seat (harness-internal) | `docs/how-it-works/agent-and-loop.md#stopping-a-turn` (+1) | n/a: unannotated — lane F |
+| TOOL-test_routine | `test_routine` | Run an existing routine ONCE as a TEST, without letting it change anything. | `packages/core/agent/tools/test_routine.ts:36` | open | worker only | `docs/capabilities/proactivity-and-routines.md#test-it-before-it-runs` | ? |
 | TOOL-unlink_identity | `unlink_identity` | Remove a linked account from the caller's own identity link-set — their current account by default, or another account already on their set (platform + nativeId). | `packages/core/agent/tools/unlink_identity.ts:16` | open | DM seat carve-in | `docs/capabilities/connectors-and-providers.md#credential-grants--lending-one-vendor-tool-fixed-to-named-arguments` (+3) | ? |
 | TOOL-update_status | `update_status` | Record your current work status so the team can see it at a glance (it's mirrored to a pinned status message in the channel, shared across all threads). | `packages/core/agent/tools/update_status.ts:15` | open | lean seat; job kit | `docs/how-it-works/agent-and-loop.md#the-toolset-it-works-with` (+1) | ? |
 | TOOL-usage_report | `usage_report` | Activity analytics for your memory domain, or (org admins only) the whole org: conversation count (an estimate — see note), turns, a per-user activity breakdown, and the busiest surfaces, over a time… | `packages/core/agent/tools/usage_report.ts:36` | open | worker only; job kit | `docs/how-it-works/access-and-scoping.md#roles-whos-an-admin` (+2) | ? |

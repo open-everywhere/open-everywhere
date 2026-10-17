@@ -626,6 +626,14 @@
       "types": "./dist/agent/access/tenant-admission.d.ts",
       "default": "./dist/agent/access/tenant-admission.js"
     },
+    "./agent/access/test-run-fence.js": {
+      "types": "./dist/agent/access/test-run-fence.d.ts",
+      "default": "./dist/agent/access/test-run-fence.js"
+    },
+    "./agent/access/test-run-state.js": {
+      "types": "./dist/agent/access/test-run-state.d.ts",
+      "default": "./dist/agent/access/test-run-state.js"
+    },
     "./agent/access/turn-opening-principal.js": {
       "types": "./dist/agent/access/turn-opening-principal.d.ts",
       "default": "./dist/agent/access/turn-opening-principal.js"
@@ -1966,6 +1974,10 @@
       "types": "./dist/agent/hooks/routine-silence.d.ts",
       "default": "./dist/agent/hooks/routine-silence.js"
     },
+    "./agent/hooks/routine-test-run.js": {
+      "types": "./dist/agent/hooks/routine-test-run.d.ts",
+      "default": "./dist/agent/hooks/routine-test-run.js"
+    },
     "./agent/hooks/session-park.js": {
       "types": "./dist/agent/hooks/session-park.d.ts",
       "default": "./dist/agent/hooks/session-park.js"
@@ -2874,6 +2886,10 @@
       "types": "./dist/agent/routines/store.d.ts",
       "default": "./dist/agent/routines/store.js"
     },
+    "./agent/routines/test-run.js": {
+      "types": "./dist/agent/routines/test-run.d.ts",
+      "default": "./dist/agent/routines/test-run.js"
+    },
     "./agent/routines/watch.js": {
       "types": "./dist/agent/routines/watch.d.ts",
       "default": "./dist/agent/routines/watch.js"
@@ -2965,6 +2981,10 @@
     "./agent/schedules/routine-dispatch.js": {
       "types": "./dist/agent/schedules/routine-dispatch.d.ts",
       "default": "./dist/agent/schedules/routine-dispatch.js"
+    },
+    "./agent/schedules/routine-test-run.js": {
+      "types": "./dist/agent/schedules/routine-test-run.d.ts",
+      "default": "./dist/agent/schedules/routine-test-run.js"
     },
     "./agent/schedules/tidy.js": {
       "types": "./dist/agent/schedules/tidy.d.ts",
@@ -3598,6 +3618,10 @@
       "types": "./dist/agent/tools/subscribe_pr.d.ts",
       "default": "./dist/agent/tools/subscribe_pr.js"
     },
+    "./agent/tools/test_routine.js": {
+      "types": "./dist/agent/tools/test_routine.d.ts",
+      "default": "./dist/agent/tools/test_routine.js"
+    },
     "./agent/tools/unlink_identity.js": {
       "types": "./dist/agent/tools/unlink_identity.d.ts",
       "default": "./dist/agent/tools/unlink_identity.js"
@@ -3705,6 +3729,7 @@
     "test:slack-room-membership-pagination": "NODE_NO_WARNINGS=1 tsx scripts/slack-room-membership-pagination-test.ts",
     "test:routine-bound": "NODE_NO_WARNINGS=1 tsx scripts/routine-bound-test.ts",
     "test:routine-attention": "NODE_NO_WARNINGS=1 tsx scripts/routine-attention-test.ts",
+    "test:routine-test-run": "NODE_NO_WARNINGS=1 tsx scripts/routine-test-run-test.ts",
     "test:routine-policy": "NODE_NO_WARNINGS=1 tsx scripts/routine-policy-test.ts",
     "test:fire-principal": "NODE_NO_WARNINGS=1 tsx scripts/fire-principal-test.ts",
     "test:silent-routine": "NODE_NO_WARNINGS=1 tsx scripts/silent-routine-test.ts",

@@ -4,6 +4,7 @@ import { oneAttrValue, routineFireIdStamped, routineManualStamped, routineMarker
 import { foldRoutineOutcome, type RoutineOutcomeMarker } from "../routines/outcome-fold.js";
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { OE_WAKE_ID_ATTR } from "../channels/unified-window.js";
+import { routineTestStamped } from "../routines/test-run.js";
 
 export interface FireBagContext {
   readonly session?: {
@@ -53,6 +54,7 @@ function readFireBag(ctx: FireBagContext): ArmedFire | null {
     | { authenticator?: unknown; principalId?: unknown; principalType?: unknown; attributes?: Record<string, string | readonly string[]> }
     | null;
   if (!isScheduleOriginatedAuth(auth)) return null;
+  if (routineTestStamped(auth?.attributes) !== null) return null;
   const marker = routineMarker(auth?.attributes);
   if (!marker) return null;
   const wakeKey =

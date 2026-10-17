@@ -110,6 +110,7 @@ export const CONTRIBUTIONS = {
     { kind: "tool", name: "revoke_routine_permissions", module: "agent/tools/revoke_routine_permissions.js", summary: "Withdraw a routine's STANDING permissions — the things it was allowed to do unattended without asking — while leaving the routine itself running on its schedule." },
     { kind: "tool", name: "rotate_webhook", module: "agent/tools/rotate_webhook.js", summary: "Issue a signing secret for a webhook that exists here, and send it privately as a one-time link." },
     { kind: "tool", name: "run_routine_now", module: "agent/tools/run_routine_now.js", summary: "Run an existing routine ONCE right now, off its schedule, without changing the schedule." },
+    { kind: "tool", name: "test_routine", module: "agent/tools/test_routine.js", summary: "Run an existing routine ONCE as a test: the real reads and model, every write blocked, a list of what it would have changed." },
     { kind: "tool", name: "sandbox_tools", module: "agent/tools/sandbox_tools.js", summary: "sandbox_tools — the per-GRAIN provider of the six framework sandbox/egress tools: `bash`, `glob`, `grep`, `read_file`, `write_file`, `web_fetch` (window-tool-gating Stage C)." },
     {
       kind: "tool",
@@ -173,6 +174,7 @@ export const CONTRIBUTIONS = {
     { kind: "hook", name: "requester-messages", module: "agent/hooks/requester-messages.js", summary: "REQUESTER-MESSAGE CAPTURE (OPE-318 phase 2) — fills access/requester-messages.ts's per-turn slot from `message.received`, the one hook event that carries the host-normalised text of what the seat was…" },
     { kind: "hook", name: "routine-outcome", module: "agent/hooks/routine-outcome.js", summary: "Routine outcome feedback — closes the loop on proactivity." },
     { kind: "hook", name: "routine-silence", module: "agent/hooks/routine-silence.js", summary: "SILENT-FIRE classification hook (OPE-149) — the one site holding BOTH the delivery auth and the eve context, so it is where a fire's stored `report: {kind:\"silent\"}` becomes the per-turn signal the…" },
+    { kind: "hook", name: "routine-test-run", module: "agent/hooks/routine-test-run.js", summary: "TEST-RUN hook (OPE-2515) — marks a test fire's session so every write is fenced, and posts the host-written summary of the writes it blocked into the test thread." },
     { kind: "hook", name: "session-park", module: "agent/hooks/session-park.js", summary: "SESSION-LIMIT PARK detection (OPE-171) — the observe-and-remedy seam for eve's HITL park." },
     { kind: "hook", name: "spawn-taint", module: "agent/hooks/spawn-taint.js", summary: "THE TURN BOUNDARY for the taint signal — it does TWO things, in this order, and both belong here:" },
     { kind: "hook", name: "spend", module: "agent/hooks/spend.js", summary: "Spend recording — accumulates usage per scope so caps can be enforced and usage observed." },

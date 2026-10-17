@@ -14,6 +14,7 @@ import { requestApproval, postedToSurfaceKey, cardPostFailureReason } from "../a
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { approvalPostDeps, hasApprovalCardPath } from "../tools/set_spend_limit.js";
 import { routineMarker } from "../routines/routine.js";
+import { routineTestStamped } from "../routines/test-run.js";
 import { recordCheckpointStall } from "../routines/outcome-fold.js";
 import "../approvals/session-checkpoint.js";
 import { CHECKPOINT_KIND, CHECKPOINT_GRANT_MEMO, CHECKPOINT_ASK_MEMO, DURABLE_GRANT_DISCLOSURE, checkpointTtlHours, liveGrantDisclosure } from "../approvals/session-checkpoint.js";
@@ -294,8 +295,9 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
   }
 
   const fireAuth = ctx.session?.auth;
-  const marker = routineMarker(fireAuth?.current?.attributes ?? fireAuth?.initiator?.attributes);
-  if (marker) await recordCheckpointStall({ marker, tool: toolName, reason: plan.reason });
+  const fireAttrs = fireAuth?.current?.attributes ?? fireAuth?.initiator?.attributes;
+  const marker = routineMarker(fireAttrs);
+  if (marker && routineTestStamped(fireAttrs) === null) await recordCheckpointStall({ marker, tool: toolName, reason: plan.reason });
 
   const store = getOperationalStore();
   const now = new Date();
@@ -310,6 +312,7 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
   let failureClass: string | undefined;
   if (!alreadyAsked) {
     try {
+      // approval-chain: exempt — `session.checkpoint` is a NON_TOOL_ACTION_KIND, so
       await requestApproval(
         {
           org: plan.org,

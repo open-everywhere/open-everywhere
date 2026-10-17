@@ -111,6 +111,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "edit_routine",
   "enable_routine",
   "run_routine_now",
+  "test_routine",
   "add_routine_rule",
   "remove_routine_rule",
   "revoke_routine_permissions",

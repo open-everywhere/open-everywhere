@@ -107,6 +107,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "edit_routine",
       "enable_routine",
       "run_routine_now",
+      "test_routine",
       "add_routine_rule",
       "remove_routine_rule",
       "revoke_routine_permissions",
