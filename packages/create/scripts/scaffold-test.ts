@@ -40,6 +40,7 @@ interface Manifest {
   devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   overrides?: Record<string, unknown>;
+  scripts?: Record<string, string>;
 }
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 
@@ -286,6 +287,12 @@ ok(
 ok(templateFiles.includes("claude/skills/quickstart-open-everywhere/SKILL.md"), "template: carries the setup skill under `claude/` for the scaffold to rename");
 ok(templateFiles.includes("claude/skills/upgrade-open-everywhere/SKILL.md"), "template: carries the upgrade skill too — the app's second standing procedure (OPE-2232)");
 ok(!templateFiles.some((f) => f === ".env" || f === ".env.local"), "template: carries no env file with values");
+eq(tpl.scripts?.["check:model-config"], "node --import tsx scripts/model-config-check.ts", "template package.json: `check:model-config` runs the template's model config check (OPE-2563)");
+eq(
+  readFileSync(join(TEMPLATE, "scripts", "model-config-check.ts"), "utf8"),
+  readFileSync(join(REFERENCE_APP, "scripts", "model-config-check.ts"), "utf8"),
+  "template: scripts/model-config-check.ts is the repository's own check, byte for byte (OPE-2563)",
+);
 
 {
   const rel = "agent/lib/register-adapters.ts";

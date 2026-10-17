@@ -1,6 +1,6 @@
 ---
 name: quickstart-open-everywhere
-description: Set up, configure or deploy an Open Everywhere app — from a fresh scaffold to an agent that answers in Slack. Use when the user wants to set up Open Everywhere, deploy it, or connect Slack, Notion or GitHub. Two routes are supported, Vercel and Docker, and step 1 is to ask which. Drives the open-everywhere-ops MCP server (preflight, surface_manifest, surface_app_create, scaffold_env, scaffold_credential_key, secret_set/list/rm) and the `@open-everywhere/create --check --json` status report.
+description: Set up, configure or deploy an Open Everywhere app — from a fresh scaffold to an agent that answers in Slack. Use when the user wants to set up Open Everywhere, deploy it, or connect Slack, Notion or GitHub. Two routes are supported, Vercel and Docker, and step 1 is to ask which. Drives the open-everywhere-ops MCP server (preflight, surface_manifest, surface_app_create, scaffold_env, scaffold_credential_key, secret_set/list/rm, sovereignty), the `@open-everywhere/create --check --json` status report and the `npm run check:model-config` model check.
 ---
 
 # Quickstart Open Everywhere
@@ -96,6 +96,56 @@ Re-run both after each step. They are the only answer to "what is left to do": t
 tool. The same step list, written for a human, is
 `https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-steps.md`.
 
+## Check the model config, after every model setting
+
+Run `npm run check:model-config` after the model settings are written, and before the deploy that
+carries them. The Vercel route runs it at its build step, and the Docker route at its model route
+step. Run it again after each change to `models` in `agent/settings/settings.ts` (`dataPolicy`,
+`targets`, `force`), to the stack in `agent/model/stacks.ts`, or to a model route of a domain or a
+role. The command is the same in both homes. For each model, it reads the public list of endpoints
+from the model's target: the AI Gateway, unless `models.targets` names another URL. So it needs the
+network and no credential. It changes nothing.
+
+Read the result to the user in plain words:
+
+- **Exit 0, no `✗` line and no `?` line.** Each model the app can use has a provider that meets
+  every demand. Go on.
+- **A `?` line that says "did not answer", "answered HTTP" or "not in the expected shape".** The
+  check did not run for that model. This is not a green. Fix the network, then run it again. A
+  target URL that "does not serve the endpoints read" (a relay) cannot be checked here: say so.
+- **A `?` line that says a `providers.only` name "serves none of the checked models".** The name is
+  most likely a typo. Show it to the user.
+- **A `?` line that says "does not say whether".** The gateway does not publish that fact, so the
+  demand is unknown. Name the model and the demand to the user, then go on.
+- **Exit 1, a `✗` line.** Each line names one demand and one model. Read it to the user:
+  - `region eu: no provider for deepseek/deepseek-v4.1-flash` (or `zeroRetention`, `noTraining`,
+    `providers.only`): no provider meets the demand. Under it every call of that model fails
+    closed: the call errors, and it never goes to a provider outside the demand. The choices are a
+    stack whose models meet the demand, a wider `providers.only` list, or fewer rows in
+    `models.dataPolicy` or in the target's own `dataPolicy`.
+  - `models.dataPolicy and target <name> name two different regions`: no call can meet both.
+    Keep one region.
+  - `the gateway does not know this model`: correct the model id in the stack or the route.
+  - `models.targets names no such target`: add the target to `models.targets`, or correct the
+    `via` name.
+
+  **Do not deploy on this red.** Let the user pick the fix, then run the check again. One role
+  differs: transcription tries the fallback route that `agent/model/stacks.ts` names when the
+  primary route fails. So a red on the primary transcription model sends the audio to the fallback
+  route. Check that route too.
+
+After the deploy, `--check --host` reads the same check in the `model-route` row of the status
+route. That row names no model, so on a `no` there, run `npm run check:model-config` for the names.
+An app scaffolded before 0.8.0 has no `check:model-config` script: its upgrade notes say how to add it.
+
+## Tell the user where their data lives
+
+Before the first deploy, offer the data map once: `npx oe sovereignty --host vercel` (or
+`--host docker`), or the `sovereignty` ops tool. For each piece of data it says where it lives,
+which region, and which company could be compelled to hand it over. It reads the app's own config
+and changes nothing. Give the user the short version. Run it again after a change to the model
+settings or the store.
+
 ## The Vercel route
 
 1. **Install.** If `node_modules` is missing: `npm install`. Its `postinstall` runs `oe-eve-patch`,
@@ -136,7 +186,8 @@ tool. The same step list, written for a human, is
    `agent/memory/config/domains/org.ts` set `admins: ["slack/<team-id>/<member-id>"]`. Offer to
    commit both edits. They take effect on the next deploy, so make them before it.
    Then OFFER the optional window step below. Do not make it for the user unasked.
-8. **Build.** `npm run build`. It must pass.
+8. **Build.** `npm run build`. It must pass. Then `npm run check:model-config`, and read it as
+   "Check the model config" above says. A `✗` line stops the route here.
 9. **Deployment env.** `.env.local` never ships, so the deployment reads only what you set ON it.
    The names are `OE_CREDENTIAL_ENCRYPTION_KEY`, `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`. The
    Neon integration already set `DATABASE_URL` there, and that one value resolves both stores — so
@@ -181,7 +232,9 @@ Then:
    an **adapter swap in app code**
    (`https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md`),
    which `--check` cannot see: that step stays `missing` on the Docker route either way, so read it
-   and move on rather than chasing a green it cannot give.
+   and move on rather than chasing a green it cannot give. On the gateway, run
+   `npm run check:model-config` once the model settings are written, and read it as "Check the
+   model config" above says. A `✗` line stops the route here.
 5. **Slack app.** Exactly as steps 5–7 of the Vercel route.
 6. **Run it.** The app ships its own `Dockerfile` and `docker-compose.yml`: the image, the egress
    proxy (`deploy/egress-proxy/`), Postgres and its WebSocket bridge. On the server, the user puts

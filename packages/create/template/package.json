@@ -18,6 +18,7 @@
     "pretypecheck": "oe build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "check": "create-open-everywhere --check",
+    "check:model-config": "node --import tsx scripts/model-config-check.ts",
     "ops": "node --import tsx scripts/ops-mcp.ts",
     "env:pipe": "node scripts/env-pipe.mjs"
   },

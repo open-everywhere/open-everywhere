@@ -525,8 +525,10 @@ unknown.
 
 It needs the network, so it is not an offline gate. Three places run it:
 
-- `npm run check:model-config` runs it from a checkout. It exits 1 when a demand cannot be served.
-  Run it before you deploy a change to `models.dataPolicy`, `models.targets` or the stack.
+- `npm run check:model-config` runs it from the app: a clone of this repository, or an app
+  scaffolded at 0.8.0 or later (the template ships the same script). It exits 1 when a demand cannot
+  be served. Run it before you deploy a change to `models.dataPolicy`, `models.targets` or the stack.
+  The setup skill runs it after the model settings are written, before the deploy, and stops on a red.
 - On a deployment, the `model-route` row of `GET /eve/v1/oe/status` carries it. A demand no provider
   can meet turns the row `no`. The route is public, so its detail names no model, provider or target,
   and counts nothing: run `npm run check:model-config` for the names. The answer is cached for ten

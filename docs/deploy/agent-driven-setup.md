@@ -227,7 +227,30 @@ the `--check` report and every later `vercel` command find the project.
 ```bash
 npm run seed:model-catalog   # makes the build offline-safe
 npm run build
+npm run check:model-config   # can every model be served under the model settings?
 ```
+
+The last command reads, for each model the app can use, the public list of endpoints from the
+model's target: the AI Gateway, unless `models.targets` names another URL. It needs the network and
+no credential, and it changes nothing. Each `✗` line names one demand and one model, and the
+command then exits 1. **Do not deploy on this red.** Tell the operator the fix, let them pick, and
+run the check again:
+
+- A `models.dataPolicy` row, a target's own `dataPolicy` row or a `providers.only` list that no
+  provider can meet: every call of that model fails closed. The choices are another stack, a wider
+  `providers.only`, or fewer data policy rows.
+- `models.dataPolicy and target <name> name two different regions`: no call can meet both. Keep one
+  region.
+- `the gateway does not know this model`: correct the model id in the stack or the route.
+- `models.targets names no such target`: add the target, or correct the `via` name.
+
+A `?` line exits 0, but it is not always a green. "Did not answer", "answered HTTP" or "not in the
+expected shape" means the check did not run for that model: fix the network and run it again. A
+`providers.only` name that "serves none of the checked models" is most likely a typo. "Does not say
+whether" is a fact the gateway does not publish, so name it to the operator and go on. The
+transcription role tries its fallback route when the primary route fails, so a red on the primary
+transcription model sends the audio to the fallback. See
+[the live config check](../extending/models-and-gateway.md#the-live-config-check).
 
 Now the step that is easy to miss and silently fatal: **`.env.local` is gitignored and never ships.**
 The hosted functions read the Vercel project's own environment. Set each value for Production, with

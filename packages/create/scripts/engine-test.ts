@@ -547,6 +547,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   ok(/npx oe env set/.test(agents), "template AGENTS.md: names `oe env set` as the door for a secret value (OPE-2396)");
   ok(/--route docker/.test(agents) && /docs\/deploy\/setup-steps\.md/.test(agents), "template AGENTS.md: names the docker route and the reference page");
   ok(!/--goal local|interactive wizard/.test(agents), "template AGENTS.md: names no retired flag");
+  ok(/npm run check:model-config/.test(agents) && /model's target/.test(agents) && /does not know/.test(agents) && /names no target/.test(agents), "template AGENTS.md: names the model config check, where it reads, and its three reds (OPE-2563)");
 
   ok(/## Step 1 — ask which route/.test(skill), "skill: step 1 is the route question");
   ok(/## The Vercel route/.test(skill) && /## The Docker route/.test(skill), "skill: both routes have their own section");
@@ -581,6 +582,26 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   ok(/Neon\s+Auth/.test(skill) && /NEON_AUTH_BASE_URL/.test(skill), "skill: the Vercel route's database step says Neon Auth is not used");
   ok(databaseStep.guide({ cwd: templateDir, env: {} }).instructions.some((l) => /Neon Auth/.test(l) && /does not use it/.test(l)), "databaseStep: the Vercel guide says Neon Auth is not used");
   ok(!databaseStep.guide({ cwd: templateDir, env: {}, route: "docker" }).instructions.some((l) => /Neon Auth/.test(l)), "databaseStep: the Docker guide does not mention Neon Auth (negative control)");
+  const between = (text: string, start: string, end: string, from = 0): string => {
+    const a = text.indexOf(start, from);
+    const b = a < 0 ? -1 : text.indexOf(end, a);
+    assert.ok(a >= 0 && b > a, `skill: "${start}" is followed by "${end}"`);
+    return text.slice(a, b);
+  };
+  const modelSection = between(skill, "## Check the model config", "## Tell the user where their data lives");
+  ok(modelSection.includes("npm run check:model-config"), "skill: a section runs `npm run check:model-config` (OPE-2563)");
+  ok(/after the model settings are written/.test(modelSection) && /models\.dataPolicy|dataPolicy/.test(modelSection) && /stacks\.ts/.test(modelSection), "skill: …after the model settings are written, and names the settings that need it");
+  ok(/fails\s+closed/.test(modelSection) && /Do not deploy on this red/.test(modelSection) && /✗/.test(modelSection), "skill: …explains a red (fails closed, do not deploy)");
+  ok(/does not know this model/.test(modelSection) && /names no such target/.test(modelSection), "skill: …names the two reds a policy change cannot fix (unknown model id, missing target)");
+  ok(/two different regions/.test(modelSection) && /target's own `dataPolicy`/.test(modelSection), "skill: …and the target's own data policy rows, with the region conflict they can cause (OPE-2531)");
+  ok(/did not answer/.test(modelSection) && /This is not a green/.test(modelSection) && /no `\?` line/.test(modelSection), "skill: …and says an unreached gateway is not a green");
+  ok(/fallback route/.test(modelSection), "skill: …and names the transcription fallback, the one role that goes to another model");
+  ok(/model-route/.test(modelSection), "skill: …and ties the deployed `model-route` row back to the command for the names");
+  const vercelBuild = between(skill, "8. **Build.**", "9. **Deployment env.**");
+  ok(vercelBuild.includes("npm run check:model-config"), "skill: the Vercel route's build step runs the model config check, before the deploy step");
+  const dockerModel = between(skill, "4. **Model route.**", "5. **Slack app.**", skill.indexOf("## The Docker route"));
+  ok(dockerModel.includes("npm run check:model-config"), "skill: the Docker route's model route step runs the model config check");
+  ok(/npx oe sovereignty --host vercel/.test(skill) && /`sovereignty` ops tool/.test(skill), "skill: offers the data map (`oe sovereignty`, OPE-2528) before the first deploy");
   for (const line of skill.split("\n").filter((l) => l.includes("env:pipe --"))) {
     ok(/\|/.test(line) || /Never run it bare/.test(line), `skill: every env:pipe line is piped or is the warning itself: ${line.trim().slice(0, 48)}`);
   }

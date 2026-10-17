@@ -89,5 +89,6 @@ roster.config.ts
 roster.lock.json
 scripts/env-pipe.mjs
 scripts/goldens/roster-plan.txt
+scripts/model-config-check.ts
 scripts/ops-mcp.ts
 tsconfig.json

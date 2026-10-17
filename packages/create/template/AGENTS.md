@@ -65,6 +65,13 @@ Setup is yours to drive, with the user's consent at every command. Use the
 - `npx oe build --check` verifies the slot tree without a write, and proves the overlays hold
   only data. Run it before you merge a pull request that changes an overlay.
 - `npm run typecheck` type-checks the app.
+- `npm run check:model-config` reads the list of endpoints for each model from the model's target
+  (the AI Gateway, unless `models.targets` names another URL). It names a demand that no provider
+  can meet, two regions that conflict, a model id the gateway does not know, and a `via` that
+  names no target. Run it after a change to the model settings, before the deploy. It needs the
+  network and no credential.
+- `npx oe sovereignty --host vercel` (or `--host docker`) prints where each piece of the app's data
+  lives, which region, and which company could be compelled to hand it over. It changes nothing.
 - Deploy is a separate, explicit step. On the Vercel route that is `npx vercel deploy --prod`; a
   `git push` does NOT deploy.
 

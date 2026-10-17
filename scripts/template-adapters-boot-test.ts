@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -131,6 +133,60 @@ function floorWiring(table: readonly string[]): Wiring {
   };
 }
 
+function runModelCheck(dir: string): Promise<{ code: number | null; out: string; err: string }> {
+  const line = (JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { scripts: Record<string, string> }).scripts["check:model-config"];
+  assert.ok(line?.startsWith("node "), `the scaffolded app ships a check:model-config script line, got ${JSON.stringify(line)}`);
+  const [, ...args] = line.split(" ");
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [...args, "--json"], { cwd: dir, env: childEnv(dir, {}), stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (c: Buffer) => (out += c.toString("utf8")));
+    child.stderr.on("data", (c: Buffer) => (err += c.toString("utf8")));
+    child.on("close", (code) => done({ code, out, err }));
+  });
+}
+
+async function modelConfigArm(): Promise<void> {
+  let region = "us";
+  const asked: string[] = [];
+  const stub = createServer((req, res) => {
+    asked.push(req.url ?? "");
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ data: { endpoints: [{ provider_name: "stub", has_zdr: true, has_no_training: true, inference_regions: [{ geo_region: region }] }] } }));
+  });
+  await new Promise<void>((up) => stub.listen(0, "127.0.0.1", up));
+  try {
+    const port = (stub.address() as AddressInfo).port;
+    const app = scaffold("model-check-app");
+    const settingsRel = join("agent", "settings", "settings.ts");
+    const settings = readFileSync(join(app, settingsRel), "utf8");
+    const closer = "\n});\n";
+    ok(settings.endsWith(closer) && settings.indexOf("defineSettings({") === settings.lastIndexOf("defineSettings({"), "F: fixture — the template's settings file ends its one defineSettings({ … }) call last");
+    writeFileSync(
+      join(app, settingsRel),
+      `${settings.slice(0, -closer.length)}\n  models: { targets: { gateway: { kind: "vercel-ai-gateway", url: "http://127.0.0.1:${port}" } }, dataPolicy: { region: "eu" } },${closer}`,
+    );
+
+    const red = await runModelCheck(app);
+    eq(red.code, 1, `🔴 F: under region eu, with every provider in us, the scaffolded app's check exits 1 — stdout: ${red.out.slice(0, 2000)} stderr: ${red.err.slice(-2000)}`);
+    const redReport = JSON.parse(red.out) as { met: string; models: { id: string }[]; findings: { met: string; row: string; detail: string }[] };
+    eq(redReport.met, "no", "F: …and its verdict is no");
+    ok(redReport.findings.some((f) => f.met === "no" && f.row === "models.dataPolicy region eu" && /^region eu: no provider for /.test(f.detail)), "F: …and a finding names the region row and the model");
+    ok(redReport.models.length > 0, "F: the check lists the app's resolvable models");
+    for (const m of redReport.models) {
+      ok(asked.some((u) => u === `/v1/models/${m.id}/endpoints`), `F: the check read ${m.id} through the app's own gateway target`);
+    }
+
+    region = "eu";
+    const green = await runModelCheck(app);
+    eq(green.code, 0, "F: NEGATIVE CONTROL — the same app exits 0 once a provider serves eu, so the red follows the settings");
+    eq((JSON.parse(green.out) as { met: string }).met, "yes", "F: …and its verdict is yes");
+  } finally {
+    stub.close();
+  }
+}
+
 eq(defaultAdapterWiring(), undefined, "importing register-defaults.js wires nothing on its own");
 
 try {
@@ -212,6 +268,8 @@ try {
   const eHand = boot(handWired, NEON_ENV, true);
   eq(eHand.wiring, null, "E: the hand-wired copy boots without the product's function");
   eq(eHand.neonQueries, 0, "🔴 E: the hand-wired 0.1.2 gate registers NO Postgres client on DATABASE_URL alone — the drift a one-call copy cannot carry");
+
+  await modelConfigArm();
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
