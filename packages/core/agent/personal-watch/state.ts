@@ -23,6 +23,15 @@ export interface WatchProposalRecord {
   readonly decidedAt?: string;
 }
 
+export type FirstConversationOutcome = "offered" | "declined" | "set-up";
+
+export interface FirstConversationRecord {
+  readonly since: string;
+  readonly surfaceKey: string;
+  readonly outcome?: FirstConversationOutcome;
+  readonly decidedAt?: string;
+}
+
 export type WatchDialSource = "default" | "command" | "app-home";
 
 export interface PersonalWatchState {
@@ -40,6 +49,7 @@ export interface PersonalWatchState {
   readonly nudgesSinceAsk: number;
   readonly proposals: readonly WatchProposalRecord[];
   readonly lastDiscoveryAt?: string;
+  readonly firstConversation?: FirstConversationRecord;
 }
 
 export const NUDGE_LOG_MAX = 20;
@@ -81,6 +91,13 @@ export function parseWatchState(json: string): PersonalWatchState {
       return { fingerprint, summary: strOrUndef(o["summary"]) ?? "", at, ...(outcome ? { outcome } : {}), ...(decidedAt ? { decidedAt } : {}) };
     })
     .filter((p): p is WatchProposalRecord => p !== undefined);
+  const fcRaw = typeof raw["firstConversation"] === "object" && raw["firstConversation"] !== null ? (raw["firstConversation"] as Record<string, unknown>) : undefined;
+  const fcSince = strOrUndef(fcRaw?.["since"]);
+  const fcSurface = strOrUndef(fcRaw?.["surfaceKey"]);
+  const fcOutcome = fcRaw && fcRaw["outcome"] !== undefined ? (fcRaw["outcome"] === "set-up" || fcRaw["outcome"] === "offered" ? fcRaw["outcome"] : "declined") : undefined;
+  const fcDecidedAt = strOrUndef(fcRaw?.["decidedAt"]);
+  const firstConversation: FirstConversationRecord | undefined =
+    fcSince && fcSurface ? { since: fcSince, surfaceKey: fcSurface, ...(fcOutcome ? { outcome: fcOutcome } : {}), ...(fcDecidedAt ? { decidedAt: fcDecidedAt } : {}) } : undefined;
   const told = (Array.isArray(raw["told"]) ? raw["told"] : []).filter((t): t is string => typeof t === "string");
   const silencedRaw = typeof raw["silenced"] === "object" && raw["silenced"] !== null ? (raw["silenced"] as Record<string, unknown>) : {};
   const silenced: Record<string, WatchSilenceReason> = {};
@@ -100,6 +117,7 @@ export function parseWatchState(json: string): PersonalWatchState {
     nudgesSinceAsk: typeof raw["nudgesSinceAsk"] === "number" && raw["nudgesSinceAsk"] >= 0 ? Math.floor(raw["nudgesSinceAsk"]) : 0,
     proposals,
     ...(strOrUndef(raw["lastDiscoveryAt"]) ? { lastDiscoveryAt: strOrUndef(raw["lastDiscoveryAt"])! } : {}),
+    ...(firstConversation ? { firstConversation } : {}),
   };
 }
 
@@ -146,7 +164,12 @@ export async function updatePersonalWatch(
   throw new Error(`the watch row for ${principalKey} changed under three writes in a row`);
 }
 
-export async function enrollPersonalWatch(org: string, principalKey: string, at = new Date().toISOString()): Promise<"enrolled" | "already" | "failed"> {
+export async function enrollPersonalWatch(
+  org: string,
+  principalKey: string,
+  at = new Date().toISOString(),
+  opts: { readonly firstDm?: string } = {},
+): Promise<"enrolled" | "already" | "failed"> {
   try {
     let enrolled = false;
     await updatePersonalWatch(
@@ -155,7 +178,7 @@ export async function enrollPersonalWatch(org: string, principalKey: string, at 
       (current, existed) => {
         if (existed) return undefined;
         enrolled = true;
-        return current;
+        return opts.firstDm !== undefined ? { ...current, firstConversation: { since: at, surfaceKey: opts.firstDm } } : current;
       },
       at,
     );
@@ -268,6 +291,29 @@ export async function recordProposalOutcome(org: string, principalKey: string, f
       }
       result = "recorded";
       return { ...current, proposals: current.proposals.map((p, j) => (j === i ? { ...p, outcome, decidedAt: at } : p)) };
+    },
+    at,
+  );
+  return result;
+}
+
+export async function recordFirstConversationOutcome(
+  org: string,
+  principalKey: string,
+  outcome: FirstConversationOutcome,
+  surfaceKey: string,
+  at = new Date().toISOString(),
+): Promise<"recorded" | "none"> {
+  let result = "none" as "recorded" | "none";
+  await updatePersonalWatch(
+    org,
+    principalKey,
+    (current, existed) => {
+      const fc = existed ? current.firstConversation : undefined;
+      if (!fc || !(fc.outcome === undefined || (fc.outcome === "offered" && outcome !== "offered"))) return undefined;
+      if (outcome !== "set-up" && fc.surfaceKey !== surfaceKey) return undefined;
+      result = "recorded";
+      return { ...current, firstConversation: { ...fc, outcome, decidedAt: at } };
     },
     at,
   );

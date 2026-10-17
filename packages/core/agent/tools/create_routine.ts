@@ -25,6 +25,7 @@ import { validateRoutineCollectors } from "../routines/collector.js";
 import { validateRoutineGate } from "../routines/gate.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { endFirstRoutineOffer } from "../onboarding/first-routine.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
@@ -329,7 +330,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
         scopeKey: proposeScopeKey,
         domain: null,
         requestedBy: createdBy,
@@ -349,6 +350,10 @@ export default defineTool({
       ...(report ? { report } : {}),
       ...(input.job ? { sessionMode: "job" as const } : {}),
     });
+
+    if (!posted.autoApproved && createdBy) {
+      await endFirstRoutineOffer({ partition: p, decidedBy: createdBy, outcome: "offered", room: binding.mode === "channel" });
+    }
 
     if (posted.autoApproved) {
       return {

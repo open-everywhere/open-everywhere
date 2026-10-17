@@ -4,6 +4,7 @@ import { getProvider } from "../memory/provider.js";
 import { writeMemoryTier } from "../memory/write-road.js";
 import type { Partition } from "../memory/partition.js";
 import { agentDisplayName } from "../identity/bot-name.js";
+import { FIRST_ROUTINE_MARKER, roomFirstRoutineMarker } from "./first-routine.js";
 
 export const ONBOARDED_MARKER = "_onboarded";
 
@@ -16,7 +17,9 @@ export async function markSurfaceOnboarded(p: Partition): Promise<void> {
   const provider = getProvider();
   const marker = await provider.ensureTier(p, SURFACE);
   if (marker[ONBOARDED_MARKER] !== undefined) return;
-  marker[ONBOARDED_MARKER] = new Date().toISOString();
+  const at = new Date().toISOString();
+  marker[ONBOARDED_MARKER] = at;
+  if (marker[FIRST_ROUTINE_MARKER] === undefined) marker[FIRST_ROUTINE_MARKER] = roomFirstRoutineMarker(at);
   await writeMemoryTier({
     provider,
     partition: p,

@@ -22,6 +22,7 @@ import type { Partition } from "../memory/partition.js";
 import type { ModelRole } from "../memory/domain.js";
 import { registerActionKind } from "./actions.js";
 import { testRunOffer } from "../routines/test-run.js";
+import { endFirstRoutineOffer } from "../onboarding/first-routine.js";
 import type { ActionKind } from "./types.js";
 
 export interface RoutineCreateArgs {
@@ -40,6 +41,7 @@ export interface RoutineCreateArgs {
   readonly collectors?: readonly string[];
   readonly gate?: string;
   readonly modelRole?: ModelRole;
+  readonly firstRoutineRoom?: true;
 }
 
 export function permissionLines(args: Pick<RoutineCreateArgs, "permissions" | "tainted">): string[] {
@@ -185,6 +187,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       action: "routine.create",
       detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}) },
     });
+    await endFirstRoutineOffer({ partition: args.partition, decidedBy, outcome: "set-up", room: args.firstRoutineRoom === true, atIso: now.toISOString() });
     const unarmed = unarmedDeclarations(args.permissions ?? [], armed);
     return (
       `routine started, runs ${triggerWords(args.trigger)}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
@@ -192,6 +195,10 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}` +
       testRunOffer(routine)
     );
+  },
+  async declined(args, decidedBy) {
+    const ended = await endFirstRoutineOffer({ partition: args.partition, decidedBy, outcome: "declined", room: args.firstRoutineRoom === true });
+    return ended.person || ended.room ? "rejected; I won't suggest a routine again" : "rejected";
   },
 };
 

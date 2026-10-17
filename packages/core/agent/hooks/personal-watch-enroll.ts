@@ -2,6 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/binding.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { enrollPersonalWatch } from "../personal-watch/state.js";
+import { partitionOfBinding } from "../memory/partition.js";
 
 const SEEN = new Set<string>();
 
@@ -12,7 +13,7 @@ export async function enrollFromBinding(binding: ReturnType<typeof bindFrom>, en
   if (!key) return "skipped";
   const memo = `${binding.org}|${key}`;
   if (SEEN.has(memo)) return "already";
-  const r = await enroll(binding.org, key);
+  const r = await enroll(binding.org, key, new Date().toISOString(), { firstDm: partitionOfBinding(binding).surfaceKey });
   if (r !== "failed") SEEN.add(memo);
   return r;
 }
