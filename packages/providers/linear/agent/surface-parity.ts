@@ -23,6 +23,7 @@ export const LINEAR_SURFACE_PARITY: SurfaceParityDeclaration = {
   "seat-context-admission": "supported",
   "approval-card": { unsupported: "an issue comment carries no component plane, so there is no button to render and no route for a tap. A governed act that takes the venue walk is redirected to a card-capable room in the SAME domain, or refused when the domain holds none. The paths OUTSIDE that walk do not: the spend checkpoint (spend/checkpoint.ts `requireSessionContinuation`) fails OPEN here and records the crossing in an audit row instead" },
   "judge-lift-notice": "supported",
+  "out-of-office-cover": { unsupported: "not built yet — the issue room routes do not call `coverForWake`" },
   "name-drop-mention": { unsupported: "not built yet — the ambient supervisor already reads every comment, so a name-drop match adds no wake" },
   "message-edit-wake": { unsupported: "the ambient leg admits `Comment` with `action: \"create\"` only — an edit returns null before the classifier" },
   threads: "supported",

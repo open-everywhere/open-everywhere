@@ -1,3 +1,7 @@
+// proves: PAR-engaged-row-promotion, PAR-approval-card, PAR-judge-lift-notice
+// proves: PAR-ancillary-ops, PAR-capability-manifest, PAR-identity-mapper, PAR-owned-thread-ingress
+// proves: PAR-post-arm, PAR-reaction-feedback-ingest, PAR-read-adapter, PAR-search, PAR-wake-origin-codec
+
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -161,8 +165,8 @@ ok(green.out.includes("ambient-engagement-seam"), "the gate prints the matrix on
 ok(/\d+ capabilities × 8 surfaces/.test(green.out), "…with the cell count (eight since OPE-2442 added Google Chat)");
 ok(/12 row\(s\) cross-checked against the live registries/.test(green.out), "the gate reports the registry-probed rows it ran");
 ok(
-  /4 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion, seat-context-admission\) against the bundle sources/.test(green.out),
-  "…and names the four that read the bundle sources, not registries alone",
+  /5 \(ambient-engagement-seam, owned-thread-ingress, engaged-row-promotion, seat-context-admission, out-of-office-cover\) against the bundle sources/.test(green.out),
+  "…and names the five that read the bundle sources, not registries alone",
 );
 ok(
   /judge-lift notice renders on all 8 post-arm platform\(s\)/.test(green.out),
@@ -215,3 +219,5 @@ ok(readFileSync(CONTRACT, "utf8") === contractBefore, "the tracked contract is b
 }
 
 console.log(`✓ surface-parity-lint: ${passed} assertions`);
+
+// proves: AP-MOD-core-identity-surface-parity

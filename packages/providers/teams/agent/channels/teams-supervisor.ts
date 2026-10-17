@@ -18,6 +18,7 @@ import {
   catchUpUnavailableReason,
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
+  coverForWake,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
 
@@ -164,6 +165,19 @@ export interface TeamsSupervisorDispatch {
   readonly engagementTier?: WakeEngagementTier;
   readonly nameDrop?: boolean;
   readonly window: UnifiedWindowWake;
+  readonly cover?: TeamsCoverFacts;
+}
+
+export interface TeamsCoverFacts {
+  readonly org: string;
+  readonly workspace: string;
+  readonly surface: string;
+  readonly mentionedIds: readonly string[];
+  readonly confirmInRoom?: (id: string) => Promise<boolean>;
+}
+
+export function teamsMentionedPersonIds(mentions: ReadonlyArray<{ readonly mentioned: { readonly id: string } }>, botId?: string): string[] {
+  return mentions.map((m) => m.mentioned.id).filter((id) => id !== botId && /^29:/.test(id));
 }
 
 export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch, deps: TeamsSupervisorDeps): Promise<void> {
@@ -182,7 +196,26 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
       tail,
       catchUpUnavailable,
     });
-    const { message, context } = renderWake(nw, deps.now);
+    const cover = d.cover
+      ? await coverForWake({
+          org: d.cover.org,
+          platform: "teams",
+          workspace: d.cover.workspace,
+          surface: d.cover.surface,
+          surfaceKey: d.containerKey,
+          channelId: d.channelId,
+          roomPublic: false,
+          wakeId: d.window.wakeId,
+          mentionedIds: d.cover.mentionedIds,
+          askerId: d.trigger.authorId,
+          ...(d.trigger.authorName ? { askerName: d.trigger.authorName } : {}),
+          text: d.trigger.text,
+          now: new Date(atIso),
+          ...(d.cover.confirmInRoom ? { confirmInRoom: d.cover.confirmInRoom } : {}),
+        }).catch(() => ({ covered: [] }) as { systemNote?: string })
+      : undefined;
+    const wake = cover?.systemNote ? { ...nw, systemNote: nw.systemNote ? `${nw.systemNote}\n${cover.systemNote}` : cover.systemNote } : nw;
+    const { message, context } = renderWake(wake, deps.now);
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 

@@ -114,6 +114,24 @@ console.log("§2 the cover wake");
   await state.updatePersonalCover(ORG, "slack/T1/UDEE", () => ({ ...state.freshCoverState(NOW.toISOString()), on: true, until: "2026-10-14T09:00:00.000Z" }));
   ok((await wake.coverForWake(roomWake({ wakeId: "wk-dee", mentionedIds: ["UDEE"] }))).systemNote === undefined, "an end date that passed covers nobody");
   ok(state.coverLive(state.parseCoverState('{"on":"yes"}'), NOW) === false, "a row that does not parse its `on` reads as cover off");
+  const e = (inRoom: unknown) => JSON.stringify({ on: true, setAt: "x", entries: [{ wakeId: "w", at: "a", platform: "teams", channelId: "c", surfaceKey: "k", inRoom }] });
+  ok(state.parseCoverState(e(true)).entries[0]!.inRoom === true, "a stored `inRoom: true` survives the parse");
+  ok(state.parseCoverState(e("yes")).entries[0]!.inRoom === undefined, "🔴 any other stored `inRoom` reads as not confirmed");
+  const ROOM = "slack/T1/UROOM";
+  await state.updatePersonalCover(ORG, ROOM, () => ({ ...state.freshCoverState(NOW.toISOString()), on: true }));
+  const roomEntry = async (wakeId: string) => (await state.readPersonalCover(ORG, ROOM)).state!.entries.find((x) => x.wakeId === wakeId);
+  const confirmed = await wake.coverForWake(roomWake({ wakeId: "wk-room-1", mentionedIds: ["UROOM"], roomPublic: false, confirmInRoom: async () => true }));
+  ok(confirmed.systemNote !== undefined, "precondition: the wake covers the person");
+  ok((await roomEntry("wk-room-1"))?.inRoom === true, "a room the surface confirms marks the question in-room");
+  await wake.coverForWake(roomWake({ wakeId: "wk-room-2", mentionedIds: ["UROOM"], roomPublic: false, confirmInRoom: async () => { throw new Error("roster down"); } }));
+  const down = await roomEntry("wk-room-2");
+  ok(down !== undefined && down.inRoom === undefined, "🔴 a check that throws confirms nothing, and the question is still recorded");
+  let asked = 0;
+  await wake.coverForWake(roomWake({ wakeId: "wk-room-3", mentionedIds: ["UROOM"], roomPublic: true, confirmInRoom: async () => (asked++, true) }));
+  ok(asked === 0 && (await roomEntry("wk-room-3"))?.inRoom === undefined, "a public room asks no check: it already passes the recap");
+  const { shown, leftOut } = await recap.readableEntries(ROOM, (await state.readPersonalCover(ORG, ROOM)).state!.entries);
+  ok(shown.map((x) => x.wakeId).sort().join(",") === "wk-room-1,wk-room-3" && leftOut === 1, "🔴 the recap shows the confirmed and the public question, and leaves the unconfirmed private one out");
+  await state.updatePersonalCover(ORG, ROOM, () => state.freshCoverState(NOW.toISOString()));
 }
 
 console.log("§3 the label");

@@ -17,6 +17,7 @@ export const SLACK_SURFACE_PARITY: SurfaceParityDeclaration = {
   "seat-context-admission": "supported",
   "approval-card": "supported",
   "judge-lift-notice": "supported",
+  "out-of-office-cover": "supported",
 
   "addressed-leg": "supported",
   "ambient-leg": "supported",

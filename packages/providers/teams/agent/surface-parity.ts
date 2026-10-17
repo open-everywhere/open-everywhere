@@ -30,6 +30,7 @@ export const TEAMS_SURFACE_PARITY: SurfaceParityDeclaration = {
       "built, not yet proven on a live tenant — a channel, a personal chat and a group chat each host their own Adaptive Card, and the tap is answered after the Bot Framework JWT verify",
   },
   "judge-lift-notice": "supported",
+  "out-of-office-cover": "supported",
   "name-drop-mention": {
     supported: "channels only; a non-@mention message reaches the bot only where the tenant consented to `ChannelMessage.Read.Group`, which no API can probe",
   },

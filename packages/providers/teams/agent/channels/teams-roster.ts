@@ -63,3 +63,15 @@ export async function teamsIsHomeTenant(
 export function _resetTeamsUserTypeCacheForTest(): void {
   teamsUserTypeCache.clear();
 }
+
+export async function teamsRosterHasMember(probe: TeamsRosterProbe | undefined, conversationId: string | undefined, userId: string): Promise<boolean> {
+  if (!probe || !conversationId || !userId) return false;
+  try {
+    const res = await probe(teamsRosterMemberPath(conversationId, userId));
+    if (!res.ok) return false;
+    const body = res.body as { id?: unknown } | null;
+    return typeof body === "object" && body !== null && body.id === userId;
+  } catch {
+    return false;
+  }
+}

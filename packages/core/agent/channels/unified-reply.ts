@@ -35,7 +35,7 @@ export interface UnifiedReplyDeps {
   readonly closeLinear?: (origin: LinearOrigin, answered?: boolean) => Promise<void>;
   readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
   readonly postDiscord?: (origin: DiscordOrigin, text: string) => Promise<string>;
-  readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
+  readonly postTeams?: (origin: TeamsOrigin, text: string, intent?: PostIntent) => Promise<string>;
 }
 
 function unifiedDedupeLocus(origin: UnifiedWakeOrigin): { channel: string; threadTs?: string } {

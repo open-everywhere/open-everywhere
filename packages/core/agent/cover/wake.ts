@@ -31,6 +31,7 @@ export interface CoverWakeInput {
   readonly askerName?: string;
   readonly text: string;
   readonly now?: Date;
+  readonly confirmInRoom?: (id: string) => Promise<boolean>;
 }
 
 export interface CoverWakeResult {
@@ -92,6 +93,7 @@ export async function coverForWake(input: CoverWakeInput): Promise<CoverWakeResu
   const question = clipCoverText(input.text);
   for (const person of covered) {
     let kept = false;
+    const inRoom = !input.roomPublic && input.confirmInRoom ? await input.confirmInRoom(person.id).catch(() => false) : false;
     try {
       kept = await recordCoverQuestion(
         input.org,
@@ -104,6 +106,7 @@ export async function coverForWake(input: CoverWakeInput): Promise<CoverWakeResu
           channelId: input.channelId,
           surfaceKey: input.surfaceKey,
           roomPublic: input.roomPublic,
+          ...(inRoom === true ? { inRoom: true as const } : {}),
           question,
         },
         now,

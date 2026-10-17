@@ -117,6 +117,18 @@ function contextAdmissionPlatforms(): ReadonlySet<string> {
   return wired;
 }
 
+const COVER_WAKE_IMPORT = /import\s*(?:type\s*)?\{[^}]*\bcoverForWake\b[^}]*\}\s*from\s*["'][^"']*adapter-api\.js["']/su;
+const COVER_WAKE_CALL = /\bawait\s+coverForWake\s*\(/su;
+
+function coverWakePlatforms(): ReadonlySet<string> {
+  const wired = new Set<string>();
+  for (const platform of PLATFORMS) {
+    const dir = join(root, "packages", "providers", platform, "agent");
+    if (sourcesReference(dir, COVER_WAKE_IMPORT) && sourcesReference(dir, COVER_WAKE_CALL)) wired.add(platform);
+  }
+  return wired;
+}
+
 function sourcesReference(dir: string, pattern: RegExp): boolean {
   let entries: string[];
   try {
@@ -147,6 +159,7 @@ const SOURCE_SCAN_PROBES = [
   "owned-thread-ingress",
   "engaged-row-promotion",
   "seat-context-admission",
+  "out-of-office-cover",
 ] as const;
 
 const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
@@ -171,6 +184,7 @@ const PROBES: CapabilityProbe = new Map<string, ReadonlySet<string>>([
   ["engaged-row-promotion", engagedRowPromotionPlatforms()],
   ["thread-done-reaction", setOf(PLATFORMS.filter((p) => hasThreadDoneReactionPath(p)))],
   ["seat-context-admission", contextAdmissionPlatforms()],
+  ["out-of-office-cover", coverWakePlatforms()],
   ["approval-card", setOf(PLATFORMS.filter((p) => hasApprovalCardPath(p)))],
   ["judge-lift-notice", setOf(PLATFORMS.filter((p) => hasJudgeLiftNoticePath(p)))],
   ["search", setOf(registeredSearchConnectors())],

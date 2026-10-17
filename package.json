@@ -212,6 +212,8 @@
     "test:wake-origin-fixtures": "NODE_NO_WARNINGS=1 tsx scripts/wake-origin-fixtures-boot.ts",
     "test:unified-window": "NODE_NO_WARNINGS=1 tsx scripts/unified-window-test.ts",
     "test:slack-cover": "NODE_NO_WARNINGS=1 tsx scripts/slack-cover-test.ts",
+    "test:teams-cover": "NODE_NO_WARNINGS=1 tsx scripts/teams-cover-test.ts",
+    "test:discord-cover": "NODE_NO_WARNINGS=1 tsx scripts/discord-cover-test.ts",
     "test:notion-integration": "NODE_NO_WARNINGS=1 tsx scripts/notion-provider-integration-test.ts",
     "test:github-spend-gate": "NODE_NO_WARNINGS=1 tsx scripts/github-spend-gate-test.ts",
     "test:github-external-policy-room": "NODE_NO_WARNINGS=1 tsx scripts/github-external-policy-room-test.ts",

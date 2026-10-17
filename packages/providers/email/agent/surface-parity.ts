@@ -22,6 +22,7 @@ export const EMAIL_SURFACE_PARITY: SurfaceParityDeclaration = {
   "seat-context-admission": { unsupported: "the context slot carries the mail's own quoted or forwarded remainder, fenced and tainting, never other authors' room history" },
   "approval-card": { unsupported: "mail cannot carry a tappable card — a governed act asked from an inbox takes the venue walk to a card-capable room in the same domain" },
   "judge-lift-notice": { supported: "the shared text render, sent as a reply in the thread to its allowed participants — mail carries no button, so the overrule is spelled out in words" },
+  "out-of-office-cover": { unsupported: "no standing room — a mail thread reaches the agent only where the agent is addressed, so no room seat can carry a cover note" },
   "name-drop-mention": { unsupported: "every mail to an inbox is addressed to the agent" },
   "message-edit-wake": { unsupported: "a sent email cannot be edited" },
   threads: { supported: "the mail thread — a reply threads under the message that woke the seat" },

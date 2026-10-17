@@ -183,7 +183,7 @@ export const teamsPostArm: PostArm = {
   },
   dispatchReply: (target, text, _replier, intent) => dispatchTeamsReply(target as TeamsTarget, text, intent),
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
-    deps.postTeams ? deps.postTeams(origin as TeamsOrigin, text) : liveTeamsPost(origin as TeamsOrigin, text, intent),
+    deps.postTeams ? deps.postTeams(origin as TeamsOrigin, text, intent) : liveTeamsPost(origin as TeamsOrigin, text, intent),
   isDirectConversation: (locus) => isTeamsPersonalConversationId(locus.channelId),
   describeRedriveTarget: (origin) => `teams conversation ${(origin as TeamsOrigin).conversationId}`,
   redriveContainerId: (origin) => (origin as TeamsOrigin).conversationId,

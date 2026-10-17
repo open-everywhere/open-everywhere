@@ -122,7 +122,9 @@ import {
   auditNoReplySentinelObserved,
   getSettings,
   authPrincipalId,
+  coverForWake,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordMemberCanViewChannel } from "../approvals/discord-admin.js";
 import { fetchDiscordBackscrollLines, gradeDiscordContextLines, DISCORD_RAW_FETCH_REACHBACK_HOURS } from "./discord-backscroll.js";
 
 function log(msg: string): void {
@@ -165,6 +167,15 @@ function strOrNum(v: unknown): string | undefined {
   if (typeof v === "string") return v.length > 0 ? v : undefined;
   if (typeof v === "number" && Number.isFinite(v)) return String(v);
   return undefined;
+}
+
+export function discordMentionedUserIds(content: string, botId?: string): string[] {
+  const ids: string[] = [];
+  for (const m of content.matchAll(/<@!?(\d{17,20})>/g)) {
+    const id = m[1]!;
+    if (id !== botId) ids.push(id);
+  }
+  return ids;
 }
 
 export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
@@ -1138,31 +1149,46 @@ export async function divertDiscordWakeToUnifiedWindow(input: {
         : {}),
       ...(isThreadChannelType(msg.channelType) ? { thread: true as const } : {}),
     };
-    const rendered = renderWake(
-      buildDiscordUnifiedWake({
-        guildId: msg.guildId ?? "",
-        channelId: msg.channelId,
-        parentChannelId: str(input.auth.attributes.parent_channel_id),
-        isThread: isThreadChannelType(msg.channelType),
-        addressing: input.addressing,
-        threadEngaged: input.threadEngaged,
-        wakeId,
-        engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
-        tail,
-        contextLines: input.contextLines,
-        contextSource: input.contextSource,
-        botName: msg.botName,
-        catchUpUnavailable,
-        trigger: {
-          id: msg.id || "unknown",
-          author: msg.author.username ?? msg.author.id,
-          authorId: msg.author.id,
-          sentAt: atIso,
-          text: msg.content,
-          trust,
-        },
-      }),
-    );
+    const cover = await coverForWake({
+      org,
+      platform: "discord",
+      workspace: input.partition.workspace,
+      surface: input.partition.surface,
+      surfaceKey: input.partition.surfaceKey,
+      channelId: msg.channelId,
+      roomPublic: false,
+      wakeId,
+      mentionedIds: discordMentionedUserIds(msg.content, msg.botId),
+      askerId: msg.author.id,
+      ...(msg.author.username ? { askerName: msg.author.username } : {}),
+      text: msg.content,
+      now: new Date(atIso),
+      ...(msg.guildId ? { confirmInRoom: (id: string) => discordMemberCanViewChannel(msg.guildId!, msg.channelId, id) } : {}),
+    }).catch(() => ({ covered: [] }) as { systemNote?: string });
+    const built = buildDiscordUnifiedWake({
+      guildId: msg.guildId ?? "",
+      channelId: msg.channelId,
+      parentChannelId: str(input.auth.attributes.parent_channel_id),
+      isThread: isThreadChannelType(msg.channelType),
+      addressing: input.addressing,
+      threadEngaged: input.threadEngaged,
+      wakeId,
+      engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
+      tail,
+      contextLines: input.contextLines,
+      contextSource: input.contextSource,
+      botName: msg.botName,
+      catchUpUnavailable,
+      trigger: {
+        id: msg.id || "unknown",
+        author: msg.author.username ?? msg.author.id,
+        authorId: msg.author.id,
+        sentAt: atIso,
+        text: msg.content,
+        trust,
+      },
+    });
+    const rendered = renderWake(cover.systemNote ? { ...built, systemNote: built.systemNote ? `${built.systemNote}\n${cover.systemNote}` : cover.systemNote } : built);
     const domainSurfaceKey = domainKeyOf(input.partition);
     try {
       await divertInboundToUnifiedWindow(input.receive, {

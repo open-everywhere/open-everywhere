@@ -24,6 +24,7 @@ export const GOOGLE_CHAT_SURFACE_PARITY: SurfaceParityDeclaration = {
     unsupported: "not built yet — a Chat card with a button needs the CARD_CLICKED tap answered; a governed act asked from Google Chat takes the venue walk to a card-capable room in the same domain",
   },
   "judge-lift-notice": { supported: "the shared text render, posted into the space — no button yet, so the overrule is spelled out in words" },
+  "out-of-office-cover": { unsupported: "not built yet — the space route does not call `coverForWake`, and the surface takes no ambient messages" },
   "name-drop-mention": { unsupported: "not built yet — a message that names the app without an @mention never reaches the HTTP endpoint; a Workspace Events subscription would deliver it" },
   "message-edit-wake": { unsupported: "not built yet — the HTTP endpoint sends no event for an edited message; a Workspace Events subscription would" },
   threads: { supported: "a reply posts into the trigger's own thread (`REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`)" },

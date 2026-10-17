@@ -6,6 +6,7 @@ import {
   agentDisplayName,
   oeCommandName,
   oeSlash,
+  parseOeCommandTokens,
   runOeCommand,
   type AttachSessionForCancel,
   type BindableContext,
@@ -80,6 +81,12 @@ export function parseDiscordOeCommandOptions(rawOptions: unknown): OeCommand {
     }
     return { kind: "rate", score };
   }
+  if (name === "cover") {
+    const sub = optArray(first.options)[0];
+    const subName = sub ? str(sub.name) : undefined;
+    const until = str(findOpt(optArray(sub?.options), "until")?.value);
+    return parseOeCommandTokens(["cover", ...(subName ? [subName] : []), ...(subName === "on" && until ? ["until", until] : [])]);
+  }
   if (name === "budget") {
     const sub = optArray(first.options)[0];
     const subName = sub ? str(sub.name) : undefined;
@@ -151,6 +158,7 @@ export async function handleDiscordOeCommandInteraction(
 
 const SUB_COMMAND = 1;
 const SUB_COMMAND_GROUP = 2;
+const OPTION_STRING = 3;
 const OPTION_INTEGER = 4;
 const OPTION_NUMBER = 10;
 const CHAT_INPUT = 1;
@@ -206,6 +214,21 @@ export function buildOeDiscordCommandDefinition(): Record<string, unknown> {
             min_value: MODEL_AB_RATING_MIN,
             max_value: MODEL_AB_RATING_MAX,
           },
+        ],
+      },
+      {
+        name: "cover",
+        description: "While you are away, I answer questions people ask you, marked as cover.",
+        type: SUB_COMMAND_GROUP,
+        options: [
+          {
+            name: "on",
+            description: "Turn cover on (from your DM with me).",
+            type: SUB_COMMAND,
+            options: [{ name: "until", description: "The first day you are back, as YYYY-MM-DD.", type: OPTION_STRING, required: false }],
+          },
+          { name: "off", description: "Turn cover off. Your recap follows in your DM.", type: SUB_COMMAND },
+          { name: "status", description: "Show whether cover is on.", type: SUB_COMMAND },
         ],
       },
       { name: "help", description: `List the ${oeSlash()} commands.`, type: SUB_COMMAND },

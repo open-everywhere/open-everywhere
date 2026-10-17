@@ -10,7 +10,7 @@ import {
   withTeamsUserType,
   type OpenEverywhereTeamsAuth,
 } from "./teams-identity.js";
-import { resolveTeamsUserType, teamsIsHomeTenant, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
+import { resolveTeamsUserType, teamsIsHomeTenant, teamsRosterHasMember, teamsServiceUrlRosterProbe, type TeamsRosterProbe } from "./teams-roster.js";
 import { recordTeamsConversationReference, teamsChannelGrainConversationId, teamsReplyChainRoot } from "./teams-conversation-ref.js";
 import { parseTeamsReaction, routeTeamsStopReaction, type TeamsReactionActivity, type TeamsStopOutcome } from "./teams-stop.js";
 import { parseTeamsFeedbackInvoke, routeTeamsFeedbackInvoke } from "./teams-reply-feedback.js";
@@ -31,8 +31,10 @@ import { handleTeamsApprovalInvoke, parseTeamsApprovalInvoke, type TeamsApproval
 import {
   planTeamsSingleWindow,
   handleTeamsSingleWindowDispatch,
+  teamsMentionedPersonIds,
   teamsSupervisorToken,
   buildTeamsDmWake,
+  type TeamsCoverFacts,
   type TeamsSupervisorDeps,
   type TeamsSingleWindowFacts,
 } from "./teams-supervisor.js";
@@ -484,6 +486,18 @@ function recordTeamsWakeFailure(key: string, err: unknown): void {
   }).catch(() => undefined);
 }
 
+export function teamsCoverFacts(a: TeamsMessageActivity, partition: Partition, probeFor?: TeamsRosterProbeFor): TeamsCoverFacts {
+  const factory: TeamsRosterProbeFor = probeFor ?? ((activity) => teamsServiceUrlRosterProbe(activity.serviceUrl));
+  const probe = teamsMembershipType(a.channelData) === "standard" && a.teamId ? factory(a) : undefined;
+  return {
+    org: partition.org,
+    workspace: partition.workspace,
+    surface: partition.surface,
+    mentionedIds: teamsMentionedPersonIds(a.mentions, a.recipient.id),
+    ...(probe && a.teamId ? { confirmInRoom: (id: string) => teamsRosterHasMember(probe, a.teamId, id) } : {}),
+  };
+}
+
 export async function liveTeamsDispatch(
   a: TeamsMessageActivity,
   plan: TeamsFrontPlan,
@@ -530,6 +544,7 @@ export async function liveTeamsDispatch(
       engagementTier,
       ...(nameDrop ? { nameDrop: true } : {}),
       window: plan.window,
+      cover: teamsCoverFacts(a, plan.partition, probeFor),
     },
     liveTeamsSupervisorDeps(plan, to),
   );

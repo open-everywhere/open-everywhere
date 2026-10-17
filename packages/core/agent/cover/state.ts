@@ -9,6 +9,7 @@ export interface CoverEntry {
   readonly channelId: string;
   readonly surfaceKey: string;
   readonly roomPublic: boolean;
+  readonly inRoom?: true;
   readonly question: string;
   readonly answer?: string;
 }
@@ -63,6 +64,7 @@ export function parseCoverState(json: string): CoverState {
         channelId,
         surfaceKey,
         roomPublic: o["roomPublic"] === true,
+        ...(o["inRoom"] === true ? { inRoom: true as const } : {}),
         question: strOrUndef(o["question"]) ?? "",
         ...(answer ? { answer } : {}),
       };
