@@ -10,7 +10,12 @@ export interface NaDeclaration {
   readonly pending: boolean;
 }
 
-export type CellKind = "unit" | "e2e" | "soak";
+export type CellKind = "unit" | "integration" | "e2e" | "soak";
+
+export function testCellKind(file: string): "unit" | "integration" {
+  const path = file.split("\\").join("/");
+  return path.startsWith("tests/integration/") && path.endsWith(".test.ts") ? "integration" : "unit";
+}
 
 export interface ProvesClaim {
   readonly ids: readonly string[];
@@ -22,6 +27,7 @@ export interface ProvesClaim {
 
 export interface MatrixCells {
   readonly unit: readonly string[];
+  readonly integration: readonly string[];
   readonly e2e: readonly string[];
   readonly soak: readonly string[];
   readonly audit: readonly string[];
@@ -142,8 +148,8 @@ export function buildMatrix(
   claims: readonly ProvesClaim[],
   auditActions: ReadonlySet<string>,
 ): readonly MatrixRow[] {
-  const byId = new Map<string, { unit: string[]; e2e: string[]; soak: string[] }>();
-  for (const row of rows) byId.set(row.id, { unit: [], e2e: [], soak: [] });
+  const byId = new Map<string, Record<CellKind, string[]>>();
+  for (const row of rows) byId.set(row.id, { unit: [], integration: [], e2e: [], soak: [] });
   for (const claim of claims) {
     for (const id of claim.ids) {
       const bucket = byId.get(id);
@@ -152,12 +158,13 @@ export function buildMatrix(
     }
   }
   return rows.map((row) => {
-    const bucket = byId.get(row.id) ?? { unit: [], e2e: [], soak: [] };
+    const bucket = byId.get(row.id) ?? { unit: [], integration: [], e2e: [], soak: [] };
     const na = parseNaDeclaration(row.declared);
     return {
       row,
       cells: {
         unit: sortedUnique(bucket.unit),
+        integration: sortedUnique(bucket.integration),
         e2e: sortedUnique(bucket.e2e),
         soak: sortedUnique(bucket.soak),
         audit: auditActions.has(row.id) ? [row.id] : [],
@@ -168,8 +175,8 @@ export function buildMatrix(
 }
 
 export function isCovered(entry: MatrixRow): boolean {
-  const { unit, e2e, soak, audit } = entry.cells;
-  return unit.length + e2e.length + soak.length + audit.length > 0;
+  const { unit, integration, e2e, soak, audit } = entry.cells;
+  return unit.length + integration.length + e2e.length + soak.length + audit.length > 0;
 }
 
 export type RowClass = "covered" | "naDeclared" | "pending" | "uncovered";
@@ -189,7 +196,7 @@ export function findings(matrix: readonly MatrixRow[], claims: readonly ProvesCl
       file: entry.row.file,
       line: entry.row.line,
       message:
-        `row \`${entry.row.id}\` has no unit test, no e2e scenario, no soak checker and no audit action. ` +
+        `row \`${entry.row.id}\` has no unit test, no integration test, no e2e scenario, no soak checker and no audit action. ` +
         `Annotate the code that proves it with \`// proves: ${entry.row.id}\`, or declare the row ` +
         `\`n/a: <reason>\` in its Tested by cell.`,
     });
@@ -238,7 +245,8 @@ export function coverageReportLines(matrix: readonly MatrixRow[]): string[] {
   out.push("");
   const cellCount = (pick: (e: MatrixRow) => readonly string[]): number => matrix.filter((e) => pick(e).length > 0).length;
   out.push(
-    `Cells filled: unit ${cellCount((e) => e.cells.unit)} · e2e ${cellCount((e) => e.cells.e2e)} · ` +
+    `Cells filled: unit ${cellCount((e) => e.cells.unit)} · integration ${cellCount((e) => e.cells.integration)} · ` +
+      `e2e ${cellCount((e) => e.cells.e2e)} · ` +
       `soak ${cellCount((e) => e.cells.soak)} · audit ${cellCount((e) => e.cells.audit)}.`,
   );
   out.push(

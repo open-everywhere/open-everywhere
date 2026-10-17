@@ -20,18 +20,27 @@ npm run coverage-board         # THE BOARD: the same coverage half, plus the las
 
 `lint:coverage-matrix` runs in the root `test:chain`.
 
-## Four cells per row
+## Five cells per row
 
-A row is **covered** when at least one of these four cells is filled.
+A row is **covered** when at least one of these five cells is filled.
 
 | Cell | Declared where | The cell reads |
 | --- | --- | --- |
-| unit | a `*.test.ts`, `*-test.ts` or `*.spec.ts` file carrying `// proves: <row-id>` | the file, and the npm leg that runs it |
+| unit | a `*.test.ts`, `*-test.ts` or `*.spec.ts` file carrying `// proves: <row-id>`, outside the integration tier | the file, and the npm leg that runs it |
+| integration | the same `// proves:` line in a `*.test.ts` file under `tests/integration/` | the file, and the npm leg that runs it |
 | e2e | a `proves` field on a scenario in `packages/core/scripts/e2e/scenarios.ts` | the scenario id |
 | soak | a `// proves:` comment above an `export function check…` in `packages/core/scripts/soak/soak-invariants.ts` | the checker's name |
 | audit | nothing — the row's own id is an action the post-ship census asserts | the action name |
 
-**The audit cell is the weakest of the four, and it is narrower than the registry.** It does not
+**The unit cell and the integration cell are apart on purpose.** An integration test drives a real
+agent host and a unit test does not, so the two prove different things and cost different amounts
+to run. The scan picks the cell from the file's path. A file is `integration` exactly when
+`npm run test:integration` schedules it: `INTEGRATION_INCLUDE_GLOBS` in `scripts/it-shards.ts` is
+`tests/integration/**/*.test.ts`, and `npm run test:coverage-matrix` pins that constant. Before
+OPE-2140 every test-file proof filed as unit, so the report could not say which rows had an
+integration proof. `npm run coverage-matrix -- --json` prints both cells for every row.
+
+**The audit cell is the weakest of the five, and it is narrower than the registry.** It does not
 prove the behaviour the row describes. It says `npm run deploy:census` asserts that a row for this
 action exists in one org's audit log, at any age — evidence that a path was driven some time, not
 that it still does what the row says. Only a **consequential** declaration with no `notExercised`

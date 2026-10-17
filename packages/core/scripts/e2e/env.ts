@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { isAbsolute, resolve as resolvePath } from "node:path";
+import { resolveAppRoot } from "../../agent/scaffold/app-root.js";
 import { ROOM_VARS, TRACKED_ROOM_IDS, credentialVarFor, identityVarsFor, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
 import { resolveControlWriteConfig, type ControlWriteConfig } from "./control-write-driver.js";
 
@@ -305,7 +308,7 @@ export function resolveDiscord(env: Env = process.env): Resolved<DiscordDriverCo
   return { ok: true, cfg: { token: values[0], channel: values[1], botUserId: values[2] } };
 }
 
-export function resolveTeams(env: Env = process.env): Resolved<TeamsDriverConfig> {
+export function resolveTeams(env: Env = process.env, cwd: string = process.cwd()): Resolved<TeamsDriverConfig> {
   const { values, missing } = need(env, [
     ENV.teamsTenantId,
     ENV.teamsClientId,
@@ -315,7 +318,12 @@ export function resolveTeams(env: Env = process.env): Resolved<TeamsDriverConfig
     ENV.teamsBotAppId,
   ]);
   if (missing.length > 0) return { ok: false, missing };
-  const refreshTokenFile = env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK;
+  let refreshTokenFile: string;
+  try {
+    refreshTokenFile = teamsRefreshSinkPath(env, cwd);
+  } catch (err) {
+    return { ok: false, missing: [`an app root for ${ENV.teamsRefreshTokenFile} — ${String(err instanceof Error ? err.message : err)}`] };
+  }
   return {
     ok: true,
     cfg: {
@@ -331,6 +339,22 @@ export function resolveTeams(env: Env = process.env): Resolved<TeamsDriverConfig
 }
 
 export const DEFAULT_TEAMS_REFRESH_SINK = ".env.e2e.teams-refresh";
+
+export const TEAMS_AUTH_NEXT_STEP = "E2E_ONLY=J-TEAMS npm run test:e2e-driver";
+
+export function teamsRefreshSinkPath(env: Env = process.env, cwd: string = process.cwd()): string {
+  const configured = env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK;
+  if (isAbsolute(configured)) return configured;
+  const resolved = resolvePath(resolveAppRoot({ env, cwd }), configured);
+  const legacy = resolvePath(cwd, configured);
+  if (legacy !== resolved && existsSync(legacy)) {
+    console.warn(
+      `[e2e:teams] a refresh sidecar from before OPE-2477 exists at ${legacy}, but the sidecar is now ${resolved}. ` +
+        `If ${legacy} holds the newer token, move it to ${resolved}, or run \`npm run e2e:teams-auth\` again.`,
+    );
+  }
+  return resolved;
+}
 
 export const PACING_CHANNEL_FLOOR_MS = 10_000;
 

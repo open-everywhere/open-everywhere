@@ -1,4 +1,4 @@
-import { DEFAULT_TEAMS_REFRESH_SINK, ENV } from "./env.js";
+import { ENV, TEAMS_AUTH_NEXT_STEP, teamsRefreshSinkPath } from "./env.js";
 import { sleep } from "./poll.js";
 import { writeRefreshSidecar } from "./teams-driver.js";
 
@@ -129,6 +129,12 @@ async function main(): Promise<void> {
         `      ChannelMessage.Read.All + offline_access, admin-consented). See docs/deploy/surfaces/teams.md.`,
     );
   }
+  let sink: string;
+  try {
+    sink = teamsRefreshSinkPath();
+  } catch (err) {
+    die(`✗ cannot place the refresh sidecar: ${String(err instanceof Error ? err.message : err)}`);
+  }
 
   console.log(`Requesting a device code for tenant ${tenantId}…`);
   const device = await requestDeviceCode(tenantId, clientId);
@@ -140,7 +146,6 @@ async function main(): Promise<void> {
   console.log("Set this in your shell / CI secrets (NEVER commit it):\n");
   console.log(`export ${ENV.teamsRefreshToken}='${token.refresh_token}'\n`);
 
-  const sink = process.env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK;
   if (token.refresh_token) {
     writeRefreshSidecar(sink, token.refresh_token);
     console.log(`(Also written to the gitignored sidecar ${sink} — the driver self-heals rotation from there, so this mint is one-time.)\n`);
@@ -150,7 +155,7 @@ async function main(): Promise<void> {
 
   console.log(
     `\nNext: set the six ${ENV.teamsTenantId.replace("_TENANT_ID", "_*")} vars (tenant, client, refresh, team, channel, bot app id) ` +
-      `and run: npm run test:e2e-driver -- --only ST1`,
+      `and run: ${TEAMS_AUTH_NEXT_STEP}`,
   );
 }
 

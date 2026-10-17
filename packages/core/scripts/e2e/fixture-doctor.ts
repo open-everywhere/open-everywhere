@@ -7,7 +7,7 @@ import {
   type FixtureFinding,
   type ProbeOutcome,
 } from "./fixture-doctor-lib.js";
-import { ENV, DEFAULT_TEAMS_REFRESH_SINK } from "./env.js";
+import { ENV, teamsRefreshSinkPath } from "./env.js";
 import { roomIdFor } from "./fixture-inventory-lib.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { NotionDriver } from "./notion-driver.js";
@@ -167,7 +167,7 @@ async function probeTeams(env: Env): Promise<ProbeOutcome> {
       refreshToken: env[ENV.teamsRefreshToken]!,
       teamId: env[ENV.teamsTeamId]!,
       channelId: env[ENV.teamsChannelId]!,
-      refreshTokenFile: env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK,
+      refreshTokenFile: teamsRefreshSinkPath(env),
       botAppId: env[ENV.teamsBotAppId]!,
     });
     const info = await driver.channelInfo();

@@ -123,6 +123,8 @@ const {
   resolveEngagedLinear,
   resolveEngagedTeams,
   DEFAULT_TEAMS_REFRESH_SINK,
+  teamsRefreshSinkPath,
+  TEAMS_AUTH_NEXT_STEP,
 } = await import("../packages/core/scripts/e2e/env.js");
 const { readRefreshSidecar, writeRefreshSidecar, isMissingChatScopeError, collectGraphPages } = await import("../packages/core/scripts/e2e/teams-driver.js");
 const { backoffDelayMs, pollUntil, pollOptional, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
@@ -1242,15 +1244,72 @@ const { parseAppMentionEvent } = await import(
       teamsCfg.cfg.botAppId === "bot-app-1",
     "teams cfg carries all six fields (tenant/client/refresh/team/channel/botApp)",
   );
-  ok(
-    teamsCfg.ok && teamsCfg.cfg.refreshTokenFile === DEFAULT_TEAMS_REFRESH_SINK,
-    "teams cfg defaults the rotated-token sidecar to .env.e2e.teams-refresh",
-  );
   const teamsSink = resolveTeams({ ...full, [ENV.teamsRefreshTokenFile]: "/tmp/custom-teams-sink" });
   ok(
     teamsSink.ok && teamsSink.cfg.refreshTokenFile === "/tmp/custom-teams-sink",
     "E2E_TEAMS_REFRESH_TOKEN_FILE overrides the sidecar path",
   );
+
+  {
+    const app = mkdtempSync(join(tmpdir(), "oe-teams-sink-"));
+    mkdirSync(join(app, "agent"), { recursive: true });
+    mkdirSync(join(app, "packages", "core"), { recursive: true });
+    writeFileSync(join(app, "package.json"), "{}\n");
+    writeFileSync(join(app, "agent", "agent.ts"), "\n");
+    writeFileSync(join(app, "packages", "core", "package.json"), "{}\n");
+    const workspaceCwd = join(app, "packages", "core");
+    const helperEnv = { ...full };
+    const driverEnv = { ...full, INIT_CWD: app, npm_package_json: join(workspaceCwd, "package.json") };
+    const expected = join(app, DEFAULT_TEAMS_REFRESH_SINK);
+    const minted = teamsRefreshSinkPath(helperEnv, app);
+    const driven = resolveTeams(driverEnv, workspaceCwd);
+    ok(minted === expected, `the helper's mint lands beside .env.e2e at the app root — got ${minted}`);
+    ok(driven.ok && driven.cfg.refreshTokenFile === minted, `the driver in packages/core reads the SAME file the helper wrote — got ${driven.ok ? driven.cfg.refreshTokenFile : "unresolved"}`);
+    writeRefreshSidecar(minted, "fresh-mint-1");
+    ok(driven.ok && readRefreshSidecar(driven.cfg.refreshTokenFile) === "fresh-mint-1", "a fresh mint from the app root is the token the workspace driver reads back");
+    const relative = { [ENV.teamsRefreshTokenFile]: "secrets/teams-refresh" };
+    ok(
+      teamsRefreshSinkPath({ ...helperEnv, ...relative }, app) === join(app, "secrets", "teams-refresh") &&
+        teamsRefreshSinkPath({ ...driverEnv, ...relative }, workspaceCwd) === join(app, "secrets", "teams-refresh"),
+      "a relative E2E_TEAMS_REFRESH_TOKEN_FILE resolves against the app root for the helper and the driver alike",
+    );
+    const legacyFile = join(workspaceCwd, DEFAULT_TEAMS_REFRESH_SINK);
+    const warned: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (...args: unknown[]) => void warned.push(args.map(String).join(" "));
+    try {
+      teamsRefreshSinkPath(driverEnv, workspaceCwd);
+      ok(warned.length === 0, "negative control: no legacy sidecar, no warning");
+      writeFileSync(legacyFile, "legacy-secret-token\n");
+      teamsRefreshSinkPath(driverEnv, workspaceCwd);
+    } finally {
+      console.warn = realWarn;
+    }
+    ok(warned.length === 1 && warned[0]!.includes(legacyFile) && warned[0]!.includes(expected), `a legacy cwd sidecar warns, naming both paths — got ${JSON.stringify(warned)}`);
+    ok(!warned.some((w) => w.includes("legacy-secret-token")), "the warning never prints the token");
+    rmSync(app, { recursive: true, force: true });
+  }
+
+  {
+    const bare = mkdtempSync(join(tmpdir(), "oe-teams-noapp-"));
+    let threw = false;
+    let noApp: ReturnType<typeof resolveTeams> | undefined;
+    try {
+      noApp = resolveTeams({ ...full, OE_APP_ROOT: undefined, INIT_CWD: undefined, npm_package_json: undefined }, bare);
+    } catch {
+      threw = true;
+    }
+    ok(!threw && noApp !== undefined && !noApp.ok && noApp.missing.some((m) => m.includes(ENV.teamsRefreshTokenFile)), `no app root skips the Teams half and names why — got ${threw ? "a throw" : JSON.stringify(noApp)}`);
+    ok(resolveTeams({ ...full, OE_APP_ROOT: undefined, [ENV.teamsRefreshTokenFile]: "/abs/sink" }, bare).ok, "negative control: an absolute sidecar needs no app root, so it still resolves");
+    rmSync(bare, { recursive: true, force: true });
+  }
+
+  ok(TEAMS_AUTH_NEXT_STEP.startsWith("E2E_ONLY=J-TEAMS ") && !TEAMS_AUTH_NEXT_STEP.includes("--only"), `the helper's next step uses E2E_ONLY, never \`-- --only\` — got ${TEAMS_AUTH_NEXT_STEP}`);
+  {
+    const named = /^E2E_ONLY=(\S+) /u.exec(TEAMS_AUTH_NEXT_STEP)?.[1];
+    ok(named !== undefined && SCENARIOS.some((sc) => sc.id === named), `the helper's next step names a live scenario id — got ${named}`);
+    ok(!SCENARIOS.some((sc) => sc.id === "ST1"), "negative control: ST1 is not a scenario id, so a line naming it would run nothing");
+  }
   const sinkPath = join(tmpdir(), `oe-teams-refresh-${process.pid}`);
   rmSync(sinkPath, { force: true });
   ok(readRefreshSidecar(sinkPath) === undefined, "absent sidecar reads as undefined (seed fallback)");

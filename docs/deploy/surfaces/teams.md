@@ -809,7 +809,7 @@ The [e2e driver pack](../../../packages/core/scripts/e2e/) drives each surface w
    npm run e2e:teams-auth
    ```
 
-   It runs a device-code sign-in (open the URL, enter the code), prints the `export E2E_TEAMS_REFRESH_TOKEN='…'` line, and lists your teams + channels so you can copy the team and channel ids. The token is printed to stdout only — it's never written to a file; paste it into your shell / CI secrets.
+   It runs a device-code sign-in (open the URL, enter the code), prints the `export E2E_TEAMS_REFRESH_TOKEN='…'` line, and lists your teams + channels so you can copy the team and channel ids. Paste the token into your shell / CI secrets. The helper also writes the token to the gitignored sidecar `.env.e2e.teams-refresh` at the app root, beside `.env.e2e`. The driver reads that same file and saves each rotated token back to it, so one mint lasts across runs. The helper and the driver resolve the sidecar against the app root, never their own working directory, so a mint at the repository root reaches a driver that runs in `packages/core`. Set `E2E_TEAMS_REFRESH_TOKEN_FILE` only to move the sidecar. A relative value also resolves against the app root. The helper never writes a tracked file. If you ran J-TEAMS before OPE-2477, the driver saved its rotated tokens to `packages/core/.env.e2e.teams-refresh`. Move that file to the app root, or run `npm run e2e:teams-auth` again. The driver warns on stderr while the old file exists.
 4. **Set the six `E2E_TEAMS_*` vars** and run the scenario:
 
    ```bash

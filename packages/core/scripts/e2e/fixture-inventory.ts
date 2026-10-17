@@ -35,7 +35,7 @@ import {
   type SlackChannelInfo,
   type SurfaceKind,
 } from "./fixture-inventory-lib.js";
-import { DEFAULT_TEAMS_REFRESH_SINK, ENV, S24_DEFAULT_QUERY } from "./env.js";
+import { teamsRefreshSinkPath, ENV, S24_DEFAULT_QUERY } from "./env.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { notionFetch, parseNotionRetryAfterMs } from "./notion-driver.js";
 import { resolveAppRoot } from "../../agent/scaffold/app-root.js";
@@ -396,7 +396,7 @@ async function runInventory(env: Env, options: InventoryOptions): Promise<number
       refreshToken: env[ENV.teamsRefreshToken]!,
       teamId: env[ENV.teamsTeamId]!,
       channelId: env[ENV.teamsChannelId] ?? "",
-      refreshTokenFile: env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK,
+      refreshTokenFile: teamsRefreshSinkPath(env),
       botAppId: env[ENV.teamsBotAppId]!,
     });
   }
@@ -590,7 +590,7 @@ async function provisionTeams(env: Env, plan: ProvisionTarget, room: PlannedRoom
     refreshToken: env[ENV.teamsRefreshToken]!,
     teamId: env[ENV.teamsTeamId]!,
     channelId: env[ENV.teamsChannelId] ?? "",
-    refreshTokenFile: env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK,
+    refreshTokenFile: teamsRefreshSinkPath(env),
     botAppId: env[ENV.teamsBotAppId]!,
   });
   const want = roomName(plan.slug, "teams");

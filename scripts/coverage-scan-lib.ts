@@ -5,6 +5,7 @@ import {
   parseInventoryRows,
   parseProvesAnnotations,
   soakCheckerAfter,
+  testCellKind,
   buildMatrix,
   type InventoryRow,
   type ProvesClaim,
@@ -72,7 +73,7 @@ function legFor(root: string, file: string): string | undefined {
   return undefined;
 }
 
-function unitClaims(root: string, isRepo: boolean): readonly ProvesClaim[] {
+function testClaims(root: string, isRepo: boolean): readonly ProvesClaim[] {
   const out: ProvesClaim[] = [];
   for (const file of testFiles(root, isRepo)) {
     const text = readFileSync(join(root, file), "utf8");
@@ -83,7 +84,7 @@ function unitClaims(root: string, isRepo: boolean): readonly ProvesClaim[] {
         ids: annotation.ids,
         source: file,
         line: annotation.line,
-        kind: "unit",
+        kind: testCellKind(file),
         cell: leg === undefined ? file : `${file} (${leg})`,
       });
     }
@@ -149,6 +150,6 @@ export async function scanTree(root: string): Promise<CoverageScan> {
     rows.push(...parseInventoryRows(readFileSync(join(root, file), "utf8"), file, warnings));
   }
   const { claims: scenarioClaims, actions } = isRepo ? await repoScenariosAndActions() : fixtureScenariosAndActions(root);
-  const claims = [...unitClaims(root, isRepo), ...scenarioClaims, ...soakClaims(root, warnings)];
+  const claims = [...testClaims(root, isRepo), ...scenarioClaims, ...soakClaims(root, warnings)];
   return { matrix: buildMatrix(rows, claims, actions), claims, warnings };
 }

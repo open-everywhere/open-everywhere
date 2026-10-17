@@ -10,6 +10,7 @@ import {
   parseNaDeclaration,
   parseProvesAnnotations,
   soakCheckerAfter,
+  testCellKind,
   buildMatrix,
   isCovered,
   findings,
@@ -26,6 +27,7 @@ import {
   PENDING_REASON_PREFIX,
   type ProvesClaim,
 } from "./coverage-matrix-lib.js";
+import { INTEGRATION_INCLUDE_GLOBS } from "./it-shards.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MATRIX_CLI = join(REPO_ROOT, "scripts", "coverage-matrix.ts");
@@ -121,6 +123,32 @@ const PAGE = [
   const auditMatrix = buildMatrix(parseInventoryRows("| Id | B | Tested by |\n| --- | --- | --- |\n| FIX-audit-only | x | ? |\n", "f.md"), [], new Set(["FIX-audit-only"]));
   ok(isCovered(auditMatrix[0] as never), "a row whose id the audit registry declares is covered by the audit cell alone");
   ok(findings(auditMatrix, []).length === 0, "…and therefore reds nothing");
+}
+
+{
+  ok(testCellKind("tests/integration/tasks/a.test.ts") === "integration", "a `*.test.ts` under tests/integration/ fills the integration cell");
+  ok(testCellKind("tests/integration\\audit\\b.test.ts") === "integration", "…on a Windows-separated path too");
+  ok(testCellKind("scripts/a-test.ts") === "unit", "negative control: a test outside tests/integration/ fills the unit cell");
+  ok(testCellKind("packages/core/tests/integration/c.test.ts") === "unit", "negative control: a nested `tests/integration/` the tier does not schedule is NOT integration");
+  ok(testCellKind("tests/integration/d-test.ts") === "unit", "negative control: a `-test.ts` under tests/integration/ is not in the tier's glob, so it is NOT integration");
+  assert.deepEqual(INTEGRATION_INCLUDE_GLOBS, ["tests/integration/**/*.test.ts"], "testCellKind mirrors INTEGRATION_INCLUDE_GLOBS — change both together");
+  n++;
+
+  const rows = parseInventoryRows("| Id | B | Tested by |\n| --- | --- | --- |\n| FIX-int | i | ? |\n| FIX-both | b | ? |\n", "f.md");
+  const matrix = buildMatrix(
+    rows,
+    [
+      { ids: ["FIX-int", "FIX-both"], source: "tests/integration/x.test.ts", line: 1, kind: "integration", cell: "tests/integration/x.test.ts" },
+      { ids: ["FIX-both"], source: "scripts/y-test.ts", line: 1, kind: "unit", cell: "scripts/y-test.ts" },
+    ],
+    new Set(),
+  );
+  const [intOnly, both] = matrix;
+  ok(intOnly?.cells.integration.join(",") === "tests/integration/x.test.ts", "an integration proof fills the integration cell");
+  ok(intOnly?.cells.unit.length === 0, "negative control: an integration proof does NOT fill the unit cell");
+  ok(isCovered(intOnly as never), "a row an integration test alone proves is covered");
+  ok(both?.cells.unit.join(",") === "scripts/y-test.ts" && both?.cells.integration.join(",") === "tests/integration/x.test.ts", "a row proven by both tiers carries each proof in its own cell");
+  ok(coverageReportLines(matrix).join("\n").includes("unit 1 · integration 2 ·"), "the report counts the two cells apart");
 }
 
 {
@@ -278,6 +306,20 @@ const PAGE = [
 
   const noClaims = run(tree("noclaims", `${header}| FIX-off | o | n/a: out of scope, and here is why |\n`, "// nothing declared here\n", {}));
   ok(noClaims.code === 1 && noClaims.out.includes("scanner broke"), `a scan that finds no declaration anywhere is a RED, never a pass — got ${noClaims.code}`);
+
+  {
+    const root = tree("tiers", `${header}| FIX-unit | u | ? |\n| FIX-int | i | ? |\n`, ANNOTATION, {});
+    mkdirSync(join(root, "tests", "integration", "tasks"), { recursive: true });
+    writeFileSync(join(root, "tests", "integration", "tasks", "fixture.test.ts"), "// proves: FIX-int\n");
+    const json = execFileSync(...npxCommand(["tsx", MATRIX_CLI, "--root", root, "--json"]), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const cells = new Map((JSON.parse(json) as { matrix: { row: { id: string }; cells: { unit: string[]; integration: string[] } }[] }).matrix.map((e) => [e.row.id, e.cells]));
+    const integrationFile = join("tests", "integration", "tasks", "fixture.test.ts");
+    ok(cells.get("FIX-int")?.integration.join(",") === integrationFile, `a proof under tests/integration/ lands in the integration cell — got ${JSON.stringify(cells.get("FIX-int"))}`);
+    ok(cells.get("FIX-int")?.unit.length === 0, "…and NOT in the unit cell, which is the defect OPE-2140 fixed");
+    ok(cells.get("FIX-unit")?.unit.length === 1 && cells.get("FIX-unit")?.integration.length === 0, "negative control: a proof outside tests/integration/ stays in the unit cell");
+    const check = run(root);
+    ok(check.code === 0 && check.out.includes("unit 1 · integration 1 ·"), `the gate passes and prints both counts — got ${check.code}: ${check.out.split("\n").filter((l) => l.startsWith("Cells")).join(" / ")}`);
+  }
 
   rmSync(dir, { recursive: true, force: true });
 }
