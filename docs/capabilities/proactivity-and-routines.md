@@ -63,6 +63,38 @@ re-armed or edited — completion is terminal, not a pause — and a **spent one
 re-armed either, because there is no future instant left for it to fire at. In both cases the answer
 is a fresh routine.
 
+### When nobody checks in: Keep going, or it pauses
+
+A recurring routine has no end. That is the point of a daily digest, but it also means a digest
+whose channel went quiet keeps running and keeps spending. So a recurring routine counts its runs
+since a person last checked in on it.
+
+- After **100 runs** with no check-in (`routines.attentionWarnRuns`), it posts **one card** where its
+  reports land: *Keep going?* with **Keep going** and **Let it pause**. The run still happens.
+- A **Keep going** press starts the count again from zero.
+- With no press, it **pauses** after **24 more runs** (`routines.attentionPauseRuns`). It says so once,
+  with a **Resume** card. A Resume press starts it again with a fresh count.
+
+A check-in is a press of either card, or a carded `edit_routine`, `add_routine_rule`,
+`remove_routine_rule` or `enable_routine` on that routine. `enable_routine` also lifts the pause. The
+count covers `cron`, `interval` and only-on-change routines, durable jobs included, and silent routines
+too: the card is the only sign a silent routine still runs. A one-time routine runs once, and an
+event routine fires because something happened, so neither is counted.
+
+Some limits are deliberate:
+
+- **A reply does not count as a check-in yet.** Nothing maps a routine's post back to the routine, so a
+  reply in its thread cannot be matched to it.
+- **A routine never pauses without a posted warning.** A room that cannot take a card (a Teams
+  routine today, or a surface with no approval-card path) gets no warning and so never pauses.
+- **A press decides from the routine as it is now.** A stale Resume card never revives a routine that
+  stopped for another reason, such as three failures or its ceiling. The tidy sweep expires a card
+  once it stops being the routine's live card.
+- **A durable job keeps its 200-run / 7-day ceiling** as a hard backstop. A Keep going press does not
+  extend it.
+
+Set `routines.attentionWarnRuns` to `0` to turn the check-in off for a deployment.
+
 ### Standing rules: correcting a routine without rewriting it
 
 A routine's instruction is written before anyone has watched it run. The first time it does something
@@ -719,7 +751,8 @@ days) and a deadline is meaningless for a fast one (the ~10-minute tick
 floor is ~1,000 runs a week). The defaults are **200 runs or 7 days** (`routines.jobMaxFires`,
 `routines.jobMaxDays`), which cross over at an hourly cadence; a cadence slower than about every other
 day stretches the deadline so the job still gets at least three runs. The ceiling is stated on the
-arming card, and `list_routines` shows how far through it each job is. A third condition — **being
+arming card, and `list_routines` shows how far through it each job is. The ceiling stays as a hard backstop beside the
+[check-in](#when-nobody-checks-in-keep-going-or-it-pauses): a Keep going press does not extend it. A third condition — **being
 blocked**, below — stops a job before either of those.
 
 When a job hits its ceiling it **stops and posts a notice** — deliberately a notice and not an
@@ -1422,6 +1455,10 @@ Proactivity that misbehaves is worse than no proactivity, so routines are govern
   names which dimension tripped and carries the routine's own `consecutiveFailures` count, which is
   usually 0 — a ceiling stop and a three-strike stop are different incidents and read differently in
   the log.
+- **…or when nobody checks in.** Any recurring routine, a job included, pauses itself after its
+  check-in grace with no press (see
+  [When nobody checks in](#when-nobody-checks-in-keep-going-or-it-pauses)). The `routine.disabled`
+  row carries `checkIn: true`, and a Resume press or `enable_routine` starts it again.
 - **…or sooner, if it keeps getting blocked.** A job paused by a
   [session cost checkpoint](../security/spend-and-cost.md) on three fires running stops itself too,
   with `boundDimension: "stalled"` on the same `routine.disabled` row plus the count that produced it.
@@ -2442,8 +2479,19 @@ retire the routine on the stall dimension (`MAX_STALLED_FIRES`, which is the sam
 row cannot retire a live job; the fire cap still binds.
 
 A fresh durable-job bound is minted at **200 fires** (`routines.jobMaxFires`) and **7 days**
-(`routines.jobMaxDays`), whichever comes first. Plain `cron` and `interval` routines are unbounded by
-design.
+(`routines.jobMaxDays`), whichever comes first. Plain `cron` and `interval` routines carry no
+ceiling. The check-in (`routines/attention.ts`) is what pauses one that nobody looks at.
+
+### The check-in
+
+`attentionStep` (`routines/attention.ts`) runs before each clock fire of a recurring routine. It warns
+once `routines.attentionWarnRuns` runs passed with no check-in (default 100), and it pauses once
+`routines.attentionPauseRuns` more runs passed since the warning **actually posted** (default 24). The
+count is written in the same optimistic advance as `fireCount`, so a gated, halted, ineligible or
+over-budget tick is not counted. A pause writes `status: "disabled"` with a host-composed
+`disabledReason` and a `routine.disabled` row that carries `checkIn: true`. A press writes a
+`routine.checkin` row. Both cards are the `routine.attention` approval kind, member tier, with no
+clock expiry.
 
 ### The self-check-in doctrine is advice, not a bound
 

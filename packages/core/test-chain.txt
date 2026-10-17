@@ -10,6 +10,7 @@ test:routine-reliability
 test:routine-fire-eligibility
 test:slack-room-membership-pagination
 test:routine-bound
+test:routine-attention
 test:routine-semantic-failure
 test:routine-fire-reach
 test:routine-targeting

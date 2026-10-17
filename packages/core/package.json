@@ -874,6 +874,10 @@
       "types": "./dist/agent/approvals/review-surface.d.ts",
       "default": "./dist/agent/approvals/review-surface.js"
     },
+    "./agent/approvals/routine-attention.js": {
+      "types": "./dist/agent/approvals/routine-attention.d.ts",
+      "default": "./dist/agent/approvals/routine-attention.js"
+    },
     "./agent/approvals/routine-cancel.js": {
       "types": "./dist/agent/approvals/routine-cancel.d.ts",
       "default": "./dist/agent/approvals/routine-cancel.js"
@@ -2630,6 +2634,10 @@
       "types": "./dist/agent/roles/role.d.ts",
       "default": "./dist/agent/roles/role.js"
     },
+    "./agent/routines/attention.js": {
+      "types": "./dist/agent/routines/attention.d.ts",
+      "default": "./dist/agent/routines/attention.js"
+    },
     "./agent/routines/bound.js": {
       "types": "./dist/agent/routines/bound.d.ts",
       "default": "./dist/agent/routines/bound.js"
@@ -2901,6 +2909,10 @@
     "./agent/schedules/personal-watch.js": {
       "types": "./dist/agent/schedules/personal-watch.d.ts",
       "default": "./dist/agent/schedules/personal-watch.js"
+    },
+    "./agent/schedules/routine-attention.js": {
+      "types": "./dist/agent/schedules/routine-attention.d.ts",
+      "default": "./dist/agent/schedules/routine-attention.js"
     },
     "./agent/schedules/routine-dispatch.js": {
       "types": "./dist/agent/schedules/routine-dispatch.d.ts",
@@ -3632,6 +3644,7 @@
     "test:routine-fire-eligibility": "NODE_NO_WARNINGS=1 tsx scripts/routine-fire-eligibility-test.ts",
     "test:slack-room-membership-pagination": "NODE_NO_WARNINGS=1 tsx scripts/slack-room-membership-pagination-test.ts",
     "test:routine-bound": "NODE_NO_WARNINGS=1 tsx scripts/routine-bound-test.ts",
+    "test:routine-attention": "NODE_NO_WARNINGS=1 tsx scripts/routine-attention-test.ts",
     "test:routine-policy": "NODE_NO_WARNINGS=1 tsx scripts/routine-policy-test.ts",
     "test:fire-principal": "NODE_NO_WARNINGS=1 tsx scripts/fire-principal-test.ts",
     "test:silent-routine": "NODE_NO_WARNINGS=1 tsx scripts/silent-routine-test.ts",

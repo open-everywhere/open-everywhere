@@ -146,6 +146,8 @@ export interface AgentSettings {
     readonly maxConcurrency: number;
     readonly jobMaxFires: number;
     readonly jobMaxDays: number;
+    readonly attentionWarnRuns: number;
+    readonly attentionPauseRuns: number;
   };
   readonly rotation: {
     readonly quietGapHours: number;
@@ -775,7 +777,7 @@ export const SETTINGS = {
       path: "routines.jobMaxFires",
       shipped: 200,
       validate: positiveInt,
-      summary: "Fire cap minted onto a fresh durable-job bound. Plain `cron`/`interval` routines are unbounded by design.",
+      summary: "Fire cap minted onto a fresh durable-job bound. Plain `cron`/`interval` routines carry no ceiling: the check-in (`routines.attentionWarnRuns`) is what pauses one that nobody looks at.",
     } satisfies SettingSpec<number>,
     jobMaxDays: {
       path: "routines.jobMaxDays",
@@ -783,6 +785,20 @@ export const SETTINGS = {
       validate: positiveInt,
       summary: "Wall-clock grace minted onto a fresh durable-job bound, in days. Stretched so a slow cadence still gets a fair sample of runs.",
       format: (v) => `${v} d`,
+    } satisfies SettingSpec<number>,
+    attentionWarnRuns: {
+      path: "routines.attentionWarnRuns",
+      shipped: 100,
+      validate: (v) => (Number.isInteger(v) && v >= 0 ? undefined : "must be a non-negative integer (0 turns the check off)"),
+      summary:
+        "Runs a recurring clock routine makes with no human check-in before it posts a Keep going card where its reports land (OPE-2511). A check-in is a press of that card, a Resume, or a carded edit, rule change or re-enable. `0` turns the check off. One-time and event routines are not counted.",
+    } satisfies SettingSpec<number>,
+    attentionPauseRuns: {
+      path: "routines.attentionPauseRuns",
+      shipped: 24,
+      validate: positiveInt,
+      summary:
+        "Further runs after the Keep going card before the routine pauses itself and posts a Resume card. Counted from the run the card actually posted, so a routine never pauses without a warning.",
     } satisfies SettingSpec<number>,
   },
   rotation: {
@@ -1316,6 +1332,8 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       maxConcurrency: resolve(SETTINGS.routines.maxConcurrency, o.routines?.maxConcurrency),
       jobMaxFires: resolve(SETTINGS.routines.jobMaxFires, o.routines?.jobMaxFires),
       jobMaxDays: resolve(SETTINGS.routines.jobMaxDays, o.routines?.jobMaxDays),
+      attentionWarnRuns: resolve(SETTINGS.routines.attentionWarnRuns, o.routines?.attentionWarnRuns),
+      attentionPauseRuns: resolve(SETTINGS.routines.attentionPauseRuns, o.routines?.attentionPauseRuns),
     },
     rotation: {
       quietGapHours: resolve(SETTINGS.rotation.quietGapHours, o.rotation?.quietGapHours),

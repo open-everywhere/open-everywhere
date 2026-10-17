@@ -78,7 +78,11 @@ import "./connector-op.js";
 import "./a2a-delegate.js";
 import "./chat-dm.js";
 import "./session-checkpoint.js";
+import "./routine-attention.js";
 import { ROUTINE_PERMISSION_KIND, parseRoutinePermissionArgs, routineCardGenerationState } from "./routine-permission.js";
+import { ROUTINE_ATTENTION_KIND, type RoutineAttentionArgs } from "../routines/attention.js";
+import { getRoutine } from "../routines/store.js";
+import { DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import {
   markRoutinePermissionAsked,
   planRoutinePermissionCard,
@@ -1547,6 +1551,10 @@ export async function reapSupersededRoutineCards(org: string, now: Date = new Da
   const pending = await store.listPendingActions(org).catch(() => [] as readonly PendingActionRow[]);
   let count = 0;
   for (const row of pending) {
+    if (row.kind === ROUTINE_ATTENTION_KIND) {
+      count += await reapSupersededCheckInCard(store, org, row, nowIso, deps);
+      continue;
+    }
     if (row.kind !== ROUTINE_PERMISSION_KIND) continue;
     const args = parseRoutinePermissionArgs(row.argsJson);
     if (!args) continue;
@@ -1568,6 +1576,35 @@ export async function reapSupersededRoutineCards(org: string, now: Date = new Da
     }
   }
   return count;
+}
+
+async function reapSupersededCheckInCard(
+  store: ReturnType<typeof getOperationalStore>,
+  org: string,
+  row: PendingActionRow,
+  nowIso: string,
+  deps: SweepFeedbackDeps,
+): Promise<number> {
+  try {
+    if (Date.parse(nowIso) - Date.parse(row.createdAt) < 2 * DISPATCH_TICK_MINUTES * 60_000) return 0;
+    const args = JSON.parse(row.argsJson) as Partial<RoutineAttentionArgs>;
+    if (typeof args.org !== "string" || typeof args.surfaceKey !== "string" || typeof args.routineId !== "string") return 0;
+    const routine = await getRoutine(args.org, args.surfaceKey, args.routineId);
+    if (routine !== null && routine.attention?.cardId === row.id) return 0;
+    const won = await store.decidePendingAction(org, row.id, "expired", "system", nowIso);
+    if (!won) return 0;
+    await appendAudit({
+      ...whereFromScope(org, row.scopeKey),
+      principalId: "system",
+      action: "approval.expired",
+      detail: { id: row.id, kind: row.kind, cause: routine === null ? "routine-deleted" : "routine-superseded", routine: args.routineId },
+    });
+    await sweepExpiryFeedback({ ...row, status: "expired", decidedBy: "system", decidedAt: nowIso }, deps);
+    return 1;
+  } catch (err) {
+    console.warn(`[open-everywhere:approvals] reapSupersededCheckInCard: failed to expire ${row.id}: ${String(err)}`);
+    return 0;
+  }
 }
 
 export interface DecisionWakeDeps {
@@ -1749,8 +1786,9 @@ async function threadOwnedBySession(org: string, origin: UnifiedWakeOrigin | nul
 }
 
 export async function deliverDecisionFeedback(input: DecisionFeedbackInput, decisionWake?: DecisionWakeDeps): Promise<void> {
+  const sessionless = actionKind(input.row.kind)?.sessionless === true;
   let woke = false;
-  if (input.target) {
+  if (input.target && !sessionless) {
     woke = await wakeWindowOnDecision(
       {
         row: input.row,
@@ -1764,6 +1802,7 @@ export async function deliverDecisionFeedback(input: DecisionFeedbackInput, deci
       decisionWake,
     ).catch(() => false);
   }
+  if (sessionless && input.cardShowsOutcome) return;
   const statesOutcome = !input.cardShowsOutcome || !woke || (await threadOwnedBySession(input.row.org, input.noticeThread));
   const notice = decisionNoticeText(input.row, input.outcome, input.clickerId, input.executed, statesOutcome ? { outcomeLine: input.outcomeLine, row: input.row } : undefined);
   if (notice !== undefined && !swallowRoomOp(`an approval decision notice (${input.outcome})`)) {

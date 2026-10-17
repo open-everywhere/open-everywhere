@@ -2,9 +2,10 @@ import { routineWords } from "../routines/schedule-words.js";
 import { shortUtc } from "./session-grant.js";
 import { QUOTE_MAX, plainQuote, plainValue } from "./plain-text.js";
 import { placeWords } from "../channels/friendly-ids.js";
-import { updateRoutine } from "../routines/store.js";
+import { getRoutine, updateRoutine } from "../routines/store.js";
 import { mintJobBound } from "../routines/bound.js";
 import { stallResetPatch } from "../routines/stall.js";
+import { attentionResetPatch, isPausedForCheckIn } from "../routines/attention.js";
 import { computeNextRun } from "../routines/schedule.js";
 import {
   assertKnownSubscription,
@@ -67,7 +68,8 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
     assertKnownSubscription(args.trigger);
 
     const generation = args.generation + 1;
-    const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation };
+    const live = await getRoutine(args.org, args.surfaceKey, args.id).catch(() => null);
+    const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation, ...(live === null || isPausedForCheckIn(live) ? {} : attentionResetPatch()) };
     const arming = armingApproval();
     const updated = await updateRoutine(args.org, args.surfaceKey, args.id, patch, {
       authoredBy: args.requestedBy,
@@ -147,6 +149,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
       nextRunAt: next ? next.toISOString() : null,
       ...(args.bounded ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
       ...stallResetPatch(),
+      ...attentionResetPatch(),
     });
     if (!updated) {
       return `${routineWords(args.description)} was stopped before this, so nothing changed`;

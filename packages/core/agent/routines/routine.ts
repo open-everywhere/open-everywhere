@@ -86,8 +86,16 @@ export interface Routine {
   fireCount?: number;
   lastStallAt?: string;
   stalledFires?: number;
+  attention?: RoutineAttention;
   completedAt?: string;
   completedReason?: string;
+}
+
+export interface RoutineAttention {
+  readonly runs: number;
+  readonly warnedAtRun?: number;
+  readonly cardId?: string;
+  readonly pausedAt?: string;
 }
 
 export function isJobRoutine(r: Pick<Routine, "sessionMode">): boolean {

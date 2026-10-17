@@ -36,6 +36,8 @@ export interface ActionKind<A = unknown> {
   consequence?(args: A): string | undefined;
   doneSummary?(args: A): string;
   readonly consequenceQuotes?: true;
+  optionLabels?(args: A): { readonly approve: string; readonly reject: string };
+  readonly sessionless?: true;
   execute(args: A, decidedBy: string): Promise<string>;
   declined?(args: A, decidedBy: string): Promise<string>;
 }

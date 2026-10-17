@@ -413,6 +413,19 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     },
   },
   {
+    kind: "routine.attention",
+    args: {
+      org: ORG,
+      surfaceKey: SCOPE,
+      routineId: "r-1a2b3c4d",
+      stage: "warn",
+      description: 'cron "0 9 * * 1-5" (UTC; posts every run)',
+      prompt: "Summarise yesterday's merged pull requests in acme/web.",
+      runs: 100,
+      runsLeft: 24,
+    },
+  },
+  {
     kind: "session.checkpoint",
     args: {
       org: ORG,

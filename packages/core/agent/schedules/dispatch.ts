@@ -16,8 +16,10 @@ import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.j
 import { auditRoutineDisabled, auditRoutineEligibilityUnresolved, auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
 import { auditFireAttrsSent } from "../routines/fire-carriage.js";
 import { checkBound } from "../routines/bound.js";
+import { attentionCountPatch, countsTowardCheckIn } from "../routines/attention.js";
+import { applyRoutineAttention, type RoutineAttentionDeps } from "./routine-attention.js";
 import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
-import { listAllRoutines, updateRoutine } from "../routines/store.js";
+import { getRoutine, listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
@@ -72,6 +74,7 @@ export async function dispatchTick(
     readonly confirmTeamsRoomMembership?: TeamsRoomMembershipCheck;
     readonly confirmTeamsCreatorActive?: TeamsAccountActiveCheck;
     readonly fireWindow?: FireWindowDeps;
+    readonly attention?: RoutineAttentionDeps;
   },
 ): Promise<void> {
   const { to, waitUntil, appAuth } = args;
@@ -100,6 +103,7 @@ export async function dispatchTick(
   let ineligible = 0;
   let halted = 0;
   let retired = 0;
+  let checkInPaused = 0;
   for (const r of due) {
     const bound = checkBound(r, now);
     if (bound.exhausted) {
@@ -139,6 +143,11 @@ export async function dispatchTick(
     if (await routineFireHalted(r, { trigger: r.trigger.kind })) {
       halted++;
       log(`SKIPPED (halted): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
+      continue;
+    }
+    const checkIn = await applyRoutineAttention(r, now, dest.target, args.attention);
+    if (checkIn.kind === "paused") {
+      checkInPaused++;
       continue;
     }
     const internal =
@@ -224,6 +233,7 @@ export async function dispatchTick(
       }
       continue;
     }
+    const attentionLive = countsTowardCheckIn(r) ? await getRoutine(r.org, r.surfaceKey, r.id).catch(() => null) : null;
     try {
       await updateRoutine(r.org, r.surfaceKey, r.id, {
         lastRunAt: now.toISOString(),
@@ -233,6 +243,7 @@ export async function dispatchTick(
         lastStallAt: undefined,
         ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
         ...(r.bound ? { fireCount: (r.fireCount ?? 0) + 1 } : {}),
+        ...(attentionLive !== null ? attentionCountPatch(attentionLive) : {}),
       });
       let fireTarget = dest.target;
       let jobAnchor = r.jobSessionAnchor;
@@ -309,7 +320,7 @@ export async function dispatchTick(
   }
   log(
     `tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${gated} condition-gated, ${ineligible} ineligible, ${deferred} deferred` +
-      `${halted > 0 ? `, ${halted} halted` : ""}${retired > 0 ? `, ${retired} retired at ceiling` : ""} (cap ${cap})`,
+      `${halted > 0 ? `, ${halted} halted` : ""}${retired > 0 ? `, ${retired} retired at ceiling` : ""}${checkInPaused > 0 ? `, ${checkInPaused} paused for a check-in` : ""} (cap ${cap})`,
   );
 }
 

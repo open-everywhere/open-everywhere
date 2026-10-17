@@ -1014,6 +1014,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "reply.stand_down_ack",
   "review.pr_walkthrough",
   "routine.cancel",
+  "routine.checkin",
   "routine.complete",
   "routine.create",
   "routine.declared_ops_resolved",

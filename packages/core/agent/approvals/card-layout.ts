@@ -1,4 +1,5 @@
 import type { PendingActionRow } from "./types.js";
+import { actionKind } from "./actions.js";
 import { grantButtonLabel, pendingCardExpiryClause, sessionGrantKind } from "./session-grant.js";
 import { getSettings } from "../settings/settings.js";
 import { consequenceForRow, doneSummaryForRow, plainSummaryForRow } from "./plain-summary.js";
@@ -141,7 +142,8 @@ const JUDGE_LIFT_OUTCOME_MAX = 200;
 export const JUDGE_LIFT_BUTTON = "This should not have run";
 
 export function pendingCardOptions(row: PendingActionRow): readonly CardOption[] {
-  const options: CardOption[] = [{ verb: "approve", label: "Approve", tone: "primary" }];
+  const labels = optionLabelsForRow(row);
+  const options: CardOption[] = [{ verb: "approve", label: labels.approve, tone: "primary" }];
   const grantLabel = sessionGrantKind(row) !== null ? grantButtonLabel(row, getSettings().approvals.routineGrantTtlHours) : undefined;
   if (grantLabel !== undefined) options.push({ verb: "approve_session", label: grantLabel, tone: "neutral" });
   const proposal = allowRuleProposalForRow(row);
@@ -153,8 +155,23 @@ export function pendingCardOptions(row: PendingActionRow): readonly CardOption[]
       confirm: { title: "Allow things like this?", text: allowRuleConfirmText(proposal), yes: "Approve and allow", no: "Cancel" },
     });
   }
-  options.push({ verb: "reject", label: "Reject", tone: "danger" });
+  options.push({ verb: "reject", label: labels.reject, tone: "danger" });
   return options;
+}
+
+function optionLabelsForRow(row: Pick<PendingActionRow, "kind" | "argsJson">): { readonly approve: string; readonly reject: string } {
+  const fallback = { approve: "Approve", reject: "Reject" };
+  const kindDef = actionKind(row.kind);
+  if (kindDef?.optionLabels === undefined) return fallback;
+  try {
+    const labels = kindDef.optionLabels(JSON.parse(row.argsJson));
+    return {
+      approve: labels.approve.trim().length > 0 ? labels.approve : fallback.approve,
+      reject: labels.reject.trim().length > 0 ? labels.reject : fallback.reject,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 function parseArgs(argsJson: string): unknown {

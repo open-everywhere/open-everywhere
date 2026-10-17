@@ -573,6 +573,11 @@ export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = 
     reason:
       "the TAUGHT-DRAFT PROPOSAL CARD (OPE-2454): `my_browser` `propose` posts it as that tool's SECOND card kind (its row names `browser.personal.act`, and the policy table has one kind per tool), so it is pinned here. Approving opens a pull request on the config repo that shows a taught draft — labels and page paths read from the person's own signed-in sites — to that repo's readers, a disclosure to a new audience, so the model never opens it alone: `execute` accepts only the owner's own click, and another member's click or an approver-chain lowering throws. Member tier because the owner is a member and the decision is theirs; the merge stays the gate that arms the skill",
   },
+  "routine.attention": {
+    tier: "gate:member",
+    reason:
+      "the ROUTINE CHECK-IN CARD (OPE-2511): a recurring routine that has run `routines.attentionWarnRuns` times with no human check-in posts Keep going where its reports land, and pauses itself after `routines.attentionPauseRuns` more runs with a Resume card. Raised by the clock dispatcher, not by a verb, so it needs pinning here. Member on purpose: a press keeps or restarts standing autonomy a member card already armed, which is the bar `routine.enable` sets, and the click re-reads the live row so it can only clear the check-in count or lift the check-in's own pause, never revive a routine that stopped for another reason",
+  },
   "routine.permission": {
     tier: "gate:member",
     reason:
@@ -769,6 +774,8 @@ const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
   "packages/core/agent/operational/store.ts": "the operational-store INTERFACE that declares the routine verbs; a type signature, not a call site",
   "packages/core/agent/schedules/dispatch.ts": "the HOST dispatcher tick. It patches nextRunAt/lastOutcome on rows it is already firing, outside any session — there is no turn here to be tainted",
   "packages/core/agent/routines/outcome-fold.ts": "the host-side outcome fold (three-strike disable + stall detection). It reads what a fire DID and writes bookkeeping; it never authors instruction text",
+  "packages/core/agent/schedules/routine-attention.ts": "the HOST check-in step of the dispatcher tick (OPE-2511). It records a posted Keep going card and pauses a routine nobody checked in on, outside any session; it never authors instruction text",
+  "packages/core/agent/approvals/routine-attention.ts": "the `routine.attention` click (OPE-2511), a NON_TOOL_ACTION_KIND the dispatcher raises. A verified member click clears the check-in count or lifts the check-in's own pause; it never authors instruction text",
   "packages/core/agent/control/writes.ts": "the control-plane MCP write surface — operator-authenticated over its own transport, not a tool the model can call in a turn",
   "packages/core/agent/control/server.ts": "the control-plane MCP server that mounts those writes; same plane, same reason",
 };

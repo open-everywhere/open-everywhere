@@ -2651,6 +2651,7 @@ export const SECTION_SECURITY: readonly DocEntry[] = [
       "| `memory.purge` | `purge_memory` | member |",
       "| `op.connector` | — *(no propose tool)* | member |",
       "| `pr.open` | `open_pull_request` | member |",
+      "| `routine.attention` | — *(no propose tool)* | member |",
       "| `routine.cancel` | `cancel_routine` | member |",
       "| `routine.create` | `create_routine` | member |",
       "| `routine.edit` | `edit_routine` | member |",
