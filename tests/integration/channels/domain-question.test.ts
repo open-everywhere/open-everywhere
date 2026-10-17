@@ -1,6 +1,11 @@
+// proves: domain_question.asked, domain_question.received, domain_question.answered, domain_question.answer_delivered, domain_question.refused
+
 import { afterAll, expect, test } from "vitest";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+import { dmWindowRegistryKey } from "@open-everywhere/core/agent/channels/unified-supervisor.js";
+import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
+import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import { domainQuestionIdFor } from "@open-everywhere/core/agent/channels/domain-question.js";
 import { wakeIdFromPrompt } from "../../../agent/model/scripted-model";
 
@@ -36,6 +41,8 @@ const RELAY = "it2452 relayed: the launch moved to Friday.";
 const ASK_ID = "it2452-ask";
 const OUTSIDER_ASK_ID = "it2452-ask-outsider";
 const ANSWER_ID = "it2452-answer";
+const FOLLOW_UP = "it2452 remind me what the launch domain said?";
+const FOLLOW_UP_REPLY = "it2452 the launch domain said it moved to Friday.";
 
 const cleanups: (() => void)[] = [];
 afterAll(() => {
@@ -208,4 +215,33 @@ test("a member's DM asks their domain, the domain's own seat answers, and the an
   expect(await rowsSinceCursor(refusedCursor, ["domain_question.asked", "domain_question.received"], { limit: 20 }), "🔴 a refused ask still recorded a question").toEqual([]);
   expect(quietDomain.requests, "🔴 a refused ask still woke the domain's seat").toEqual([]);
   expect(outsiderLeg.requests.filter((r) => r.fault !== undefined), "a scripted outsider request degraded").toEqual([]);
+  outsiderLeg.dispose();
+  quietDomain.dispose();
+
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  const dmKey = dmWindowRegistryKey(`slack/${SLACK_TEAM_ID}/${MEMBER_DM}`);
+  const before = await store.getChannelSession(org, dmKey);
+  expect(before?.token, "the member's DM seat has no registry row").toBeDefined();
+  await waitFor(async () => ((await store.readSessionTail(org, dmKey, before!.token)).some((e) => e.kind === "post" && e.text === RELAY) ? true : undefined), "it2452: the relay in the DM seat's ring");
+  expect(await store.markChannelSessionRotation(org, dmKey, new Date().toISOString()), "the member's DM seat was not marked for rotation").toBe(true);
+  const followLeg = disposeLater(
+    registerScript({
+      parent: [{ calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: FOLLOW_UP_REPLY }, id: "it2452-follow-up" }] }, { say: NO_REPLY_SENTINEL }],
+    }),
+  );
+  const ts3 = slackTs(Date.now(), (tsCounter += 1));
+  const f = await slackDmWake({ channelId: MEMBER_DM, userId: MEMBER, text: FOLLOW_UP, ts: ts3, eventId: `EvIT2452F${ts3.replace(".", "")}` });
+  expect(f.status, `the follow-up DM wake was refused: ${f.body.slice(0, 200)}`).toBe(200);
+  const followStep = await waitFor(() => followLeg.requests.find((r) => r.role === "parent" && r.stepIndex === 0), "it2452: the rotated DM seat's first step");
+  expect((await store.getChannelSession(org, dmKey))!.token, "the mark did not rotate the member's DM seat").not.toBe(before!.token);
+  expect(followStep.sessionId, "the follow-up ran in the DM seat's old session").not.toBe(dmSession);
+  expect(promptOf(followStep), "🔴 the rotated DM seat forgot the domain's answer it relayed").toContain(RELAY);
+  expect(promptOf(followStep), "the rotated DM seat did not read the follow-up").toContain(FOLLOW_UP);
+  const followPost = await waitFor(
+    async () => (await rowsSinceCursor(refusedCursor, ["reply.post"], { limit: 100 })).find((r) => r.detail?.sessionId === followStep.sessionId && r.detail?.chars === FOLLOW_UP_REPLY.length),
+    "it2452: the rotated DM seat's reply.post row",
+  );
+  expect(followPost.surface, "the rotated DM seat posted somewhere other than the member's DM").toBe(MEMBER_DM);
+  expect(followLeg.requests.filter((r) => r.fault !== undefined), "a scripted follow-up request degraded").toEqual([]);
 }, 600_000);
