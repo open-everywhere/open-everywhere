@@ -159,7 +159,24 @@ export function testRunBlockedMessage(toolName: string): string {
   );
 }
 
+let fenceMounted = false;
+
+export const TEST_RUN_UNFENCED_REFUSAL = "this deployment has no way to block a test's writes, so the test would change things for real";
+
+export function noteTestRunFenceMounted(): void {
+  fenceMounted = true;
+}
+
+export function testRunFenceMounted(): boolean {
+  return fenceMounted;
+}
+
+export function _setTestRunFenceMountedForTest(mounted: boolean): void {
+  fenceMounted = mounted;
+}
+
 export function testRunRefusal(r: { readonly status: string; readonly trigger: { readonly kind: string }; readonly surfaceKey: string }): string | null {
+  if (!testRunFenceMounted()) return TEST_RUN_UNFENCED_REFUSAL;
   if (r.status === "done") return "it is a finished job, and a finished job does not run again";
   if (r.trigger.kind === "event") return "it runs when an event arrives, and a test has no event to give it";
   if ((r.surfaceKey.split("/")[0] ?? "") !== "slack") return "a test run is available in Slack only for now";

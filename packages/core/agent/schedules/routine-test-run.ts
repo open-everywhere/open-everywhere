@@ -17,7 +17,15 @@ import { taintedFireAttrs } from "../access/taint-signal.js";
 import { routinePartition } from "../routines/partition.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { appendAudit } from "../audit/audit.js";
-import { ROUTINE_TEST_FIRED_ACTION, testRunAttrs, testRunKickoffText, testRunRefusal, type RoutineTestRequest } from "../routines/test-run.js";
+import {
+  ROUTINE_TEST_FIRED_ACTION,
+  TEST_RUN_UNFENCED_REFUSAL,
+  testRunAttrs,
+  testRunFenceMounted,
+  testRunKickoffText,
+  testRunRefusal,
+  type RoutineTestRequest,
+} from "../routines/test-run.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routine-test-run] ${msg}`);
@@ -95,6 +103,10 @@ export async function dispatchTestRuns(all: readonly Routine[], args: TestRunDis
         await auditTestFired(r, test, { started: false, reason });
         if (channelId !== undefined) await post(channelId, `🧪 The test run of ${name} did not start: ${why}.`);
       };
+      if (!testRunFenceMounted()) {
+        await refuse(TEST_RUN_UNFENCED_REFUSAL, "fence-unmounted");
+        continue;
+      }
       const refusal = testRunRefusal(r);
       if (refusal !== null) {
         await refuse(refusal, "not-testable");

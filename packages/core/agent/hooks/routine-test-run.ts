@@ -10,6 +10,7 @@ import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { routineWords } from "../routines/schedule-words.js";
 import {
+  noteTestRunFenceMounted,
   renderTestRunSummary,
   ROUTINE_TEST_BLOCKED_ACTION,
   routineTestStamped,
@@ -19,6 +20,8 @@ import {
 import { refuseTurn, type RefusableContext } from "./control-refusal.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
+
+noteTestRunFenceMounted();
 
 const reported = defineState<Record<string, true>>("open-everywhere.routine-test-run.reported", () => ({}));
 

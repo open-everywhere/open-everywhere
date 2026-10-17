@@ -23,6 +23,9 @@ overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 overrideSettingsForTest({ window: { topology: false } });
 
 const testRun = await import("../agent/routines/test-run.js");
+ok(!testRun.testRunFenceMounted(), "mount: before the test-run hook module loads, the fence reads as NOT mounted");
+await import("../agent/hooks/routine-test-run.js");
+ok(testRun.testRunFenceMounted(), "🔴 mount: loading the test-run hook module marks the fence mounted");
 const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
 const { fenceToolsetForTestRun } = await import("../agent/access/test-run-fence.js");
 type Routine = import("../agent/routines/routine.js").Routine;
@@ -403,6 +406,36 @@ const { ROUTINE_AUDIT } = await import("../agent/routines/fire-audit.js");
   delete plain[testRun.ROUTINE_TEST_ATTR];
   await fold(plain);
   ok((await routineStore.getRoutine(ORG, SURFACE, "r-digest"))?.consecutiveFailures === 1, "fold: control — the same failed turn WITHOUT the stamp is a strike");
+}
+
+{
+  testRun._setTestRunFenceMountedForTest(false);
+  const base = { status: "active", trigger: { kind: "cron" }, surfaceKey: "slack/T1/C1" };
+  ok(testRun.testRunRefusal(base) === testRun.TEST_RUN_UNFENCED_REFUSAL, "🔴 unmounted: a testable routine is refused when nothing can fence its writes");
+  ok(testRun.testRunOffer(base) === "", "🔴 unmounted: the create and edit replies offer no test");
+
+  const asked = (await testTool.execute({ id: "r-digest" } as never, humanCtx)) as { queued: boolean; message: string };
+  ok(!asked.queued && asked.message.includes("block a test's writes"), "🔴 unmounted: the tool queues no test, and says why in words");
+  ok(!asked.message.includes("r-digest") && !asked.message.includes("routine-test-run"), "unmounted: the refusal names no raw id and no roster key");
+  ok((await routineStore.getRoutine(ORG, SURFACE, "r-digest"))?.testRun === undefined, "unmounted: …and writes no request");
+
+  const sendsBefore = sends.length;
+  const postsBefore = slackPosts.length;
+  await routineStore.updateRoutine(ORG, SURFACE, "r-digest", { testRun: { id: "t-00000a11", requestedBy: "U-ASKER", requestedAt: "2026-07-02T13:00:00.000Z" } });
+  await tick(new Date("2026-07-02T13:00:00.000Z"));
+  ok(sends.length === sendsBefore, "🔴 unmounted: the dispatcher starts NO test fire, so no write runs unfenced");
+  const told = slackPosts.slice(postsBefore);
+  ok(told.some((p) => p.channel === CHAN && p.thread === undefined && p.text.includes("did not start") && p.text.includes("block a test's writes")), "🔴 unmounted: the room is told why, in words");
+  ok(!told.some((p) => p.text.startsWith("🧪 Test run of")), "unmounted: no test thread root posts");
+  ok(!told.some((p) => p.text.includes("r-digest") || p.text.includes("t-00000a11")), "unmounted: the room line names no raw id");
+  ok((await routineStore.getRoutine(ORG, SURFACE, "r-digest"))?.testRun === undefined, "unmounted: the request is consumed, so the room is told once");
+  const why = await readAudit({ org: ORG, action: testRun.ROUTINE_TEST_FIRED_ACTION });
+  ok(why.some((r) => (r.detail as Record<string, unknown>)?.["test"] === "t-00000a11" && (r.detail as Record<string, unknown>)?.["started"] === false && (r.detail as Record<string, unknown>)?.["reason"] === "fence-unmounted"), "unmounted: the refusal is audited with its own reason");
+
+  testRun._setTestRunFenceMountedForTest(true);
+  await routineStore.updateRoutine(ORG, SURFACE, "r-digest", { testRun: { id: "t-00000a12", requestedBy: "U-ASKER", requestedAt: "2026-07-02T13:10:00.000Z" } });
+  await tick(new Date("2026-07-02T13:10:00.000Z"));
+  ok(sends.length === sendsBefore + 1 && sends.at(-1)!.attrs[testRun.ROUTINE_TEST_ATTR] === "t-00000a12", "control: with the hook mounted, the same request starts its test");
 }
 
 rmSync(dir, { recursive: true, force: true });
