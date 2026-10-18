@@ -34,11 +34,10 @@ import {
   type UnifiedWindowWake,
   type WakeMessageInput,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { processVerifiedEmail, renderEmailWake, verifyEmailDelivery, type EmailFrontDeps, type EmailWakePlan } from "./email-front.js";
+import { EMAIL_DEDUPE_TTL_MS, processVerifiedEmail, renderEmailWake, verifyEmailDelivery, type EmailFrontDeps, type EmailWakePlan } from "./email-front.js";
 
 const ROUTE = "/eve/v1/email";
 const EMAIL_INGRESS_MAX_BODY_BYTES = 4 * 1024 * 1024;
-const DEDUPE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 function log(msg: string): void {
   console.log(`[open-everywhere:email] ${msg}`);
@@ -140,7 +139,7 @@ function liveEmailFrontDeps(to: RouteHandlerArgs["to"]): EmailFrontDeps {
     policy: emailPolicy,
     transport: emailTransport,
     principals: livePrincipals,
-    markSeen: (key) => getOperationalStore().markEventSeen(deploymentOrg(), key, new Date().toISOString(), DEDUPE_TTL_MS),
+    markSeen: (key) => getOperationalStore().markEventSeen(deploymentOrg(), key, new Date().toISOString(), EMAIL_DEDUPE_TTL_MS),
     roomHasSeat: (surfaceKey) => {
       try {
         return grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, getConfig().loadDomains()));

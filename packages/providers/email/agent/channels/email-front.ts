@@ -26,6 +26,8 @@ import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 type EmailOrigin = Extract<UnifiedWakeOrigin, { platform: "email" }>;
 
+export const EMAIL_DEDUPE_TTL_MS = 72 * 60 * 60 * 1000;
+
 export type EmailFrontRefusal = EmailRefusalReason | "no-domain";
 
 export type EmailFrontOutcome =

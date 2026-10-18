@@ -12,9 +12,10 @@ import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
 import { isThreadScopedWakeOrigin, unifiedThreadRef } from "../channels/unified-window.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
-import { EVENT_DEDUPE_MAX_RETENTION_MS } from "../operational/store.js";
 import { checkInFromReportReply, MEMBER_TIERS, originOfReplyTarget, type ReportReplyOutcome } from "../routines/report-thread.js";
 import { captureEligible } from "./requester-messages.js";
+
+const REPORT_REPLY_DEDUPE_TTL_MS = 24 * 60 * 60_000;
 
 export function nativeReportReplier(ctx: BindableContext): string | undefined {
   if (isUnifiedWindowContext(ctx)) return undefined;
@@ -42,7 +43,7 @@ export async function checkInFromNativeTurn(ctx: BindableContext, turnId?: strin
     const stableId = `${currentSessionId(ctx) ?? ""}:${turnId}`;
     const key = outboundKey({ surface: origin.platform, channel: ref.channelKey, threadTs: ref.threadKey, action: "routine.checkin.reply", stableId, payload: principalId });
     return (
-      (await postOnce<ReportReplyOutcome | "duplicate">({ org, key, run, skipped: () => "duplicate", ttlMs: EVENT_DEDUPE_MAX_RETENTION_MS, ...(now !== undefined ? { now } : {}) })) ?? "duplicate"
+      (await postOnce<ReportReplyOutcome | "duplicate">({ org, key, run, skipped: () => "duplicate", ttlMs: REPORT_REPLY_DEDUPE_TTL_MS, ...(now !== undefined ? { now } : {}) })) ?? "duplicate"
     );
   } catch (err) {
     console.warn(`[open-everywhere:routine-report-reply] could not read a native reply: ${err instanceof Error ? err.message : String(err)}`);

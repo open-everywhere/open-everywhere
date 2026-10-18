@@ -1,4 +1,5 @@
 import {
+  EMAIL_DEDUPE_TTL_MS,
   processVerifiedEmail,
   handleEmailDelivery,
   planEmailWake,
@@ -8,7 +9,7 @@ import {
 } from "../agent/channels/email-front.js";
 import { bindEmail } from "../agent/channels/email-identity.js";
 import { emailWakeOriginCodec } from "../agent/channels/email-origin-codec.js";
-import { OE_CHAT_NONMEMBER_ATTR, type EmailPolicy, type EmailTransport, type InboundEmail, type Principal } from "@open-everywhere/core/agent/adapter-api.js";
+import { EVENT_DEDUPE_MAX_RETENTION_MS, OE_CHAT_NONMEMBER_ATTR, type EmailPolicy, type EmailTransport, type InboundEmail, type Principal } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -80,6 +81,15 @@ function harness(opts: { verified?: boolean; parsed?: InboundEmail | null; seen?
   return { deps, transport, audits, rooms, dms };
 }
 
+{
+  const SVIX_LAST_RETRY_MS = (5 + 5 * 60 + 30 * 60 + (2 + 5 + 10 + 10) * 60 * 60) * 1000;
+  ok(SVIX_LAST_RETRY_MS > 27 * 60 * 60 * 1000, "fixture control: Svix's last retry lands more than 27 h after the first attempt");
+  ok(EMAIL_DEDUPE_TTL_MS > SVIX_LAST_RETRY_MS, "the delivery-id claim outlives Svix's last retry");
+  ok(
+    EMAIL_DEDUPE_TTL_MS <= EVENT_DEDUPE_MAX_RETENTION_MS,
+    "🔴 OPE-2573: the delivery-id claim fits under the event_dedupe sweep ceiling, so the sweep cannot drop a live claim",
+  );
+}
 {
   const h = harness({ verified: false });
   const out = await handleEmailDelivery({}, "{}", h.deps);

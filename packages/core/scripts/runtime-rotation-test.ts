@@ -272,7 +272,7 @@ registerConfig({
   eq(
     await claimRuntimeRotation({ ...scope, atIso: wayLater }, pair),
     false,
-    `🔴 the seat STILL does not rotate ${EVENT_DEDUPE_MAX_RETENTION_MS * 40}ms later — the comparison reads code, never a clock. A TTL'd primitive here rotates every window every 24 h forever (OPE-345 violation)`,
+    `🔴 the seat STILL does not rotate ${EVENT_DEDUPE_MAX_RETENTION_MS * 40}ms later — the comparison reads code, never a clock. A TTL'd primitive here rotates every window each time the event_dedupe ceiling passes, forever (OPE-345 violation)`,
   );
   eq(
     await claimRuntimeRotation({ ...scope, atIso: wayLater }, { ...pair, codeFingerprint: "eve:SHIPPED" }),

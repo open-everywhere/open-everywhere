@@ -809,6 +809,7 @@ export { ingestUntrusted } from "./access/untrusted.js";
 export { statusVerbsFor, DEFAULT_STATUS_VERBS } from "./memory/domain.js";
 
 export type { EngagementRow, ChannelSessionRow, SlackAttachmentRow } from "./operational/store.js";
+export { EVENT_DEDUPE_MAX_RETENTION_MS } from "./operational/store.js";
 
 export {
   isSurfaceOnboarded,

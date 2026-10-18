@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
-import { PROMOTER_LIST_MAX, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, type AuditWriteEntry, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
+import { EVENT_DEDUPE_MAX_RETENTION_MS, PROMOTER_LIST_MAX, ROUTINE_GUARDED_WRITE_ATTEMPTS, spendLedgerConjuncts, type AuditWriteEntry, type AuditFilter, type SpendLedgerFilter, type SpendLedgerRow } from "../agent/operational/store.js";
 import type { Routine } from "../agent/routines/routine.js";
 import { openTestPg, closeAllTestPg } from "./test-pg-driver.js";
 import { pinSuiteStore, pinnedSuiteStorePath } from "./_suite-store.js";
@@ -1298,6 +1298,30 @@ const store = makeOperationalPostgresStore(client);
   ok(await store.markEventSeen("globex", "Ev123", "2026-06-30T10:00:00Z", TTL), "pg: same key in another org is a fresh sighting");
   ok(await store.markEventSeen("acme", "Ev123", "2026-06-30T10:30:00Z", TTL), "pg: expired sighting is pruned — key fresh after TTL");
   ok(!(await store.markEventSeen("acme", "Ev123", "2026-06-30T10:30:01Z", TTL)), "pg: re-marked key dedupes again");
+}
+
+{
+  const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
+  const EMAIL_TTL = 72 * 60 * 60_000;
+  const t0 = Date.parse("2026-01-10T12:20:00Z");
+  const at = (ms: number): string => new Date(t0 + ms).toISOString();
+  const SVIX_LAST_RETRY = (27 * 60 + 36) * 60_000;
+  for (const s of [store, sqliteOperationalStore]) {
+    const label = s === store ? "pg" : "sqlite";
+    const ORG = `dedupe-ceiling-${label}`;
+    ok(await s.markEventSeen(ORG, "email:msg_A", at(0), EMAIL_TTL), `${label}: the first email delivery claims its id`);
+    ok(await s.markEventSeen(ORG, "slack:Ev1", at(SVIX_LAST_RETRY), 10 * 60_000), `${label}: fixture: another key's write runs the org-wide sweep`);
+    ok(
+      !(await s.markEventSeen(ORG, "email:msg_A", at(SVIX_LAST_RETRY), EMAIL_TTL)),
+      `🔴 OPE-2573 (${label}): Svix's last retry, 27 h 36 min later, is still a DUPLICATE — the sweep kept the 72 h claim`,
+    );
+    ok(await s.markEventSeen(ORG, "email:msg_B", at(0), EMAIL_TTL), `${label}: fixture: a second claim at t0`);
+    ok(await s.markEventSeen(ORG, "slack:Ev2", at(EVENT_DEDUPE_MAX_RETENTION_MS + 60_000), 10 * 60_000), `${label}: fixture: a write past the ceiling runs the sweep`);
+    ok(
+      !(await s.hasEventSeen(ORG, "email:msg_B", at(EVENT_DEDUPE_MAX_RETENTION_MS + 60_000), 10 * EVENT_DEDUPE_MAX_RETENTION_MS)),
+      `${label}: negative control: a row older than the ceiling is swept, whatever TTL a reader asks with`,
+    );
+  }
 }
 
 {

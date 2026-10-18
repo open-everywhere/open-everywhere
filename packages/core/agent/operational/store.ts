@@ -62,7 +62,7 @@ export const OPERATIONAL_TABLES = [
   "routine_report_thread",
 ] as const;
 
-export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
+export const EVENT_DEDUPE_MAX_RETENTION_MS = 72 * 60 * 60_000;
 
 export const INGRESS_DELIVERY_TOMBSTONE_RETENTION_MS = 24 * 60 * 60_000;
 
