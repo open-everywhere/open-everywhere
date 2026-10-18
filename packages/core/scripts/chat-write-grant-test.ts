@@ -322,6 +322,9 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
 
   const home = resourceAddress("slack", CONTAINER_RESOURCE_TYPE, "C_HOME");
   ok(chatWriteTargetsFrom(HOME, {}, DOMAINS).find((t) => t.address === home) === undefined, "the arrival container is not a P1 target without a grant");
+  ok(chatWriteTargetsFrom(HOME, { [home]: ["post"] }, DOMAINS).some((t) => t.address === home), "a granted arrival container is a P1 target");
+  const dHome = resourceAddress("discord", CONTAINER_RESOURCE_TYPE, D_HOME_ID);
+  ok(chatWriteTargetsFrom(D_HOME, { [dHome]: ["post"] }, DOMAINS).some((t) => t.address === dHome), "a granted arrival discord container is a P1 target");
 }
 
 {
@@ -382,6 +385,22 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
   await import("../agent/approvals/chat-post.js");
   ok(actionKind("chat.post") !== undefined, "the chat.post ActionKind is registered");
   ok(actionKind("chat.post")!.policy === "member", "the chat.post kind's policy matches its tier");
+}
+
+{
+  const { POST_MESSAGE_DESCRIPTION } = await import("../agent/tools/post_message.js");
+  const { CONTRIBUTIONS } = await import("../agent/contributions.js");
+  const summary = CONTRIBUTIONS.contributions.find((c) => c.kind === "tool" && c.name === "post_message")?.summary ?? "";
+  const denies = /\bANOTHER container\b|not the one you are|other than the one|only targets another/iu;
+  for (const [what, text] of [["description", POST_MESSAGE_DESCRIPTION], ["contribution summary", summary]] as const) {
+    ok(text.length > 0, `🔴 post_message ${what} exists`);
+    ok(!denies.test(text), `🔴 post_message ${what} does not forbid the granted arrival container`);
+    ok(/\breply\b/u.test(text), `post_message ${what} still sends an answer to reply`);
+  }
+  ok(/current one too, when granted/u.test(summary), "🔴 the contribution summary says the current container is allowed when granted");
+  ok(/channel you are in is allowed when it is granted/u.test(POST_MESSAGE_DESCRIPTION), "🔴 the description says the current channel is allowed when granted");
+  ok(POST_MESSAGE_DESCRIPTION.includes("slack:") && POST_MESSAGE_DESCRIPTION.includes("discord:"), "the description shows an address on each surface");
+  ok(POST_MESSAGE_DESCRIPTION.length <= 600, `the description stays brief (${POST_MESSAGE_DESCRIPTION.length} chars)`);
 }
 
 console.log(`chat-write-grant: ${n} assertions passed`);

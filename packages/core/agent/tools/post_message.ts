@@ -23,14 +23,16 @@ function safeDomains(): readonly Domain[] {
   }
 }
 
+export const POST_MESSAGE_DESCRIPTION =
+  "Post a message into a container an operator granted to your domain. Name it by its granted " +
+  `address, e.g. "slack:${CONTAINER_RESOURCE_TYPE}/C0123ABC" or "discord:${CONTAINER_RESOURCE_TYPE}/123456789". ` +
+  "The channel you are in is allowed when it is granted. To answer the conversation, use reply instead. " +
+  "A container that is not granted, or not in this session's own memory domain, refuses and says " +
+  "which boundary stopped it. Consequential: it posts an approval card showing the destination " +
+  "and the exact message — nothing is posted until a human confirms.";
+
 const postMessageEntry = defineTool({
-  description:
-    "Post a message into ANOTHER container your domain owns — not the one you are talking in (use " +
-    "reply for that). Name the container by its granted address, e.g. " +
-    `"slack:${CONTAINER_RESOURCE_TYPE}/C0123ABC". Only containers an operator granted in config and ` +
-    "that belong to this session's own memory domain can be named; anything else refuses and says " +
-    "which boundary stopped it. Consequential: it posts an approval card showing the destination " +
-    "and the exact message — nothing is posted until a human confirms.",
+  description: POST_MESSAGE_DESCRIPTION,
   inputSchema: z.object({
     container: z
       .string()
