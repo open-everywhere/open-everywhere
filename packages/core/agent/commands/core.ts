@@ -1,6 +1,6 @@
 import { placeWords } from "../channels/friendly-ids.js";
 import { friendlyMonth, PersonFacingError } from "../channels/person-text.js";
-import { unattendedFrom, type SurfaceBinding } from "../identity/binding.js";
+import { roomTrustOf, unattendedFrom, type SurfaceBinding } from "../identity/binding.js";
 import { cancelAnchoredTurn, type AttachSessionForCancel } from "../channels/turn-cancel.js";
 import { turnAnchorAddress, turnChannelKey } from "../channels/turn-registry.js";
 import { ownCardRoom } from "../approvals/card-venue.js";
@@ -211,7 +211,7 @@ export async function computeBudgetStatusFacts(binding: SurfaceBinding, deps: Bu
   const surfaceKey = defaultScopeKey(binding, "surface");
   const workspaceKey = defaultScopeKey(binding, "workspace");
   const period = periodOf(nowISO);
-  const domainName = domainNameForScope(surfaceKey, binding.mode, binding.trust);
+  const domainName = domainNameForScope(surfaceKey, binding.mode, roomTrustOf(binding));
 
   const [caps, st, wt, usd] = await Promise.all([
     effectiveCapsFn(binding.org, workspaceKey, surfaceKey, domainName),
@@ -321,7 +321,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
   const scopeKey = defaultScopeKey(binding, level);
   const workspaceKey = defaultScopeKey(binding, "workspace");
   const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
-  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
+  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey, domainNameForScope(scopeKey, binding.mode, roomTrustOf(binding)));
   const current: CurrentCaps = { tokens: caps.surfaceMonthlyTokens ?? null, usd: caps.surfaceMonthlyUsd ?? null };
 
   const input: SetSpendLimitInput = {
@@ -369,11 +369,11 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
   const scopeKey = defaultScopeKey(binding, level);
   const workspaceKey = defaultScopeKey(binding, "workspace");
   const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
-  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
+  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey, domainNameForScope(scopeKey, binding.mode, roomTrustOf(binding)));
   const current: CurrentCaps = { tokens: caps.surfaceMonthlyTokens ?? null, usd: caps.surfaceMonthlyUsd ?? null };
 
   const input: ClearSpendLimitInput = {};
-  const after = await (deps.capsAfterClear ?? capsAfterClearFor)(binding.org, workspaceKey, level, scopeKey, binding.mode, binding.trust);
+  const after = await (deps.capsAfterClear ?? capsAfterClearFor)(binding.org, workspaceKey, level, scopeKey, binding.mode, roomTrustOf(binding));
   const plan = planClearSpendLimit(binding, input, current, domain, after);
 
   const channelId = requireChannelId(binding);
@@ -432,6 +432,12 @@ export async function runStop(binding: SurfaceBinding, attachSession: AttachSess
   return result.message;
 }
 
+const BUDGET_MEMBERS_ONLY = "This channel's budget is for members of this organisation, so I can't show it to you.";
+
+function budgetWithheldFrom(binding: SurfaceBinding): boolean {
+  return binding.mode === "channel" && roomTrustOf(binding) === "internal" && binding.trust !== "internal";
+}
+
 export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps: OeCommandDeps = {}): Promise<string> {
   switch (cmd.kind) {
     case "error":
@@ -452,6 +458,7 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding, deps
       return renderStatus(getAppInfo(), memoryProviderId, telemetryStatus);
     }
     case "budget-status": {
+      if (budgetWithheldFrom(binding)) return BUDGET_MEMBERS_ONLY;
       const facts = await computeBudgetStatusFacts(binding);
       return renderBudgetStatus(facts);
     }

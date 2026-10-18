@@ -14,6 +14,7 @@ import {
   unadmittedTenantLog,
   UNADMITTED_TENANT_DROP_REASON,
   type BindableContext,
+  type SurfaceBinding,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { slackAuthorIsMember, slackChannelFactsFor } from "./slack-events.js";
@@ -33,10 +34,14 @@ function formField(params: URLSearchParams, name: string): string | undefined {
 export interface SlashTrustFacts {
   readonly dmPartnerTrust?: "internal" | "external";
   readonly room?: { readonly extShared: boolean };
+  readonly invokerMember?: true;
 }
 
-export function bindableForSlashCommand(params: URLSearchParams, invoker?: SlashTrustFacts): BindableContext {
+export type SlashTrustLeg = "person" | "room";
+
+export function bindableForSlashCommand(params: URLSearchParams, invoker?: SlashTrustFacts, leg: SlashTrustLeg = "person"): BindableContext {
   const enterpriseId = formField(params, "enterprise_id");
+  const room = invoker?.room && (leg === "room" || invoker.invokerMember === true) ? invoker.room : undefined;
   return {
     channel: { kind: "slack" },
     session: {
@@ -47,7 +52,7 @@ export function bindableForSlashCommand(params: URLSearchParams, invoker?: Slash
             channel_id: formField(params, "channel_id") ?? "",
             ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
             ...(invoker?.dmPartnerTrust ? { dm_partner_trust: invoker.dmPartnerTrust } : {}),
-            ...(invoker?.room ? { is_ext_shared: String(invoker.room.extShared), trust_checked: "true" } : {}),
+            ...(room ? { is_ext_shared: String(room.extShared), trust_checked: "true" } : {}),
           },
           principalId: formField(params, "user_id") ?? "",
           principalType: "slack-user",
@@ -85,12 +90,17 @@ export async function slashRoomVerdict(
   ]);
   if (!facts || facts.trustChecked !== true || typeof facts.extShared !== "boolean") return {};
   if (facts.channelType !== "channel" && facts.channelType !== "group") return {};
-  if (member !== true) return {};
-  return { room: { extShared: facts.extShared } };
+  return { room: { extShared: facts.extShared }, ...(member === true ? { invokerMember: true as const } : {}) };
 }
 
 export async function slashTrustFacts(params: URLSearchParams): Promise<SlashTrustFacts> {
   return slackMode(undefined, formField(params, "channel_id")) === "dm" ? slashInvokerDmTrust(params) : slashRoomVerdict(params);
+}
+
+export function bindSlashCommand(params: URLSearchParams, facts: SlashTrustFacts): SurfaceBinding {
+  const person = bindFrom(bindableForSlashCommand(params, facts, "person"));
+  const room = bindFrom(bindableForSlashCommand(params, facts, "room"));
+  return { ...person, roomTrust: room.trust };
 }
 
 async function withinAckBudget<T>(p: Promise<T>): Promise<T | undefined> {
@@ -160,7 +170,7 @@ export default defineChannel({
       }
 
       const cmd = parseSlackCommandText(formField(params, "text"));
-      const binding = bindFrom(bindableForSlashCommand(params, await slashTrustFacts(params)));
+      const binding = bindSlashCommand(params, await slashTrustFacts(params));
       try {
         const reply = await runOeCommand(cmd, binding, { attachSession });
         return ephemeralResponse(reply);

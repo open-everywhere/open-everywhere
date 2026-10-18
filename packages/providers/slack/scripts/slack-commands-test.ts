@@ -121,7 +121,14 @@ function ok(cond: boolean, label: string): void {
     const { bindSlack } = await import("../agent/channels/slack-identity.js");
     registerIdentityMapper("slack", bindSlack);
     const { _resetAuthorMemberCache } = await import("../agent/channels/slack-events.js");
-    const { slashInvokerDmTrust, slashRoomVerdict } = await import("../agent/channels/slack-commands.js");
+    const { slashInvokerDmTrust, slashRoomVerdict, bindSlashCommand } = await import("../agent/channels/slack-commands.js");
+    const { registerConfig, getConfig, defineDomain } = await import("@open-everywhere/core/agent/adapter-api.js");
+    let prevConfig: ReturnType<typeof getConfig> | undefined;
+    try {
+      prevConfig = getConfig();
+    } catch {
+      prevConfig = undefined;
+    }
     const USERS: Record<string, Record<string, unknown>> = {
       UGUEST: { id: "UGUEST", team_id: "T1", is_restricted: true },
       UMEMBER: { id: "UMEMBER", team_id: "T1" },
@@ -195,14 +202,55 @@ function ok(cond: boolean, label: string): void {
         const guestWatch = await signed("command=%2Foe&text=watch+more&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
         ok(guestWatch.text.startsWith("I could not confirm that this room and you are inside the organisation"), `🔴 a guest's /oe watch more in an internal channel binds nothing (got "${guestWatch.text.slice(0, 100)}")`);
         ok((await readAudit({ org: "default", action: "personal_watch.dial.set", principalId: "slack/T1/UGUEST" })).length === 0, "🔴 …and the guest still has no dial.set row");
+
+        registerConfig({
+          loadBundles: () => [],
+          loadBindings: () => [],
+          pluginRegistry: {},
+          skillContent: {},
+          loadDomains: () => [defineDomain({ name: "outside", match: "public" })],
+          loadSilos: () => [],
+          domainsForSurface: () => [],
+          loadSpendBudgets: () => ({ default: { surfaceMonthlyUsd: 50 }, perDomain: { outside: { surfaceMonthlyUsd: 3 } } }),
+        });
+        const memberBudget = await signed("command=%2Foe&text=budget&team_id=T1&channel_id=CINTERNAL&user_id=UMEMBER");
+        ok(memberBudget.text.includes("$50") && !memberBudget.text.includes("$3"), `🔴 a member's /oe budget in an internal channel shows the internal domain's cap, not the external domain's (got "${memberBudget.text.slice(0, 160)}")`);
+        const guestBudget = await signed("command=%2Foe&text=budget&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
+        ok(guestBudget.status === 200 && guestBudget.text === "This channel's budget is for members of this organisation, so I can't show it to you.", `🔴 a guest's /oe budget in an internal channel is refused in one line (got "${guestBudget.text.slice(0, 160)}")`);
+        ok(!guestBudget.text.includes("$") && !/\d/.test(guestBudget.text) && !guestBudget.text.includes("UGUEST") && !guestBudget.text.includes("CINTERNAL"), "🔴 …and the refusal carries no figure and no id");
+        const unknownRefused = await signed("command=%2Foe&text=budget&team_id=T1&channel_id=CINTERNAL&user_id=UNOBODY");
+        ok(unknownRefused.text === guestBudget.text, `🔴 a person users.info cannot check is refused the same way (got "${unknownRefused.text.slice(0, 160)}")`);
+        const guestStatusAlias = await signed("command=%2Foe&text=budget+status&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
+        ok(guestStatusAlias.text === guestBudget.text, "…and so is the long form, /oe budget status");
+        const guestDmBudget = await signed("command=%2Foe&text=budget&team_id=T1&channel_id=DGUEST&user_id=UGUEST");
+        ok(guestDmBudget.text.startsWith("*Spending this month*"), `a guest's /oe budget in their own DM still answers: the ruling covers a channel (got "${guestDmBudget.text.slice(0, 100)}")`);
+        const externalBudget = await signed("command=%2Foe&text=budget&team_id=T1&channel_id=CEXTERNAL&user_id=UMEMBER");
+        ok(externalBudget.text.includes("$3") && !externalBudget.text.includes("$50"), `a member's /oe budget in a Slack Connect room still shows the external domain's cap (got "${externalBudget.text.slice(0, 160)}")`);
+        const unknownBudget = await signed("command=%2Foe&text=budget&team_id=T1&channel_id=C1&user_id=UMEMBER");
+        ok(unknownBudget.text.includes("$3"), `a room Slack gives no verdict for fails closed to the external domain's cap (got "${unknownBudget.text.slice(0, 160)}")`);
+        const guestOnAgain = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
+        ok(guestOnAgain.text.startsWith("Only a member"), `🔴 the guest's /oe suggest on in that channel is still refused (got "${guestOnAgain.text.slice(0, 100)}")`);
+        const guestWatchAgain = await signed("command=%2Foe&text=watch+less&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
+        ok(guestWatchAgain.text.startsWith("I could not confirm that this room and you are inside the organisation"), `🔴 the guest's /oe watch less in that channel is still refused (got "${guestWatchAgain.text.slice(0, 100)}")`);
+        const guestCover = await signed("command=%2Foe&text=cover+on&team_id=T1&channel_id=DGUEST&user_id=UGUEST");
+        ok(guestCover.text === "Cover is for members of this organisation, so I changed nothing.", `🔴 the guest's /oe cover on in their DM is still refused (got "${guestCover.text.slice(0, 100)}")`);
+        ok((await readAudit({ org: "default", action: "personal_watch.dial.set", principalId: "slack/T1/UGUEST" })).length === 0, "🔴 …and the guest still has no dial.set row");
       });
+      const guestInRoom = bindSlashCommand(new URLSearchParams("team_id=T1&channel_id=CX&user_id=UGUEST"), { room: { extShared: false } });
+      ok(guestInRoom.trust === "external" && guestInRoom.roomTrust === "internal", "🔴 a guest in an internal room: person trust external, room trust internal");
+      const memberInRoom = bindSlashCommand(new URLSearchParams("team_id=T1&channel_id=CX&user_id=UMEMBER"), { room: { extShared: false }, invokerMember: true });
+      ok(memberInRoom.trust === "internal" && memberInRoom.roomTrust === "internal", "a confirmed member in an internal room: both legs internal");
+      const memberInShared = bindSlashCommand(new URLSearchParams("team_id=T1&channel_id=CX&user_id=UMEMBER"), { room: { extShared: true }, invokerMember: true });
+      ok(memberInShared.trust === "external" && memberInShared.roomTrust === "external", "a member in a Slack Connect room: both legs external");
+      const noVerdict = bindSlashCommand(new URLSearchParams("team_id=T1&channel_id=CX&user_id=UMEMBER"), { invokerMember: true });
+      ok(noVerdict.trust === "external" && noVerdict.roomTrust === "external", "no room verdict: both legs fail closed external");
       const roomParams = (channel: string, user = "UX") => new URLSearchParams(`team_id=T1&channel_id=${channel}&user_id=${user}`);
       const internalRoom = async () => ({ channelType: "channel", extShared: false, trustChecked: true });
-      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => true)) === '{"room":{"extShared":false}}', "an internal room with a confirmed member stamps the room");
-      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => undefined)) === "{}", "🔴 an unanswered invoker probe withholds the room's verdict: the channel command fails closed");
-      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, () => new Promise(() => undefined))) === "{}", "an invoker probe slower than the ack budget withholds it too");
-      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({ channelType: "channel", extShared: true, trustChecked: true }), async () => true)) === '{"room":{"extShared":true}}', "an external room stamps its external verdict");
-      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => false)) === "{}", "a refuted invoker withholds the room's verdict");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => true)) === '{"room":{"extShared":false},"invokerMember":true}', "an internal room with a confirmed member gives the room and the member");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => undefined)) === '{"room":{"extShared":false}}', "🔴 an unanswered invoker probe confirms no member: the person leg fails closed, the room leg keeps the room");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, () => new Promise(() => undefined))) === '{"room":{"extShared":false}}', "an invoker probe slower than the ack budget confirms no member either");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({ channelType: "channel", extShared: true, trustChecked: true }), async () => true)) === '{"room":{"extShared":true},"invokerMember":true}', "an external room gives its external verdict");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => false)) === '{"room":{"extShared":false}}', "a refuted invoker confirms no member");
       ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({}), async () => true)) === "{}", "an unchecked room stamps nothing");
       ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({ channelType: "mpim", extShared: false, trustChecked: true }), async () => true)) === "{}", "a group DM stamps nothing: its binding is unchanged");
       ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), () => new Promise(() => undefined), async () => true)) === "{}", "a room read slower than the ack budget stamps nothing");
@@ -216,6 +264,7 @@ function ok(cond: boolean, label: string): void {
       ok((await slashInvokerDmTrust(dmParams, async () => false)).dmPartnerTrust === "external", "a guest verdict stamps external");
       ok((await slashInvokerDmTrust(dmParams, async () => true)).dmPartnerTrust === "internal", "a member verdict stamps internal");
     } finally {
+      registerConfig(prevConfig ?? { loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {}, loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [], loadSpendBudgets: () => ({}) });
       _resetSurfacesForTest();
       _resetAuthorMemberCache();
       if (prevToken === undefined) delete process.env.SLACK_BOT_TOKEN;

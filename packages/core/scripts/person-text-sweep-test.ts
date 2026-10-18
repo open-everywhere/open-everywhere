@@ -100,6 +100,11 @@ const ROUTINE_ID = "r-1a2b3c4d";
     core.renderBudgetStatus({ surfaceKey: "slack/T0EXAMPLE/C0123ABCD", workspaceKey: "slack/T0EXAMPLE", surfaceTokens: 1234, workspaceTokens: 5678, surfaceUsd: 1.2, workspaceUsd: 3.4, caps: {} as never }),
     "/oe budget",
   );
+  const guestBudget = await core.runOeCommand({ kind: "budget-status" }, { ...(binding as object), trust: "external", roomTrust: "internal" } as never);
+  clean(guestBudget, "the /oe budget refusal for a guest");
+  ok(!guestBudget.includes("$") && !/\d/.test(guestBudget), "the /oe budget refusal carries no figure");
+  const noRoomTrust = await core.runOeCommand({ kind: "budget-status" }, { ...(binding as object), trust: "external" } as never);
+  ok(noRoomTrust !== guestBudget && noRoomTrust.startsWith("*Spending this month*"), `with no roomTrust, /oe budget is not refused (got "${noRoomTrust.slice(0, 80)}")`);
 }
 
 {

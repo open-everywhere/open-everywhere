@@ -32,6 +32,7 @@ export interface SurfaceBinding {
   readonly modeResolved?: true;
   readonly visibility: Visibility;
   readonly trust: Trust;
+  readonly roomTrust?: Trust;
   readonly enterprise?: string;
   readonly declaredTrust?: SurfaceTrust;
   readonly principalId?: string;
@@ -196,6 +197,10 @@ export function actingPrincipalId(binding: SurfaceBinding): string | undefined {
 
 export function unattendedFrom(binding: SurfaceBinding): boolean {
   return actingPrincipalId(binding) === undefined;
+}
+
+export function roomTrustOf(binding: SurfaceBinding): Trust {
+  return binding.roomTrust ?? binding.trust;
 }
 
 export interface RawIdentity {

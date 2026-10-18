@@ -799,4 +799,36 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   );
 }
 
+{
+  const { getConfig } = await import("../agent/access/config.js");
+  const { runBudgetRaise, runBudgetClear } = await import("../agent/commands/core.js");
+  const restore = getConfig();
+  registerConfig({ ...restore, loadDomains: () => [defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }), defineDomain({ name: "outside", match: "public" }), defineDomain({ name: "org", match: "org" })] });
+  try {
+    const guest = { org: "default", platform: "slack", workspace: "T1", surface: "C_RANDOM", mode: "channel", visibility: "private", trust: "external", roomTrust: "internal", principalId: "U_GUEST", target: { channelId: "C_RANDOM" } } as never;
+    const domainArgs: (string | undefined)[] = [];
+    const afterTrusts: (string | undefined)[] = [];
+    let scanned = 0;
+    const deps = {
+      effectiveCaps: (async (_o: string, _w: string, _s: string, domainName?: string) => (domainArgs.push(domainName), {})) as never,
+      requestApproval: (async () => ({ id: "p1", posted: true })) as never,
+      friendlyScopeLabel: (async () => "this channel") as never,
+      readSpendCoverage: (async () => undefined) as never,
+      domainSpendWindow: (async () => (scanned++, { domain: "org", periods: ["2026-09"], tokens: 0, usd: 0, calls: 0 })) as never,
+      capsAfterClear: (async (_o: string, _w: string, _l: string, _s: string, _m: string, trust?: string) => (afterTrusts.push(trust), { tokens: null, usd: null })) as never,
+      nowISO: () => "2026-09-12T10:00:00Z",
+    };
+    const raiseReply = await runBudgetRaise(guest, 10, deps);
+    await runBudgetClear(guest, deps);
+    ok(domainArgs.length === 2 && domainArgs.every((d) => d === undefined), `🔴 a guest's raise and clear resolve the internal room's caps, not the "outside" (public) domain's (got ${JSON.stringify(domainArgs)})`);
+    ok(afterTrusts.length === 1 && afterTrusts[0] === "internal", `🔴 the clear card's fallback cap reads the room's trust (got ${JSON.stringify(afterTrusts)})`);
+    ok(scanned === 0 && raiseReply === "", "🔴 the guest's raise gets no domain-wide comparison line: the scan reads the person's trust");
+    domainArgs.length = 0;
+    await runBudgetRaise({ ...(guest as object), roomTrust: undefined } as never, 10, deps);
+    ok(domainArgs[0] === "outside", `with no roomTrust the caps fall back to trust, the external domain (got ${JSON.stringify(domainArgs)})`);
+  } finally {
+    registerConfig(restore);
+  }
+}
+
 console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing incl. display labels + DM masking, session_cost/spend_report/usage_report tools)`);
