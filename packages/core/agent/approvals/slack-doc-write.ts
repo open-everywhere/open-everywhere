@@ -45,6 +45,12 @@ export interface ListWriteArgs {
 const CANVAS_VERB: Readonly<Record<CanvasWriteArgs["op"], string>> = { create: "Create", replace: "Rewrite", append: "Add to" };
 const CANVAS_DONE: Readonly<Record<CanvasWriteArgs["op"], string>> = { create: "created", replace: "rewritten", append: "added to" };
 
+export const FREE_TEAM_TAB_TAKEN = "free_team_canvas_tab_already_exists";
+
+export function freeTeamTabTakenWords(channelId: string): string {
+  return `This Slack workspace is on the free plan, which allows one canvas tab per channel, and ${channelWords("slack", channelId)} already has one (${FREE_TEAM_TAB_TAKEN}).`;
+}
+
 const TAINT_LINE = "⚠ proposed in a turn that read external content — review before approving";
 export function canvasPlainSummary(args: CanvasWriteArgs): string {
   return `${CANVAS_VERB[args.op]} the canvas "${plainValue(args.title)}" in ${channelWords("slack", args.channelId)}`;
@@ -84,6 +90,9 @@ const canvasWrite: ActionKind<CanvasWriteArgs> = {
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
+      if (args.op === "create" && reason.includes(FREE_TEAM_TAB_TAKEN)) {
+        throw new Error(`canvas.write: the canvas "${plainValue(args.title)}" was not written. ${freeTeamTabTakenWords(args.channelId)}`);
+      }
       throw new Error(`canvas.write: the canvas "${args.title}" was not written. ${reason}`);
     }
     await appendAudit({

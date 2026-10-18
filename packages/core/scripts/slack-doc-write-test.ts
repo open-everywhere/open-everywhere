@@ -9,6 +9,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const lib = await import("../agent/channels/slack-canvas-list.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { auditErrorDetail } = await import("../agent/audit/tool-action.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { registerSlackBridge, _resetSlackBridgeForTest } = await import("../agent/channels/slack-bridge.js");
 const { rawIdLeaks } = await import("../agent/channels/friendly-ids.js");
@@ -41,6 +42,7 @@ const ROOM = "C0ROOM01";
 const OTHER = "C0OTHER1";
 const CANVAS = "F0CANVAS1";
 const OWN_CANVAS = "F0CHANCV1";
+const FREE_ROOM = "C0FREEROOM";
 const ELSEWHERE = "F0ELSEWH1";
 const LIST = "F0LIST001";
 const COLUMNS = [
@@ -74,7 +76,10 @@ const fakeCall: SlackDocCall = async (method, params) => {
   }
   if (method === "conversations.info") return { ok: true, channel: { id: params.channel, properties: params.channel === ROOM ? { canvas: { file_id: OWN_CANVAS } } : {} } };
   if (method === "slackLists.items.list") return { ok: true, items: ITEMS };
-  if (method === "canvases.create") return { ok: true, canvas_id: "F0NEWCANV" };
+  if (method === "canvases.create") {
+    if (params.channel_id === FREE_ROOM) throw new Error("Slack canvases.create failed: free_team_canvas_tab_already_exists");
+    return { ok: true, canvas_id: "F0NEWCANV" };
+  }
   if (method === "slackLists.items.create") return { ok: true, item: { id: "Rec0New" } };
   return { ok: true };
 };
@@ -245,6 +250,23 @@ registerSlackBridge({ readCall: async (m: string, p: Record<string, string | num
   ok(outcome === `canvas "Retro" created in <#${ROOM}>`, `the decided card says what happened (${outcome})`);
 
   calls.length = 0;
+  const free = canvasArgs({ op: "create", canvasId: undefined, title: "Free retro", markdown: "# Retro", channelId: FREE_ROOM });
+  let freeErr = "";
+  await ck.execute(free as never, "U0APPROV1").catch((e: unknown) => (freeErr = e instanceof Error ? e.message : String(e)));
+  ok(
+    freeErr === `canvas.write: the canvas "Free retro" was not written. This Slack workspace is on the free plan, which allows one canvas tab per channel, and <#${FREE_ROOM}> already has one (free_team_canvas_tab_already_exists).`,
+    `🔴 a create on a free workspace whose room has a canvas tab refuses with the honest one-line reason (${freeErr})`,
+  );
+  ok(!freeErr.includes("\n") && !freeErr.includes("Slack canvases.create failed"), "the reason is one line, in words, not Slack's raw failure");
+  let longErr = "";
+  await ck.execute(canvasArgs({ ...free, title: "T".repeat(150) }) as never, "U0APPROV1").catch((e: unknown) => (longErr = e instanceof Error ? e.message : String(e)));
+  const shown = auditErrorDetail(new Error(longErr)).error;
+  ok(shown.endsWith("(free_team_canvas_tab_already_exists).") && shown.includes(`<#${FREE_ROOM}>`), `🔴 a 150-character title does not cut the free-plan reason off the card (${shown.length} chars)`);
+  calls.length = 0;
+  await ck.execute(free as never, "U0APPROV1").catch(() => undefined);
+  ok(calls.filter((c) => c.method === "canvases.create").length === 1 && !calls.some((c) => c.method === "canvases.edit"), "🔴 the refusal sends no second create and edits no other canvas");
+
+  calls.length = 0;
   await ck.execute(canvasArgs({ op: "replace" }) as never, "U0APPROV1");
   ok(calls[0]?.method === "files.info", "🔴 an edit re-runs the room fence at approval, before it writes");
   const edit = calls.find((c) => c.method === "canvases.edit");
@@ -283,6 +305,7 @@ registerSlackBridge({ readCall: async (m: string, p: Record<string, string | num
   ok(!JSON.stringify(cw!.detail).includes("Decisions") && !JSON.stringify(cw!.detail).includes("Retro"), "the canvas.write row holds no text");
   ok((lw!.detail as Record<string, unknown>).added === 1 && (lw!.detail as Record<string, unknown>).changed === 1, "the list.write row counts the rows");
   ok(!audit.some((a) => a.action === "canvas.write" && (a.detail as Record<string, unknown>).canvasId === ELSEWHERE), "a refused approval writes no audit row");
+  ok(!audit.some((a) => a.action === "canvas.write" && (a.detail as Record<string, unknown>).channel === FREE_ROOM), "a free-plan refusal writes no canvas.write row");
 }
 _resetSlackBridgeForTest();
 
