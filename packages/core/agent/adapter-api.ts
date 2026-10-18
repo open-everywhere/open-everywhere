@@ -183,6 +183,8 @@ export { dataPolicyRows, dataPolicyActive, mergeDataPolicy } from "./model/data-
 export type { ModelDataPolicy, DataPolicyRegion } from "./model/data-policy.js";
 export { DEFAULT_MODEL_VIA, assertRouteTargets, modelTargetFor, resolvableModels, validateModelTargets, viaProblem } from "./model/targets.js";
 export type { ModelTarget, ModelTargets, ModelTargetProviders, ResolvableModel } from "./model/targets.js";
+export { _resetBareModelRoutesForTest, bareModelFallbacks, bareModelRoutes, bareModelRoutesRegistered, bareModelRoutesUnregistered, bareModelVia, registerBareModelRoutes } from "./model/bare-model-via.js";
+export type { BareModelFallback, BareModelRoutes, BareModelVia } from "./model/bare-model-via.js";
 
 export { registerProvider, registerPostgres } from "./memory/provider.js";
 export { resolveMemoryProviderId, MEMORY_PROVIDER_FLOOR } from "./memory/provider.js";

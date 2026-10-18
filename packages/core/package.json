@@ -2514,6 +2514,10 @@
       "types": "./dist/agent/model/ab-test.d.ts",
       "default": "./dist/agent/model/ab-test.js"
     },
+    "./agent/model/bare-model-via.js": {
+      "types": "./dist/agent/model/bare-model-via.d.ts",
+      "default": "./dist/agent/model/bare-model-via.js"
+    },
     "./agent/model/call-capture.js": {
       "types": "./dist/agent/model/call-capture.d.ts",
       "default": "./dist/agent/model/call-capture.js"

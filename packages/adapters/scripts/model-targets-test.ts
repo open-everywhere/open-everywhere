@@ -1,5 +1,11 @@
 import { generateText } from "ai";
 import {
+  _resetBareModelRoutesForTest,
+  bareModelFallbacks,
+  bareModelRoutes,
+  bareModelRoutesUnregistered,
+  bareModelVia,
+  registerBareModelRoutes,
   type Domain,
   type ModelTarget,
   type ModelTargets,
@@ -12,7 +18,7 @@ import {
   validateModelTargets,
   viaProblem,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { dataPolicyCallError, foreignProviderGuard, gatewayLanguageModel, gatewayModelBackend, gatewayTargetHost, policyModel, targetBaseUrl, withTargetRows } from "../agent/model/gateway.js";
+import { _resetBareGapNoticeForTest, dataPolicyCallError, foreignProviderGuard, gatewayLanguageModel, gatewayModelBackend, gatewayTargetHost, policyModel, targetBaseUrl, withTargetRows } from "../agent/model/gateway.js";
 import { dreamCallSettings } from "../agent/model/dream-judge.js";
 import { probeGatewayRoute, type ConfigCheckCache } from "../agent/model/gateway-probe.js";
 import { checkModelConfig, configCheckSummary, judgeModelEndpoints, modelEndpointsUrl, parseEndpoints, type EndpointFacts } from "../agent/model/model-config-check.js";
@@ -230,6 +236,74 @@ await withGateway(textReply, async (calls) => {
   await generateText({ model: MODEL, prompt: "hi" });
   ok(calls.length === 1 && new URL(calls[0]!.url).host === "relay.example.invalid" && json(bodyGw(calls[0]!).only) === json(["openai", "azure"]), "wire: a bare model id goes to the gateway target, with its only row");
 });
+{
+  const logged: string[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => void logged.push(a.map(String).join(" "));
+  const notes = (): number => logged.filter((l) => l.includes("does not call registerBareModelRoutes")).length;
+  let unregisteredNotes = -1;
+  let registeredNotes = -1;
+  try {
+    _resetBareGapNoticeForTest();
+    await withGateway(textReply, async () => {
+      await generateText({ model: MODEL, prompt: "hi" });
+      await generateText({ model: MODEL, prompt: "hi" });
+    });
+    unregisteredNotes = notes();
+    _resetBareGapNoticeForTest();
+    registerBareModelRoutes([{ id: MODEL }]);
+    await withGateway(textReply, async () => {
+      await generateText({ model: MODEL, prompt: "hi" });
+    });
+    registeredNotes = notes() - unregisteredNotes;
+  } finally {
+    console.error = realError;
+    _resetBareModelRoutesForTest();
+  }
+  ok(unregisteredNotes === 1, `wire: an unregistered app names the gap once, at the first bare-id call — got ${unregisteredNotes}`);
+  ok(registeredNotes === 0, `wire: NEGATIVE CONTROL — a registered app logs nothing — got ${registeredNotes}`);
+}
+{
+  const routes = bareModelRoutes([{ id: "mistral/mistral-small", via: "mistral" }, { id: MODEL }, { id: "mistral/mistral-small", via: "eu" }]);
+  ok(json(bareModelVia("mistral/mistral-small", routes)) === json({ via: "mistral", source: "role" }), "bare id: the first role that names the id gives its via");
+  ok(json(bareModelVia(MODEL, routes)) === json({ via: "gateway", source: "role" }), "bare id: a role with no via gives gateway");
+  ok(json(bareModelVia("vendor/unnamed", routes)) === json({ via: "mistral", source: "default" }), "bare id: an id no role names takes the primary role's via, not gateway");
+  ok(json(bareModelVia("vendor/unnamed", undefined)) === json({ via: "gateway", source: "default" }), "bare id: a process that registered no role uses gateway");
+  ok(bareModelRoutes([]).fallback === "gateway", "bare id: no roles, the default is gateway");
+  const fb = bareModelFallbacks([{ where: "subagent a", id: MODEL }, { where: "subagent b", id: "vendor/unnamed" }], routes);
+  ok(json(fb) === json([{ where: "subagent b", id: "vendor/unnamed", via: "mistral" }]), "bare id: the fallback list names only the id no role names, with its target");
+  ok(bareModelRoutesUnregistered(routes, null), "bare id: no registration while a role names mistral is flagged");
+  ok(!bareModelRoutesUnregistered(routes, routes), "bare id: a registered table is not flagged");
+  ok(!bareModelRoutesUnregistered(bareModelRoutes([{ id: MODEL }]), null), "bare id: no registration on an all-gateway stack is not flagged, because nothing leaves its target");
+}
+await withGateway(textReply, async (calls) => {
+  registerBareModelRoutes([{ id: "mistral/mistral-small", via: "mistral" }, { id: MODEL }]);
+  try {
+    await generateText({ model: "mistral/mistral-small", prompt: "hi" });
+    await generateText({ model: MODEL, prompt: "hi" });
+    await generateText({ model: "vendor/unnamed", prompt: "hi" });
+  } finally {
+    _resetBareModelRoutesForTest();
+  }
+  const mistralRows = (c: Captured): boolean => bodyGw(c).zeroDataRetention === true && json(bodyGw(c).only) === json(["mistral"]);
+  ok(calls.length === 3 && mistralRows(calls[0]!), "wire: a bare id a mistral role names carries the mistral target's pin and zero-retention row");
+  ok(bodyGw(calls[1]!).zeroDataRetention === undefined && json(bodyGw(calls[1]!).only) === json(["openai", "azure"]), "wire: a bare id a gateway role names goes through the gateway target");
+  ok(mistralRows(calls[2]!), "wire: a bare id no role names goes through the primary role's target, not gateway");
+});
+{
+  registerBareModelRoutes([{ id: "mistral/mistral-small", via: "mistral" }]);
+  let sent = 0;
+  const foreign = foreignProviderGuard(((id: string) => ({ modelId: id, doGenerate: async () => (sent++, {}) })) as unknown as object) as unknown as (id: string) => {
+    doGenerate: (o: unknown) => Promise<unknown>;
+  };
+  let msg = "";
+  try {
+    await foreign("mistral/mistral-small").doGenerate({}).catch((e: unknown) => (msg = String(e)));
+  } finally {
+    _resetBareModelRoutesForTest();
+  }
+  ok(msg.includes(`target "mistral"`) && msg.includes("refuses") && sent === 0, "wire: a foreign default provider refuses a bare id whose role goes through another target");
+}
 await withGateway(onlyRefusal, async (calls) => {
   let msg = "";
   try {

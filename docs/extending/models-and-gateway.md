@@ -390,7 +390,9 @@ export default defineSettings({
 on each request it sends: the turn, compaction, the dream and failure-facet judges, the approval
 judge, the meeting recap, the image describer, gateway transcription, and a declared subagent's
 `model: "<id>"` string or eve's own `evaluate()` (the adapter installs the AI SDK's default
-provider, so a bare id resolves through it too). Every model kind the provider builds carries them:
+provider, so a bare id resolves through it too). A bare id goes through the target of the stack role
+that names it, else the primary role's target (OPE-2566), so it carries that target's rows as well.
+Every model kind the provider builds carries them:
 language, evaluation, reranking, embedding, transcription, video and batch (each batch request
 too). The rows win over a call's own gateway options, so no call can remove one. A call that cannot
 carry the rows refuses under a policy: a realtime client secret, and a streaming-transcription or
@@ -403,7 +405,8 @@ Two exceptions, stated plainly:
   not take this path.
 - If another module set the AI SDK's default provider before the adapter loaded, the adapter keeps
   it and logs an error at boot. That provider cannot carry the rows, so under a policy every call
-  through it refuses.
+  through it refuses. It cannot reach a target either, so a bare id whose target is not `gateway`
+  refuses too.
 `npm run lint:model-adapter` refuses any module in shipped agent code that builds a gateway model
 itself, or that writes the AI SDK's default provider, because such a call would leave without the
 rows.
@@ -629,14 +632,28 @@ recap, the approval judge and the image describer) goes only to the `mistral` pr
 zero retention. A role with no `via` uses `gateway`, so the target changes no call of the other
 stacks.
 
-🔴 **Two call paths do not go through the `mistral` target.** A declared subagent's bare
-`model: "<id>"` string (`fresh_eyes_review` uses the primary's id) and eve's own `evaluate()`
-resolve through the default provider, which is the `gateway` target. Those calls carry neither the
-provider pin nor the zero-retention row. Today the gateway lists one provider for the model, so the
-provider is the same, but nothing enforces it. When zero retention must cover every call, also set
-`models: { dataPolicy: { zeroRetention: true } }`: that row rides every call on every target. If your app
-replaces `models.targets`, keep the `mistral` entry, or a switch to the stack fails config load and
-names the missing target.
+**A bare model id goes through the `mistral` target too (OPE-2566).** The AI SDK resolves a
+declared subagent's bare `model: "<id>"` string and eve's own `evaluate()` through the default
+provider, which sees only the id. So the app registers its stack roles (`agent/model/models.ts`,
+`registerBareModelRoutes`), and the default provider sends each bare id through:
+
+1. the target of the first role that names the id (`fresh_eyes_review` uses the primary's id, so it
+   goes through the primary's target);
+2. else the primary role's target, the deployment default;
+3. else, in a process that registered no role, `gateway`.
+
+On this stack every role goes `via: "mistral"`, so every bare id carries the provider pin and the
+zero-retention row. A bare id that no role names (a plugin subagent that maps its own model, or
+eve's `evaluate()` default) also goes through `mistral`, and a model that no `mistral` provider
+serves fails closed. `npm run check:model-config` checks each declared subagent's id on its target
+and names each declared subagent whose id no role names, and each one whose module does not load. It
+does not list eve's `evaluate()` model. An app scaffolded before 0.8.0 does not call
+`registerBareModelRoutes`, so every bare id still goes through `gateway`. When a role names another
+target, the check says so and exits 1. Add the line from the template (`packages/core/upgrading.json`
+has the step). If another module set the AI SDK's default provider first, a
+bare id whose target is not `gateway` refuses, because that provider cannot reach the target. If your
+app replaces `models.targets`, keep the `mistral` entry, or a switch to the stack fails config load
+and names the missing target.
 
 What a probe through this repo's own transport showed on 2026-10-15:
 

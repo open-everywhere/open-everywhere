@@ -149,11 +149,12 @@ function runModelCheck(dir: string): Promise<{ code: number | null; out: string;
 
 async function modelConfigArm(): Promise<void> {
   let region = "us";
+  let provider = "stub";
   const asked: string[] = [];
   const stub = createServer((req, res) => {
     asked.push(req.url ?? "");
     res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ data: { endpoints: [{ provider_name: "stub", has_zdr: true, has_no_training: true, inference_regions: [{ geo_region: region }] }] } }));
+    res.end(JSON.stringify({ data: { endpoints: [{ provider_name: provider, has_zdr: true, has_no_training: true, inference_regions: [{ geo_region: region }] }] } }));
   });
   await new Promise<void>((up) => stub.listen(0, "127.0.0.1", up));
   try {
@@ -182,6 +183,27 @@ async function modelConfigArm(): Promise<void> {
     const green = await runModelCheck(app);
     eq(green.code, 0, "F: NEGATIVE CONTROL — the same app exits 0 once a provider serves eu, so the red follows the settings");
     eq((JSON.parse(green.out) as { met: string }).met, "yes", "F: …and its verdict is yes");
+
+    provider = "mistral";
+    const eu = scaffold("bare-model-app");
+    const euSettings = readFileSync(join(eu, settingsRel), "utf8");
+    writeFileSync(
+      join(eu, settingsRel),
+      `${euSettings.slice(0, -closer.length)}\n  models: { stack: "european-open-weights", targets: { gateway: { kind: "vercel-ai-gateway", url: "http://127.0.0.1:${port}" }, mistral: { kind: "vercel-ai-gateway", url: "http://127.0.0.1:${port}", providers: { only: ["mistral"] }, dataPolicy: { zeroRetention: true } } } },${closer}`,
+    );
+    const registered = await runModelCheck(eu);
+    eq(registered.code, 0, `G: the scaffolded app on the european stack registers its roles for bare ids, and the check exits 0 — stdout: ${registered.out.slice(0, 2000)} stderr: ${registered.err.slice(-2000)}`);
+    const regReport = JSON.parse(registered.out) as { bareRoutesUnregistered: boolean; bareDefaultVia: string };
+    eq(regReport.bareRoutesUnregistered, false, "G: …and it finds the roles registered");
+    eq(regReport.bareDefaultVia, "mistral", "G: …and a bare id no role names goes through the primary role's target, mistral");
+    const modelsRel = join("agent", "model", "models.ts");
+    const models = readFileSync(join(eu, modelsRel), "utf8");
+    const line = "registerBareModelRoutes(Object.values(MODELS));\n";
+    ok(models.includes(line), "G: fixture — the template's models.ts registers its roles for bare ids");
+    writeFileSync(join(eu, modelsRel), models.replace(line, ""));
+    const unregistered = await runModelCheck(eu);
+    eq(unregistered.code, 1, `🔴 G: without the registration line, the check exits 1 — stdout: ${unregistered.out.slice(0, 2000)} stderr: ${unregistered.err.slice(-2000)}`);
+    eq((JSON.parse(unregistered.out) as { bareRoutesUnregistered: boolean }).bareRoutesUnregistered, true, "G: …and it names the missing registration");
   } finally {
     stub.close();
   }

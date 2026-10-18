@@ -14,7 +14,7 @@ import {
   type SovereigntyRow,
   type SovereigntySettings,
 } from "../agent/ops/sovereignty.js";
-import { appEnv, eveScriptTelemetry, namesWorkflowWorld, originRemoteHost } from "../agent/ops/sovereignty-facts.js";
+import { appEnv, declaredSubagentModels, eveScriptTelemetry, gatherSovereigntyInput, namesWorkflowWorld, originRemoteHost, registersBareModelRoutes } from "../agent/ops/sovereignty-facts.js";
 import { telemetrySwitches } from "../agent/observability/telemetry.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
 import { runSovereigntyCommand } from "./oe-sovereignty.js";
@@ -170,6 +170,78 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
   ok("the stack's role ids are printed", row(roles, "model route").where.includes("primary vendor/model-a"));
   const forced = report({ settings: { ...SHIPPED, models: { ...SHIPPED.models, force: "vendor/pinned" } } });
   ok("models.force is named as an override", row(forced, "model route").where.includes("models.force vendor/pinned"));
+  const bare = report({
+    bareDefaultVia: "mistral",
+    bareModels: [
+      { where: "subagent review", id: "vendor/model-a", via: "mistral", source: "role" },
+      { where: "subagent extra", id: "vendor/other", via: "mistral", source: "default" },
+    ],
+  });
+  const bareWhere = row(bare, "model route").where;
+  ok("a role-named subagent is named with its role's target", bareWhere.includes("subagent review via mistral") && !bareWhere.includes("review vendor/model-a"));
+  ok("a subagent whose model no role names is flagged", bareWhere.includes("subagent extra vendor/other via mistral (no role names this model)"));
+  ok("any other bare id takes the primary role's target", bareWhere.includes("any other via mistral, the primary role's target"));
+  ok("no bare facts: the row says nothing about bare ids", !row(report({}), "model route").where.includes("bare model ids"));
+  const unloaded = report({ bareDefaultVia: "gateway", bareModels: [{ where: "subagent broken", id: undefined }] });
+  ok("a subagent whose module did not load is named as unknown", row(unloaded, "model route").where.includes("subagent broken model unknown (its module did not load)"));
+}
+
+{
+  const app = mkdtempSync(join(tmpdir(), "oe-sov-subagents-"));
+  mkdirSync(join(app, "agent", "subagents", "good"), { recursive: true });
+  mkdirSync(join(app, "agent", "subagents", "broken"), { recursive: true });
+  writeFileSync(join(app, "agent", "subagents", "good", "agent.ts"), `export default { model: "vendor/model-a" };\n`);
+  writeFileSync(join(app, "agent", "subagents", "broken", "agent.ts"), `throw new Error("this subagent does not load");\n`);
+  const found = await declaredSubagentModels(app);
+  ok(
+    `declared subagents: the broken one stays in the list with an unknown model — got ${JSON.stringify(found)}`,
+    found?.length === 2 && found[0]!.where === "subagent broken" && found[0]!.id === undefined && found[1]!.where === "subagent good" && found[1]!.id === "vendor/model-a",
+  );
+}
+
+{
+  const app = mkdtempSync(join(tmpdir(), "oe-sov-order-"));
+  mkdirSync(join(app, "agent", "model"), { recursive: true });
+  mkdirSync(join(app, "agent", "subagents", "helper"), { recursive: true });
+  writeFileSync(
+    join(app, "agent", "model", "stacks.ts"),
+    `export function resolveStack() { return { utility: { id: "x/u" }, primary: { id: "x/p", via: "mistral" } }; }\n`,
+  );
+  writeFileSync(join(app, "agent", "subagents", "helper", "agent.ts"), `export default { model: "x/other" };\n`);
+  const facts = await gatherSovereigntyInput(app, {});
+  ok(`stack order: the default target is the primary's — got ${facts.bareDefaultVia}`, facts.bareDefaultVia === "mistral");
+  ok(
+    `stack order: a subagent no role names goes via the primary's target — got ${JSON.stringify(facts.bareModels)}`,
+    JSON.stringify(facts.bareModels) === JSON.stringify([{ where: "subagent helper", id: "x/other", via: "mistral", source: "default" }]),
+  );
+}
+
+{
+  const app = mkdtempSync(join(tmpdir(), "oe-sov-unregistered-"));
+  mkdirSync(join(app, "agent", "model"), { recursive: true });
+  mkdirSync(join(app, "agent", "subagents", "helper"), { recursive: true });
+  writeFileSync(join(app, "agent", "model", "stacks.ts"), `export function resolveStack() { return { primary: { id: "x/p", via: "mistral" } }; }\n`);
+  writeFileSync(join(app, "agent", "subagents", "helper", "agent.ts"), `export default { model: "x/p" };\n`);
+  writeFileSync(join(app, "agent", "model", "models.ts"), `export const MODELS = {};\n`);
+  const facts = await gatherSovereigntyInput(app, {});
+  ok(
+    `unregistered: every bare id is reported via gateway — got ${facts.bareDefaultVia} ${JSON.stringify(facts.bareModels)}`,
+    facts.bareRoutesRegistered === false && facts.bareDefaultVia === "gateway" && facts.bareModels?.[0]?.id === "x/p" && (facts.bareModels[0] as { via: string }).via === "gateway",
+  );
+  const words = row(report({ bareDefaultVia: facts.bareDefaultVia, bareModels: facts.bareModels, bareRoutesRegistered: facts.bareRoutesRegistered }), "model route").where;
+  ok(`unregistered: the row names the missing call — got ${words}`, words.includes("all via gateway, because agent/model/models.ts does not call registerBareModelRoutes") && !words.includes("via mistral"));
+  writeFileSync(join(app, "agent", "model", "models.ts"), `registerBareModelRoutes(Object.values(MODELS));\n`);
+  const reg = await gatherSovereigntyInput(app, {});
+  ok(`registered: the bare id takes its role's target — got ${JSON.stringify(reg.bareModels)}`, reg.bareRoutesRegistered === true && reg.bareDefaultVia === "mistral" && (reg.bareModels?.[0] as { via: string }).via === "mistral");
+  ok("registersBareModelRoutes ignores a line comment that holds the call", !registersBareModelRoutes("// registerBareModelRoutes(Object.values(MODELS));\n"));
+  ok("registersBareModelRoutes ignores a block comment that holds the call", !registersBareModelRoutes("/* registerBareModelRoutes(Object.values(MODELS)); */\n"));
+  ok("registersBareModelRoutes reads a call after a URL in a string", registersBareModelRoutes('const u = "https://x.example"; registerBareModelRoutes(Object.values(MODELS));\n'));
+  const missing = mkdtempSync(join(tmpdir(), "oe-sov-nomodels-"));
+  mkdirSync(join(missing, "agent", "model"), { recursive: true });
+  writeFileSync(join(missing, "agent", "model", "stacks.ts"), `export function resolveStack() { return { primary: { id: "x/p", via: "mistral" } }; }\n`);
+  const nm = await gatherSovereigntyInput(missing, {});
+  const nmWords = row(report({ bareDefaultVia: nm.bareDefaultVia, bareModels: nm.bareModels, bareRoutesRegistered: nm.bareRoutesRegistered }), "model route").where;
+  ok(`no models.ts: the bare-id target is unknown — got ${nm.bareRoutesRegistered} ${nmWords}`, nm.bareRoutesRegistered === "unknown" && nmWords.includes("target unknown, because agent/model/models.ts did not read") && !nmWords.includes("via mistral"));
 }
 
 {
@@ -277,6 +349,7 @@ const ENV = { DATABASE_URL: NEON_URL, OE_TELEMETRY: "off" };
   const expectOff = !telemetrySwitches(appEnv(REPO, ENV)).enabled;
   ok("oe sovereignty honours the env it reads", text.includes("nowhere: telemetry is OFF") === expectOff);
   ok("oe sovereignty reads the app's transcription role", text.includes("■ transcription\n  where:       primary "));
+  ok("oe sovereignty reads the app's declared subagent and its target (OPE-2566)", text.includes("subagent fresh_eyes_review via gateway") && text.includes("any other via gateway"));
   ok("oe sovereignty reads the app's eve scripts", text.includes("eve CLI telemetry is OFF in every script"));
   ok("oe sovereignty never prints the DSN", !text.includes(SECRET_PASSWORD) && !text.includes("ep-quiet-lab"));
   const j = io();

@@ -31,6 +31,31 @@ export interface SovereigntyInput {
   readonly transcription?: readonly TranscriptionRouteFact[] | undefined;
   readonly eveScripts?: { readonly disabled: readonly string[]; readonly enabled: readonly string[] } | undefined;
   readonly customWorkflowWorld?: boolean | undefined;
+  readonly bareModels?: readonly BareModelFact[] | undefined;
+  readonly bareDefaultVia?: string | undefined;
+  readonly bareRoutesRegistered?: boolean | "unknown" | undefined;
+}
+
+export type BareModelFact =
+  | {
+      readonly where: string;
+      readonly id: string;
+      readonly via: string;
+      readonly source: "role" | "default";
+    }
+  | { readonly where: string; readonly id: undefined };
+
+function bareModelWords(bare: readonly BareModelFact[] | undefined, fallback: string | undefined, registered: boolean | "unknown" | undefined): string {
+  if (fallback === undefined) return "";
+  if (registered === "unknown") return "; bare model ids (declared subagents, eve evaluate()): target unknown, because agent/model/models.ts did not read";
+  if (registered === false) {
+    return "; bare model ids (declared subagents, eve evaluate()): all via gateway, because agent/model/models.ts does not call registerBareModelRoutes (the 0.8.0 upgrade step)";
+  }
+  const each = (bare ?? []).map((b) =>
+    b.id === undefined ? `${b.where} model unknown (its module did not load)` : b.source === "role" ? `${b.where} via ${b.via}` : `${b.where} ${b.id} via ${b.via} (no role names this model)`,
+  );
+  const listed = bare === undefined ? "subagents unknown; " : each.length > 0 ? `${each.join(", ")}; ` : "";
+  return `; bare model ids (declared subagents, eve evaluate()): ${listed}any other via ${fallback}, the primary role's target`;
 }
 
 export interface TranscriptionRouteFact {
@@ -265,7 +290,7 @@ export function sovereigntyReport(input: SovereigntyInput): SovereigntyReport {
   ];
   rows.push({
     piece: "model route",
-    where: `stack "${settings.models.stack}"${roleText}${overrides.length > 0 ? `; overridden by ${overrides.join(", ")}` : ""}; data policy: ${dataPolicyWords(policy)}`,
+    where: `stack "${settings.models.stack}"${roleText}${overrides.length > 0 ? `; overridden by ${overrides.join(", ")}` : ""}; data policy: ${dataPolicyWords(policy)}${bareModelWords(input.bareModels, input.bareDefaultVia, input.bareRoutesRegistered)}`,
     region: policy.region !== undefined ? `${policy.region.toUpperCase()} only (models.dataPolicy.region; a call no ${policy.region.toUpperCase()} provider serves fails closed)` : "not pinned (models.dataPolicy.region is unset)",
     compellable: targets.every((t) => t.only !== undefined)
       ? `only ${[...new Set(targets.flatMap((t) => t.only ?? []))].join(", ")} (models.targets providers.only; a call no listed provider serves refuses) (transcription: see its own row)`

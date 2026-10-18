@@ -5,6 +5,7 @@ import {
 } from "@open-everywhere/core/agent/model/default-model.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 import { viaProblem, type ModelTargets } from "@open-everywhere/core/agent/model/targets.js";
+import { registerBareModelRoutes } from "@open-everywhere/core/agent/model/bare-model-via.js";
 import { SETTINGS_OVERRIDES } from "../settings/settings.js";
 import { resolveStack, resolveTranscription, type ModelRole, type ModelRoleSpec, type ModelStack } from "./stacks.js";
 
@@ -26,6 +27,8 @@ export const MODELS = {
   supervisor: STACK.supervisor,
   judge: STACK.judge,
 } as const satisfies Record<string, ModelRoleSpec>;
+
+registerBareModelRoutes(Object.values(MODELS));
 
 export const MODEL_STACK = STACK_ALIAS;
 

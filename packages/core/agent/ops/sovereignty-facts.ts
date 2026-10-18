@@ -1,11 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
 import { getSettings, registerSettings, type AgentSettingsOverrides } from "../settings/settings.js";
 import { importAppModule } from "../scaffold/app-root.js";
 import { loadRosterConfig } from "../scaffold/roster-fs.js";
 import { parseRosterConfig } from "../scaffold/roster-plan.js";
-import type { SovereigntyInput, TranscriptionRouteFact } from "./sovereignty.js";
+import type { BareModelFact, SovereigntyInput, TranscriptionRouteFact } from "./sovereignty.js";
+import { bareModelRoutes, bareModelVia } from "../model/bare-model-via.js";
 import { EVE_TELEMETRY_SWITCH, eveCommands } from "./eve-scripts.js";
 
 export async function registerAppSettings(appRoot: string): Promise<string | undefined> {
@@ -69,6 +70,79 @@ async function stackRoles(appRoot: string, alias: string): Promise<Record<string
   } catch {
     return undefined;
   }
+}
+
+const ROLE_ORDER: readonly string[] = ["primary", "utility", "vision", "supervisor", "judge"];
+
+async function stackRoleRoutes(appRoot: string, models: { readonly stack: string; readonly force: string; readonly primary: string }): Promise<{ id: string; via?: string }[] | undefined> {
+  try {
+    const mod = await importAppModule<{ resolveStack?: (a: string) => Record<string, { id?: unknown; via?: unknown }> }>("agent/model/stacks.ts", appRoot);
+    if (typeof mod.resolveStack !== "function") return undefined;
+    const rank = (role: string): number => {
+      const i = ROLE_ORDER.indexOf(role);
+      return i === -1 ? ROLE_ORDER.length : i;
+    };
+    const entries = Object.entries(mod.resolveStack(models.stack)).sort(([a], [b]) => rank(a) - rank(b));
+    const out: { id: string; via?: string }[] = [];
+    for (const [role, spec] of entries) {
+      if (typeof spec?.id !== "string") continue;
+      const id = role === "primary" ? models.force || models.primary || spec.id : spec.id;
+      out.push(typeof spec.via === "string" ? { id, via: spec.via } : { id });
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface DeclaredSubagentModel {
+  readonly where: string;
+  readonly id: string | undefined;
+}
+
+export async function declaredSubagentModels(appRoot: string): Promise<DeclaredSubagentModel[] | undefined> {
+  let dirs: string[];
+  try {
+    dirs = readdirSync(join(appRoot, "agent", "subagents"), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && existsSync(join(appRoot, "agent", "subagents", e.name, "agent.ts")))
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return existsSync(join(appRoot, "agent")) ? [] : undefined;
+  }
+  const out: DeclaredSubagentModel[] = [];
+  for (const name of dirs) {
+    try {
+      const mod = await importAppModule<{ default?: { model?: unknown } }>(`agent/subagents/${name}/agent.ts`, appRoot);
+      const model = mod.default?.model;
+      if (typeof model === "string" && model !== "") out.push({ where: `subagent ${name}`, id: model });
+    } catch {
+      out.push({ where: `subagent ${name}`, id: undefined });
+    }
+  }
+  return out;
+}
+
+export function registersBareModelRoutes(modelsTs: string): boolean {
+  const code = modelsTs.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  return /\bregisterBareModelRoutes\s*\(/.test(code);
+}
+
+async function bareModelFacts(
+  appRoot: string,
+  models: { readonly stack: string; readonly force: string; readonly primary: string },
+): Promise<{ bareModels?: BareModelFact[]; bareDefaultVia?: string; bareRoutesRegistered?: boolean | "unknown" }> {
+  const roles = await stackRoleRoutes(appRoot, models);
+  if (roles === undefined) return {};
+  const text = readText(join(appRoot, "agent", "model", "models.ts"));
+  const registered = text === undefined ? "unknown" : registersBareModelRoutes(text);
+  const routes = bareModelRoutes(registered === false ? [] : roles);
+  const subagents = await declaredSubagentModels(appRoot);
+  return {
+    bareDefaultVia: routes.fallback,
+    bareRoutesRegistered: registered,
+    ...(subagents !== undefined ? { bareModels: subagents.map((b) => (b.id === undefined ? { where: b.where, id: undefined } : { where: b.where, id: b.id, ...bareModelVia(b.id, routes) })) } : {}),
+  };
 }
 
 async function transcriptionRoutes(appRoot: string, alias: string): Promise<TranscriptionRouteFact[] | undefined> {
@@ -151,6 +225,7 @@ export async function gatherSovereigntyInput(appRoot: string, env: NodeJS.Proces
     chatPlatforms: await chatPlatforms(appRoot),
     configRemoteHost: configRemoteHost(appRoot),
     transcription: await transcriptionRoutes(appRoot, s.models.stack),
+    ...(await bareModelFacts(appRoot, s.models)),
     eveScripts: ((t) => (t === undefined ? undefined : eveScriptTelemetry(t)))(readText(join(appRoot, "package.json"))),
     customWorkflowWorld: ((t) => (t === undefined ? undefined : namesWorkflowWorld(t)))(readText(join(appRoot, "agent", "agent.ts"))),
   };

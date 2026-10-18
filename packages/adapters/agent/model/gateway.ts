@@ -7,6 +7,8 @@ import {
   type ModelDataPolicy,
   type ModelTarget,
   DEFAULT_MODEL_VIA,
+  bareModelRoutesRegistered,
+  bareModelVia,
   dataPolicyActive,
   dataPolicyRows,
   mergeDataPolicy,
@@ -94,14 +96,6 @@ function targetProvider(via: string | undefined): GatewayProvider {
     TARGET_PROVIDERS.set(name, p);
   }
   return p;
-}
-
-function lazyTargetProvider(via: string): GatewayProvider {
-  return new Proxy(function lazyGateway() {} as unknown as GatewayProvider, {
-    apply: (_t, thisArg, args: unknown[]) => Reflect.apply(targetProvider(via) as unknown as (...a: unknown[]) => unknown, thisArg, args),
-    get: (_t, prop) => Reflect.get(targetProvider(via), prop),
-    has: (_t, prop) => Reflect.has(targetProvider(via), prop),
-  });
 }
 
 export function vercelDataPolicyOptions(p: ModelDataPolicy): Record<string, unknown> {
@@ -260,10 +254,51 @@ export function policyProvider<P extends object>(base: P): P {
   });
 }
 
+function bareViaOf(args: readonly unknown[]): string {
+  noteUnregisteredBareIds();
+  return bareModelVia(typeof args[0] === "string" ? args[0] : "").via;
+}
+
+let bareGapNoted = false;
+
+function noteUnregisteredBareIds(): void {
+  if (bareGapNoted || bareModelRoutesRegistered()) return;
+  if (!Object.keys(currentTargets()).some((k) => k !== DEFAULT_MODEL_VIA)) return;
+  bareGapNoted = true;
+  console.error(
+    "[open-everywhere:model] a bare model id (a declared subagent's model, eve evaluate()) goes via gateway, because agent/model/models.ts " +
+      "does not call registerBareModelRoutes. Add the line from the 0.8.0 template so it takes its role's target. npm run check:model-config names this too.",
+  );
+}
+
+export function _resetBareGapNoticeForTest(): void {
+  bareGapNoted = false;
+}
+
+export function bareIdProvider(): GatewayProvider {
+  const build = (prop: PropertyKey | undefined, args: unknown[]): unknown => {
+    const via = bareViaOf(args);
+    const p = targetProvider(via);
+    const m = prop === undefined ? Reflect.apply(p as unknown as (...a: unknown[]) => unknown, undefined, args) : (Reflect.get(p, prop) as (...a: unknown[]) => unknown).apply(p, args);
+    return m !== null && typeof m === "object" ? policyModel(m, via) : m;
+  };
+  return new Proxy(function bareIdGateway() {} as unknown as GatewayProvider, {
+    apply: (_t, _thisArg, args: unknown[]) => build(undefined, args),
+    get: (_t, prop) => {
+      if (prop === OWN_PROVIDER) return true;
+      const via = bareModelVia("").via;
+      const value = Reflect.get(targetProvider(via), prop) as unknown;
+      if (typeof value !== "function" || NON_MODEL_MEMBERS.has(prop)) return value;
+      return withGuardedMemberProps((...args: unknown[]): unknown => build(prop, args), value, String(prop), via);
+    },
+    has: (_t, prop) => prop === OWN_PROVIDER || Reflect.has(targetProvider(bareModelVia("").via), prop),
+  });
+}
+
 const sdkGlobal = globalThis as { AI_SDK_DEFAULT_PROVIDER?: unknown };
 const installed = sdkGlobal.AI_SDK_DEFAULT_PROVIDER;
 if (installed === undefined || installed === null) {
-  sdkGlobal.AI_SDK_DEFAULT_PROVIDER = policyProvider(lazyTargetProvider(DEFAULT_MODEL_VIA));
+  sdkGlobal.AI_SDK_DEFAULT_PROVIDER = bareIdProvider();
 } else if ((typeof installed === "object" || typeof installed === "function") && installed !== null && (installed as Record<symbol, unknown>)[OWN_PROVIDER] !== true) {
   console.error(
     "[open-everywhere:model] AI_SDK_DEFAULT_PROVIDER was already set by another module. A bare model id resolves through it, " +
@@ -273,14 +308,17 @@ if (installed === undefined || installed === null) {
 }
 
 export function foreignProviderGuard<P extends object>(base: P): P {
-  const guardModel = (m: object): object =>
+  const guardModel = (m: object, via: string): object =>
     new Proxy(m, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
         if (typeof prop !== "string" || !CALL_METHOD.test(prop) || typeof value !== "function") return value;
         return async (...args: unknown[]) => {
+          if (via !== DEFAULT_MODEL_VIA) {
+            throw new Error(`this call goes through the target "${via}", but it resolved through a default provider that is not the gateway adapter's, so it cannot reach that target, and it refuses`);
+          }
           const p = currentDataPolicy();
-          const t = currentTarget(DEFAULT_MODEL_VIA);
+          const t = currentTarget(via);
           if (demandsAnything(t, p)) {
             throw new Error(`${demandLabel(p, t)}: this call resolved through a default provider that is not the gateway adapter's, so it cannot carry the rows, and it refuses`);
           }
@@ -291,7 +329,7 @@ export function foreignProviderGuard<P extends object>(base: P): P {
   return new Proxy(base, {
     apply(target, thisArg, args: unknown[]) {
       const m = Reflect.apply(target as (...a: unknown[]) => unknown, thisArg, args);
-      return m !== null && typeof m === "object" ? guardModel(m) : m;
+      return m !== null && typeof m === "object" ? guardModel(m, bareViaOf(args)) : m;
     },
     get(target, prop, receiver) {
       if (prop === OWN_PROVIDER) return true;
@@ -300,7 +338,7 @@ export function foreignProviderGuard<P extends object>(base: P): P {
       return withGuardedMemberProps(
         (...args: unknown[]): unknown => {
           const m = (value as (...a: unknown[]) => unknown).apply(target, args);
-          return m !== null && typeof m === "object" ? guardModel(m) : m;
+          return m !== null && typeof m === "object" ? guardModel(m, bareViaOf(args)) : m;
         },
         value,
         String(prop),
