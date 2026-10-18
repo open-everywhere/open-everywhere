@@ -88,9 +88,10 @@ function routineBag(over: Record<string, string> = {}): Record<string, string> {
   };
 }
 
-function fakeDeps(): { deps: FireWorkDeps; sent: { forward: Forward; receive: unknown }[]; ledger: [string, string][] } {
+function fakeDeps(): { deps: FireWorkDeps; sent: { forward: Forward; receive: unknown }[]; ledger: [string, string][]; cleared: string[] } {
   const sent: { forward: Forward; receive: unknown }[] = [];
   const ledger: [string, string][] = [];
+  const cleared: string[] = [];
   const deps: FireWorkDeps = {
     org: ORG,
     store,
@@ -101,12 +102,15 @@ function fakeDeps(): { deps: FireWorkDeps; sent: { forward: Forward; receive: un
     noteLedger: async (_org, token, id) => {
       ledger.push([token, id]);
     },
+    clearLedger: async (_org, id) => {
+      cleared.push(id);
+    },
     notifyLost: async () => 0,
     binding: bindingForDivert,
     audit: async () => undefined,
     now: () => "2026-10-06T06:00:00.000Z",
   };
-  return { deps, sent, ledger };
+  return { deps, sent, ledger, cleared };
 }
 
 const RECEIVE = (() => ({ send: async () => ({}) })) as never;
@@ -436,6 +440,42 @@ const PLAN = fireWork.planFireWork({ surfaceKey: SURFACE, origin: ORIGIN, domain
   eq(bare.sent.length, 0, "§11 a fire whose auth names no surface does not forward");
   eq(bareHandled, false, "§11 🔴 …and is NOT handled here: the caller keeps its native send (no thread seat)");
   ok(REQUESTER_UNVERIFIED.length > 0, "§11 fixture sanity");
+}
+
+{
+  const { workSessionLedgerId } = await import("../agent/channels/work-generation.js");
+  const { DispatchNotDeliveredError } = await import("../agent/channels/self-dispatch.js");
+  const NEW_W = "oe-dom:fwork:win:w/fwork:oe-sup:g4-c3c3c3";
+  let failWith: Error | undefined = new DispatchNotDeliveredError("unified continuation binding does not match its durable origin");
+  const { deps, sent, ledger, cleared } = fakeDeps();
+  const failing: FireWorkDeps = {
+    ...deps,
+    resolveWork: async () => ({ token: NEW_W, generation: 4, rotated: { from: PLAN.workToken, trigger: "runtime-changed" as const, lostRequestIds: [], lostTaskIds: [], drainingRequestIds: [], drainingTaskIds: [] } }),
+    dispatch: (async (forward: Forward, receive?: unknown) => {
+      if (failWith !== undefined) throw failWith;
+      sent.push({ forward, receive });
+    }) as FireWorkDeps["dispatch"],
+  };
+  const wakeId = mintWakeId();
+  const input = { message: "a fire into a rotated W", surfaceKey: SURFACE, origin: ORIGIN, auth: { attributes: routineBag() }, wakeId };
+  await assert.rejects(() => fireWork.forwardFireToWork(RECEIVE, PLAN, input, failing), /binding does not match/);
+  n++;
+  const requestId = work.workRequestIdFor(`fire:${wakeId}`);
+  ok(ledger.some(([, id]) => id === work.workLedgerId(requestId)), "§17 fixture: the fire noted the seat's ledger before its delivery");
+  ok(cleared.includes(work.workLedgerId(requestId)), "§17 🔴 a definite delivery failure gives back the SEAT's entry, so the seat can rotate");
+  ok(cleared.includes(workSessionLedgerId(requestId)), "§17 🔴 …and W's own entry");
+  failWith = undefined;
+  await fireWork.forwardFireToWork(RECEIVE, PLAN, input, failing);
+  eq(sent.filter((s) => s.forward.requestId === requestId).length, 1, "§17 🔴 a re-delivered fire reaches W: the failed attempt gave its once-only claim back");
+  failWith = new Error("aborted");
+  const wake2 = mintWakeId();
+  const before = cleared.length;
+  await assert.rejects(() => fireWork.forwardFireToWork(RECEIVE, PLAN, { ...input, wakeId: wake2 }, failing), /aborted/);
+  n++;
+  eq(cleared.length, before, "§17 🔴 a throw with no proof of non-delivery gives back nothing");
+  failWith = undefined;
+  await fireWork.forwardFireToWork(RECEIVE, PLAN, { ...input, wakeId: wake2 }, failing);
+  eq(sent.filter((s) => s.forward.requestId === work.workRequestIdFor(`fire:${wake2}`)).length, 0, "§17 🔴 …and keeps the claim, so a second delivery cannot start the fire twice");
 }
 
 console.log(`fire-work-test: ${n} assertions passed`);

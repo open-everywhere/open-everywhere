@@ -358,6 +358,13 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
       "RED-until-leg: the e2e board has no work-session journey yet. Its proof is the integration tier (tasks/seat-snappy-under-worker, tasks/parallel-jobs-one-conversation). Extend J-UNI-X with a forwarded job.",
   },
   {
+    action: "work.forward_failed",
+    fields: ["requestId", "wakeId", "outcome", "error"],
+    proves: "a seat's forward did not reach its work session (OPE-2603): `not-delivered` (proved: eve's send never ran) gave back what the forward recorded as owed, `unknown` kept it because the job can still be running",
+    notExercised:
+      "RED-until-leg: no e2e leg can make a live delivery fail on purpose. The unit tier pins it (packages/core/scripts/work-forward-test.ts §OPE-2603).",
+  },
+  {
     action: "work.cancel_relayed",
     fields: ["taskId", "request", "outcome"],
     proves: "a seat relayed a cancel for one forwarded job into its work session, or why the cancel was refused (OPE-2338, ruling D15)",

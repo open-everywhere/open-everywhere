@@ -900,4 +900,82 @@ console.log("§17 a withheld settlement clears W's own ledger entry even when it
   ok(!(await generationOwedTaskIds(ORG, W_TOKEN)).includes(workSessionLedgerId(REQ)), "🔴 the withheld settlement freed W's entry, although its seat wake was a replay — W may go idle");
 }
 
+console.log("§OPE-2603 a failed delivery after a W rotation gives back what it owed, re-delivers on replay, and names no cause:");
+{
+  const { generationOwedTaskIds } = await import("../agent/channels/generation-retirement.js");
+  const { workSessionLedgerId } = await import("../agent/channels/work-generation.js");
+  const { DispatchNotDeliveredError } = await import("../agent/channels/self-dispatch.js");
+  const OLD_W = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g8-a1a1a1";
+  const NEW_W = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g9-b2b2b2";
+  const RAW = "self-dispatch POST to https://oe.example/eve/v1/unified/dispatch returned 422: dispatch refused before delivery: boom";
+  let failWith: Error | undefined = new DispatchNotDeliveredError(RAW);
+  let resolves = 0;
+  const failAudits: { action?: string; detail?: Record<string, unknown> }[] = [];
+  const failDeps = {
+    ...deps(),
+    dispatch: async (input: Delivered) => {
+      if (failWith !== undefined) throw failWith;
+      delivered.push(input);
+    },
+    audit: async (row: unknown) => {
+      failAudits.push(row as { action?: string; detail?: Record<string, unknown> });
+    },
+    resolveWork: async () => {
+      resolves += 1;
+      return { token: NEW_W, generation: 9, rotated: { from: OLD_W, trigger: "runtime-changed" as const, lostRequestIds: [], lostTaskIds: [], drainingRequestIds: [], drainingTaskIds: [] } };
+    },
+  };
+
+  const id = work.workRequestIdFor("call-2603");
+  const before = delivered.length;
+  const [err, pending] = await inSession(async () => {
+    const e = await workTool.forwardWork({ message: "schedule a check-in for 10:00" }, seatCtx("call-2603", "turn-2603"), failDeps).then(
+      () => undefined,
+      (x: unknown) => x as Error,
+    );
+    return [e, pendingDelegationOwing("turn-2603", WAKE, undefined)] as const;
+  });
+  ok(err !== undefined, "the forward fails when its delivery throws");
+  eq(err!.message, workTool.FORWARD_FAILED_NOTE, "🔴 the seat reads the host's copy, not the delivery's own error");
+  ok(!err!.message.includes("422") && !err!.message.includes("refused before delivery") && !err!.message.includes("POST"), "🔴 …so the transport's words, the seed of the false cause, never reach the seat");
+  ok(/cause is not known/.test(err!.message) && /do not name one/.test(err!.message), "…and the copy says the cause is not known, and forbids naming one");
+  ok(!(await generationOwedTaskIds(ORG, SEAT_TOKEN)).includes(work.workLedgerId(id)), "🔴 the SEAT generation no longer owes the job no W holds, so its rotation is not blocked for the ledger's TTL");
+  ok(!(await generationOwedTaskIds(ORG, NEW_W)).includes(workSessionLedgerId(id)), "🔴 …and the fresh W's own ledger does not owe it either");
+  eq(pending, undefined, "…and the seat holds no pending job for the wake, so no promise is owed for it");
+  const failRow = failAudits.find((a) => a.action === work.WORK_FORWARD_FAILED_ACTION);
+  ok(failRow !== undefined, "one work.forward_failed row: a later reader has a row for the failure");
+  eq([failRow?.detail?.requestId, failRow?.detail?.workToken, failRow?.detail?.outcome], [id, NEW_W, "not-delivered"], "…naming the request, the W it was sent to and the outcome");
+  ok(!JSON.stringify(failRow).includes("check-in for 10:00"), "…and never the brief");
+  eq(failAudits.filter((a) => a.action === work.WORK_FORWARDED_ACTION).length, 0, "no work.forwarded row claims a job that was not delivered");
+
+  failWith = undefined;
+  const receipt = await inSession(() => workTool.forwardWork({ message: "schedule a check-in for 10:00" }, seatCtx("call-2603", "turn-2603"), failDeps));
+  eq(receipt.requestId, id, "the replay is the same job");
+  eq(delivered.length, before + 1, "🔴 the replay re-dispatches the job: the failed attempt gave its once-only claim back");
+  eq(delivered[delivered.length - 1]!.token, NEW_W, "…to the W the first execution resolved");
+  eq(resolves, 1, "…and it does not rotate W again");
+  ok((await generationOwedTaskIds(ORG, SEAT_TOKEN)).includes(work.workLedgerId(id)), "…and the delivered job is owed again, as any delivered job is");
+
+  failWith = new Error("self-dispatch POST to https://oe.example/eve/v1/unified/dispatch returned 500: dispatch failed: boom");
+  const id2 = work.workRequestIdFor("call-2603-unknown");
+  const [err2, pending2] = await inSession(async () => {
+    const e = await workTool.forwardWork({ message: "another job" }, seatCtx("call-2603-unknown", "turn-2603u"), failDeps).then(
+      () => undefined,
+      (x: unknown) => x as Error,
+    );
+    return [e, pendingDelegationOwing("turn-2603u", WAKE, undefined)] as const;
+  });
+  eq(err2?.message, workTool.FORWARD_UNKNOWN_NOTE, "🔴 a failure with no proof of non-delivery (a 500) reads as 'not known whether it started', never as 'not started'");
+  ok(!err2!.message.includes("500") && !err2!.message.includes("dispatch failed") && !err2!.message.includes("POST"), "🔴 …in the host's words: the transport's words, the seed of the false cause, never reach the seat");
+  ok(/done:false/.test(err2!.message), "…and it says to reply with done:false, because the job is held as pending");
+  ok((await generationOwedTaskIds(ORG, SEAT_TOKEN)).includes(work.workLedgerId(id2)), "…the seat generation still owes it, because a result can still arrive");
+  ok((await generationOwedTaskIds(ORG, NEW_W)).includes(workSessionLedgerId(id2)), "…and the work session's own entry stays");
+  eq(pending2, work.workLedgerId(id2), "…and the seat holds it as pending for the wake that asked");
+  eq(failAudits.find((a) => a.action === work.WORK_FORWARD_FAILED_ACTION && a.detail?.requestId === id2)?.detail?.outcome, "unknown", "…and the row says the outcome is unknown");
+  failWith = undefined;
+  const before2 = delivered.length;
+  await inSession(() => workTool.forwardWork({ message: "another job" }, seatCtx("call-2603-unknown", "turn-2603u"), failDeps));
+  eq(delivered.length, before2, "🔴 the replay of an indeterminate failure does NOT deliver again: the job can already be running");
+}
+
 console.log(`\n✓ work-forward: ${n} assertions`);

@@ -9,15 +9,17 @@ import { taintKindsThisTurn, untrustedIngestedThisTurn } from "../access/taint-s
 import { currentSessionId, currentTurnId, currentWakeId, deploymentOrg, platformIdentityAttributesFor, type BindableContext } from "../identity/binding.js";
 import { resolveUnifiedWakeAuthority } from "../channels/unified-window.js";
 import { dispatchWorkRequest } from "../channels/unified.js";
-import { generationOfTask, noteGenerationDelegation } from "../channels/generation-retirement.js";
+import { clearGenerationDelegation, generationOfTask, noteGenerationDelegation } from "../channels/generation-retirement.js";
 import { continuationRoute, resolveWorkGeneration, workSessionLedgerId, type ContinuationRoute, type WorkGeneration } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
-import { OE_WORK_RESULT_QUIET_ATTR, readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderJobBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkRowStore } from "../channels/work.js";
+import { OE_WORK_RESULT_QUIET_ATTR, readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderJobBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, WORK_FORWARD_FAILED_ACTION, type WorkRowStore } from "../channels/work.js";
 import { parseWindowToken, isWorkWindowToken } from "../channels/window-key.js";
 import { ownAccountStampToForward } from "../connections/own-account-carriage.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { outboundKey, postOnce, type MarkEventSeen } from "../operational/post-once.js";
+import { outboundKey, postOnce, type ForgetEventSeen, type MarkEventSeen } from "../operational/post-once.js";
 import { appendAudit } from "../audit/audit.js";
+import { auditErrorDetail } from "../audit/tool-action.js";
+import { DispatchNotDeliveredError } from "../channels/self-dispatch.js";
 import { rememberWorkForward } from "../hooks/work-task-key.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import { requesterAsksForWake } from "../access/requester-messages.js";
@@ -43,6 +45,7 @@ export interface ForwardWorkDeps {
   readonly store: () => WorkRowStore & Parameters<typeof resolveUnifiedWakeAuthority>[0];
   readonly dispatch: typeof dispatchWorkRequest;
   readonly markEventSeen?: MarkEventSeen;
+  readonly forgetEventSeen?: ForgetEventSeen;
   readonly tainted: () => boolean;
   readonly taintKinds: () => readonly string[];
   readonly audit: (row: Parameters<typeof appendAudit>[0]) => Promise<unknown>;
@@ -131,7 +134,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     atIso,
     ...(requesterAsks.length > 0 ? { requesterAsks } : {}),
   });
-  await noteJobForwarded({ requestId, ctx: c, ...(openingRequest !== undefined ? { openingRequestId: openingRequest } : {}), ...(input.taskId !== undefined ? { taskId: input.taskId } : {}) });
+  await noteJobForwarded({ requestId, ctx: c, ...(openingRequest !== undefined ? { openingRequestId: openingRequest } : {}) });
   if (input.taskId !== undefined && quietResultWake(c)) await rememberWorkReportPromised(store, org, requestId, atIso).catch(() => undefined);
   await rememberWorkBrief(store, org, requestId, input.message, atIso);
   await noteGenerationDelegation(org, seatToken, workLedgerId(requestId));
@@ -194,12 +197,38 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     ...(ownAccountAsk !== undefined ? { ownAccountAsk } : {}),
   };
   await rememberWorkForward(store, org, forward, atIso).catch(() => undefined);
-  await postOnce({
-    org,
-    key: outboundKey({ surface: "work", action: "work.forward", stableId: requestId, payload: workToken }),
-    ...(deps.markEventSeen ? { markEventSeen: deps.markEventSeen } : {}),
-    run: () => deps.dispatch(forward),
-  });
+  const forwardKey = outboundKey({ surface: "work", action: "work.forward", stableId: requestId, payload: workToken });
+  try {
+    await postOnce({
+      org,
+      key: forwardKey,
+      ...(deps.markEventSeen ? { markEventSeen: deps.markEventSeen } : {}),
+      ...(deps.forgetEventSeen ? { forgetEventSeen: deps.forgetEventSeen } : {}),
+      releaseKeyOnFailure: (err) => err instanceof DispatchNotDeliveredError,
+      run: () => deps.dispatch(forward),
+    });
+  } catch (err) {
+    const definite = err instanceof DispatchNotDeliveredError;
+    if (definite) {
+      await clearGenerationDelegation(org, workLedgerId(requestId));
+      await clearGenerationDelegation(org, workSessionLedgerId(requestId));
+    } else {
+      notePendingDelegation(turnId, workLedgerId(requestId), wakeId);
+    }
+    await deps
+      .audit({
+        org,
+        platform: "unified",
+        workspace: parseWindowToken(seatToken)?.domain ?? "unknown",
+        action: WORK_FORWARD_FAILED_ACTION,
+        detail: { requestId, wakeId, workToken: deliveryToken, outcome: definite ? "not-delivered" : "unknown", ...auditErrorDetail(err) },
+      })
+      .catch(() => undefined);
+    throw new Error(definite ? FORWARD_FAILED_NOTE : FORWARD_UNKNOWN_NOTE);
+  }
+  if (input.taskId !== undefined) {
+    await noteJobForwarded({ requestId, ctx: c, ...(openingRequest !== undefined ? { openingRequestId: openingRequest } : {}), taskId: input.taskId });
+  }
   notePendingDelegation(turnId, workLedgerId(requestId), wakeId);
 
   await deps.audit({
@@ -228,6 +257,17 @@ export const FORWARDED_NOTE =
   "as a new message; relay it then. When the message addressed you, post one short line that says what will happen " +
   "(reply with done:false); otherwise say it only if the people who asked should hear something now. " +
   `${flatRule(NO_HANDOFF_NARRATION_RULE)}`;
+
+export const FORWARD_FAILED_NOTE =
+  "work: the job was NOT started: it was refused before it was handed over, so nothing is running for it. The cause is not known, to you or to the host, so do not name one: " +
+  "no service, no error and no outage. You may call `work` once more with the same message. If you do not, or if that call also fails, " +
+  "tell the people who asked, in one plain line, that you could not start it, and ask them to try again. Do not mention jobs, tasks or sessions.";
+
+export const FORWARD_UNKNOWN_NOTE =
+  "work: it is not known whether the job started: the hand-off broke before it was confirmed. Do not call `work` again for it, because it can be " +
+  "running. The cause is not known, to you or to the host, so do not name one: no service, no error and no outage. If its result arrives as a " +
+  "new message, relay it. Tell the people who asked, in one plain line, that you are not sure it started and that you will pass on its result " +
+  "if one comes (reply with done:false). Do not mention jobs, tasks or sessions.";
 
 function flatRule(rule: string): string {
   return rule.replace(/\s+/g, " ");

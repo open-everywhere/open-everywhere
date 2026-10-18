@@ -19,6 +19,7 @@ export const OE_WORK_RESULT_OWED_ATTR = "oe_work_result_owed";
 export const OE_WORK_RESULT_QUIET_ATTR = "oe_work_result_quiet";
 
 export const WORK_FORWARDED_ACTION = "work.forwarded";
+export const WORK_FORWARD_FAILED_ACTION = "work.forward_failed";
 export const WORK_RESULT_WAKE_ACTION = "work.result_wake";
 
 export const WORK_GENERATION = 1;

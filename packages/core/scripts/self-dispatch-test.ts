@@ -36,6 +36,8 @@ import {
   readCappedBody,
   handleSelfDispatch,
   postSelfDispatch,
+  DispatchNotDeliveredError,
+  SELF_DISPATCH_REFUSED_STATUS,
   type UnifiedDispatchPayload,
 } from "../agent/channels/self-dispatch.js";
 import {
@@ -329,6 +331,12 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
   const boomBody = JSON.stringify(goodPayload({ message: "divert-failure probe", issuedAt: Date.now() }));
   const boomSig = signSelfDispatchBody(SECRET, boomBody);
   eq((await handleSelfDispatch(mkReq(boomBody, boomSig), fakeReceive, boom, armed)).status, 500, "divert failure → 500");
+  const refuse = async (): Promise<void> => {
+    throw new DispatchNotDeliveredError("binding mismatch");
+  };
+  const refuseBody = JSON.stringify(goodPayload({ message: "divert-refusal probe", issuedAt: Date.now() }));
+  eq((await handleSelfDispatch(mkReq(refuseBody, signSelfDispatchBody(SECRET, refuseBody)), fakeReceive, refuse, armed)).status, SELF_DISPATCH_REFUSED_STATUS, "🔴 a divert refused before the send → 422, a definite verdict");
+  eq((await handleSelfDispatch(mkReq(refuseBody, signSelfDispatchBody(SECRET, refuseBody)), fakeReceive, refuse, armed)).status, SELF_DISPATCH_REFUSED_STATUS, "🔴 …and the SAME signed body again → 422 again, never a 200 'deduped' for a wake that was never delivered");
 
   const rows = (await readAudit({ org: "acme" })).filter((e) => e.action === "unified.self_dispatch");
   ok(rows.length >= 1, "authenticated dispatch is self-audited (unified.self_dispatch)");
@@ -368,6 +376,21 @@ console.log("5. postSelfDispatch (client):");
     "non-2xx throws with the status",
   );
   n++;
+  const err500 = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env, fetchImpl: fetch500 }).then(() => undefined, (e: unknown) => e);
+  ok(err500 instanceof Error && !(err500 instanceof DispatchNotDeliveredError), "🔴 a 5xx is NOT proof of non-delivery: the divert can fail after eve's send (OPE-2603)");
+  const fetch422 = (async () => new Response("refused", { status: SELF_DISPATCH_REFUSED_STATUS })) as typeof fetch;
+  const err422 = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env, fetchImpl: fetch422 }).then(() => undefined, (e: unknown) => e);
+  ok(err422 instanceof DispatchNotDeliveredError, "🔴 a 4xx IS proof: every route refusal comes before the divert");
+  const errUnconfigured = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env: {} as NodeJS.ProcessEnv, fetchImpl: fetch200 }).then(() => undefined, (e: unknown) => e);
+  ok(errUnconfigured instanceof DispatchNotDeliveredError, "…and so is a client with no route to call");
+  let abortThen422Calls = 0;
+  const fetchAbortThen422 = (async () => {
+    abortThen422Calls += 1;
+    if (abortThen422Calls === 1) throw new Error("aborted");
+    return new Response("refused", { status: SELF_DISPATCH_REFUSED_STATUS });
+  }) as typeof fetch;
+  const errRetry422 = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env, fetchImpl: fetchAbortThen422 }).then(() => undefined, (e: unknown) => e);
+  ok(errRetry422 instanceof Error && !(errRetry422 instanceof DispatchNotDeliveredError), "🔴 a 4xx AFTER an aborted attempt is NOT proof: the first attempt may have landed");
   const fetchBoom = (async () => {
     throw new Error("ECONNREFUSED");
   }) as typeof fetch;
@@ -377,6 +400,8 @@ console.log("5. postSelfDispatch (client):");
     "network failure throws with the cause",
   );
   n++;
+  const errBoom = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env, fetchImpl: fetchBoom }).then(() => undefined, (e: unknown) => e);
+  ok(errBoom instanceof Error && !(errBoom instanceof DispatchNotDeliveredError), "🔴 a network failure on every attempt is NOT proof: the divert may have landed (OPE-2603)");
 }
 
 console.log("6. unified.ts callers, cold process (self-call fallback):");
@@ -496,8 +521,8 @@ try {
         binding: { ...frozenBinding, surface: "C_OTHER", target: { channelId: "C_OTHER" } },
         internalDispatch: true,
       }),
-    /binding does not match its durable origin/,
-    "an explicit continuation binding for another surface is refused before dispatch",
+    (e: unknown) => e instanceof DispatchNotDeliveredError && /binding does not match its durable origin/.test(e.message),
+    "an explicit continuation binding for another surface is refused before dispatch, as proof of non-delivery (OPE-2603)",
   );
   n++;
 

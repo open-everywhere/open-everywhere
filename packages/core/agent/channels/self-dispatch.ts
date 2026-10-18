@@ -221,6 +221,7 @@ export async function handleSelfDispatch(
       org,
       key: hopKey,
       ttlMs: SELF_DISPATCH_MAX_SKEW_MS,
+      releaseKeyOnFailure: (err) => err instanceof DispatchNotDeliveredError,
       run: async () => {
         await divert(to, payload);
         return "dispatched";
@@ -229,9 +230,16 @@ export async function handleSelfDispatch(
     });
     return json(200, { ok: true, wakeId: payload.window.wakeId, ...(outcome === "deduped" ? { deduped: true } : {}) });
   } catch (err) {
+    if (err instanceof DispatchNotDeliveredError) return json(SELF_DISPATCH_REFUSED_STATUS, { error: `dispatch refused before delivery: ${err.message}` });
     return json(500, { error: `dispatch failed: ${err instanceof Error ? err.message : String(err)}` });
   }
 }
+
+export class DispatchNotDeliveredError extends Error {
+  override readonly name = "DispatchNotDeliveredError";
+}
+
+export const SELF_DISPATCH_REFUSED_STATUS = 422;
 
 export async function postSelfDispatch(
   payload: UnifiedDispatchPayload,
@@ -240,7 +248,7 @@ export async function postSelfDispatch(
   const env = deps.env ?? process.env;
   const base = selfDispatchBaseUrl(env);
   if (!base || !selfSecretsArmed()) {
-    throw new Error(
+    throw new DispatchNotDeliveredError(
       "self-dispatch is not configured on this deployment — arm OE_CREDENTIAL_ENCRYPTION_KEY (and set OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
     );
   }
@@ -262,7 +270,8 @@ export async function postSelfDispatch(
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`self-dispatch POST to ${url} returned ${res.status}: ${text.slice(0, 200)}`);
+      const message = `self-dispatch POST to ${url} returned ${res.status}: ${text.slice(0, 200)}`;
+      throw res.status >= 400 && res.status < 500 && lastErr === undefined ? new DispatchNotDeliveredError(message) : new Error(message);
     }
     return;
   }

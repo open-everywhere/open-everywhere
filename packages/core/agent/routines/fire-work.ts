@@ -6,7 +6,8 @@ import { parseWindowToken } from "../channels/window-key.js";
 import { renderWorkRequest, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, type WorkFireRow, type WorkRequestRow, type WorkRowStore } from "../channels/work.js";
 import { resolveWorkGeneration, workSessionLedgerId, type WorkGeneration } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
-import { noteGenerationDelegation } from "../channels/generation-retirement.js";
+import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
+import { DispatchNotDeliveredError } from "../channels/self-dispatch.js";
 import { rememberWorkForward } from "../hooks/work-task-key.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -94,6 +95,7 @@ export interface FireWorkDeps {
   readonly dispatch: typeof dispatchWorkRequest;
   readonly resolveWork: (input: { readonly org: string; readonly seatToken: string; readonly surfaceKey: string; readonly atIso: string }) => Promise<WorkGeneration>;
   readonly noteLedger: (org: string, token: string, ledgerId: string) => Promise<void>;
+  readonly clearLedger: (org: string, ledgerId: string) => Promise<void>;
   readonly notifyLost: typeof notifyLostWorkRequests;
   readonly binding: typeof bindingForDivert;
   readonly audit: (row: Parameters<typeof appendAudit>[0]) => Promise<unknown>;
@@ -107,6 +109,7 @@ export function liveFireWorkDeps(org: string): FireWorkDeps {
     dispatch: dispatchWorkRequest,
     resolveWork: (input) => resolveWorkGeneration(input),
     noteLedger: (o, token, id) => noteGenerationDelegation(o, token, id),
+    clearLedger: (o, id) => clearGenerationDelegation(o, id),
     notifyLost: notifyLostWorkRequests,
     binding: bindingForDivert,
     audit: appendAudit,
@@ -191,11 +194,20 @@ export async function forwardFireToWork(
     fireAttributes,
   };
   await rememberWorkForward(deps.store, org, forward, atIso).catch(() => undefined);
-  await postOnce({
-    org,
-    key: outboundKey({ surface: "work", action: "work.forward", stableId: requestId, payload: plan.workToken }),
-    run: () => deps.dispatch(forward, receive),
-  });
+  try {
+    await postOnce({
+      org,
+      key: outboundKey({ surface: "work", action: "work.forward", stableId: requestId, payload: plan.workToken }),
+      releaseKeyOnFailure: (err) => err instanceof DispatchNotDeliveredError,
+      run: () => deps.dispatch(forward, receive),
+    });
+  } catch (err) {
+    if (err instanceof DispatchNotDeliveredError) {
+      if (fire.owesRoom) await deps.clearLedger(org, workLedgerId(requestId));
+      await deps.clearLedger(org, workSessionLedgerId(requestId));
+    }
+    throw err;
+  }
   await deps
     .audit({
       org,

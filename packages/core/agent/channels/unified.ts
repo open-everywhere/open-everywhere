@@ -3,7 +3,7 @@ import { auditErrorDetail, scrubAuditText } from "../audit/tool-action.js";
 import { defineChannel, GET, POST } from "eve/channels";
 import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
 import { defineState } from "eve/context";
-import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
+import { DispatchNotDeliveredError, SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
 import { auditSurfaceModeStamp, deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, currentTurnAddressed, bindFrom, carriesPlatformIdentity, WORK_FIRE_CREATOR_ATTR, WORK_FIRE_ROUTINE_ATTR, WORK_FIRE_ROUTINE_SURFACE_ATTR, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding, OE_FROZEN_SURFACE_BINDING_ATTR } from "../identity/frozen-surface-binding.internal.js";
@@ -624,7 +624,7 @@ export async function divertToUnifiedWindow(
       !wakeBindingMatchesSurfaceKey(input.binding, input.surfaceKey) ||
       !wakeBindingMatchesOrigin(input.binding, input.window.origin)
     ) {
-      throw new Error("unified continuation binding does not match its durable origin");
+      throw new DispatchNotDeliveredError("unified continuation binding does not match its durable origin");
     }
   }
   if (input.internalDispatch !== true && (await windowSpendGate(input)) === "declined") {
@@ -976,7 +976,7 @@ export async function dispatchWorkRequest(input: {
   readonly fireAttributes?: Readonly<Record<string, unknown>>;
 }, receive?: RouteHandlerArgs["to"]): Promise<void> {
   if (receive === undefined && !crossProcessDispatchAvailable()) {
-    throw new Error("work: no live cross-surface dispatch is available on this instance, so the job could not be forwarded. Retry from a message-driven turn.");
+    throw new DispatchNotDeliveredError("work: no live cross-surface dispatch is available on this instance, so the job could not be forwarded. Retry from a message-driven turn.");
   }
   const attributes: Record<string, unknown> = {
     ...(input.fireAttributes ?? {}),

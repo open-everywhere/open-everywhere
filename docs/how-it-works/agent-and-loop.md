@@ -1222,6 +1222,22 @@ The work session has its own lifetime, apart from the seat's:
 - **A code change loses no job.** The old work session stays alive on its own deployment. The jobs it
   holds finish there, and their results reach the asking room as any result does, the seat's
   promise to report included. The `work.session_rotated` row counts them as `drainingRequests`.
+- **A delivery that fails is never reported with a cause (OPE-2603).** The forward records the job as
+  owed before it delivers it. When the delivery throws, the forward asks whether the code PROVES that
+  eve's send never ran. It proves that in three cases only: no dispatch path exists, a gate refused the
+  wake before the send (the dispatch route answers 4xx on the first attempt, including 422 for a
+  refusal inside the divert; a 4xx after an aborted attempt proves nothing), or the frozen binding
+  did not match. Then the forward removes the job from the seat's
+  ledger and from the work session's ledger, and it gives back the once-only claim, so a replay of the
+  same call delivers the job. Every other failure, a 5xx from the route and a network failure
+  included, can follow an accepted send, because eve's send makes network calls to the workflow
+  backend. Then the forward keeps both ledger entries and the claim, and holds the job as pending,
+  because a result can still arrive. The seat then owes the job until its result or the ledger's TTL.
+  In every case the seat reads host copy that names no cause, and never the transport's own error. A
+  `work.forward_failed` row records the request, the work session and the outcome (`not-delivered` or
+  `unknown`). A follow-up leaves its conversation's wait list only after its delivery succeeds. A
+  routine fire forwarded into the work session takes the same rule on its ledger entries and its
+  claim, and its caller's `routine.fire_lost` row records the failure.
 - **A follow-up goes to the work session that holds its task.** eve keeps a task in the session that
   started it, so a follow-up (`work` with a `taskId`) must reach that session. The forward reads which
   generation the task's latest request reached. While that older generation still runs a job, the

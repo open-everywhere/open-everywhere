@@ -221,6 +221,8 @@ console.log("§6 the wiring");
   eq(/await postOnce\([\s\S]*?\);\s*[\s\S]{0,400}await rememberWorkAsked\(c\);/.test(askRoom), true, "ask_room marks the delegation AFTER its post");
   const workTool = src("agent/tools/work.ts");
   eq(/await rememberWorkRequest\([\s\S]*?\}\);[\s\S]{0,600}await noteJobForwarded\(\{ requestId, ctx: c,/.test(workTool), true, "the forward records the conversation right after the request row");
+  eq(/await noteJobForwarded\(\{ requestId, ctx: c, \.\.\.\(openingRequest !== undefined \? \{ openingRequestId: openingRequest \} : \{\}\) \}\);/.test(workTool), true, "the first record carries no task, so it moves nothing on");
+  eq(/run: \(\) => deps\.dispatch\(forward\),[\s\S]*?throw new Error\(definite \? FORWARD_FAILED_NOTE : FORWARD_UNKNOWN_NOTE\);\s*\}\s*if \(input\.taskId !== undefined\) \{\s*await noteJobForwarded\(\{[^\n]*taskId: input\.taskId \}\);/.test(workTool), true, "🔴 the move-on runs after the delivery, never before it");
   const spawn = src("agent/hooks/spawn-taint.ts");
   eq(/run: async \(\) => \{[\s\S]*?if \(silentFire\) return;\s*(?:\/\/[^\n]*\n\s*)*if \(row\.fire === undefined\) \{\s*const waits = settledJobWaitReason\([\s\S]*?await noteJobSettledWait\([\s\S]*?delivered = await dispatchWorkResult\(/.test(spawn), true, "W's settlement writes the wait inside the once-guard, for a seat's job only, BEFORE the result wake");
   eq(spawn.indexOf("await noteJobSettledWait(") < spawn.indexOf("await settleSignIn("), true, "the wait is written before the sign-in resume can wake the seat");
