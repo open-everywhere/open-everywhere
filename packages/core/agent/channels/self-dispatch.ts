@@ -241,6 +241,14 @@ export class DispatchNotDeliveredError extends Error {
 
 export const SELF_DISPATCH_REFUSED_STATUS = 422;
 
+const ERROR_BODY_HEAD_CHARS = 40;
+const ERROR_BODY_TAIL_CHARS = 140;
+
+export function elideErrorBody(text: string): string {
+  if (text.length <= ERROR_BODY_HEAD_CHARS + ERROR_BODY_TAIL_CHARS + 3) return text;
+  return `${text.slice(0, ERROR_BODY_HEAD_CHARS)} … ${text.slice(-ERROR_BODY_TAIL_CHARS)}`;
+}
+
 export async function postSelfDispatch(
   payload: UnifiedDispatchPayload,
   deps: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
@@ -270,7 +278,7 @@ export async function postSelfDispatch(
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      const message = `self-dispatch POST to ${url} returned ${res.status}: ${text.slice(0, 200)}`;
+      const message = `self-dispatch POST to ${url} returned ${res.status}: ${elideErrorBody(text)}`;
       throw res.status >= 400 && res.status < 500 && lastErr === undefined ? new DispatchNotDeliveredError(message) : new Error(message);
     }
     return;

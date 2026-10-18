@@ -19,6 +19,7 @@ import {
   type SeatCatchUpRequest,
   type SeatCatchUpResult,
   coverForWake,
+  engagedFollowUpContract,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
 
@@ -100,18 +101,23 @@ export interface TeamsSupervisorWakeInput {
   readonly wakeId: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly nameDrop?: boolean;
+  readonly threadEngaged?: boolean;
   readonly tail?: readonly WakeMessageInput[];
   readonly catchUpUnavailable?: string;
 }
 
 export function buildTeamsSupervisorWake(input: TeamsSupervisorWakeInput): NormalizedWake {
   const nameDrop = !input.directMention && input.nameDrop === true;
+  const addressing = input.directMention ? "direct-mention" : nameDrop ? "name-drop" : "channel-watch";
   return {
     platform: "teams",
     reason: input.directMention ? "mention" : "channel-activity",
-    addressing: input.directMention ? "direct-mention" : nameDrop ? "name-drop" : "channel-watch",
+    addressing,
     engagementTier: input.directMention || nameDrop ? undefined : input.engagementTier,
-    ...(nameDrop ? { nameDrop: { followUp: "channel-not-following" as const } } : {}),
+    ...(nameDrop
+      ? { nameDrop: { followUp: input.threadEngaged === true ? ("thread-engaged" as const) : ("channel-not-following" as const) } }
+      : {}),
+    followUp: engagedFollowUpContract({ addressing, threadEngaged: input.threadEngaged }),
     wakeId: input.wakeId,
     locus: {
       channel: { id: input.channelId },
@@ -164,6 +170,7 @@ export interface TeamsSupervisorDispatch {
   readonly replyChainRootId?: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly nameDrop?: boolean;
+  readonly threadEngaged?: boolean;
   readonly window: UnifiedWindowWake;
   readonly cover?: TeamsCoverFacts;
 }
@@ -193,6 +200,7 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
       wakeId: d.window.wakeId,
       engagementTier: d.engagementTier,
       ...(d.nameDrop === true ? { nameDrop: true } : {}),
+      ...(d.threadEngaged === true ? { threadEngaged: true } : {}),
       tail,
       catchUpUnavailable,
     });

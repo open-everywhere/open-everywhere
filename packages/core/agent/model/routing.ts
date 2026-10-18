@@ -7,7 +7,7 @@ import { bindFrom, deploymentOrg, type BindableContext } from "../identity/bindi
 import { currentWorkerWake } from "../access/worker-seat-state.js";
 import { noteWakeAttachments } from "../access/worker-continuation.js";
 import { stampModelCall } from "./model-stamp.js";
-import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, boundaryStopReply } from "./step-boundary.js";
+import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, boundaryStopReply, isTurnEndingTier } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -48,7 +48,9 @@ export interface RoutableModel {
   readonly provider: string;
   readonly modelId: string;
   readonly supportedUrls: unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   doGenerate(options: any): PromiseLike<any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   doStream(options: any): PromiseLike<any>;
 }
 
@@ -318,7 +320,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
   const capturingDeps = withCapture(deps, captureSite);
   const retryingDeps = withStreamDropRetry(capturingDeps, currentWorkerWake());
-  if (boundary.tier === "hard" || boundary.tier === "closed") {
+  if (isTurnEndingTier(boundary.tier)) {
     reportStepBoundary(ctx, boundary);
     noteUncalledModelStep(captureSite);
     stampModelCall(defaults.primary.id);

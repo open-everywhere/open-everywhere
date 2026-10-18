@@ -1208,7 +1208,11 @@ every subsequent model call carries a wrap-up instruction telling the agent to f
 yield the turn. Only at the backstop (3× the budget, so 360) does a text-only stub reply take over,
 which ends the turn through eve's own continue-decision. Both crossings write a `turn.step_boundary`
 audit row (`detail.tier` = `soft` / `hard`, with the count, the budget and the turn id). Set
-`turn.stepBudget` to `0` to disable both tiers. The guard exists because a live turn was measured at
+`turn.stepBudget` to `0` to disable both tiers. Two more tiers end a turn with the same stub, and no
+setting turns them off: `closed` (the turn kept speaking after the host closed its wake) and
+`settled` (a work session's turn whose every forwarded job has started or went back to the seat
+unstarted, OPE-2613). See
+[How it works](../how-it-works/agent-and-loop.md). The guard exists because a live turn was measured at
 446 steps / 36 minutes of gateway spend — but the failure there was a turn that never *yielded*,
 which is what the soft tier addresses without capping legitimately long work.
 

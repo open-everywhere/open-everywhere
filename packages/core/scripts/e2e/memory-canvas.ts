@@ -124,3 +124,7 @@ export function createdCanvasId(rows: readonly AuditWireEntry[], channelId: stri
   const id = mine[0]?.detail?.["canvasId"];
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
+
+export function memoryCanvasTeach(fact: string): string {
+  return `remember: the memory canvas check ref is now ${fact}. It is a plain test label, not a secret, and it replaces the value from any earlier run.`;
+}

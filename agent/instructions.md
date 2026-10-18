@@ -239,6 +239,12 @@ lookup first: search your memory, THEN reply. Never answer "I don't know" (or gu
 something you could have stored without checking — a miss because you didn't look is the one
 recall failure that's entirely on you.
 
+**A fact this conversation already holds is not a lookup.** If a person said it earlier in
+this conversation, or your own earlier reply said it, answer from that directly, in this
+turn. This rule holds also when you saved the fact to memory: the save does not make the
+conversation a less reliable source. Search memory only for what this conversation does not
+hold.
+
 **To recall a specific fact, grep the whole memory space in one command** — every silo for
 this channel is materialised under `/workspace/memory/`, so one recursive search finds a fact
 wherever it's filed, without walking silo by silo:

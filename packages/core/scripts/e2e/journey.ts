@@ -69,6 +69,10 @@ export function withoutMarker(text: string, marker: string): string {
   return marker.length === 0 ? text : text.split(marker).join(" ");
 }
 
+export function answersNumber(text: string, expected: number, marker: string): boolean {
+  return new RegExp(`(?<!\\d)${expected}(?!\\d)`).test(withoutMarker(text, marker));
+}
+
 export function approveButton(m: SlackMessage): { pendingId: string; org: string } | undefined {
   const prefix = `${APPROVAL_PREFIX}approve:`;
   const btn = m.actions?.find((a) => a.actionId.startsWith(prefix));
@@ -366,6 +370,36 @@ export function findJudgeAllow(rows: readonly AuditWireEntry[], tool: string): J
     };
   }
   return undefined;
+}
+
+function lastSurfaceSegment(surface: string): string {
+  return surface.slice(surface.lastIndexOf("/") + 1);
+}
+
+export interface TeamsDmJudgeRead {
+  readonly dmSurface?: string;
+  readonly allow?: JudgeAllowEvidence;
+}
+
+export function findTeamsDmJudgeAllow(rows: readonly AuditWireEntry[], tool: string, opts: { readonly floorIso: string }): TeamsDmJudgeRead {
+  const floorMs = Date.parse(opts.floorIso);
+  const atOrAfterFloor = (r: AuditWireEntry): boolean => Date.parse(r.ts) >= floorMs;
+  const ownWake = rows
+    .filter((r) => r.action === "teams.dispatched" && r.detail?.dmWindow === true && typeof r.surface === "string" && atOrAfterFloor(r))
+    .reduce<AuditWireEntry | undefined>((first, r) => (first === undefined || Date.parse(r.ts) < Date.parse(first.ts) ? r : first), undefined);
+  if (ownWake === undefined) return {};
+  const dmSurface = lastSurfaceSegment(ownWake.surface!);
+  const onDm = rows.filter((r) => typeof r.surface === "string" && lastSurfaceSegment(r.surface) === dmSurface && atOrAfterFloor(r));
+  const allow = findJudgeAllow(onDm, tool);
+  return { dmSurface, ...(allow ? { allow } : {}) };
+}
+
+export function findTeamsChannelJudgeAllow(
+  rows: readonly AuditWireEntry[],
+  tool: string,
+  opts: { readonly chainSurface: string; readonly channelSurface: string },
+): JudgeAllowEvidence | undefined {
+  return findJudgeAllow(rows.filter((r) => r.surface === opts.chainSurface || r.surface === opts.channelSurface), tool);
 }
 
 export interface PrOpenPublish {

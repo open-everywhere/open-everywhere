@@ -1,5 +1,5 @@
 import { defineState } from "eve/context";
-import { parseWorkRequests } from "../channels/work.js";
+import { parseWorkCancels, parseWorkRequests } from "../channels/work.js";
 
 export interface OpenWorkRequest {
   readonly requestId: string;
@@ -38,13 +38,16 @@ interface WorkRequestTurnState {
   readonly open?: readonly OpenWorkRequest[];
   readonly claims?: readonly WorkCallClaim[];
   readonly retired?: readonly string[];
+  readonly started?: readonly string[];
+  readonly cancels?: readonly string[];
+  readonly ended?: boolean;
 }
 
 const slot = defineState<WorkRequestTurnState>("open-everywhere.work-requests-turn", () => ({}));
 
 function readState(v: unknown): WorkRequestTurnState {
   if (v === null || typeof v !== "object") return {};
-  const s = v as { turn?: unknown; open?: unknown; claims?: unknown; retired?: unknown };
+  const s = v as { turn?: unknown; open?: unknown; claims?: unknown; retired?: unknown; started?: unknown; cancels?: unknown; ended?: unknown };
   if (typeof s.turn !== "string" || s.turn.length === 0) return {};
   const open = Array.isArray(s.open)
     ? s.open
@@ -61,19 +64,32 @@ function readState(v: unknown): WorkRequestTurnState {
       )
     : [];
   const retired = Array.isArray(s.retired) ? s.retired.filter((id): id is string => typeof id === "string") : [];
-  return { turn: s.turn, open, claims, ...(retired.length > 0 ? { retired } : {}) };
+  const started = Array.isArray(s.started) ? s.started.filter((id): id is string => typeof id === "string") : [];
+  const cancels = Array.isArray(s.cancels) ? s.cancels.filter((id): id is string => typeof id === "string") : [];
+  return {
+    turn: s.turn,
+    open,
+    claims,
+    ...(retired.length > 0 ? { retired } : {}),
+    ...(started.length > 0 ? { started } : {}),
+    ...(cancels.length > 0 ? { cancels } : {}),
+    ...(s.ended === true ? { ended: true } : {}),
+  };
 }
 
 export function recordWorkRequestsThisTurn(turnId: string | undefined, message: string | undefined): void {
   if (turnId === undefined || turnId.length === 0 || message === undefined) return;
   const incoming: OpenWorkRequest[] = parseWorkRequests(message).map((r) => ({ requestId: r.requestId, brief: r.brief, ...(r.taskId !== undefined ? { taskId: r.taskId } : {}) }));
-  if (incoming.length === 0) return;
+  const incomingCancels = parseWorkCancels(message).map((c) => c.taskId);
+  if (incoming.length === 0 && incomingCancels.length === 0) return;
   try {
     slot.update((cur) => {
       const state = readState(cur);
-      const prior = state.turn === turnId ? (state.open ?? []) : [];
+      const same = state.turn === turnId;
+      const prior = same ? (state.open ?? []) : [];
       const open = [...prior];
-      let retired = state.turn === turnId ? (state.retired ?? []) : [];
+      let retired = same ? (state.retired ?? []) : [];
+      const started = same ? (state.started ?? []) : [];
       for (const r of incoming) {
         if (retired.includes(r.requestId)) retired = retired.filter((id) => id !== r.requestId);
         if (open.some((o) => o.requestId === r.requestId)) continue;
@@ -83,7 +99,16 @@ export function recordWorkRequestsThisTurn(turnId: string | undefined, message: 
         }
         open.push(r);
       }
-      return { turn: turnId, open, claims: state.turn === turnId ? (state.claims ?? []) : [], ...(retired.length > 0 ? { retired } : {}) };
+      const cancels = [...(same ? (state.cancels ?? []) : [])];
+      for (const taskId of incomingCancels) if (!cancels.includes(taskId)) cancels.push(taskId);
+      return {
+        turn: turnId,
+        open,
+        claims: same ? (state.claims ?? []) : [],
+        ...(retired.length > 0 ? { retired } : {}),
+        ...(started.length > 0 ? { started } : {}),
+        ...(cancels.length > 0 ? { cancels } : {}),
+      };
     });
   } catch {
   }
@@ -184,3 +209,68 @@ export function workRequestsThisTurn(turnId: string | undefined): readonly OpenW
     return [];
   }
 }
+
+export function noteWorkRequestStarted(turnId: string | undefined, requestId: string): void {
+  if (turnId === undefined || turnId.length === 0 || requestId.length === 0) return;
+  try {
+    slot.update((cur) => {
+      const state = readState(cur);
+      if (state.turn !== turnId) return cur as WorkRequestTurnState;
+      const started = state.started ?? [];
+      return started.includes(requestId) ? (cur as WorkRequestTurnState) : { ...state, started: [...started, requestId] };
+    });
+  } catch {
+  }
+}
+
+export function workRequestStarted(turnId: string | undefined, requestId: string): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    const state = readState(slot.get());
+    return state.turn === turnId && (state.started ?? []).includes(requestId);
+  } catch {
+    return false;
+  }
+}
+
+export function noteWorkCancelHandled(turnId: string | undefined, taskId: string): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  try {
+    slot.update((cur) => {
+      const state = readState(cur);
+      if (state.turn !== turnId || !(state.cancels ?? []).includes(taskId)) return cur as WorkRequestTurnState;
+      const cancels = (state.cancels ?? []).filter((id) => id !== taskId);
+      const { cancels: _old, ...rest } = state;
+      return cancels.length > 0 ? { ...rest, cancels } : rest;
+    });
+  } catch {
+  }
+}
+
+export interface WorkTurnSettled {
+  readonly first: boolean;
+  readonly jobs: number;
+}
+
+export function workTurnSettled(turnId: string | undefined): WorkTurnSettled | undefined {
+  if (turnId === undefined || turnId.length === 0) return undefined;
+  let verdict: WorkTurnSettled | undefined;
+  try {
+    slot.update((cur) => {
+      const state = readState(cur);
+      const open = state.open ?? [];
+      if (state.turn !== turnId || open.length === 0 || (state.cancels ?? []).length > 0) return cur as WorkRequestTurnState;
+      const done = new Set([...(state.started ?? []), ...(state.retired ?? [])]);
+      if (!open.every((r) => done.has(r.requestId))) return cur as WorkRequestTurnState;
+      verdict = { first: state.ended !== true, jobs: open.length };
+      return state.ended === true ? (cur as WorkRequestTurnState) : { ...state, ended: true };
+    });
+  } catch {
+    return undefined;
+  }
+  return verdict;
+}
+
+export const WORK_REQUEST_ALREADY_STARTED_MESSAGE =
+  "agent: this job already started in this turn, and its result goes back to the conversation by itself when it settles. " +
+  "It was NOT started again. Do not call `agent` for it again: end your turn.";

@@ -208,7 +208,7 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
     "entrypoint.sh",
     "control/acl.ts",
     "control/handlers.ts",
-    "control/helper.js",
+    "control/helper.cjs",
     "control/server.ts",
   ];
   for (const rel of ["Dockerfile", ".dockerignore", "docker-compose.yml"]) ok(templateFiles.includes(rel), `template ${rel}: present (the Docker route)`);
@@ -225,6 +225,10 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
   const copied = [...proxyDockerfile.matchAll(/^COPY\s+(.+)\s+\S+$/gm)].flatMap((m) => m[1]!.trim().split(/\s+/)).map((p) => p.replace(/\/$/, ""));
   ok(copied.length > 0, "the egress proxy's Dockerfile COPYs its files");
   for (const p of copied) ok(EGRESS_PROXY_FILES.some((f) => f === p || f.startsWith(`${p}/`)), `the proxy image COPYs ${p}, and the template ships it`);
+  const squidConf = readFileSync(join(TEMPLATE, "deploy", "egress-proxy", "squid.conf"), "utf8");
+  const helpers = [...squidConf.matchAll(/\/usr\/bin\/node \/opt\/oe-egress\/(\S+)/g)].map((m) => m[1]!);
+  ok(helpers.length > 0, "squid.conf starts a Node helper from /opt/oe-egress");
+  for (const h of helpers) ok(EGRESS_PROXY_FILES.includes(h), `squid.conf's helper /opt/oe-egress/${h} is a file the proxy context ships`);
 
   const dockerfile = readFileSync(join(TEMPLATE, "Dockerfile"), "utf8");
   ok(/^COPY package\.json package-lock\.json \.\/$/m.test(dockerfile) && /^RUN npm ci\b/m.test(dockerfile), "template Dockerfile: installs from the lockfile with `npm ci`");

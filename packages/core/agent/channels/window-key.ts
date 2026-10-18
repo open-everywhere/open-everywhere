@@ -10,6 +10,16 @@ const EXPLICIT_WINDOW_TOKEN_RE = /^oe-dom:(.+):win:([^:]+):oe-sup:g(\d+)(?:-[0-9
 
 const DEGENERATE_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
+export const HOOK_TOKEN_MAX_BYTES = 255;
+
+export const LONGEST_EVE_HOOK_PREFIX = "eve:inbox:handoff:unified:";
+
+const SALT_TAIL_BYTES = 7;
+
+export const WINDOW_TOKEN_MAX_BYTES = HOOK_TOKEN_MAX_BYTES - Buffer.byteLength(LONGEST_EVE_HOOK_PREFIX) - SALT_TAIL_BYTES;
+
+const WORK_OF_DOMAIN_WIRE_ID = "w/=";
+
 export function formatWindowToken(key: WindowKey): string {
   if (key.windowId === key.domain) {
     return `oe-dom:${key.domain}:oe-sup:g${key.generation}`;
@@ -19,13 +29,20 @@ export function formatWindowToken(key: WindowKey): string {
       `formatWindowToken: a windowId is colon-free ([^:]+) — got windowId="${key.windowId}" (domain="${key.domain}"); sanitise colons before minting the explicit :win: form`,
     );
   }
-  return `oe-dom:${key.domain}:win:${key.windowId}:oe-sup:g${key.generation}`;
+  const long = `oe-dom:${key.domain}:win:${key.windowId}:oe-sup:g${key.generation}`;
+  if (key.windowId === `w/${key.domain}` && Buffer.byteLength(long) > WINDOW_TOKEN_MAX_BYTES) {
+    return `oe-dom:${key.domain}:win:${WORK_OF_DOMAIN_WIRE_ID}:oe-sup:g${key.generation}`;
+  }
+  return long;
 }
 
 export function parseWindowToken(token: unknown): WindowKey | undefined {
   if (typeof token !== "string") return undefined;
   const explicit = EXPLICIT_WINDOW_TOKEN_RE.exec(token);
-  if (explicit) return { domain: explicit[1], windowId: explicit[2], generation: Number(explicit[3]) };
+  if (explicit) {
+    const windowId = explicit[2] === WORK_OF_DOMAIN_WIRE_ID ? `w/${explicit[1]}` : explicit[2];
+    return { domain: explicit[1], windowId, generation: Number(explicit[3]) };
+  }
   const degenerate = DEGENERATE_WINDOW_TOKEN_RE.exec(token);
   if (degenerate) return { domain: degenerate[1], windowId: degenerate[1], generation: Number(degenerate[2]) };
   return undefined;

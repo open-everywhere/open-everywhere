@@ -6,8 +6,13 @@ import { appendAudit } from "../audit/audit.js";
 import { claimTurnCloseoutReport, turnCloseoutSnapshot } from "./turn-closeout.js";
 import { deleteTurnState, durableTurnKey, EMPTY_TURN_STATE, readTurnState, turnPairKey, writeTurnState } from "./turn-state.js";
 import type { RoutableModel, RoutedCallOptions } from "./routing.js";
+import { workTurnSettled } from "../access/work-request-turn.js";
 
-export type StepBoundaryTier = "none" | "soft" | "hard" | "closed";
+export type StepBoundaryTier = "none" | "soft" | "hard" | "closed" | "settled";
+
+export function isTurnEndingTier(tier: StepBoundaryTier): boolean {
+  return tier === "hard" || tier === "closed" || tier === "settled";
+}
 
 export interface StepBoundaryDecision {
   readonly tier: StepBoundaryTier;
@@ -102,6 +107,8 @@ export async function noteTurnStep(ctx: BindableContext, event?: unknown, settin
   if (closeout !== undefined) {
     return { tier: "closed", count, budget, backstop, turnId, sessionId, crossed: closeout.first, closeoutReason: closeout.reason };
   }
+  const settled = workTurnSettled(turnId);
+  if (settled !== undefined) return { tier: "settled", count, budget, backstop, turnId, sessionId, crossed: settled.first };
   if (budget <= 0) return INERT;
   const tier = classifyStepCount(count, budget, backstop);
   const previous = classifyStepCount(count - 1, budget, backstop);
@@ -141,7 +148,17 @@ function closedTurnReply(d: StepBoundaryDecision): string {
   );
 }
 
+function settledTurnReply(): string {
+  return (
+    `${STEP_BOUNDARY_MARKER}: every job forwarded to this work session in this turn has started, or went ` +
+    "back to the conversation's seat without a start. Each started job's result goes back to the conversation " +
+    "by itself when its task settles. The host ends this turn here, so no job starts twice. The next forwarded " +
+    "job wakes you."
+  );
+}
+
 export function boundaryStopReply(d: StepBoundaryDecision): string {
+  if (d.tier === "settled") return settledTurnReply();
   return d.tier === "closed" ? closedTurnReply(d) : backstopReply(d);
 }
 
@@ -216,6 +233,7 @@ export const STEP_BOUNDARY_ACTION = "turn.step_boundary";
 function crossingNote(tier: StepBoundaryTier): string {
   if (tier === "soft") return "the wrap-up instruction now rides every call this turn";
   if (tier === "closed") return "the turn kept speaking after the host had told it to stop, so it was ended here";
+  if (tier === "settled") return "every job the work session's turn holds has started or went back to the seat unstarted, so the turn was ended here";
   return "the turn was stopped by the text-only backstop";
 }
 

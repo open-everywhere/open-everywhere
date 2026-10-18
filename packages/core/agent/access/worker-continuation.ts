@@ -1,4 +1,4 @@
-import { claimWorkCall, releaseWorkCall, retireWorkRequest, workCallClaimed, workRequestNamesTask, WORK_REQUEST_UNJOINABLE_MESSAGE } from "./work-request-turn.js";
+import { claimWorkCall, releaseWorkCall, retireWorkRequest, workCallClaimed, workRequestNamesTask, workRequestStarted, WORK_REQUEST_ALREADY_STARTED_MESSAGE, WORK_REQUEST_UNJOINABLE_MESSAGE } from "./work-request-turn.js";
 import { gateWorkCallStamp, liveWorkRequestStamp, workStampVerdict, WORK_CALL_NEEDS_REISSUE_MESSAGE } from "./work-step-stamp.js";
 import { asSchema, jsonSchema } from "ai";
 import { defineState } from "eve/context";
@@ -193,6 +193,9 @@ function guardTool(tool: ToolWithInputSchema, name: string, delegation: boolean)
         const join = claimWorkCall(turnNow?.turnId, callMessage, stamp);
         if (join.kind === "refused") return { success: false as const, error: new Error(WORK_REQUEST_UNJOINABLE_MESSAGE) };
         if (join.kind === "joined") {
+          if (workRequestStarted(turnNow?.turnId, join.requestId)) {
+            return { success: false as const, error: new Error(WORK_REQUEST_ALREADY_STARTED_MESSAGE) };
+          }
           if (repeat && workStampVerdict(join.requestId, stamp).kind === "needs-reissue") {
             return { success: false as const, error: new Error(WORK_REQUEST_UNJOINABLE_MESSAGE) };
           }

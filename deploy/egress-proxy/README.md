@@ -103,7 +103,7 @@ sets no backend variable.
 | `control/acl.ts` | Pure ACL match + policy store (the enforcement decision) | **unit-tested** (`control/acl-test.ts`, 96 assertions) |
 | `control/handlers.ts` | Pure policy-push + ACL-query handlers + the auth primitives | **unit-tested** (same file) |
 | `control/server.ts` | HTTP control service (`POST /policy`, `GET /acl`, `/healthz`) | **process-tested** (`control/server-boot-test.ts`, 35 assertions — spawns the real service under `node --experimental-strip-types`: token-less boot refusal, the `/policy` bearer gate, the `/acl` loopback path, the host-plane credential path) |
-| `control/helper.js` | Squid `external_acl_type` helper (per-request callout → control; forwards `Proxy-Authorization` for the host plane) | **live-verified** by `npm run test:docker-smoke` leg 2 |
+| `control/helper.cjs` | Squid `external_acl_type` helper (per-request callout → control; forwards `Proxy-Authorization` for the host plane) | **live-verified** by `npm run test:docker-smoke` leg 2 |
 | `squid.conf` / `tier-b.conf` | Tier A base / Tier B MITM overlay | **live-pending** (needs Squid + TLS) |
 | the **denial log** (`logformat oe_deny` in `squid.conf` → `/var/log/oe-egress/denied.log`) | the only file the app reads back off this container: three fields (timestamp, result tag, **domain**) filtered to refusals | reducer/aggregation/tailing **unit-tested** (`packages/core/scripts/egress-denial-log-test.ts`, 71 assertions); the Squid half (`%>rd`, the `http_status 403` log ACL) is **live-pending** |
 | `gen-ca.sh` / `install-ca.sh` | CA generation / guest-trust install (Tier B) | syntax-checked; **live-pending** |
@@ -198,7 +198,7 @@ the proxy image was `alpine:3.20` whose `nodejs` is too old for `--experimental-
 appended to the config, not `include`d); Squid can't open root-owned `/dev/stdout` as the
 `squid` user (→ entrypoint chowns the pipes; `cache_effective_user root` is itself refused by
 Squid 7); the `external_acl` helper path was `/opt/oe-egress/helper.js` but the file ships at
-`/opt/oe-egress/control/helper.js`; and the app image lacked the `just-bash` package the
+`/opt/oe-egress/control/helper.js` (renamed `helper.cjs` in 0.8.0, OPE-2619); and the app image lacked the `just-bash` package the
 `justbash()` sandbox backend requires (→ added as a dep). After the fixes, **verified live**:
 default-deny with no policy (`TCP_DENIED/403 CONNECT example.com:443`); a pushed
 `{allow:["example.com"]}` → `TCP_TUNNEL/200 … HIER_DIRECT` (TLS tunnelled, not decrypted);

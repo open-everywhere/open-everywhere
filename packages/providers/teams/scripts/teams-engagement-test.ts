@@ -145,6 +145,12 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
 
   const deliver = await resolveTeamsEngagement(activity("channel"), false, engaged.deps);
   ok(deliver.kind === "deliver", "2c: a PLAIN message in an ENGAGED conversation resolves DELIVER — the wake this ticket adds");
+  ok(deliver.kind === "deliver" && deliver.threadEngaged === true, "2c2: 🔴 OPE-2610 — …and the verdict says the row is an ENROLMENT, the fact Leg A's wake states");
+  const warm = await resolveTeamsEngagement(activity("channel"), false, depsFor({ [CHANNEL_CONV]: row({ participating: false }) }).deps);
+  ok(
+    warm.kind === "deliver" && warm.threadEngaged === false,
+    "2c3: 🔴 NEGATIVE CONTROL — a WARM row (participating: false) still delivers, but it is no enrolment, so the verdict says so",
+  );
 
   const hold = await resolveTeamsEngagement(activity("channel"), false, unengaged.deps);
   ok(hold.kind === "hold" && hold.stopped === false, "2d: NEGATIVE CONTROL — the same plain message in an UN-engaged conversation HOLDS, and not because of a stop");
@@ -184,6 +190,7 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     readonly marks: number;
     readonly roomWatched: number;
     readonly roomCleared: number;
+    readonly dispatchedEngaged: readonly (boolean | undefined)[];
   }
 
   async function run(
@@ -197,6 +204,7 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     let marks = 0;
     let roomWatched = 0;
     let roomCleared = 0;
+    const dispatchedEngaged: (boolean | undefined)[] = [];
     const waits: Promise<unknown>[] = [];
     const handler = buildTeamsFrontHandler(
       async () => {
@@ -229,8 +237,9 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
                 auth: {} as never,
               } as unknown as TeamsFrontPlan)
             : null,
-        dispatch: async () => {
+        dispatch: async (_a, plan) => {
           dispatch++;
+          dispatchedEngaged.push(plan.threadEngaged);
         },
         dmDivert: async () => {
           dm++;
@@ -240,11 +249,12 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     const args = { to: {} as never, waitUntil: (p: Promise<unknown>) => waits.push(p) } as unknown as Parameters<typeof handler>[1];
     await handler(new Request("https://oe.test/eve/v1/teams", { method: "POST", body }), args);
     await Promise.all(waits);
-    return { forward, dispatch, dm, marks, roomWatched, roomCleared };
+    return { forward, dispatch, dm, marks, roomWatched, roomCleared, dispatchedEngaged };
   }
 
   const engage: TeamsEngagementVerdict = { kind: "engage", anchor: CHANNEL_CONV, org: "default" };
-  const deliver: TeamsEngagementVerdict = { kind: "deliver", anchor: CHANNEL_CONV, reason: "engaged thread, human reply — deliver to the live session" };
+  const deliver: TeamsEngagementVerdict = { kind: "deliver", anchor: CHANNEL_CONV, reason: "engaged thread, human reply — deliver to the live session", threadEngaged: true };
+  const deliverWarm: TeamsEngagementVerdict = { ...deliver, threadEngaged: false };
   const holdOpen: TeamsEngagementVerdict = { kind: "hold", anchor: CHANNEL_CONV, reason: "thread is not engaged", stopped: false };
   const holdStopped: TeamsEngagementVerdict = { kind: "hold", anchor: CHANNEL_CONV, reason: "asked to stand down in this thread", stopped: true };
   const unanchored: TeamsEngagementVerdict = { kind: "unanchored", reason: "a 1:1 chat carries no engagement anchor" };
@@ -258,6 +268,14 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
   ok(deliverNative.forward === 1 && deliverNative.dispatch === 0, "3c: a DELIVER verdict on the native path forwards exactly once (the native gate then admits it) and Leg A dispatches nothing");
   const deliverWindow = await run(activityBody("channel"), deliver, { plan: true });
   ok(deliverWindow.dispatch === 1 && deliverWindow.forward === 0, "3d: on a single-window surface Leg A alone handles it — ONE dispatch, ZERO forwards: the two legs never both handle one message");
+  ok(
+    deliverWindow.dispatchedEngaged[0] === true,
+    "3d2: 🔴 OPE-2610 — Leg A's dispatch CARRIES the seam's enrolment verdict, so the seat's wake can say the chain is engaged",
+  );
+  const warmWindow = await run(activityBody("channel"), deliverWarm, { plan: true });
+  ok(warmWindow.dispatch === 1 && warmWindow.dispatchedEngaged[0] === undefined, "3d3: NEGATIVE CONTROL — a WARM row's delivery carries no enrolment");
+  const ambientWindow = await run(activityBody("channel"), holdOpen, { plan: true });
+  ok(ambientWindow.dispatch === 1 && ambientWindow.dispatchedEngaged[0] === undefined, "3d4: NEGATIVE CONTROL — an un-engaged ambient message carries no enrolment");
 
   const stoppedNative = await run(activityBody("channel"), holdStopped);
   ok(stoppedNative.forward === 0 && stoppedNative.dispatch === 0, "3e: 🔴 a STOOD-DOWN conversation suppresses the message ABOVE the forward — the one case the front stops rather than letting the native gate answer");

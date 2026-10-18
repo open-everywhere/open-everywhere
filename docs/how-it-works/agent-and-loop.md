@@ -1065,6 +1065,24 @@ job the call joins (`hooks/work-task-key.ts`):
 - A worker that starts under the wrong stamp anyway is caught at `task.started`. That edge cannot stop
   it, so the host withholds its output, and the seat is told that the job ran and may have acted.
 
+**Each job starts once, and the work session's turn then ends** (OPE-2613). The host owns the
+forward, not the work session's model:
+
+- A job whose task started in this turn is never started again, once its `task.started` has joined
+  the task to its request. A second `agent` call for it, fresh or by `taskId`, is refused, and no
+  task starts.
+- Once every job of the turn has started, or went back to the seat without a start (refused at the
+  same-step gate or by the continuation fence), the host answers the work session's next model call with a
+  short note instead of the model (`turn.step_boundary`, tier `settled`). The note carries no tool
+  call, so the turn ends after eve waits for the tasks that still work. Each result goes back to the
+  seat by itself when its task settles, so the work session's model has nothing to add.
+- A new job or a relayed cancel that arrives in the open turn makes the model live again, until it
+  has made its one call for it.
+
+The rule exists because a "pending approval" answer reads as unfinished. In a live run the work
+session read the job's dispatch note again after each result, and started the same job 51 times in
+one turn. Each worker raised one more approval card.
+
 ### Results
 
 Each settled task wakes the seat once with a **result wake**: a host note plus the worker's output.
@@ -1642,6 +1660,14 @@ keys a session on. It has two shapes. A window whose id equals its domain mints 
 form, `oe-dom:<domain>:oe-sup:g<generation>`. Every other window mints the explicit form,
 `oe-dom:<domain>:win:<windowId>:oe-sup:g<generation>`. A window id that carries a colon **throws** at
 the mint, because the colon is the token's own separator and the token would misparse.
+
+**A token must fit the hook-token limit** (OPE-2614). eve keys a session's inbox on Workflow hooks
+that embed the token, and the longest is `eve:inbox:handoff:unified:<token>`. The Vercel Workflow
+backend refuses a hook token over 255 bytes with HTTP 400, so a forward into that session fails. An
+unsalted token therefore has a budget of 222 bytes (`WINDOW_TOKEN_MAX_BYTES`). A work session on a
+degenerate seat names its domain twice (`…:win:w/<domain>:…`). When that long form passes the budget,
+as it does for a Teams DM, the mint writes the compact window id `w/=` instead, and the parse expands
+it back to `w/<domain>`. A token within the budget keeps its long form byte for byte.
 
 **Every rotation appends a fresh salt.** `saltSupervisorGeneration` appends six hexadecimal
 characters from `mintGenerationSalt`. The salt is what makes a re-used generation integer harmless: a

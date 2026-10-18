@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { AuditWireEntry } from "./audit-read.js";
-import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, channelCanvasIdOf, channelCanvasIdsOf, classifyChannelTrust, createdCanvasId, readCanvasById, readChannelCanvas, type SlackRawCall } from "./memory-canvas.js";
+import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, channelCanvasIdOf, channelCanvasIdsOf, classifyChannelTrust, createdCanvasId, memoryCanvasTeach, readCanvasById, readChannelCanvas, type SlackRawCall } from "./memory-canvas.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -176,6 +176,14 @@ for (const [o, pass] of [["skipped-external", true], ["cleared-guest", true], ["
   ok(!canvasShowsFact(theirs, BOT), "negative control: a canvas a person made is not the agent's write");
   const scope = await readCanvasById(async () => ({ ok: false, error: "missing_scope", needed: "files:read" }), "F1", FACT);
   ok(scope.kind === "missing-scope" && scope.scope === "files:read", "a missing driver scope is named, never read as a verdict");
+}
+
+{
+  const teach = memoryCanvasTeach(FACT);
+  ok(teach.startsWith("remember: ") && teach.includes(FACT), "the teach is a remember: intent that carries the run-unique fact");
+  ok(!/\b(token|password|credential|api key|secret key)\b/iu.test(teach), "🔴 the teach names no credential word for the fact (OPE-2615)");
+  ok(/\bref\b/u.test(teach) && /not a secret/u.test(teach), "the teach calls the fact a ref and says it is not a secret");
+  ok(/replaces the value from any earlier run/u.test(teach), "the teach says the fact replaces an earlier run's value");
 }
 
 console.log(`\n✓ memory-canvas: ${n} assertions passed\n`);

@@ -171,17 +171,25 @@ const FOLLOW_UP = "and what's that plus 6?";
 
 {
   const trigger = { id: "a1", authorId: "u1", authorName: "dev", sentAt: NOW(), text: FOLLOW_UP, trust: "peer" as const };
-  const message = renderWake(
-    buildTeamsSupervisorWake({ conversationId: "19:chan", teamId: "T", channelId: "19:chan", trigger } as never),
-    NOW,
-  ).message;
+  const wakeOf = (extra: Record<string, unknown>): string =>
+    renderWake(buildTeamsSupervisorWake({ channelId: "19:chan", directMention: false, wakeId: "w1", trigger, ...extra } as never), NOW).message;
+  ok(wakeOf({ threadEngaged: true }).includes(ATTR), "🔴 teams: the engaged reply chain's plain follow-up states the enrolment (OPE-2610)");
+  ok(!wakeOf({}).includes("follow-up="), "teams: NEGATIVE CONTROL — an un-enrolled judged wake states nothing");
   ok(
-    !message.includes("follow-up="),
-    "🔴 teams: its judged wake states NO enrolment today — the engaged channel follow-up is forwarded to the native path, which builds no wake at all. A STATED GAP, not coverage",
+    !wakeOf({ threadEngaged: true, directMention: true }).includes("follow-up="),
+    "teams: NEGATIVE CONTROL — an ADDRESSED @mention states nothing",
+  );
+  ok(
+    wakeOf({ threadEngaged: true, nameDrop: true }).includes(ATTR),
+    "🔴 teams: a name-drop INSIDE an enrolled chain states the enrolment — never `channel-not-following` in a chain an @mention enrolled",
+  );
+  ok(
+    wakeOf({ nameDrop: true }).includes('follow-up="channel-not-following"'),
+    "teams: NEGATIVE CONTROL — a name-drop in an un-enrolled chain keeps `channel-not-following`",
   );
   ok(
     NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL.includes("You are engaged in this conversation"),
-    "🔴 teams: …and the REFUSAL states the enrolment itself, which is what keeps a surface the telling has not reached from acting on a wrong reading",
+    "teams: …and the REFUSAL states the enrolment itself, for the native-path channel that renders no wake",
   );
 }
 

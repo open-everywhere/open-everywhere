@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { resolveMemoryPlan, surfaceProvider, type MemoryResolveConfig } from "../agent/memory/resolve.js";
 import { MEMORY_PROVIDER_FLOOR, resolveMemoryProviderId } from "../agent/memory/backing-selection.js";
 import { getProvider, providerById, registerProvider, resetProvider, type MemoryProvider } from "../agent/memory/provider.js";
@@ -321,6 +323,15 @@ ok(!/To recall anything from memory, delegate/u.test(delegIndex) && delegIndex.i
 ok(delegIndex.indexOf(HELD) < delegIndex.indexOf("delegate a lookup"), "recall/agent: the carve-out is read BEFORE the lookup instruction it limits");
 ok(noneIndex.includes(HELD) && noneIndex.includes("in the files and nowhere else"), "🔴 recall/none: a seat that cannot read the files still answers what the conversation holds, and refuses only a files-only question (OPE-2601)");
 ok(!multiIndex.includes(HELD), "recall/file-tools: the carve-out does not ride the file-tools lead (its bytes are the on-disk copy)");
+
+for (const rel of ["agent/instructions.md", "packages/create/template/agent/instructions.md"]) {
+  const md = readFileSync(fileURLToPath(new URL(`../../../${rel}`, import.meta.url)), "utf8");
+  const memory = md.slice(md.indexOf("\n## Memory\n"), md.indexOf("\n## ", md.indexOf("\n## Memory\n") + 1));
+  const rule = memory.indexOf("lookup first: search your memory, THEN reply");
+  const carve = memory.indexOf("**A fact this conversation already holds is not a lookup.**");
+  ok(rule >= 0 && carve > rule, `🔴 ${rel}: § Memory limits "memory lookup first" with the held-in-conversation carve-out, after the rule (OPE-2607)`);
+  ok(/answer from that directly, in this\s+turn/u.test(memory) && /the save does not make the\s+conversation a less reliable source/u.test(memory), `🔴 ${rel}: the carve-out holds for a fact this seat also saved (OPE-2607)`);
+}
 
 assertSilosValid(cfg.silos);
 ok(true, "validation: a valid silo set passes");

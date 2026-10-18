@@ -7,7 +7,7 @@ import { classifySessionId } from "@open-everywhere/core/agent/channels/window-k
 import { NO_REPLY_SENTINEL, REDRIVE_TRIGGER_ID_PREFIX } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
 import { noteWakeAttachments } from "@open-everywhere/core/agent/access/worker-continuation.js";
-import { boundaryStopReply, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
+import { boundaryStopReply, isTurnEndingTier, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
 import {
   isEmptyResponseReissue,
   ANY_SESSION,
@@ -76,7 +76,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
 
   const boundary = await noteTurnStep(bindable, event);
   noteWakeAttachments((ctx as { messages?: unknown } | undefined)?.messages);
-  if (boundary.tier === "hard" || boundary.tier === "closed") {
+  if (isTurnEndingTier(boundary.tier)) {
     reportStepBoundary(bindable, boundary);
     if (isWorkSessionContext(bindable)) {
       const wSession = (ctx as { session?: { id?: unknown } } | undefined)?.session?.id;

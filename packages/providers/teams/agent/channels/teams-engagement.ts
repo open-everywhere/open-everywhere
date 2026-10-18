@@ -62,7 +62,7 @@ export function resetTeamsSeamSupport(): void {
 export type TeamsEngagementVerdict =
   | { readonly kind: "unanchored"; readonly reason: string }
   | { readonly kind: "engage"; readonly anchor: string; readonly org: string }
-  | { readonly kind: "deliver"; readonly anchor: string; readonly reason: string }
+  | { readonly kind: "deliver"; readonly anchor: string; readonly reason: string; readonly threadEngaged: boolean }
   | { readonly kind: "hold"; readonly anchor: string; readonly reason: string; readonly stopped: boolean };
 
 export interface TeamsEngagementDeps {
@@ -111,7 +111,9 @@ export async function resolveTeamsEngagement(
     isAppMention: false,
     inThread: true,
   });
-  if (decision.deliver) return { kind: "deliver", anchor, reason: decision.reason };
+  if (decision.deliver) {
+    return { kind: "deliver", anchor, reason: decision.reason, threadEngaged: row?.participating === true && row.stopped !== true };
+  }
   return { kind: "hold", anchor, reason: decision.reason, stopped: row?.stopped === true };
 }
 

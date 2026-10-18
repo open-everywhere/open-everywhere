@@ -215,7 +215,13 @@ const TEAM = "TEAM-R";
 const AUTHOR = "29:example-owner";
 
 function channelActivity(
-  over: { readonly id?: string; readonly text?: string; readonly from?: { id: string; name: string; aadObjectId: string }; readonly noChannelData?: true } = {},
+  over: {
+    readonly id?: string;
+    readonly text?: string;
+    readonly from?: { id: string; name: string; aadObjectId: string };
+    readonly noChannelData?: true;
+    readonly ambient?: true;
+  } = {},
 ): TeamsMessageActivity {
   const parsed = parseTeamsActivity({
     type: "message",
@@ -226,7 +232,7 @@ function channelActivity(
     conversation: { id: CONVERSATION, conversationType: "channel", tenantId: TENANT },
     channelData: over.noChannelData ? { team: { id: TEAM } } : { channel: { id: CHANNEL, membershipType: "standard" }, team: { id: TEAM } },
     text: over.text ?? "hello, what can you do?",
-    isBotMentioned: true,
+    isBotMentioned: over.ambient !== true,
   });
   assert.ok(parsed && parsed.type === "message", "fixture must parse as a message activity");
   return parsed as TeamsMessageActivity;
@@ -268,6 +274,8 @@ async function driveWake(input: {
   readonly from?: { id: string; name: string; aadObjectId: string };
   readonly noChannelData?: true;
   readonly probe?: TeamsRosterProbe | undefined;
+  readonly ambient?: true;
+  readonly threadEngaged?: true;
 }): Promise<{ readonly received: Received; readonly partition: ReturnType<typeof resolvePartition>; readonly wakeId: string }> {
   _resetTeamsUserTypeCacheForTest();
   const a = channelActivity(input);
@@ -276,14 +284,21 @@ async function driveWake(input: {
   const surfaceKey = domainKeyOf(partition);
   const window = planTeamsSingleWindow(
     true,
-    true,
+    input.ambient !== true,
     { scope: "channel", membershipType: "standard", tenantId: TENANT, vouched: true },
     { serviceUrl: SERVICE_URL, conversationId: CONVERSATION, tenantId: TENANT },
   );
-  assert.ok(window, "the fixture must mint a window (an addressed mention on a vouched standard channel)");
-  const plan: TeamsFrontPlan = { window, surfaceKey, partition, grain: supervisorGrainFor(surfaceKey, []), auth };
+  assert.ok(window, "the fixture must mint a window (a mention or a plain message on a vouched standard channel)");
+  const plan: TeamsFrontPlan = {
+    window,
+    surfaceKey,
+    partition,
+    grain: supervisorGrainFor(surfaceKey, []),
+    auth,
+    ...(input.threadEngaged ? { threadEngaged: true } : {}),
+  };
   const received: Received[] = [];
-  await liveTeamsDispatch(a, plan, captureTo(received), () => input.probe);
+  await liveTeamsDispatch(a, plan, captureTo(received), () => input.probe, async () => false);
   assert.equal(received.length, 1, "exactly one dispatch into the unified channel");
   return { received: received[0]!, partition, wakeId: window.wakeId };
 }
@@ -676,6 +691,17 @@ async function runDm(probe: TeamsRosterProbe | undefined): Promise<Received> {
     false,
     "🔴 FAIL-OPEN: an unanswerable probe suppresses nothing — a bot that cannot read the roster must never take the surface off the air",
   );
+}
+
+{
+  const engaged = await driveWake({ id: "act-r-2610a", ambient: true, threadEngaged: true });
+  ok(engaged.received.message.includes('addressing="channel-watch"'), "OPE-2610: the fixture is Leg A's ambient wake, not an addressed one");
+  ok(
+    engaged.received.message.includes('follow-up="thread-engaged"'),
+    "🔴 OPE-2610: an enrolled chain's plain follow-up reaches the seat with `follow-up=\"thread-engaged\"` through the REAL dispatch",
+  );
+  const plain = await driveWake({ id: "act-r-2610b", ambient: true });
+  ok(!plain.received.message.includes("follow-up="), "OPE-2610: NEGATIVE CONTROL — the same plain message on an un-enrolled chain states no follow-up");
 }
 
 console.log(`✓ teams roster probe: ${n} assertions passed (path + verdicts + TTL cache; the REAL liveTeamsDispatch and liveTeamsDmDivert over the real store, mapper and supervisor)`);

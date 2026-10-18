@@ -129,7 +129,7 @@ import {
   type NotionTaintReplayResult,
 } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
-import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, createdCanvasId, readCanvasById, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
+import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, createdCanvasId, memoryCanvasTeach, readCanvasById, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
 import {
   auditSessionIds,
   decomposeSession,
@@ -264,6 +264,8 @@ import {
   assertAuditedSilence,
   awaitCard,
   findJudgeAllow,
+  findTeamsChannelJudgeAllow,
+  findTeamsDmJudgeAllow,
   awaitDecided,
   classifyPrMiss,
   classifySilence,
@@ -279,6 +281,7 @@ import {
   supervisorAsk,
   otherFactTokens,
   withoutMarker,
+  answersNumber,
   parseLinkCode,
   parseClaimCodeBack,
   CLAIM_CODE_BACK_MARKER,
@@ -3770,7 +3773,7 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       const markerT = factToken("teams");
-      const remention = await teams.postMentionReply(driven.id, `what's the name of the project I mentioned earlier? Answer with the project name and include the token ${markerT}.`);
+      const remention = await teams.postMentionReply(driven.id, `what's the name of the project I mentioned earlier? Answer with the project name and include the ref ${markerT}.`);
       const reply3 = await teams.awaitReply(driven.id, {
         timeoutMs: REPLY_WAIT,
         afterIso: remention.createdDateTime ?? reply1.createdDateTime,
@@ -3841,14 +3844,14 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const followUpFrom = await presenceSince(ctx, "followUpFrom", 15_000);
       const markerE = factToken("teams-engaged");
-      const followUp = await teams.postReply(root.id, `and what is 7 plus 6? Answer with the number and include the token ${markerE}.`);
-      let answered = "";
-      try {
-        const reply = await teams.awaitReply(root.id, { timeoutMs: REPLY_WAIT, afterIso: followUp.createdDateTime ?? ack.createdDateTime, contains: markerE });
-        answered = reply.text;
-      } catch {
-        answered = "";
-      }
+      const followUp = await teams.postReply(root.id, `and what is 7 plus 6? Answer with the number and include the ref ${markerE}.`);
+      const followUpAfter = followUp.createdDateTime ?? ack.createdDateTime;
+      const afterFollowUp = (m: TeamsMessage) => teams.isBotReply(m) && (followUpAfter === undefined || (m.createdDateTime ?? "") > followUpAfter);
+      const reply = await pollOptional(
+        async () => (await teams.replies(root.id)).find((m) => afterFollowUp(m) && answersNumber(m.text, 13, markerE)),
+        { timeoutMs: REPLY_WAIT, what: `J-ENGAGED-teams: a bot reply after the plain follow-up that answers 13` },
+      );
+      const answered = reply?.text ?? (await teams.replies(root.id)).filter(afterFollowUp).map((m) => m.text).join("\n");
       const woke = await dispatchedOn(root.id, followUpFrom);
       if (answered === "" && woke.length === 0) {
         ctx.skip(
@@ -3862,7 +3865,12 @@ export const SCENARIOS: readonly Scenario[] = [
             `(2) and a real defect. The @mention half above PASSED, so the surface itself is alive either way.`,
         );
       }
-      ctx.gate(answered.includes("13"), `engaged wake: the PLAIN follow-up (no @mention) woke the chain and it answered correctly — 13, token ${markerE}`);
+      ctx.gate(
+        answersNumber(answered, 13, markerE),
+        `engaged wake: the PLAIN follow-up (no @mention) woke the chain and it answered correctly — 13 (saw ${JSON.stringify(answered.slice(0, 200))})`,
+      );
+      if (carriesFactToken(answered, markerE)) ctx.log(`engaged wake: the reply echoed the ref ${markerE}`);
+      else ctx.log(`engaged wake: the reply answered 13 but did not echo the ref ${markerE} — a soft signal, not gated (OPE-2618)`);
       ctx.log(`engaged wake: ${woke.length} teams.dispatched row(s) on this chain (a native-path surface writes none and answers only in Teams — the reply above is the portable signal)`);
 
       const standDownFrom = await presenceSince(ctx, "standDownFrom", 15_000);
@@ -3949,7 +3957,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const markerD = factToken("teams-dm");
       const driven = await teams
-        .postDm(chatId, `Hi — this is an automated e2e check of the Teams 1:1 DM plane. Reply with a one-line acknowledgement and include the token ${markerD}.`)
+        .postDm(chatId, `Hi — this is an automated e2e check of the Teams 1:1 DM plane. Reply with a one-line acknowledgement and include the ref ${markerD}.`)
         .catch((err: unknown) => {
           if (isMissingChatScopeError(err)) {
             ctx.skip(
@@ -3970,7 +3978,7 @@ export const SCENARIOS: readonly Scenario[] = [
       });
       ctx.gate(reply.text.trim().length > 0, "DM: bot replied in the 1:1 chat (a real personal-scope Graph message woke it end-to-end)");
       await ctx.judgePass(
-        closedQA(`Is the reply a relevant, non-empty acknowledgement that quotes the token ${markerD} (not an error)?`, { mustMatch: [markerD] }),
+        closedQA(`Is the reply a relevant, non-empty acknowledgement that quotes the ref ${markerD} (not an error)?`, { mustMatch: [markerD] }),
         reply.text,
         "DM: relevance",
       );
@@ -3992,7 +4000,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const ghHandoff = replyIsPendingWorkHandoff(ctx, runStart);
 
       const markerA = factToken("gh");
-      const askId = await gh.comment(gh.fixtureIssue, gh.mention(`summarise this issue in one line. Include the token ${markerA} in your reply.`));
+      const askId = await gh.comment(gh.fixtureIssue, gh.mention(`summarise this issue in one line. Include the ref ${markerA} in your reply.`));
       const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT, skip: (c) => ghHandoff(String(c.id), c.body) });
       ctx.gate(reply.body.trim().length > 0, "mention: a <slug>[bot] reply appears on the fixture issue (real-remote wake end-to-end)");
       await ctx.judgePass(
@@ -4047,7 +4055,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const issueB = await gh.createIssue(`(e2e) reply-targeting probe ${factToken("probe")}`, "second discussion for the reply-targeting gate");
       try {
         const markerB = factToken("ghb");
-        const askBId = await gh.comment(issueB, gh.mention(`what number issue is this? Include the token ${markerB}.`));
+        const askBId = await gh.comment(issueB, gh.mention(`what number issue is this? Include the ref ${markerB}.`));
         const replyB = await gh.awaitBotReply(issueB, askBId, { timeoutMs: REPLY_WAIT, skip: (c) => ghHandoff(String(c.id), c.body) });
         ctx.gate(replyB.body.trim().length > 0, "reply-targeting: the SECOND issue gets its OWN bot reply (not just the first) — the reply-targeting fix, live");
         const leakedToA = (await gh.comments(gh.fixtureIssue)).some((c) => gh.isBotComment(c) && c.body.includes(markerB));
@@ -4096,7 +4104,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const issueA = await lin.createIssue(`(e2e) J-LIN discussion A ${factToken("lin")}`);
       try {
         const markerA = factToken("lina");
-        const bodyA = lin.mention(`summarise this issue in one line. Include the token ${markerA}.`);
+        const bodyA = lin.mention(`summarise this issue in one line. Include the ref ${markerA}.`);
         ctx.gate(lin.bodyMentionsAgent(bodyA), "assertion (b): the @mention comment body literally contains @<DisplayName>");
         const beforeA = new Set((await lin.comments(issueA.id)).map((c) => c.id));
         const askAId = await lin.comment(issueA.id, bodyA);
@@ -4146,7 +4154,7 @@ export const SCENARIOS: readonly Scenario[] = [
         try {
           const markerB = factToken("linb");
           const beforeB = new Set((await lin.comments(issueB.id)).map((c) => c.id));
-          const askBId = await lin.comment(issueB.id, lin.mention(`what is this issue's identifier? Include the token ${markerB}.`));
+          const askBId = await lin.comment(issueB.id, lin.mention(`what is this issue's identifier? Include the ref ${markerB}.`));
           const replyB = await lin.awaitAppReply(issueB.id, beforeB.add(askBId), { timeoutMs: REPLY_WAIT, skip: (c) => isPendingWorkHandoff(c.body) });
           ctx.gate(replyB.userId === lin.appUserId, "reply-targeting: issue B gets its OWN app-authored reply (not just the first discussion) — the reply-targeting fix, live");
           const leakedToA = (await lin.comments(issueA.id)).some((c) => lin.isAppComment(c) && c.body.includes(markerB));
@@ -5589,9 +5597,10 @@ export const SCENARIOS: readonly Scenario[] = [
           if (card) return { card };
           if (!ctx.auditRead) return undefined;
           const rows = await ctx.auditRead({ sinceIso, platform: "teams", actions: [APPROVAL_JUDGE_VERDICT_ACTION] });
-          return findJudgeAllow(rows, "create_routine") !== undefined ? { allow: true } : undefined;
+          const scope = { chainSurface: teamsReplyChainSurface(teams.channelId, driven.id), channelSurface: teamsSegment(teams.channelId) };
+          return findTeamsChannelJudgeAllow(rows, "create_routine", scope) !== undefined ? { allow: true } : undefined;
         },
-        { timeoutMs: FILE_REPLY_WAIT, what: `an OE approval card (Adaptive Card with ${"oe_teams_approval"} actions) in the Teams channel after ${askedAt}, or the judge's allow row` },
+        { timeoutMs: FILE_REPLY_WAIT, what: `an OE approval card (Adaptive Card with ${"oe_teams_approval"} actions) in the Teams channel after ${askedAt}, or the judge's allow row on this ask's reply chain or channel` },
       );
       if (carded === undefined) {
         ctx.gate(false, "S-CARD-teams: no OE approval card reached the Teams channel and the judge did not allow the act — the governed ask produced no card");
@@ -5843,7 +5852,8 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.skip(`S-CARD-teams-dm: ${err instanceof Error ? err.message : String(err)} — grant the personal-scope install for the driver user (OPE-887) and re-run.`),
       );
       const note = factToken("teamsdmcard");
-      const sinceIso = await presenceSince(ctx, "S-CARD-teams-dm", 60_000);
+      const askFloorIso = await presenceSince(ctx, "S-CARD-teams-dm", 0);
+      const sinceIso = new Date(Date.parse(askFloorIso) - 60_000).toISOString();
       const driven = await teams
         .postDm(chatId, `schedule a ONE-SHOT check-in for a couple of minutes from now — a single "at" time, not a recurring cron — that posts exactly the word ${note} here. Confirm you've scheduled it.`)
         .catch((err: unknown) => {
@@ -5859,10 +5869,10 @@ export const SCENARIOS: readonly Scenario[] = [
           const card = teamsDmApprovalCard({ dm, ...(channel ? { channel } : {}), askedAt, isBot: (m) => teams.isBotAuthored(m), note, what });
           if (card) return { card };
           if (!ctx.auditRead) return undefined;
-          const rows = await ctx.auditRead({ sinceIso, platform: "teams", actions: [APPROVAL_JUDGE_VERDICT_ACTION] });
-          return findJudgeAllow(rows, "create_routine") !== undefined ? { allow: true } : undefined;
+          const rows = await ctx.auditRead({ sinceIso: askFloorIso, platform: "teams", actions: [APPROVAL_JUDGE_VERDICT_ACTION, "teams.dispatched"] });
+          return findTeamsDmJudgeAllow(rows, "create_routine", { floorIso: askFloorIso }).allow !== undefined ? { allow: true } : undefined;
         },
-        { timeoutMs: FILE_REPLY_WAIT, what: `an OE approval card in the 1:1 chat after ${askedAt}, or the judge's allow row` },
+        { timeoutMs: FILE_REPLY_WAIT, what: `an OE approval card in the 1:1 chat after ${askedAt}, or the judge's allow row on this ask's own DM wake` },
       );
       if (carded !== undefined && !("card" in carded)) ctx.skip("the approval judge ALLOWED create_routine with no card, so this run has no card to place. Disarm the judge's starter rule for this room and re-run.");
       ctx.gate(carded !== undefined, "S-CARD-teams-dm: the governed ask in the 1:1 chat posted its approval card INTO the chat — before OPE-2447 it went to a channel in the domain, or was refused");
@@ -6413,7 +6423,7 @@ export const SCENARIOS: readonly Scenario[] = [
       };
 
       const taughtAt = await presenceSince(ctx, "S-MEMORY-CANVAS teach");
-      const { ts } = await slack.post(slack.mention(`remember: the memory canvas check token for this run is ${fact}`));
+      const { ts } = await slack.post(slack.mention(memoryCanvasTeach(fact)));
       await slack.awaitThreadReply(ts, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
 
       let rows: readonly AuditWireEntry[] = [];
@@ -6519,7 +6529,7 @@ export const SCENARIOS: readonly Scenario[] = [
         synthetic: ctx.synthetic!,
         gate: ctx.gate,
         log: ctx.log,
-        ask: `create a new canvas in this channel titled "${title}" with one bullet that says: the canvas check token is ${fact}`,
+        ask: `create a new canvas in this channel titled "${title}" with one bullet that says: the canvas body check ref is ${fact}`,
         leg: "S-CANVAS-LIST",
         decision: "approve",
         timeoutMs: FILE_REPLY_WAIT,

@@ -38,8 +38,10 @@ import {
   postSelfDispatch,
   DispatchNotDeliveredError,
   SELF_DISPATCH_REFUSED_STATUS,
+  elideErrorBody,
   type UnifiedDispatchPayload,
 } from "../agent/channels/self-dispatch.js";
+import { auditErrorDetail } from "../agent/audit/tool-action.js";
 import {
   divertToUnifiedWindow,
   windowEnabledFor,
@@ -376,6 +378,16 @@ console.log("5. postSelfDispatch (client):");
     "non-2xx throws with the status",
   );
   n++;
+  {
+    const longToken = `eve:inbox:v1:unified:oe-dom:oe-dm/teams/${"t".repeat(36)}/${"a".repeat(140)}:w/oe-dm/teams/${"t".repeat(36)}/${"a".repeat(140)}:oe-sup:g5-5426e3`;
+    const body = JSON.stringify({ error: `dispatch failed: GET /v2/hooks/by-token?token=${encodeURIComponent(longToken)} -> HTTP 502: Bad Gateway` });
+    const fetchLong500 = (async () => new Response(body, { status: 500 })) as typeof fetch;
+    const errLong = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env, fetchImpl: fetchLong500 }).then(() => undefined, (e: unknown) => e);
+    ok(errLong instanceof Error && errLong.message.includes("HTTP 502: Bad Gateway"), "🔴 a long 500 body keeps its cause at the tail (OPE-2614)");
+    ok(errLong instanceof Error && errLong.message.includes("dispatch failed: GET"), "…and its head, which names the failed call");
+    ok(String(auditErrorDetail(errLong).error).includes("HTTP 502"), "🔴 the cause survives the audit row's own cap (the work.forward_failed row)");
+    eq(elideErrorBody("short body"), "short body", "a short body is kept whole");
+  }
   const err500 = await postSelfDispatch(goodPayload() as unknown as UnifiedDispatchPayload, { env, fetchImpl: fetch500 }).then(() => undefined, (e: unknown) => e);
   ok(err500 instanceof Error && !(err500 instanceof DispatchNotDeliveredError), "🔴 a 5xx is NOT proof of non-delivery: the divert can fail after eve's send (OPE-2603)");
   const fetch422 = (async () => new Response("refused", { status: SELF_DISPATCH_REFUSED_STATUS })) as typeof fetch;

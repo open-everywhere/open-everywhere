@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-github",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Open Everywhere GitHub provider — GitHub issues and pull requests as a conversational wake surface.",
   "keywords": [
     "agent",
@@ -154,7 +154,7 @@
     "test:github-reaction-scope": "NODE_NO_WARNINGS=1 tsx scripts/github-reaction-scope-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.7.0",
+    "@open-everywhere/core": "0.8.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {

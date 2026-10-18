@@ -1,3 +1,5 @@
+// proves: SEAT-55, SEAT-59, SEAT-61
+
 import assert from "node:assert/strict";
 import {
   formatWindowToken,
@@ -20,8 +22,17 @@ import {
   isDmAnchoredTaskToken,
   windowTokenPlatform,
   DM_ANCHOR_GENERATION,
+  workWindowId,
+  isWorkWindowToken,
+  classifySessionId,
+  HOOK_TOKEN_MAX_BYTES,
+  LONGEST_EVE_HOOK_PREFIX,
+  WINDOW_TOKEN_MAX_BYTES,
   type WindowKey,
 } from "../agent/channels/window-key.js";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -238,6 +249,56 @@ eq(parseWindowToken("oe-dom:payments:oe-sup:g3-zz"), undefined, "non-hex salt ch
     "slack",
     "…and a DM-ANCHORED worker reads it off its own task windowId",
   );
+}
+
+{
+  const eveAddress = readFileSync(join(dirname(createRequire(import.meta.url).resolve("eve/package.json")), "dist/src/execution/session-inbox/address.js"), "utf8");
+  ok(eveAddress.includes("`eve:inbox:handoff:${e}`") && eveAddress.includes("`eve:inbox:v1:${e}`"), "eve's inbox hooks are still `eve:inbox:v1:` and `eve:inbox:handoff:` over the token");
+  ok(LONGEST_EVE_HOOK_PREFIX.startsWith("eve:inbox:handoff:") && LONGEST_EVE_HOOK_PREFIX.length >= "eve:inbox:v1:unified:".length, "the budget prefix is the longer of the two hooks");
+  eq(WINDOW_TOKEN_MAX_BYTES, 255 - 26 - 7, "the unsalted budget leaves room for the hand-off prefix and a rotation salt");
+
+  const hookBytes = (salted: string) => Buffer.byteLength(LONGEST_EVE_HOOK_PREFIX + salted);
+  const workKey = (domain: string, seatWindowId: string, generation: number): WindowKey => ({ domain, windowId: workWindowId(seatWindowId), generation });
+  const teamsDm = `teams/1b2c3d4e-5f60-4a71-8b92-a3b4c5d6e7f8/a-1${"Xy9_Zq8-Wv7".repeat(8)}Ab_cd-EfG`;
+  eq(teamsDm.length, 143, "the Teams DM surface key has the ship-257 length");
+
+  const dmDomain = dmAnchorDomain(teamsDm);
+  for (const generation of [1, 6, 1234]) {
+    const w = formatWindowToken(workKey(dmDomain, dmDomain, generation));
+    const salted = saltSupervisorGeneration(w);
+    ok(hookBytes(salted) <= HOOK_TOKEN_MAX_BYTES, `a Teams DM W token at g${generation} fits the hook limit (${hookBytes(salted)} bytes)`);
+    eq(parseWindowToken(w), workKey(dmDomain, dmDomain, generation), `the compact Teams DM W token parses to the FULL key at g${generation}`);
+    eq(parseWindowToken(salted), workKey(dmDomain, dmDomain, generation), "…and so does its salted form");
+    eq(formatWindowToken(parseWindowToken(w)!), w, "…and re-formats to the same bytes (one generation, one token)");
+    ok(isWorkWindowToken(salted) && isWorkWindowToken(`unified:${salted}`), "…and still classifies as a work-session token, bare or namespaced");
+    eq(classifySessionId(salted).kind, "work", "…in the codec too");
+    ok(!isDmAnchorWindowToken(salted), "…and is never read as the DM seat");
+    eq(dmAnchorSurfaceForToken(salted), teamsDm, "…and still names the DM surface it serves");
+  }
+  ok(formatWindowToken(workKey(dmDomain, dmDomain, 6)) !== formatWindowToken(dmWindowKey(teamsDm, 6)), "the compact W token never equals the DM seat's own token");
+
+  const longForm = (k: WindowKey) => `oe-dom:${k.domain}:win:${k.windowId}:oe-sup:g${k.generation}`;
+  const kept: Array<[string, WindowKey]> = [
+    ["Slack DM", workKey(dmAnchorDomain("slack/T0123456789/D0123456789"), dmAnchorDomain("slack/T0123456789/D0123456789"), 6)],
+    ["Discord DM", workKey(dmAnchorDomain("discord/@me/1234567890123456789"), dmAnchorDomain("discord/@me/1234567890123456789"), 6)],
+    [
+      "Notion DM",
+      workKey(dmAnchorDomain("notion/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d"), dmAnchorDomain("notion/0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0/9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d"), 6),
+    ],
+    ["channel domain", workKey("e2e-unified", "e2e-unified", 6)],
+    ["solo Teams channel", workKey("eng", "teams/1b2c3d4e-5f60-4a71-8b92-a3b4c5d6e7f8/19-0123456789abcdef0123456789abcdef@thread.tacv2", 6)],
+    ["Teams thread seat", workKey("eng", threadSeatWindowId("teams/19-0123456789abcdef0123456789abcdef@thread.tacv2", "1760800000000"), 6)],
+  ];
+  for (const [label, k] of kept) {
+    const w = formatWindowToken(k);
+    eq(w, longForm(k), `a ${label} W token keeps its long form byte for byte`);
+    ok(hookBytes(saltSupervisorGeneration(w)) <= HOOK_TOKEN_MAX_BYTES, `a ${label} W token fits the hook limit`);
+    eq(parseWindowToken(w), k, `a ${label} W token round-trips`);
+  }
+
+  const longTask = { domain: dmDomain, windowId: taskWindowId(teamsDm, "1760800000000"), generation: 0 };
+  eq(formatWindowToken(longTask), longForm(longTask), "a long TASK window id is never compacted");
+  eq(parseWindowToken("oe-dom:payments:win:w/=:oe-sup:g2-abc123"), { domain: "payments", windowId: "w/payments", generation: 2 }, "the compact wire id expands to `w/<domain>`");
 }
 
 console.log(`window-key-test: ${n} assertions passed`);

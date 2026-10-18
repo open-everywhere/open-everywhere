@@ -572,7 +572,7 @@ const memCfg: MemoryResolveConfig = {
   ok(personal.forward === 0, "H2: …and is not forwarded to the native channel");
   ok(personal.dmSurface?.startsWith("teams/TENANT_H/") === true, "H2: the DM window is keyed on the DM's OWN surface key (real bindFrom → resolvePartition)");
 
-  const groupEngaged = await run(activityBody("groupChat"), { kind: "deliver", anchor: "19:conv-h@thread.v2", reason: "engaged" });
+  const groupEngaged = await run(activityBody("groupChat"), { kind: "deliver", anchor: "19:conv-h@thread.v2", reason: "engaged", threadEngaged: true });
   ok(groupEngaged.dm === 1 && groupEngaged.plan === 0 && groupEngaged.forward === 0, "H2: an ENGAGED group chat diverts on the same terms as a DM (the predicate covers personal + groupChat, the Slack mpim parity)");
   const groupOpen = await run(activityBody("groupChat"), { kind: "hold", anchor: "19:conv-h@thread.v2", reason: "thread is not engaged", stopped: false });
   ok(groupOpen.dm === 0 && groupOpen.plan === 0 && groupOpen.forward === 0, "🔴 H2: an UN-ENGAGED group chat wakes NOTHING — the seam gates the group-chat branch (OPE-1500)");

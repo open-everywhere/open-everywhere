@@ -119,6 +119,7 @@ export interface TeamsFrontPlan {
   readonly partition: Partition;
   readonly grain: SupervisorGrain;
   readonly auth: OpenEverywhereTeamsAuth;
+  readonly threadEngaged?: boolean;
 }
 
 function teamsAttrs(auth: unknown): Record<string, unknown> {
@@ -544,6 +545,7 @@ export async function liveTeamsDispatch(
       ...(replyChainRootId ? { replyChainRootId } : {}),
       engagementTier,
       ...(nameDrop ? { nameDrop: true } : {}),
+      ...(plan.threadEngaged === true ? { threadEngaged: true } : {}),
       window: plan.window,
       cover: teamsCoverFacts(a, plan.partition, probeFor),
     },
@@ -841,7 +843,8 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
         `(${plan.window.addressing === "direct-mention" ? "addressed @mention; native forward suppressed" : "ambient channel-watch"})`,
     );
     if (!addressedHere) args.waitUntil(markRoomWatched(plan.partition, new Date(now()).toISOString()).catch(() => undefined));
-    args.waitUntil(fifo.enqueue(plan.surfaceKey, () => dispatch(activity, plan, args.to)));
+    const dispatchPlan: TeamsFrontPlan = seam?.kind === "deliver" && seam.threadEngaged ? { ...plan, threadEngaged: true } : plan;
+    args.waitUntil(fifo.enqueue(plan.surfaceKey, () => dispatch(activity, dispatchPlan, args.to)));
     return OK();
   };
 }

@@ -5,6 +5,7 @@ import { takeWorkCancel, WORK_CANCEL_REDEEM_ACTION } from "../channels/work.js";
 import { appendAudit } from "../audit/audit.js";
 import { currentWorkSessionToken } from "./lean-seat-state.js";
 import { currentContinuationTurn } from "./continuation-turn-state.js";
+import { noteWorkCancelHandled } from "./work-request-turn.js";
 
 export const WORK_CANCEL_UNAUTHORISED_MESSAGE =
   "task_cancel: this work session stops a job only when its seat relays a cancel for it with `cancel_work`. Nothing was cancelled.";
@@ -32,6 +33,7 @@ export function fenceWorkSessionCancel(toolset: Record<string, unknown>): boolea
         workToken !== undefined &&
         turnId !== undefined &&
         (await takeWorkCancel(getOperationalStore(), deploymentOrg(), workToken, taskId, turnId).catch(() => false));
+      if (typeof taskId === "string") noteWorkCancelHandled(turnId, taskId);
       void appendAudit({
         org: deploymentOrg(),
         platform: "unified",

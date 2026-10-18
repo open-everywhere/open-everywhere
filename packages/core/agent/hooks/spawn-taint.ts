@@ -10,7 +10,7 @@ import { forgetWorkStop, readWorkStop } from "../channels/work-stop-note.js";
 import { forgetSignInMarkers, forgetWorkSignIn, readWorkSignIn } from "../channels/work-sign-in-note.js";
 import { forgetWorkAsked, noteJobSettledWait, readWorkAsked, settledJobWaitReason } from "../channels/work-surface-wait.js";
 import { settleSignIn } from "../channels/work-sign-in-resume.js";
-import { claimWorkCall, workRequestsThisTurn } from "../access/work-request-turn.js";
+import { claimWorkCall, noteWorkRequestStarted, workRequestsThisTurn } from "../access/work-request-turn.js";
 import { keyWorkTask, readWorkTaskKey, wakeSeatNeedsReissue } from "./work-task-key.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { isWorkSessionContext } from "../access/work-session.js";
@@ -1184,6 +1184,7 @@ export default defineHook({
           : undefined;
         await noteTaskStarted(started, ownSessionId, workRequestId);
         if (workRequestId !== undefined) {
+          noteWorkRequestStarted(currentTurnId(ctx as unknown as BindableContext), workRequestId);
           await rememberWorkTask(getOperationalStore(), deploymentOrg(), started.taskId, workRequestId, new Date().toISOString());
           await keyWorkTask({ taskId: started.taskId, callId: started.callId, workSessionId: ownSessionId, joined: workRequestId, stamped: deliveryAttr(ctx as unknown as BindableContext, OE_WORK_REQUEST_ATTR) });
           await noteWorkJobStarted({ requestId: workRequestId, taskId: started.taskId });

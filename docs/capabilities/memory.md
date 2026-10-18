@@ -388,6 +388,23 @@ earlier reply. A lookup, or a "can't check memory from here", is only for what t
 not hold (OPE-2601). The `file-tools` recall lead does not carry the sentence: there the seat reads
 the file in one call in the same turn, and no reply waits.
 
+The base `agent/instructions.md` states the same rule in its `## Memory` section, for every seat on
+every route (OPE-2607). That section tells a seat to treat a question about the team as a memory
+lookup first. With the carve-out only in the index, that rule won: in a live run a Teams seat
+forwarded "the project I mentioned earlier" to `work` to "confirm the memory entry", though the
+conversation held the name. The section now says that a fact the conversation holds gets a direct
+answer, also when the seat saved that fact to memory. `test:memory-resolve` pins the sentence in both
+shipped copies of the file. A deployment that keeps its own copy of `agent/instructions.md` needs the
+same paragraph.
+
+The base file is read on every route, so since OPE-2607 a `file-tools` seat also answers a fact the
+conversation holds without a grep. The `file-tools` recall LEAD above still does not carry the
+sentence, because the on-disk `MEMORY.md` copy is pinned to its bytes. The cost is the case the
+OPE-2601 follow-up names: the rule has no age limit. If memory received a newer value for the fact
+from another conversation, a seat answers the older value that this conversation holds. That held
+value is what a person here stated, or what this seat's own earlier reply said, and it can be an older
+memory value. This cost is accepted until the age limit lands.
+
 **A write outside this conversation's own silos is refused, in the same turn.** The capture reads
 the silos this conversation resolved — nothing else. So a write into any other directory under
 `/workspace/memory/` would look like it worked and then reach no store. The write tool refuses that

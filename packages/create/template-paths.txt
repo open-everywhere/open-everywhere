@@ -76,7 +76,7 @@ agent/webhooks/hooks.ts
 deploy/egress-proxy/Dockerfile
 deploy/egress-proxy/control/acl.ts
 deploy/egress-proxy/control/handlers.ts
-deploy/egress-proxy/control/helper.js
+deploy/egress-proxy/control/helper.cjs
 deploy/egress-proxy/control/server.ts
 deploy/egress-proxy/entrypoint.sh
 deploy/egress-proxy/gen-ca.sh

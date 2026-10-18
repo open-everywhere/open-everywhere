@@ -129,7 +129,7 @@ const {
 } = await import("../packages/core/scripts/e2e/env.js");
 const { readRefreshSidecar, writeRefreshSidecar, isMissingChatScopeError, collectGraphPages } = await import("../packages/core/scripts/e2e/teams-driver.js");
 const { backoffDelayMs, pollUntil, pollOptional, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
-const { withoutMarker } = await import("../packages/core/scripts/e2e/journey.js");
+const { withoutMarker, answersNumber } = await import("../packages/core/scripts/e2e/journey.js");
 const {
   signSlackRequest,
   buildApprovalClickPayload,
@@ -1460,6 +1460,26 @@ const { parseAppMentionEvent } = await import(
   ok(withoutMarker("150", "engaged-99999").includes("150"), "a reply with no marker at all is unchanged by the removal");
   ok(!withoutMarker(`12${badMarker}34`, badMarker).includes("1234"), "the marker is replaced by a space, so removing it cannot fuse two tokens into a third");
   ok(withoutMarker("untouched", "").includes("untouched"), "an empty marker removes nothing rather than shredding the text");
+}
+
+{
+  const marker = "teams-engaged-78755";
+  ok(answersNumber("13", 13, marker), "🔴 the measured reply \"13\" answers the follow-up although it carries no marker");
+  ok(answersNumber(`13 (ref ${marker})`, 13, marker), "a reply that answers and echoes the marker answers too");
+  ok(answersNumber("7 plus 6 is 13.", 13, marker), "an answer inside a sentence is read");
+  ok(!answersNumber("Acknowledged.", 13, marker), "NEGATIVE CONTROL: a reply with no number does not answer");
+  ok(!answersNumber("14", 13, marker), "NEGATIVE CONTROL: a wrong number does not answer");
+  ok(!answersNumber("113 or 130", 13, marker), "NEGATIVE CONTROL: a longer number that holds the digits does not answer");
+  ok(!answersNumber("ref teams-engaged-13", 13, "teams-engaged-13"), "🔴 NEGATIVE CONTROL: an exact echo of a marker whose digits are 13 cannot pass for the answer");
+  ok(answersNumber("13, ref teams-engaged-13", 13, "teams-engaged-13"), "…and the strip does not remove a real answer beside that marker");
+
+  const body = SCENARIOS.find((s) => s.id === "J-ENGAGED-teams")!.run.toString();
+  const flat = body.replace(/\s+/g, "");
+  ok(!flat.includes("contains:markerE"), "🔴 WIRING: no J-ENGAGED-teams wait keys on the marker any more");
+  ok(flat.includes("afterFollowUp(m)&&answersNumber(m.text,13,markerE)"), "🔴 WIRING: the follow-up wait ends on a reply that answers 13");
+  ok(flat.includes("ctx.gate(answersNumber(answered,13,markerE)"), "🔴 WIRING: the engaged-wake gate reads the answer through answersNumber");
+  ok(!/ctx\.gate\([^;]*carriesFactToken\(answered,markerE\)/.test(flat), "WIRING: the marker echo is never a gate");
+  ok(body.includes("include the ref ${markerE}"), "WIRING: the ask calls the marker a ref, not a token (OPE-2607)");
 }
 
 {
@@ -3053,6 +3073,54 @@ const { parseAppMentionEvent } = await import(
   ok(
     findJudgeAllow([row("approval.judge.shadow", { tool: "open_pull_request", enforcedVerdict: "allow" })], "open_pull_request") === undefined,
     "findJudgeAllow: a phase-1 approval.judge.shadow row never arms anything — shadow rows are log-only and influenced nothing",
+  );
+
+  const { findTeamsDmJudgeAllow } = await import("../packages/core/scripts/e2e/journey.js");
+  const at = (ts: string, surface: string, action: string, detail: Record<string, unknown>) => ({ ...row(action, detail), ts, platform: "teams", surface });
+  const chain = "19-synthChan-thread.tacv2-messageid-1700159720001";
+  const dmKey = "teams/0000feed/a-SynthDm01";
+  const floorIso = "2026-06-22T11:46:25.000Z";
+  const routineAllow = { tool: "create_routine", enforcedVerdict: "allow", verdict: "allow", ruleId: "routine-reports-here", source: "pass2" };
+  const channelThenDm = [
+    at("2026-06-22T11:46:10.000Z", chain, "approval.judge.verdict", routineAllow),
+    at("2026-06-22T11:46:26.000Z", dmKey, "teams.dispatched", { addressing: "direct-mention", dmWindow: true, conversationId: "a:SynthDm01" }),
+  ];
+  ok(findJudgeAllow(channelThenDm, "create_routine") !== undefined, "findTeamsDmJudgeAllow control: the OLD unscoped read finds the channel leg's allow row in the same window");
+  const dmRead = findTeamsDmJudgeAllow(channelThenDm, "create_routine", { floorIso });
+  ok(
+    dmRead.allow === undefined && dmRead.dmSurface === "a-SynthDm01",
+    "findTeamsDmJudgeAllow: the channel leg's allow row is NOT the DM leg's arm — the read names the DM surface of its own wake and keeps waiting for the DM seat",
+  );
+  ok(
+    findTeamsDmJudgeAllow([channelThenDm[0]!, { ...channelThenDm[0]!, ts: "2026-06-22T11:46:27.000Z" }], "create_routine", { floorIso }).allow === undefined,
+    "findTeamsDmJudgeAllow: with no DM wake in the window there is no arm, even for a channel allow row above the floor",
+  );
+  ok(
+    findTeamsDmJudgeAllow([...channelThenDm, at("2026-06-22T11:46:40.000Z", "a-SynthDm01", "approval.judge.verdict", routineAllow)], "create_routine", { floorIso }).allow?.source === "pass2",
+    "findTeamsDmJudgeAllow: an allow row on the DM's own bare surface, after the floor, IS the arm",
+  );
+  ok(
+    findTeamsDmJudgeAllow(
+      [at("2026-06-22T11:45:50.000Z", "a-SynthDm01", "approval.judge.verdict", routineAllow), at("2026-06-22T11:45:49.000Z", dmKey, "teams.dispatched", { dmWindow: true }), ...channelThenDm],
+      "create_routine",
+      { floorIso },
+    ).allow === undefined,
+    "findTeamsDmJudgeAllow: an EARLIER ask's allow row on the same DM, below the floor, is not this ask's arm",
+  );
+  ok(
+    findTeamsDmJudgeAllow([at("2026-06-22T11:46:26.000Z", chain, "teams.dispatched", { addressing: "direct-mention" }), channelThenDm[0]!], "create_routine", { floorIso }).dmSurface === undefined,
+    "findTeamsDmJudgeAllow: a channel dispatch row (no dmWindow) is never the DM leg's own wake",
+  );
+  const { findTeamsChannelJudgeAllow } = await import("../packages/core/scripts/e2e/journey.js");
+  const channelScope = { chainSurface: chain, channelSurface: "19-synthChan-thread.tacv2" };
+  ok(findTeamsChannelJudgeAllow([channelThenDm[0]!], "create_routine", channelScope) !== undefined, "findTeamsChannelJudgeAllow: an allow row on this ask's reply chain is the arm");
+  ok(
+    findTeamsChannelJudgeAllow([at("2026-06-22T11:46:10.000Z", "19-synthChan-thread.tacv2", "approval.judge.verdict", routineAllow)], "create_routine", channelScope) !== undefined,
+    "findTeamsChannelJudgeAllow: an allow row on the CHANNEL grain (the addressed-wake scope key) is also this ask's arm",
+  );
+  ok(
+    findTeamsChannelJudgeAllow([at("2026-06-22T11:46:40.000Z", "a-SynthDm01", "approval.judge.verdict", routineAllow)], "create_routine", channelScope) === undefined,
+    "findTeamsChannelJudgeAllow: the DM leg's allow row is never the channel leg's arm",
   );
 
   const prRows = [

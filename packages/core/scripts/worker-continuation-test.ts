@@ -632,6 +632,44 @@ eq(noMessage.success, false, "🔴 §4 NEGATIVE CONTROL: eve's own `message` req
   );
   eq(notices.length, 1, "§8 NEGATIVE CONTROL: …and the recorder hears nothing");
   registerContinuationRefusalNotifier(liveNotifier);
+
+  const turnState = await import("../agent/access/work-request-turn.js");
+  const { noteTurnStep } = await import("../agent/model/step-boundary.js");
+  await seedWake("req-2613-job", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2613-next", ORIGIN_A, "U_ALICE");
+  const JOB: Delivery = { requestId: "req-2613-job", brief: "create a one-shot routine for 9am", origin: ORIGIN_A };
+  const NEXT: Delivery = { requestId: "req-2613-next", brief: "and a second one for 5pm", origin: ORIGIN_A };
+  const T = "w-turn-2613";
+  const oneStart = await wStep(T, [JOB], JOB.requestId, async () => {
+    const first = await wValidate({ message: JOB.brief });
+    const beforeStart = turnState.workTurnSettled(T);
+    turnState.noteWorkRequestStarted(T, JOB.requestId);
+    const again = await wValidate({ message: JOB.brief });
+    const continued = await wValidate({ message: JOB.brief, taskId: W_TASK });
+    const settled = turnState.workTurnSettled(T);
+    const settledAgain = turnState.workTurnSettled(T);
+    const tier = (await noteTurnStep({ channel: { kind: "unified" }, session: { id: W, turn: { id: T } } } as never)).tier;
+    turnState.recordWorkRequestsThisTurn(T, work.renderWorkCancel({ cancelId: "cancel-2613", taskId: W_TASK, origin: ORIGIN_A as never, nowIso: at }));
+    const withCancel = turnState.workTurnSettled(T);
+    turnState.noteWorkCancelHandled(T, W_TASK);
+    const afterCancel = turnState.workTurnSettled(T);
+    const nextMessage = work.renderWorkRequest({ requestId: NEXT.requestId, brief: NEXT.brief, origin: NEXT.origin as never, nowIso: at });
+    recordDeliveredWakes(T, nextMessage);
+    turnState.recordWorkRequestsThisTurn(T, nextMessage);
+    const withNext = turnState.workTurnSettled(T);
+    return { first, beforeStart, again, continued, settled, settledAgain, tier, withCancel, afterCancel, withNext };
+  });
+  eq(oneStart.first, "ok", "§9 precondition: W's first `agent` call for the job is admitted");
+  eq(oneStart.beforeStart, undefined, "§9: a job that has not started keeps W's model live");
+  eq(oneStart.again, turnState.WORK_REQUEST_ALREADY_STARTED_MESSAGE, "🔴 §9 OPE-2613: a second `agent` call for a job that already started is refused");
+  eq(oneStart.continued, turnState.WORK_REQUEST_ALREADY_STARTED_MESSAGE, "🔴 §9 …and so is a continuation of it by `taskId`");
+  eq(oneStart.settled, { first: true, jobs: 1 }, "🔴 §9 OPE-2613: once every job of the turn has started, the turn is settled");
+  eq(oneStart.settledAgain, { first: false, jobs: 1 }, "§9 …and the ending is reported once");
+  eq(oneStart.tier, "settled", "🔴 §9 …and the step resolver's boundary serves the `settled` stub tier");
+  eq(oneStart.withCancel, undefined, "🔴 §9 NEGATIVE CONTROL: a relayed cancel waiting for its `task_cancel` keeps W's model live");
+  eq(oneStart.afterCancel, { first: true, jobs: 1 }, "§9 …and once W made the `task_cancel`, the turn is settled again, as a new ending");
+  eq(oneStart.withNext, undefined, "🔴 §9 NEGATIVE CONTROL: a new job steered into the turn keeps W's model live");
+  eq(await wStep("w-turn-2613-none", [], JOB.requestId, async () => turnState.workTurnSettled("w-turn-2613-none")), undefined, "§9 NEGATIVE CONTROL: a turn that holds no job is never settled (inert off a work session)");
 }
 
 console.log(`worker-continuation: ${n} assertions passed`);
