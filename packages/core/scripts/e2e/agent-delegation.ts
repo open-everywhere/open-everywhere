@@ -3,7 +3,7 @@ import {
   classifyDelegationOutcome, type ToolCall,
   deploymentPresenceSince,
 } from "./window-harness.js";
-import { type AuditWireEntry } from "./audit-read.js";
+import { oldestRow, type AuditWireEntry } from "./audit-read.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
@@ -27,7 +27,7 @@ const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<ToolCall[] |
   readToolCalls(TARGET, READ, sessionId, { paged: true, sinceIso });
 
 function receiptsFor(rows: readonly AuditWireEntry[], wakeId: string): { nativeReceipt: boolean; sessionId: string | undefined; settled: AuditWireEntry | undefined } {
-  const sessionId = rows.find((r) => dS(r, "wakeId") === wakeId && (dS(r, "sessionId") ?? "").length > 0)?.detail?.sessionId as string | undefined;
+  const sessionId = oldestRow(rows, (r) => dS(r, "wakeId") === wakeId && (dS(r, "sessionId") ?? "").length > 0)?.detail?.sessionId as string | undefined;
   const started = sessionId === undefined ? undefined : rows.find((r) => r.action === "delegation.task_started" && dS(r, "session") === sessionId);
   const settled = started === undefined ? undefined : rows.find((r) => r.action === "delegation.task_settled" && dS(r, "task") === dS(started, "task"));
   return { nativeReceipt: started !== undefined, sessionId, settled };
@@ -54,7 +54,7 @@ async function t1aAsync(): Promise<void> {
       const close = settled === undefined ? "not yet settled at this read" : `settled status=${dS(settled, "status")} marker=${dS(settled, "marker")}`;
       return record("T1a", "PASS", `agent delegated — ${route}; ${close}. The worker does the job and its result reaches the caller.`);
     }
-    const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
+    const reply = oldestRow(rows, (r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
     if (reply) {
       const sid = dS(reply, "sessionId");
       const calls = sid ? await toolCallsOf(sid, since) : null;
@@ -84,7 +84,7 @@ async function t1cFile(): Promise<void> {
         return record("T1c", "FAIL", `the delegated worker SETTLED (${settled.action}) with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return leaves the requester empty-handed). Check the worker persona still permits post_file for a file task.`);
       }
     } else {
-      const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
+      const reply = oldestRow(rows, (r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
       if (reply) {
         const sid = dS(reply, "sessionId");
         const calls = sid ? await toolCallsOf(sid, since) : null;

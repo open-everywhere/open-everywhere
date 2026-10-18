@@ -3777,6 +3777,14 @@ const { parseAppMentionEvent } = await import(
   const busy = renderRepliesPerWake([{ wake: "w-a", posts: 16 }, { wake: "w-b", posts: 1 }]);
   ok(busy !== null && busy.includes("w-a=16") && busy.includes("w-b=1"), "renderRepliesPerWake: QUOTES every wake's count — this is the line the ticket's '16 reply.post rows on one wake' is read off");
   ok(busy!.includes("busiest wake carries 16 posts") && /discouraged, not gated/i.test(busy!), "renderRepliesPerWake: …and names the busiest wake as a duplicate that is reported, never gated");
+  ok(/hand-off beside its worker's answer/.test(busy!), "renderRepliesPerWake: …and says a second post on one wake can be a seat hand-off beside its worker's answer, which names the same wake since OPE-2591");
+
+  const { oldestRow } = await import("../packages/core/scripts/e2e/audit-read.js");
+  const wakeRow = (sessionId: string, ts: string) => ({ ts, org: "default", platform: "slack", workspace: "acme", action: "reply.post", detail: { wakeId: "w-seat", sessionId } });
+  const newestFirst = [wakeRow("wrun_worker", "2026-06-22T04:59:56.631Z"), wakeRow("seat-session", "2026-06-22T04:59:40.000Z")];
+  ok(oldestRow(newestFirst, (r) => r.detail?.wakeId === "w-seat")?.detail?.sessionId === "seat-session", "🔴 oldestRow: a newest-first read answers the seat's own row, not the worker's later row on the same wake");
+  ok(newestFirst.find((r) => r.detail?.wakeId === "w-seat")?.detail?.sessionId === "wrun_worker", "oldestRow/CONTROL: `find` on the same read answers the worker's row — the defect oldestRow removes");
+  ok(oldestRow(newestFirst, () => false) === undefined, "oldestRow: no match answers undefined");
 
   ok(renderObservationSummary([]).lines.length === 0, "renderObservationSummary/CONTROL: a run with no observations prints NOTHING");
   const summary = renderObservationSummary([{ scenario: "J-TEAMS", line: "reply.post rows per wake: w-a=16" }]);

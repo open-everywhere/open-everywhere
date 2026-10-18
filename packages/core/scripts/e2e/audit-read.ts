@@ -67,6 +67,10 @@ export async function fetchAudit(targetUrl: string, readToken: string, opts: Aud
   return (await fetchAuditWindow(targetUrl, readToken, opts)).entries;
 }
 
+export function oldestRow(rows: readonly AuditWireEntry[], pred: (r: AuditWireEntry) => boolean): AuditWireEntry | undefined {
+  return rows.findLast(pred);
+}
+
 export function hasAuditRow(
   rows: readonly AuditWireEntry[],
   action: string,

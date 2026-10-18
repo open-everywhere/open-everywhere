@@ -55,6 +55,8 @@ export function renderRepliesPerWake(counts: readonly WakePostCount[]): string |
   const busiest = counts[0].posts;
   return (
     `reply.post rows per wake: ${counts.map((c) => `${c.wake}=${c.posts}`).join(", ")}` +
-    (busiest > 1 ? ` — the busiest wake carries ${busiest} posts (a duplicate answer; discouraged, not gated)` : "")
+    (busiest > 1
+      ? ` — the busiest wake carries ${busiest} posts (a duplicate answer, or a seat hand-off beside its worker's answer, which names the same wake since OPE-2591; discouraged, not gated)`
+      : "")
   );
 }

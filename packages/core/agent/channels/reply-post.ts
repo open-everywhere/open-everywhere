@@ -1,4 +1,4 @@
-import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireOwnRoutine, fireResultCreatorId, fireResultRoutine, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
+import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireOwnRoutine, fireResultCreatorId, fireResultRoutine, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, workSeatWakeOf, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
@@ -62,6 +62,7 @@ export interface ReplyAudit {
   readonly fireRoutine?: { readonly id: string; readonly surfaceKey: string };
   readonly sessionId?: string;
   readonly wakeId?: string;
+  readonly seatWakeId?: string;
   readonly turnId?: string;
   readonly route: "tool";
 }
@@ -75,6 +76,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
   const creatorId = attestedCreatorId ?? fireResultCreatorId(ctx);
   const routine = fireResultRoutine(ctx);
   const fireRoutine = currentTestRun() === null ? fireOwnRoutine(ctx) : undefined;
+  const seatWakeId = workSeatWakeOf(ctx);
   return {
     org: p.org,
     platform: p.platform,
@@ -94,9 +96,14 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
     ...(fireRoutine ? { fireRoutine } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(wakeId ? { wakeId } : {}),
+    ...(seatWakeId ? { seatWakeId } : {}),
     ...(turnId ? { turnId } : {}),
     route,
   };
+}
+
+export function replyRowWakeId(audit: ReplyAudit): string | undefined {
+  return audit.wakeId ?? audit.seatWakeId;
 }
 
 export function replyCarriesSubstance(body: string): boolean {
@@ -105,6 +112,7 @@ export function replyCarriesSubstance(body: string): boolean {
 
 export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, platform: string, chars: number, done?: boolean): Promise<void> {
   if (!audit) return;
+  const wakeId = replyRowWakeId(audit);
   await appendAudit({
     org: audit.org,
     platform,
@@ -120,7 +128,7 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
       route: audit.route,
       ...(done !== undefined ? { done } : {}),
       ...(audit.creatorId ? { creatorId: audit.creatorId } : {}),
-      ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
+      ...(wakeId ? { wakeId } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
   }).catch(() => undefined);

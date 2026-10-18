@@ -9,7 +9,7 @@ import { applyReplyProvenance, auditReplyProvenance } from "./reply-provenance.j
 import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guard.js";
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
 import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
-import type { ReplyAudit } from "./reply-post.js";
+import { replyRowWakeId, type ReplyAudit } from "./reply-post.js";
 
 export interface EditLocus {
   readonly platform: string;
@@ -92,7 +92,7 @@ async function auditReplyEdit(audit: ReplyAudit | undefined, id: string, platfor
       chars,
       route: audit.route,
       ...(audit.creatorId ? { creatorId: audit.creatorId } : {}),
-      ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
+      ...(replyRowWakeId(audit) ? { wakeId: replyRowWakeId(audit) } : {}),
       ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
     },
   }).catch(() => undefined);

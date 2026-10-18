@@ -104,8 +104,12 @@ CLI's own auth path never read the same variable.
 3. The delivery **fired** rather than being declined.
 4. A `reply.post` row carries **that fire's wake id** — this delivery produced this reply, not a
    reply that merely landed nearby. The declared fire mints the id, the `webhook.fired` row stamps
-   it, and both reply routes stamp it back. A hook that fires natively (delegation disarmed, or a
-   surface with no unified window) carries no wake id to its reply, so the gate falls back to the
+   it, and both reply routes stamp it back. When the seat forwards the fire to a worker and the
+   worker posts the answer, the worker's row carries the same id: the host stamped the fire's wake
+   on the forward, so no model input reaches it. One case names another job's wake: when the work
+   session starts two jobs in one step, one job's worker can inherit the other job's stamp
+   (`hooks/work-task-key.ts`), and its `work.task_keyed` row carries the mismatch verdict. A hook
+   that fires natively (delegation disarmed, or a surface with no unified window) carries no wake id to its reply, so the gate falls back to the
    hook's target surface and renames itself to say which join it made.
 5. An unsigned POST is refused (`401`) **and leaves no audit trace**. The second half is the one
    that matters: a `401` with a fire behind it would pass a status-only check.

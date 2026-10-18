@@ -4339,6 +4339,7 @@
     "test:reply-provenance": "NODE_NO_WARNINGS=1 tsx scripts/reply-provenance-test.ts",
     "test:reply-source-links": "NODE_NO_WARNINGS=1 tsx scripts/reply-source-links-test.ts",
     "test:reply-follow-ups": "NODE_NO_WARNINGS=1 tsx scripts/reply-follow-ups-test.ts",
+    "test:worker-reply-wake": "NODE_NO_WARNINGS=1 tsx scripts/worker-reply-wake-test.ts",
     "test:delegated-provenance": "NODE_NO_WARNINGS=1 tsx scripts/delegated-provenance-test.ts",
     "test:runtime-rotation": "NODE_NO_WARNINGS=1 tsx scripts/runtime-rotation-test.ts",
     "test:app-code-fingerprint": "NODE_NO_WARNINGS=1 tsx scripts/app-code-fingerprint-test.ts",
