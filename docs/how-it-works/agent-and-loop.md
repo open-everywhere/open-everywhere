@@ -388,11 +388,12 @@ than refuses. Four deliberate carve-outs:
   move — go and look at what you were asked about, then reply — not a way to work through a
   room. Both verbs read WHERE THE SEAT IS and take no target, so the seat cannot browse a
   sibling channel with them. Digestion (summarise this channel, mine this history) is still
-  worker work, and the worker does it through its provider's native work reads under the
-  domain's work grant — it does not hold these two verbs at all. On Slack, Discord, Teams,
-  Notion and Linear those work reads are `read_work_channel` and `read_work_thread`. They read
-  the same container and carry no read budget, and they mount only where the domain declares
-  that surface's work role. A page too large to show is
+  worker work, and the worker does it through its provider's native work reads — it does not
+  hold these two verbs at all. On Slack, Discord, Teams, GitHub, Notion and Linear those work
+  reads are `read_work_channel` and `read_work_thread`. They read the same container and carry
+  no read budget. A delegated worker holds them for the room and thread its job came from with
+  no work grant, because that is the container its seat could read. A read beyond that
+  container needs the domain's work grant. A page too large to show is
   trimmed to its
   **oldest** messages, which is the half the wake did not already carry, and the whole page is
   written to a file the seat's worker can read.
@@ -428,8 +429,9 @@ seat's binding and would act on the seat's conversation rather than its own: `st
 make the *seat* stop following a channel the worker never followed) and `no_reply` (it ends a reply
 obligation a worker does not have — and on the native route the worker's last message *is* its
 report, so a turn that ends in silence hands the seat nothing). The other two are the seat's chat
-reads, `read_channel` and `read_thread`: each reads the room the worker was delegated *from*, on the
-chat credential, while a worker reads its own work surface natively under the domain's work grant. A
+reads, `read_channel` and `read_thread`: they are the seat's verbs, with the seat's read budget.
+A worker reads the same room and thread with `read_work_channel` / `read_work_thread` instead, on
+the same credential and with no work grant. A
 worker still posts with `reply` and still shows progress with `update_status`. The subtraction is not
 the only cut a worker takes. The same seam withdraws the delegation verb `agent` from every worker —
 the framework classifies a subagent child as a leaf — and the `task_cancel` / `task_wait` verbs
@@ -746,12 +748,23 @@ are the conservative direction, not the intended one. Everywhere else the fold i
 
 **A worker does not inherit the seat's backscroll**, and that is what the work plane is for. A child
 gets the parent's identity, sandbox and grants — not its window tail. So a worker asked to summarise
-a conversation must READ it, through `read_work_channel` / `read_work_thread`, and those mount only
-where the domain holds that surface's work grant. A domain that holds none leaves its workers able to
-verify nothing: they will say so rather than invent a summary, which is correct behaviour and a
-useless answer. For a chat surface the grant is a work ROLE declared in the domain's `credentials`;
-GitHub is the exception, where it is the access bundle's `repos:` list instead. Grant every surface
-whose history your workers must read — see
+a conversation must READ it, through `read_work_channel` / `read_work_thread`. A delegated worker
+holds those two verbs for the room and thread its job came from, with no work grant (OPE-2491), on
+Slack, Discord, Teams, GitHub, Notion and Linear. That container is the one its seat could read, so
+the read uses the seat's own access: the same read adapter, the same domain allowlist, the same
+external-participant policy and the same untrusted-output fence. The container always comes from
+the worker's dispatch binding. An origin that is not a source of the window mounts nothing.
+
+Two limits. **Email is not covered**: its read adapter takes the thread from the live auth, which a
+later mail can replace before the worker starts, so an email worker still needs a grant. And the
+execute step takes the platform from the turn's auth stamp, which a sibling surface can replace
+after dispatch. When that platform differs from the dispatch platform, the call needs that
+platform's grant, and the adapter's allowlist refuses the foreign container. No read widens, but
+such a worker holds a verb that refuses.
+
+The work grant is still the road to anything **beyond** that origin container: another channel, a
+`search`, a ticket. For a chat surface the grant is a work ROLE declared in the domain's
+`credentials`; GitHub is the exception, where it is the access bundle's `repos:` list instead. See
 [Access and scoping](./access-and-scoping.md).
 
 What it means to be on the native route:
@@ -1250,10 +1263,9 @@ worker to find the value with its tools, or to call a tool that needs none.
 
 ### The job carries the person's own words
 
-A job's brief is the seat model's summary of the request. A worker may hold no read of the
-conversation it works for: its chat-surface work read needs the domain's work grant for that surface
-(see [A chat surface can be a work surface too](../capabilities/connectors-and-providers.md#a-chat-surface-can-be-a-work-surface-too)),
-and a domain of a fresh install declares none. So the forward appends
+A job's brief is the seat model's summary of the request. A worker can read the room and thread its
+job came from (see [A chat surface can be a work surface too](../capabilities/connectors-and-providers.md#a-chat-surface-can-be-a-work-surface-too)),
+but a read costs a step, and the person's exact ask is the part a summary loses. So the forward appends
 the verified requester's own words to the job, quoted, after the brief, under the heading "The
 person's own words" (OPE-2473). These are the same asks that the job's approval judge reads: this
 turn's, this wake's, and this requester's only. An unverified requester or a non-member wake adds

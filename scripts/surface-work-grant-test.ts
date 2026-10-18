@@ -5,6 +5,7 @@ import {
   domainHoldsSurfaceWorkGrant,
   surfaceWorkReadPlatforms,
   surfaceWorkReadMount,
+  workerOriginReadPlatform,
   assertSurfaceWorkGrant,
   SurfaceWorkGrantError,
 } from "@open-everywhere/core/agent/access/surface-work-grant.js";
@@ -340,20 +341,30 @@ ok(allowedOnWorkerSeat("read_work_thread") === true, "the WORK thread read REACH
   const discordWorker = workerOf(discordCtx(bothSources), "discord");
   const slackWorker = workerOf(slackCtx(bothSources), "slack");
 
+  const plain = [defineDomain({ name: "plain-worker", reach: [SLACK_CHANNEL, DISCORD_CHANNEL] })];
+
   asWorker(discordCtx(bothSources), () => {
     ok(surfaceWorkReadPlatforms(discordWorker, mixed).join(",") === "slack", "§7/CONTROL: the Discord worker's window resolves its domain, and Slack is the granted source");
+    ok(workerOriginReadPlatform(discordWorker, mixed) === "discord", "🔴 §7: the Discord worker's own origin is its dispatch platform, discord");
     ok(
-      surfaceWorkReadMount(discordWorker, () => mixed) === false,
-      "🔴 §7: a Discord worker on a window where only Slack holds the grant does NOT mount the work reads (explicit false)",
+      surfaceWorkReadMount(discordWorker, () => mixed) === true,
+      "🔴 §7: a Discord worker on a window where only Slack holds the grant MOUNTS the work reads (OPE-2491 ruling)",
     );
-    ok(resolverOf(readWorkThread)({}, discordWorker) === null, "🔴 §7: …and read_work_thread's own resolver mounts nothing for it");
-    ok(resolverOf(readWorkChannel)({}, discordWorker) === null, "🔴 §7: …and read_work_channel's own resolver mounts nothing for it");
+    ok(resolverOf(readWorkThread)({}, discordWorker) !== null, "🔴 §7: …and read_work_thread's own resolver mounts it");
+    ok(resolverOf(readWorkChannel)({}, discordWorker) !== null, "🔴 §7: …and read_work_channel's own resolver mounts it");
+    assertSurfaceWorkGrant(discordWorker, mixed, "discord");
+    passed++;
+
+    ok(surfaceWorkReadMount(discordWorker, () => plain) === true, "🔴 §7: a worker of a domain that declares NO work role mounts the read of its own origin");
+    assertSurfaceWorkGrant(discordWorker, plain, "discord");
+    passed++;
     assert.throws(
-      () => assertSurfaceWorkGrant(discordWorker, mixed, "discord"),
-      (err: unknown) => err instanceof SurfaceWorkGrantError && err.platform === "discord",
-      "§7: the per-turn check refuses the Discord worker's own platform",
+      () => assertSurfaceWorkGrant(discordWorker, plain, "slack"),
+      (err: unknown) => err instanceof SurfaceWorkGrantError && err.platform === "slack",
+      "🔴 §7: the Discord worker is refused a Slack work read on the ungranted domain",
     );
     passed++;
+    ok(domainHoldsSurfaceWorkGrant(plain[0], "discord") === false, "§7/CONTROL: the origin arm declares no grant — the domain still holds none (explicit false)");
   });
 
   asWorker(slackCtx(bothSources), () => {
@@ -365,19 +376,50 @@ ok(allowedOnWorkerSeat("read_work_thread") === true, "the WORK thread read REACH
   });
 
   asWorker(discordCtx(bothSources), () => {
+    const stampSaysSlack = workerOf(slackCtx(bothSources), "slack");
+    ok(workerOriginReadPlatform(stampSaysSlack, plain) === "discord", "🔴 §7: a Discord-dispatched worker whose inherited stamp says Slack has origin discord");
+    assertSurfaceWorkGrant(stampSaysSlack, plain, "discord");
+    passed++;
+    assert.throws(
+      () => assertSurfaceWorkGrant(stampSaysSlack, plain, "slack"),
+      SurfaceWorkGrantError,
+      "🔴 §7: …and the stamp's platform, slack, is refused with no grant",
+    );
+    passed++;
+  });
+  asWorker(discordCtx(), () => {
     ok(
-      surfaceWorkReadMount(workerOf(slackCtx(bothSources), "slack"), () => mixed) === false,
-      "🔴 §7: a Discord-dispatched worker whose inherited stamp says Slack does NOT mount (explicit false)",
+      surfaceWorkReadMount(workerOf(slackCtx("slack"), "slack"), () => plain) === false,
+      "🔴 §7: a worker whose dispatch origin is not a source of its window does NOT mount (explicit false)",
     );
   });
-  asWorker(slackCtx(bothSources), () => {
-    ok(
-      surfaceWorkReadMount(workerOf(discordCtx(bothSources), "discord"), () => mixed) === true,
-      "🔴 §7: a Slack-dispatched worker whose inherited stamp says Discord still mounts",
-    );
-  });
+  {
+    const emailParent = {
+      channel: { kind: "email" },
+      session: { auth: { current: { attributes: { email_inbox: "room@example.com", email_thread_id: "T1", oe_sources: "email" }, principalId: "a@example.com", principalType: "email-user" } } },
+    } as unknown as BindableContext;
+    const emailWorker = workerOf(emailParent, "email");
+    asWorker(emailParent, () => {
+      ok(bindFrom(emailWorker).platform === "email", "§7/CONTROL: the email worker's dispatch binding names email");
+      ok(workerOriginReadPlatform(emailWorker, plain) === undefined, "🔴 §7: an email-dispatched worker has NO grant-free origin (explicit undefined)");
+      ok(surfaceWorkReadMount(emailWorker, () => plain) === false, "🔴 §7: …and mounts neither work read (explicit false)");
+      assert.throws(() => assertSurfaceWorkGrant(emailWorker, plain, "email"), SurfaceWorkGrantError, "🔴 §7: …and the per-turn check refuses its email read");
+      passed++;
+    });
+  }
+
+  ok(workerOriginReadPlatform(discordWorker, plain) === undefined, "🔴 §7: a child with no adopted dispatch authority has no origin (fail closed)");
+  ok(surfaceWorkReadMount(discordWorker, () => plain) === false, "🔴 §7: …and mounts nothing on the ungranted domain (explicit false)");
 
   ok(surfaceWorkReadMount(discordCtx(bothSources), () => mixed) === true, "§7: a non-child context on the same window keeps the any-granted-source mount");
+  ok(workerOriginReadPlatform(discordCtx(bothSources), plain) === undefined, "🔴 §7: a non-child context has no origin arm");
+  ok(surfaceWorkReadMount(discordCtx(bothSources), () => plain) === false, "🔴 §7: a non-child context on the ungranted domain does NOT mount (explicit false)");
+  assert.throws(
+    () => assertSurfaceWorkGrant(discordCtx(bothSources), plain, "discord"),
+    SurfaceWorkGrantError,
+    "🔴 §7: a non-child context is refused the ungranted discord read",
+  );
+  passed++;
 }
 
 console.log(`✓ surface-work-grant: ${passed} assertions passed`);

@@ -126,9 +126,11 @@ This is a list of one name no filter may take away.
 wake arrived in, and expose NO target argument. A cross-container read is therefore not
 expressible, rather than refused: there is no parameter a model could put another channel in. Reach
 beyond the wake container is the WORK plane's — the provider's native work tools under the domain's
-work grant. The work-plane chat reads `read_work_channel` / `read_work_thread` share the same fence:
-what the work grant buys a worker is the read, not a wider address. Source:
-`packages/core/agent/channels/wake-container.ts`.
+work grant. The work-plane chat reads `read_work_channel` / `read_work_thread` share the same fence.
+A delegated worker reads the room and thread its job came from with them and needs no work grant,
+because that container is the one its seat could read (OPE-2491). A grant never makes the address
+wider. Source: `packages/core/agent/channels/wake-container.ts`,
+`packages/core/agent/access/surface-work-grant.ts#workerOriginReadPlatform`.
 
 **recovery read** — `read_channel` / `read_thread` on a lean seat. A wake carries recent backscroll,
 not all of it, so a person can refer to a message the seat cannot see. Without a read verb the seat

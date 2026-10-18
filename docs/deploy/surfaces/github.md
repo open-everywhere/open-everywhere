@@ -300,8 +300,9 @@ Three things worth knowing:
 - **Only a comment on the diff has a thread.** An issue comment and a PR timeline comment are at the
   top level of their conversation, so `read_thread` on one says so rather than reading the timeline
   under a thread read's name.
-- **A delegated worker needs the repo grant.** The seat reads its own conversation; the worker's
-  `read_work_channel` / `read_work_thread` mount only when the calling scope grants at least one repo
+- **A delegated worker reads the same conversation.** The seat reads its own conversation, and the
+  worker's `read_work_channel` / `read_work_thread` read the conversation its job came from, with no
+  repo grant (OPE-2491). Every other GitHub work tool still needs the calling scope to grant a repo
   ([Connectors § A chat surface can be a work surface too](../../capabilities/connectors-and-providers.md#a-chat-surface-can-be-a-work-surface-too)).
 
 The read runs on the `OE_GITHUB_*` App installation token, with no fallback to `GITHUB_TOKEN`, so a

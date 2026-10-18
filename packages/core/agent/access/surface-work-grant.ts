@@ -1,6 +1,7 @@
 import { containerWorkRoleFor, hasWorkGrant, hasGithubWorkGrant, GITHUB_CONNECTOR, WORK_ROLES } from "./work-grant.js";
 import { resolveAccessFor } from "./request.js";
-import { isSubagentChildContext, resolveWindowSources, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
+import { isSubagentChildContext, resolveWindowSources, type BindableContext } from "../identity/binding.js";
+import { delegatedBindingThisTurn } from "../identity/delegated-binding.js";
 import { resolveDomainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -51,12 +52,25 @@ export function surfaceWorkReadPlatforms(ctx: BindableContext, domains: readonly
   return sources.filter((platform) => domainHoldsSurfaceWorkGrant(domain, platform, repos));
 }
 
+function originBoundReadPlatform(platform: string): boolean {
+  return platform === GITHUB_CONNECTOR || containerWorkRoleFor(platform) !== undefined;
+}
+
+export function workerOriginReadPlatform(ctx: BindableContext, domains: readonly Domain[]): string | undefined {
+  try {
+    if (!isSubagentChildContext(ctx)) return undefined;
+    const origin = delegatedBindingThisTurn(undefined)?.platform;
+    if (origin === undefined || !originBoundReadPlatform(origin)) return undefined;
+    return resolveWindowSources(ctx, domains).includes(origin) ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function surfaceWorkReadMount(ctx: BindableContext, domains: () => readonly Domain[]): boolean {
   try {
-    const platforms = surfaceWorkReadPlatforms(ctx, domains());
-    if (!isSubagentChildContext(ctx)) return platforms.length > 0;
-    const origin = turnOriginPlatform(ctx);
-    return origin !== undefined && platforms.includes(origin);
+    if (isSubagentChildContext(ctx)) return workerOriginReadPlatform(ctx, domains()) !== undefined;
+    return surfaceWorkReadPlatforms(ctx, domains()).length > 0;
   } catch {
     return false;
   }
@@ -69,6 +83,7 @@ export class SurfaceWorkGrantError extends Error {
 }
 
 export function assertSurfaceWorkGrant(ctx: BindableContext, domains: readonly Domain[], platform: string): void {
+  if (workerOriginReadPlatform(ctx, domains) === platform) return;
   if (domainHoldsSurfaceWorkGrant(callerDomain(ctx, domains), platform, callerRepos(ctx))) return;
   const remedy =
     platform === GITHUB_CONNECTOR

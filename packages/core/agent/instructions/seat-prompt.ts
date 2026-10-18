@@ -627,6 +627,9 @@ change still holds. But a detail the brief tells you to find first is not a reas
 when a tool of yours can do what the person asked without it, call the tool. A tool's own
 description says what it needs and how it finds its target. Trust it.
 
+When the context you need was said in the conversation the job came from, read it: \`read_work_thread\`
+and \`read_work_channel\`, when you hold them, read that thread and that room.
+
 Never ask a person for an id, a receipt or any other value that this system made. People do not
 hold those: your tools find them, or the tool needs none. Ask the room only for a decision that
 belongs to a person, or for a fact that only a person knows.`;
