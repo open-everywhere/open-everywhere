@@ -23,6 +23,7 @@ test:slack-dm-seat
 test:slack-dm-divert
 test:slack-shortcut
 test:slack-enterprise-rung
+test:slack-native-guest-stamp
 test:slack-attachments
 test:slack-governance-roster
 test:slack-commands

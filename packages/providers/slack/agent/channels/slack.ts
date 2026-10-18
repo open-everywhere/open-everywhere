@@ -71,6 +71,9 @@ import {
   dmTrustTtlMs,
   swallowRoomOp,
   domainRoster,
+  domainKeyOf,
+  resolveWakeTrust,
+  stampNonMemberChatAuth,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { TURN_FAILED_TEXT, withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
@@ -80,7 +83,7 @@ import { holdRouteWork } from "./slack-route-hold.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { admitSlackInputResponse } from "./slack-input-response.js";
 import { taskCardConfidentiality } from "./slack-task-card.js";
-import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
+import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, slackAuthorIsMember, slackWakeAuthorFacts, type SlackMemberProbe, type SupervisorReplyTarget } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
 import { stepStatusFor, type StepAction } from "./slack-step-label.js";
 import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
@@ -467,7 +470,31 @@ async function onInbound(
     context = await loadConversationContext(ctx, message);
     await markThreadEngaged(partitionForMessage(message, facts), message.threadTs, new Date().toISOString(), { participating: true });
   }
-  return { auth: authFromFacts(message, facts), context };
+  return { auth: await stampNativeAuthorLeg(message, facts, isDm, authFromFacts(message, facts)), context };
+}
+
+export async function stampNativeAuthorLeg(
+  message: SlackMessage,
+  facts: ChannelFacts,
+  isDm: boolean,
+  auth: OpenEverywhereSlackAuth | null,
+  probe: SlackMemberProbe = slackAuthorIsMember,
+): Promise<OpenEverywhereSlackAuth | null> {
+  if (auth === null) return null;
+  const mode = slackMode(facts.channelType, message.channelId);
+  const surfaceInternal = isDm ? facts.dmPartnerTrust === "internal" : facts.trustChecked === true && facts.isExternal === false;
+  const authorFacts = await slackWakeAuthorFacts(surfaceInternal, message.author?.userId, message.teamId, probe);
+  const channelKey = domainKeyOf(partitionForMessage(message, facts));
+  const rawBotId = typeof (message.raw as { bot_id?: unknown })?.bot_id === "string" ? (message.raw as { bot_id: string }).bot_id : undefined;
+  const enterpriseId = forwardedSlackEnterpriseId(message);
+  const trust = resolveWakeTrust({
+    authorIsBot: Boolean(message.author?.isBot) && !isAllowedSlackDriver(message.teamId, rawBotId),
+    authorId: message.author?.userId,
+    surfaceInternal: authorFacts.surfaceInternal,
+    channelKey,
+    ...(enterpriseId === undefined ? {} : { enterpriseId }),
+  });
+  return stampNonMemberChatAuth(auth, [{ trust, refuted: authorFacts.refuted }], mode === "channel" ? { surfaceKey: channelKey } : { dm: true });
 }
 
 export async function admitInbound(

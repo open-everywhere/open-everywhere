@@ -277,6 +277,7 @@
     "test:slack-dm-divert": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-divert-test.ts",
     "test:slack-shortcut": "NODE_NO_WARNINGS=1 tsx scripts/slack-shortcut-test.ts",
     "test:slack-enterprise-rung": "NODE_NO_WARNINGS=1 tsx scripts/slack-enterprise-rung-test.ts",
+    "test:slack-native-guest-stamp": "NODE_NO_WARNINGS=1 tsx scripts/slack-native-guest-stamp-test.ts",
     "test:slack-native-wake-heal": "NODE_NO_WARNINGS=1 tsx scripts/slack-native-wake-heal-test.ts",
     "test:slack-attachments": "NODE_NO_WARNINGS=1 tsx scripts/slack-attachments-test.ts",
     "test:slack-governance-roster": "NODE_NO_WARNINGS=1 tsx scripts/slack-governance-roster-test.ts",
