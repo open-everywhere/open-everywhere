@@ -6403,7 +6403,7 @@ export const SCENARIOS: readonly Scenario[] = [
         base.kind === "none"
           ? `S-MEMORY-CANVAS: a memory.canvas_refresh row names the base channel ${channel} after the teach — none did. Its domain shows no canvas (no memory, or memoryCanvas: false), the app is not in it, or the fact was never written`
           : base.outcome === "failed"
-            ? `S-MEMORY-CANVAS: the base channel's canvas refresh FAILED. The usual cause is a deployment Slack app without the bot scope canvases:write (app-manifest.ts lists it); reinstall the app with it`
+            ? `S-MEMORY-CANVAS: the base channel's canvas refresh FAILED: the bot could not read or write the channel canvas. Check that the deployment bot token carries canvases:read (a canvas made before the memory canvas id was recorded needs files.info and canvases.sections.lookup) and canvases:write. app-manifest.ts lists both; re-apply the manifest and reinstall the app`
             : `S-MEMORY-CANVAS: the base channel's canvas was written (created or updated) — the row says "${base.outcome}"`,
       );
 
@@ -6441,7 +6441,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`domain ${String(domain)}: ${others.length} other channel(s), ${untrusted.length} shared or guest — ${untrusted.map((u) => `${u.channel} (${u.why})`).join(", ") || "none"}`);
       if (untrusted.length === 0) {
         return ctx.fixtureMissing(
-          `S-MEMORY-CANVAS: the internal half is GREEN, but Slack shows no shared or guest channel among the domain ${String(domain)}'s channels the app sits in, so nothing proves the trust gate keeps the canvas out of one. Add a Slack Connect channel, or a channel with a guest member, to the domain's reach (agent/memory/config/domains/), invite the app and the driver user, and rerun.`,
+          `S-MEMORY-CANVAS: the internal half is GREEN, but Slack shows no shared or guest channel among the domain ${String(domain)}'s channels the app sits in, so nothing proves the trust gate keeps the canvas out of one. Add a Slack Connect channel, or a channel with a guest member, to the reach list in agent/memory/config/domains/${String(domain)}.ts, invite the app and the driver user, and rerun.`,
         );
       }
       for (const { channel: c, why } of untrusted) {
