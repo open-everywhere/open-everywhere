@@ -25,7 +25,7 @@ import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
-import { isMissingChatScopeError, teamsApprovalCardActions, type TeamsMessage } from "./teams-driver.js";
+import { isMissingChatScopeError, teamsApprovalCardActions, teamsDmApprovalCard, type TeamsMessage } from "./teams-driver.js";
 import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { commentAtOrAfter } from "./comment-window.js";
 import { capDriveOutcome } from "./cap-drive-outcome.js";
@@ -5778,10 +5778,12 @@ export const SCENARIOS: readonly Scenario[] = [
           throw err;
         });
       const askedAt = driven.createdDateTime ?? sinceIso;
-      const isCard = (m: TeamsMessage): boolean => teams.isBotAuthored(m) && teamsApprovalCardActions(m).length > 0 && (m.createdDateTime ?? "") >= askedAt;
+      const what = "S-CARD-teams-dm: the approval card in the 1:1 chat";
       const carded = await pollOptional<{ readonly card: TeamsMessage } | { readonly allow: true }>(
         async () => {
-          const card = (await teams.dmMessages(chatId)).find(isCard);
+          const dm = await teams.dmMessages(chatId);
+          const channel = await teams.channelRootMessages().catch(() => undefined);
+          const card = teamsDmApprovalCard({ dm, ...(channel ? { channel } : {}), askedAt, isBot: (m) => teams.isBotAuthored(m), note, what });
           if (card) return { card };
           if (!ctx.auditRead) return undefined;
           const rows = await ctx.auditRead({ sinceIso, platform: "teams", actions: [APPROVAL_JUDGE_VERDICT_ACTION] });

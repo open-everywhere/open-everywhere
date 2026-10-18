@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import type { TeamsDriverConfig } from "./env.js";
-import { pollUntil, sleep } from "./poll.js";
+import { pollUntil, sleep, UnrecognisedShape } from "./poll.js";
 
 const TOKEN_BASE = "https://login.microsoftonline.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -65,6 +65,73 @@ export function teamsApprovalCardActions(m: Pick<TeamsMessage, "attachments">): 
     }
   }
   return out;
+}
+
+export type TeamsCardShape =
+  | { readonly kind: "approval" }
+  | { readonly kind: "none" }
+  | { readonly kind: "unrecognised"; readonly saw: string };
+
+export function teamsCardShape(m: Pick<TeamsMessage, "attachments">): TeamsCardShape {
+  const decoded = teamsApprovalCardActions(m);
+  if (decoded.some((a) => a.decision === "approve" || a.decision === "reject")) return { kind: "approval" };
+  if (decoded.length > 0) return { kind: "none" };
+  const seen: string[] = [];
+  for (const a of m.attachments ?? []) {
+    if (a.contentType !== "application/vnd.microsoft.card.adaptive") continue;
+    let card: unknown;
+    try {
+      card = typeof a.content === "string" ? JSON.parse(a.content) : a.content;
+    } catch {
+      seen.push(`an Adaptive Card whose content is not JSON (${JSON.stringify(String(a.content).slice(0, 60))})`);
+      continue;
+    }
+    const actions = (card as { actions?: unknown } | null)?.actions;
+    if (!Array.isArray(actions) || actions.length === 0) continue;
+    if ((actions as unknown[]).every(isEveDefaultCardButton)) continue;
+    const described = (actions as { type?: unknown; data?: unknown }[]).map((action) => {
+      const data = action?.data;
+      const keys = data !== null && typeof data === "object" ? Object.keys(data).join(",") : "";
+      return `${typeof action?.type === "string" ? action.type : "untyped"}{${keys}}`;
+    });
+    seen.push(`an Adaptive Card with ${actions.length} button(s) and no button with a readable "${TEAMS_APPROVAL_DATA_KEY}" payload (${described.join(" ")})`);
+  }
+  return seen.length > 0 ? { kind: "unrecognised", saw: seen.join("; ") } : { kind: "none" };
+}
+
+function isEveDefaultCardButton(action: unknown): boolean {
+  if (action === null || typeof action !== "object") return false;
+  const { type, data } = action as { type?: unknown; data?: unknown };
+  if (type === "Action.OpenUrl") return true;
+  return data !== null && typeof data === "object" && EVE_INPUT_DATA_KEY in data;
+}
+
+const EVE_INPUT_DATA_KEY = "eve_input";
+
+export function teamsDmApprovalCard(args: {
+  readonly dm: readonly TeamsMessage[];
+  readonly channel?: readonly TeamsMessage[];
+  readonly askedAt: string;
+  readonly isBot: (m: TeamsMessage) => boolean;
+  readonly note: string;
+  readonly what: string;
+}): TeamsMessage | undefined {
+  const fresh = (m: TeamsMessage): boolean => args.isBot(m) && (m.createdDateTime ?? "") >= args.askedAt;
+  for (const m of args.dm.filter(fresh)) {
+    const shape = teamsCardShape(m);
+    if (shape.kind === "approval") return m;
+    if (shape.kind === "unrecognised") throw new UnrecognisedShape(args.what, `in the 1:1 chat, message ${m.id}: ${shape.saw}`);
+  }
+  const noteAt = new RegExp(`${args.note.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\d)`);
+  const quotesNote = (m: TeamsMessage): boolean => (m.attachments ?? []).some((a) => typeof a.content === "string" && noteAt.test(a.content));
+  const elsewhere = (args.channel ?? []).find((m) => fresh(m) && teamsCardShape(m).kind === "approval" && quotesNote(m));
+  if (elsewhere) {
+    throw new UnrecognisedShape(
+      args.what,
+      `no card in the 1:1 chat, and an OE approval card in the team channel (message ${elsewhere.id}, ${elsewhere.createdDateTime ?? "no time"}) — the pre-OPE-2447 shape, where a chat card went to a channel in the domain`,
+    );
+  }
+  return undefined;
 }
 
 export interface GraphPage<T> {

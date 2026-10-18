@@ -6414,6 +6414,28 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 {
+  const { UnrecognisedShape } = await import("../packages/core/scripts/e2e/poll.js");
+  const long = { timeoutMs: 60_000, initialDelayMs: 5_000, maxDelayMs: 5_000 } as const;
+  const shapeErr = new UnrecognisedShape("S-X: the card", "an Adaptive Card with 2 button(s) and no readable payload");
+  ok(shapeErr.message === "S-X: the card: the response is in a shape this gate does not recognise — saw an Adaptive Card with 2 button(s) and no readable payload", "the error names the gate and the shape it saw");
+  for (const [name, poll] of [["pollUntil", pollUntil], ["pollOptional", pollOptional]] as const) {
+    let calls = 0;
+    const t0 = Date.now();
+    let caught: unknown;
+    try {
+      await poll(async () => {
+        calls++;
+        throw shapeErr;
+      }, { ...long, what: "a card" });
+    } catch (err) {
+      caught = err;
+    }
+    ok(caught === shapeErr && calls === 1 && Date.now() - t0 < 1_000, `🔴 ${name} propagates an UnrecognisedShape on the FIRST probe, with no retry tick (calls ${calls}, ${Date.now() - t0}ms)`);
+  }
+  ok((await pollOptional(async () => "card", { ...long, what: "a card" })) === "card", "a probe that reads the correct shape still resolves");
+}
+
+{
   const { buildCostReport, renderCostReport } = await import("../packages/core/scripts/e2e/cost.js");
   const rows = [
     { surfaceKey: "slack/T1/C1", model: "test/model-a", calls: 3, inputTokens: 1_000_000, outputTokens: 500_000, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedUsd: 2 },

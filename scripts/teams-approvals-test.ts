@@ -519,4 +519,60 @@ async function auditFor(action: string, id: string) {
   ok(teamsApprovalCardActions({ attachments: [{ contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE, content: "{not json" }] }).length === 0, "an unparseable attachment decodes to nothing");
 }
 
+{
+  const { teamsCardShape, teamsDmApprovalCard } = await import("../packages/core/scripts/e2e/teams-driver.js");
+  const { UnrecognisedShape } = await import("../packages/core/scripts/e2e/poll.js");
+  const r = row();
+  const wire = (c: unknown) => ({ attachments: [{ contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE, content: JSON.stringify(c) }] });
+  ok(teamsCardShape(wire(pendingTeamsCard(r, ["l"]))).kind === "approval", "the real pending card is an approval card");
+  ok(teamsCardShape(wire(decidedTeamsCard(r, ["l"], "Approved"))).kind === "none", "the real decided card (no buttons) is not a card to wait on, and not a shape error");
+  ok(teamsCardShape(wire(judgeLiftNoticeTeamsCard(r, ["l"], "ran"))).kind === "none", "the real judge-lift notice (a contradict button only) is not an approval card, and not a shape error");
+  ok(teamsCardShape({ attachments: [{ contentType: "text/html", content: "<p>hi</p>" }] }).kind === "none", "a message with no Adaptive Card is no card");
+  const oldCard = { type: "AdaptiveCard", version: "1.4", body: [], actions: [{ type: "Action.Submit", title: "Approve", data: { oe_approval: { id: r.id, decision: "approve" } } }] };
+  const oldShape = teamsCardShape(wire(oldCard));
+  ok(oldShape.kind === "unrecognised" && oldShape.saw.includes("Action.Submit{oe_approval}"), `a card with buttons but no readable approval payload is UNRECOGNISED and names its buttons (got ${JSON.stringify(oldShape)})`);
+  const { renderInputRequestAttachment } = await import("eve/channels/teams");
+  const eveInput = renderInputRequestAttachment({ requestId: "q1", prompt: "Which one?", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] } as never);
+  ok(teamsCardShape({ attachments: [{ contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE, content: JSON.stringify(eveInput.content) }] }).kind === "none", "eve's real input-request card (eve_input buttons) is a known shape, not an approval card and not a shape error");
+  const eveSignIn = { type: "AdaptiveCard", version: "1.5", body: [{ type: "TextBlock", text: "Authorization required for GitHub" }], actions: [{ type: "Action.OpenUrl", title: "Sign in with GitHub", url: "https://example.test/auth" }] };
+  ok(teamsCardShape(wire(eveSignIn)).kind === "none", "eve's sign-in card (one Action.OpenUrl button, the authorization.required shape) is a known shape, not a shape error");
+  const mixed = teamsCardShape(wire({ ...oldCard, actions: [(eveInput.content as { actions: unknown[] }).actions[0], oldCard.actions[0]] }));
+  ok(mixed.kind === "unrecognised" && mixed.saw.includes("Action.Submit{oe_approval}"), `a card with one eve button and one unknown button is still UNRECOGNISED (got ${JSON.stringify(mixed)})`);
+  const garbled = teamsCardShape({ attachments: [{ contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE, content: "{not json" }] });
+  ok(garbled.kind === "unrecognised" && garbled.saw.includes("not JSON"), "an Adaptive Card whose content does not parse is UNRECOGNISED");
+
+  const askedAt = "2026-10-18T10:00:00.000Z";
+  const bot = { id: "b", text: "", fromApplicationId: "app" };
+  const isBot = (m: { fromApplicationId?: string }) => m.fromApplicationId === "app";
+  const what = "S-CARD-teams-dm: the approval card in the 1:1 chat";
+  await import("@open-everywhere/core/agent/approvals/routine-create.js");
+  const routineRow = (prompt: string) =>
+    row({ kind: "routine.create", argsJson: JSON.stringify({ prompt, trigger: { kind: "at", at: "2026-10-18T10:05:00.000Z" }, channelId: CHANNEL }) });
+  const note = "teamsdmcard-q7z";
+  const card = { ...bot, id: "card", createdDateTime: "2026-10-18T10:00:05.000Z", ...wire(pendingTeamsCard(routineRow(`Post exactly the word ${note} here.`), [])) };
+  ok(card.attachments[0]!.content.includes(note), "the real routine card quotes the routine's prompt, so it carries the ask's note");
+  const throwsShape = (f: () => unknown): string => {
+    try {
+      f();
+    } catch (err) {
+      return err instanceof UnrecognisedShape ? err.message : `not a shape error: ${String(err)}`;
+    }
+    return "no throw";
+  };
+  ok(teamsDmApprovalCard({ dm: [card], channel: [], askedAt, isBot, note, what })?.id === "card", "the real card in the 1:1 chat is found (the correct shape passes)");
+  ok(teamsDmApprovalCard({ dm: [], channel: [], askedAt, isBot, note, what }) === undefined, "no card yet anywhere is a wait, not a red");
+  ok(teamsDmApprovalCard({ dm: [], askedAt, isBot, note, what }) === undefined, "a failed channel read (no channel list) is a wait, not a red");
+  ok(teamsDmApprovalCard({ dm: [], channel: [{ ...card, createdDateTime: "2026-10-18T09:59:00.000Z" }], askedAt, isBot, note, what }) === undefined, "a channel card from BEFORE the ask is not this ask's card");
+  ok(teamsDmApprovalCard({ dm: [], channel: [{ ...card, fromApplicationId: "someone-else" }], askedAt, isBot, note, what }) === undefined, "a channel card by another app is not the bot's card");
+  const lateOtherLeg = { ...card, id: "late", ...wire(pendingTeamsCard(routineRow("Post exactly the word teamscard-other here."), [])) };
+  ok(teamsDmApprovalCard({ dm: [], channel: [lateOtherLeg], askedAt, isBot, note, what }) === undefined, "a fresh channel card that does NOT quote this ask's note (a late card from an earlier leg) is a wait, not a red");
+  const longerToken = { ...card, id: "longer", ...wire(pendingTeamsCard(routineRow(`Post exactly the word ${note}9 here.`), [])) };
+  ok(teamsDmApprovalCard({ dm: [], channel: [longerToken], askedAt, isBot, note, what }) === undefined, "a channel card quoting a LONGER token that starts with this note is another ask's card — a wait, not a red");
+  const redirected = throwsShape(() => teamsDmApprovalCard({ dm: [], channel: [card], askedAt, isBot, note, what }));
+  ok(redirected.startsWith(what) && redirected.includes("pre-OPE-2447") && redirected.includes("message card"), `🔴 the pre-OPE-2447 shape (the card in the team channel, none in the chat) throws at once and names it (got: ${redirected})`);
+  ok(teamsDmApprovalCard({ dm: [card], channel: [card], askedAt, isBot, note, what })?.id === "card", "a card in the chat wins over a card in the channel");
+  const unreadable = throwsShape(() => teamsDmApprovalCard({ dm: [{ ...card, id: "old", ...wire(oldCard) }], channel: [], askedAt, isBot, note, what }));
+  ok(unreadable.includes("message old") && unreadable.includes("Action.Submit{oe_approval}"), `🔴 an unreadable bot card in the chat throws at once and names its buttons (got: ${unreadable})`);
+}
+
 console.log(`teams-approvals-test: ${n} assertions passed`);

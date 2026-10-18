@@ -27,6 +27,13 @@ export class PollTimeout extends Error {
   }
 }
 
+export class UnrecognisedShape extends Error {
+  constructor(what: string, saw: string) {
+    super(`${what}: the response is in a shape this gate does not recognise — saw ${saw}`);
+    this.name = "UnrecognisedShape";
+  }
+}
+
 export async function pollUntil<T>(probe: () => Promise<T | undefined>, opts: PollOpts): Promise<T> {
   const started = Date.now();
   for (let attempt = 0; ; attempt++) {
@@ -51,6 +58,7 @@ export async function pollOptional<T>(probe: () => Promise<T | undefined>, opts:
       lastAttemptThrew = false;
       return found;
     } catch (err) {
+      if (err instanceof UnrecognisedShape) throw err;
       if (lastAttemptThrew) throw err;
       lastAttemptThrew = true;
       lastError = err;
