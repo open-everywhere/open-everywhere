@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lockfileEntriesToDrop, runUpgradeCommand, type UpgradeIo, type UpgradeRegistry } from "../packages/core/scripts/oe-upgrade.js";
+import { lockfileEntriesToDrop, probeDockerDaemon, runUpgradeCommand, type UpgradeIo, type UpgradeRegistry } from "../packages/core/scripts/oe-upgrade.js";
 import { finishedRun, type ChildResult } from "./npm-command.js";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -82,7 +82,9 @@ interface Harness {
   text(): string;
 }
 
-function harness(options: { readonly registry?: Partial<UpgradeRegistry>; readonly onRun?: (call: Call) => number } = {}): Harness {
+function harness(
+  options: { readonly registry?: Partial<UpgradeRegistry>; readonly onRun?: (call: Call) => number; readonly dockerDaemonDown?: string } = {},
+): Harness {
   const calls: Call[] = [];
   const out: string[] = [];
   const err: string[] = [];
@@ -104,6 +106,7 @@ function harness(options: { readonly registry?: Partial<UpgradeRegistry>; readon
         calls.push(call);
         return options.onRun?.(call) ?? 0;
       },
+      dockerDaemonDown: () => options.dockerDaemonDown,
       registry,
     },
   };
@@ -889,6 +892,75 @@ const FULL_SET = ["core", "adapters", "provider-slack", "create"].map((n) => ({
   ok(h.text().includes("npm pack --workspaces --pack-destination"), "…and says how to pack the checkout");
   const empty = harness();
   ok((await runUpgradeCommand(["--from"], empty.io, root)) === 2, "…and --from with no directory is a usage error");
+}
+
+function withBuildScript(root: string, build: string): string {
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
+  writeFileSync(join(root, "package.json"), `${JSON.stringify({ ...pkg, scripts: { build } }, null, 2)}\n`);
+  return root;
+}
+
+{
+  const DOWN = "`docker version` exited 1: failed to connect to the docker API";
+  const app = (build = "EVE_TELEMETRY_DISABLED=1 eve build"): string => withBuildScript(fixtureApp({ notes: recordOf(note()) }), build);
+  const builds = (x: Harness): string[] => x.calls.map((c) => c.args.join(" ")).filter((a) => a.startsWith("run build"));
+  const notices = (x: Harness): string[] => x.out.filter((l) => l.startsWith("! npm run build exited"));
+  const dockerApp = (c: Call): number => (c.args.join(" ") === "run build" ? 1 : 0);
+
+  const h = harness({ dockerDaemonDown: DOWN, onRun: dockerApp });
+  ok((await runUpgradeCommand([], h.io, app())) === 0, `🔴 no daemon, docker app: the upgrade completes\n${h.text()}`);
+  ok(builds(h).join(" | ") === "run build | run build -- --skip-sandbox-prewarm", `🔴 no daemon, docker app: the failed build runs again with --skip-sandbox-prewarm — got ${builds(h).join(" | ")}`);
+  ok(notices(h).length === 1 && notices(h)[0]!.includes(DOWN), "no daemon, docker app: ONE line says why the prewarm is skipped, with the probe's own reason");
+  ok(notices(h)[0]!.includes("may not be deployable") && notices(h)[0]!.includes("builds again on Vercel"), "no daemon, docker app: …and that line says not to deploy the output, and how to proceed");
+  ok(!h.err.some((l) => l.includes("✗")), "no daemon, docker app: the first failure prints no refusal, because the step goes on");
+
+  const jb = harness({ dockerDaemonDown: DOWN });
+  ok((await runUpgradeCommand([], jb.io, app())) === 0, "no daemon, justbash app: the upgrade completes");
+  ok(builds(jb).join(" | ") === "run build", `🔴 no daemon, justbash app: ONE whole build, prewarm included — got ${builds(jb).join(" | ")}`);
+  ok(notices(jb).length === 0, "no daemon, justbash app: no prewarm line is printed");
+
+  const up = harness({ onRun: dockerApp });
+  ok((await runUpgradeCommand([], up.io, app())) === 1, "daemon up: a failing build exits 1");
+  ok(builds(up).join(" | ") === "run build", "🔴 daemon up: the prewarm is never skipped when a daemon answers");
+  ok(up.err.some((l) => l === "✗ oe upgrade: npm run build exited 1. Nothing after this step ran."), "daemon up: …and the refusal names the step");
+
+  const f = harness({ dockerDaemonDown: DOWN, onRun: dockerApp });
+  ok((await runUpgradeCommand([], f.io, app("eve build && node post-build.js"))) === 1, "no daemon, other build script: a failing build exits 1");
+  ok(builds(f).join(" | ") === "run build", "no daemon, other build script: the flag is never appended to a script it cannot reach");
+  ok(f.err.some((l) => l.includes("No Docker daemon answers") && l.includes("start the daemon")), `no daemon, other build script: the failure names the daemon and the fix\n${f.text()}`);
+
+  const plan = harness();
+  await runUpgradeCommand(["--plan"], plan.io, fixtureApp({ notes: recordOf(note()) }));
+  ok(plan.text().includes("npm run build   (again with --skip-sandbox-prewarm if it fails and no Docker daemon answers)"), "--plan names the no-daemon build");
+}
+
+if (process.platform !== "win32") {
+  const dir = mkdtempSync(join(tmpdir(), "oe-upgrade-docker-"));
+  const fake = (name: string, body: string): string => {
+    const file = join(dir, name);
+    writeFileSync(file, `#!/bin/sh\n${body}\n`);
+    chmodSync(file, 0o755);
+    return file;
+  };
+  const prev = process.env.EVE_DOCKER_PATH;
+  const probeWith = (bin: string, timeoutMs?: number): string | undefined => {
+    process.env.EVE_DOCKER_PATH = bin;
+    try {
+      return probeDockerDaemon(timeoutMs);
+    } finally {
+      if (prev === undefined) delete process.env.EVE_DOCKER_PATH;
+      else process.env.EVE_DOCKER_PATH = prev;
+    }
+  };
+  ok(probeWith(fake("up", `[ "$1 $2 $3" = "version --format {{.Server.Version}}" ] && echo 27.3.1 && exit 0; exit 9`)) === undefined, "probe: a daemon that reports its version is up");
+  const down = probeWith(fake("down", `echo "failed to connect to the docker API at unix:///var/run/docker.sock" >&2; exit 1`));
+  ok(down !== undefined && down.includes("exited 1") && down.includes("failed to connect to the docker API"), `🔴 probe: a CLI that cannot reach its daemon is down, with docker's first stderr line — got ${down}`);
+  const missing = probeWith(join(dir, "no-such-docker"));
+  ok(missing !== undefined && missing.includes("is not on this host"), `probe: no docker CLI is down — got ${missing}`);
+  const started = Date.now();
+  const hung = probeWith(fake("hang", "sleep 30"), 500);
+  ok(hung !== undefined && hung.includes("did not answer"), `🔴 probe: a CLI that hangs is down — got ${hung}`);
+  ok(Date.now() - started < 10_000, "🔴 probe: …and the timeout bounds the wait, so the upgrade never hangs on it");
 }
 
 {

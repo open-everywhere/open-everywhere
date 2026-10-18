@@ -20,6 +20,7 @@ export interface UpgradeIo {
   out(line: string): void;
   err(line: string): void;
   run(command: string, args: readonly string[], cwd: string): number;
+  dockerDaemonDown(): string | undefined;
   registry: UpgradeRegistry;
 }
 
@@ -322,11 +323,58 @@ function applyPins(manifest: AppManifest, target: string, evePeer: string, spec:
 function step(io: UpgradeIo, appRoot: string, label: string, command: readonly [string, readonly string[]], recovery: readonly string[] = []): boolean {
   io.out(`→ ${label}`);
   const code = io.run(command[0], command[1], appRoot);
-  if (code === 0) return true;
+  return code === 0 || stepFailed(io, label, code, recovery);
+}
+
+function stepFailed(io: UpgradeIo, label: string, code: number, recovery: readonly string[] = []): false {
   io.err(`✗ oe upgrade: ${label} exited ${code}. Nothing after this step ran.`);
   for (const line of recovery) io.err(`  ${line}`);
   io.err(`  Fix the cause, then run the same command again: it resumes from here rather than reporting there is nothing to do.`);
   return false;
+}
+
+const SKIP_PREWARM_FLAG = "--skip-sandbox-prewarm";
+
+function buildScriptTakesEveFlags(appRoot: string): boolean {
+  try {
+    const json = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8")) as { scripts?: Record<string, unknown> };
+    const script = json.scripts?.build;
+    return typeof script === "string" && /(^|[\s;&|])eve build\s*$/u.test(script);
+  } catch {
+    return false;
+  }
+}
+
+function buildStep(io: UpgradeIo, appRoot: string): boolean {
+  const label = "npm run build";
+  io.out(`→ ${label}`);
+  const code = io.run(...npmCommand(["run", "build"]), appRoot);
+  if (code === 0) return true;
+  const down = io.dockerDaemonDown();
+  if (down === undefined) return stepFailed(io, label, code);
+  if (!buildScriptTakesEveFlags(appRoot)) {
+    return stepFailed(io, label, code, [
+      `No Docker daemon answers (${down}), and this app's build script does not end in \`eve build\`, so oe upgrade cannot pass it ${SKIP_PREWARM_FLAG}. If eve says the Docker sandbox provider needs a running daemon, start the daemon.`,
+    ]);
+  }
+  io.out(
+    `! ${label} exited ${code} and no Docker daemon answers (${down}). With \`sandbox.selfHostBackend: "docker"\`, eve's build-time sandbox prewarm needs the daemon, so the step builds again with ${SKIP_PREWARM_FLAG}. eve says that output may not be deployable, so do not start or deploy it: a Vercel deploy builds again on Vercel, and off Vercel you run \`npm run build\` with the daemon running.`,
+  );
+  return step(io, appRoot, `${label} -- ${SKIP_PREWARM_FLAG}`, npmCommand(["run", "build", "--", SKIP_PREWARM_FLAG]));
+}
+
+export function probeDockerDaemon(timeoutMs = 15_000): string | undefined {
+  const bin = process.env.EVE_DOCKER_PATH?.trim() || "docker";
+  const r = spawnSync(bin, ["version", "--format", "{{.Server.Version}}"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs });
+  if (r.error !== undefined) {
+    const code = (r.error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return `the \`${bin}\` CLI is not on this host`;
+    if (code === "ETIMEDOUT") return `\`${bin} version\` did not answer in ${Math.round(timeoutMs / 1000)} s`;
+    return `\`${bin} version\` failed: ${r.error.message}`;
+  }
+  if (r.status === 0 && r.stdout.trim().length > 0) return undefined;
+  const first = r.stderr.split(/\r?\n/u).find((l) => l.trim().length > 0)?.trim();
+  return `\`${bin} version\` exited ${r.status ?? "on a signal"}${first === undefined ? "" : `: ${first}`}`;
 }
 
 const INSTALL_RECOVERY: readonly string[] = [
@@ -500,7 +548,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   for (const id of planned) io.out(`  run  codemod ${id} — ${codemodById(id)?.describe ?? `(not in this CLI's registry — ${target}'s registry resolves it)`}`);
   io.out(`  run  oe build --accept   (then READ the roster.lock.json diff — every line is a capability decision)`);
   io.out(`  run  npm run typecheck`);
-  io.out(`  run  npm run build`);
+  io.out(`  run  npm run build   (again with ${SKIP_PREWARM_FLAG} if it fails and no Docker daemon answers)`);
 
   if (plan) {
     await reportTemplateDrift(io, appRoot, target, manifest, before.kind === "ok" ? before.notes : undefined, registry);
@@ -562,7 +610,7 @@ export async function runUpgradeCommand(args: readonly string[], io: UpgradeIo, 
   }
   if (!step(io, appRoot, "oe build --accept", [oe[0], [...oe[1], "build", "--accept"]])) return 1;
   if (!step(io, appRoot, "npm run typecheck", npmCommand(["run", "typecheck"]))) return 1;
-  if (!step(io, appRoot, "npm run build", npmCommand(["run", "build"]))) return 1;
+  if (!buildStep(io, appRoot)) return 1;
 
   rmSync(join(appRoot, RESUME_MARKER), { force: true });
   io.out(`✓ oe upgrade: ${installed} → ${target}.`);
@@ -708,6 +756,7 @@ export function realUpgradeIo(): UpgradeIo {
     out: (line) => console.log(line),
     err: (line) => console.error(line),
     run: (command, args, cwd) => spawnSync(command, [...args], { cwd, stdio: "inherit" }).status ?? 1,
+    dockerDaemonDown: () => probeDockerDaemon(),
     registry: npmViewRegistry(),
   };
 }

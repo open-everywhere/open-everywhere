@@ -104,6 +104,7 @@ function harness(registry: Partial<UpgradeRegistry>, onRun: (args: readonly stri
         onRun(argv);
         return 0;
       },
+      dockerDaemonDown: () => undefined,
       registry: { latestVersion: async () => TARGET, evePeer: async () => "0.54.3", ...registry },
     },
   };

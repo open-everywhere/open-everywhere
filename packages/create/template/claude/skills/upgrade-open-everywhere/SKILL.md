@@ -122,7 +122,12 @@ In order, and it stops at the first step that fails:
 4. run the config codemods the target's notes name, and print the migrations that are yours;
 5. `oe build --accept` — this rewrites `roster.lock.json`;
 6. `npm run typecheck`;
-7. `npm run build`.
+7. `npm run build`. eve prepares the sandbox template at build time. Off Vercel an app whose
+   `sandbox.selfHostBackend` is `docker` needs a running Docker daemon for that (this template
+   declares `justbash`, which needs nothing). When the build fails, `docker version` does not
+   answer, and the app's `build` script ends in `eve build`, a core at 0.8.0 or later builds
+   again with `npm run build -- --skip-sandbox-prewarm` and says so in one line. eve says that output may not be deployable, so do not start or deploy
+   it. A Vercel deploy builds again on Vercel.
 
 A failed step prints which one and leaves the tree where it stopped. Fix the cause and run
 `oe upgrade` again: it RESUMES, from whichever step stopped it.
@@ -164,7 +169,8 @@ thing the agent can do. If a line surprises you, say so to the user before the p
 is the review surface, and it is the only one.
 
 Then run the app's own checks once more if anything above was fixed by hand:
-`npm run typecheck && npm run build`.
+`npm run typecheck && npm run build`. If the build stops because no Docker daemon runs, add
+`-- --skip-sandbox-prewarm` to the build, as `oe upgrade` does, and do not deploy that output.
 
 Then act on the template drift report. A core that carries it prints it again after the install;
 if this run printed no "Template drift" heading, run `npx oe upgrade --to <target> --plan` now to get it. For

@@ -185,6 +185,13 @@ packages quote their own module paths in comments.)
 Run `npx oe upgrade` from the app root. It bumps every `@open-everywhere/*` package together and
 pins `eve` to the target core's declared peer. Then it installs and runs the config codemods the
 release notes name. Last, it runs `oe build --accept`, `npm run typecheck` and `npm run build`.
+eve prepares the sandbox template at build time. Off Vercel an app whose `sandbox.selfHostBackend` is
+`docker` (core's default; the template declares `justbash`) needs a running Docker daemon for that.
+When the build fails, `docker version` does not answer, and the app's `build` script ends in
+`eve build`, the build step builds again with `npm run build -- --skip-sandbox-prewarm` and says so
+in one line. That build proves the app builds.
+eve says its output may not be deployable, so do not start or deploy it. A Vercel deploy builds again
+on Vercel.
 `npx oe upgrade --plan` prints the plan and writes nothing. Review the `roster.lock.json` diff before you deploy.
 `UPGRADING.md` in `@open-everywhere/core` holds the release notes the command reads.
 
