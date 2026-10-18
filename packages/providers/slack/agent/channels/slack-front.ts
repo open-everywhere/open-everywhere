@@ -10,6 +10,7 @@ import {
   auditDmBotAuthorDrop,
   auditDmDriverAdmitted,
   dmDoorAdmitsDriver,
+  UNCHANGED_EDIT_DROP_REASON,
   parseMessageEvent,
   routeMessageEvent,
   liveDeps,
@@ -915,6 +916,10 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         return OK();
       }
       if (slackFrontTenantFenceDeclined(dev, `dm-${decision.dmKind}`, "front-dm-branch")) return fencedAck(OK());
+      if (dev.unchangedEdit) {
+        console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: no wake — ${UNCHANGED_EDIT_DROP_REASON}`);
+        return OK();
+      }
       const driverAdmitted = Boolean(dev.botId) && dmDoorAdmitsDriver(dev) && dev.botId !== (await getBotIdentity()).botId;
       if (driverAdmitted) {
         args.waitUntil(
@@ -1408,6 +1413,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     const ev = parseMessageEvent(decision.env);
     if (!ev) return OK();
+    if (ev.unchangedEdit) return OK();
     persistAttachments(ev);
 
     const identity = await getBotIdentity();

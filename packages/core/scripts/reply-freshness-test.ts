@@ -343,4 +343,37 @@ const rowsFor = async (action: string, wakeId: string): Promise<Record<string, u
   ok(typeof stillStale.error === "string", "🔴 §10/STICKY: an INTERNAL re-register of a human's wake does NOT clear `inbound` — the redrive cannot silence the gate");
 }
 
+{
+  const inTurn = newSession();
+  const anchorTs = "1770441610.827000";
+  const topLevel = (ts: string): UnifiedWakeOrigin => ({ platform: "slack", channelId: "C_SAME", replyAnchorTs: ts });
+  const at = Date.now() - 5000;
+  const mention = mintWakeId();
+  await registerUnifiedWakeTarget(store, ORG, mention, topLevel(anchorTs), new Date(at).toISOString(), TOKEN, true);
+  const sibling = mintWakeId();
+  await registerUnifiedWakeTarget(store, ORG, sibling, topLevel(anchorTs), new Date(at + 1).toISOString(), TOKEN, true);
+  const before = posted.length;
+
+  const out = await inTurn(() => callReply(mention, "turn_1100", mention, "Cover for Ana, who is away: yes, it is still scheduled."));
+  ok(out.posted === true, "🔴 §11: a second wake for the SAME message (same conversation, same anchor ts) does NOT make the answer stale — it POSTS");
+  ok(posted.length === before + 1, "§11/ROOM: the answer reached the room, once");
+  ok((await rowsFor("reply.refused", mention)).length === 0, "§11/AUDIT: no stale-conversation refusal row");
+
+  const target = topLevel(anchorTs);
+  const viaTurn = await replyFreshness(store, ORG, { target, windowToken: TOKEN, inputWake: "no-such-wake", turnWake: mention });
+  ok(viaTurn.stale === false, "§11: …and the turn wake's origin alone is enough to match the sibling as the same message");
+
+  const burstSeen = mintWakeId();
+  await registerUnifiedWakeTarget(store, ORG, burstSeen, { platform: "slack", channelId: "C_SAME2", replyAnchorTs: "1770441640.000100" }, new Date(at).toISOString(), TOKEN, true);
+  await registerUnifiedWakeTarget(store, ORG, mintWakeId(), { platform: "slack", channelId: "C_SAME2", replyAnchorTs: "1770441640.000200" }, new Date(at + 1).toISOString(), TOKEN, true);
+  const burst = await replyFreshness(store, ORG, { target: { platform: "slack", channelId: "C_SAME2", replyAnchorTs: "1770441640.000100" }, windowToken: TOKEN, inputWake: burstSeen, turnWake: burstSeen });
+  ok(burst.stale === true && burst.newer === 1, "§11/CONTROL: a different message 1 ms later IS newer — the real burst still refuses");
+
+  const threadSeen = mintWakeId();
+  await registerUnifiedWakeTarget(store, ORG, threadSeen, { platform: "slack", channelId: "C_SAME3", threadTs: "1.1" }, new Date(at).toISOString(), TOKEN, true);
+  await registerUnifiedWakeTarget(store, ORG, mintWakeId(), { platform: "slack", channelId: "C_SAME3", threadTs: "1.1" }, new Date(at + 1).toISOString(), TOKEN, true);
+  const thread = await replyFreshness(store, ORG, { target: { platform: "slack", channelId: "C_SAME3", threadTs: "1.1" }, windowToken: TOKEN, inputWake: threadSeen, turnWake: threadSeen });
+  ok(thread.stale === true, "§11/CONTROL: a threaded follow-up (no placement anchor) still refuses — the rule matches the same message only");
+}
+
 console.log(`✓ reply freshness gate: ${passed} assertions passed`);

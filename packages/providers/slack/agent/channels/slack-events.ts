@@ -164,6 +164,7 @@ export interface ParsedMessageEvent {
   readonly text: string;
   readonly authoredText: string;
   readonly previousText?: string;
+  readonly unchangedEdit?: true;
   readonly isAppMention: boolean;
   readonly attachments?: readonly WakeAttachment[];
   readonly appContext?: SlackAppContextRoom;
@@ -421,6 +422,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   for (const a of attachments) {
     if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, teamId });
   }
+  const unchangedEdit = previousMessage !== undefined && isUnchangedSlackEdit(inner, previousMessage);
   return {
     channelId,
     ts,
@@ -434,11 +436,30 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     text,
     authoredText,
     previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
+    ...(unchangedEdit ? { unchangedEdit: true as const } : {}),
     isAppMention: e.type === "app_mention",
     attachments,
     ...(appContext === undefined ? {} : { appContext }),
   };
 }
+
+export function isUnchangedSlackEdit(inner: Record<string, unknown>, previous: Record<string, unknown>): boolean {
+  const textOf = (m: Record<string, unknown>): string => resolveSlackInboundText(typeof m.text === "string" ? m.text : "", m);
+  if (typeof previous.text !== "string") return false;
+  if (textOf(inner) !== textOf(previous)) return false;
+  const fileKeys = (m: Record<string, unknown>): string =>
+    (Array.isArray(m.files) ? m.files : [])
+      .map((f) => {
+        const o = typeof f === "object" && f !== null ? (f as Record<string, unknown>) : {};
+        const key = [o["id"], o["url_private"], o["name"]].find((v) => typeof v === "string") ?? "";
+        return `${String(key)}${o["mode"] === "tombstone" ? ":tombstone" : ""}`;
+      })
+      .sort()
+      .join("\n");
+  return fileKeys(inner) === fileKeys(previous);
+}
+
+export const UNCHANGED_EDIT_DROP_REASON = "an edit that changed no words and no files (a metadata-only message_changed) — not news";
 
 function slackTsToIso(ts: string): string {
   const seconds = Number.parseFloat(ts);
@@ -946,6 +967,7 @@ export async function auditDmDriverAdmitted(ev: ParsedMessageEvent, dmKind: "im"
     dmKind,
     botId: ev.botId ?? null,
     team: ev.teamId ?? null,
+    subtype: ev.subtype ?? null,
   });
 }
 

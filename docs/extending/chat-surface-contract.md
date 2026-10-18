@@ -1300,7 +1300,11 @@ model must write the full message, not only the new part.
 (`reply-freshness.ts`) anchors on the later of the echoed wake's stamp and the turn's own wake stamp,
 then counts pending inbound wakes registered after that anchor **in the same conversation**. A row is
 counted only when it parses as a known origin and names this conversation; an unreadable origin never
-counts. With no window token, or with no stamp on either wake, or on a store error, the gate is simply
+counts. A row that names the **same vendor message** as a wake the turn was shown is never counted:
+one Slack message can reach a seat as two wakes (an `app_mention` and its `message.channels` twin),
+and a message is not newer than itself (OPE-2576). The test is the conversation plus the placement
+anchor (`unifiedPlacementRef`: a top-level Slack trigger's own `ts`, a Discord message's own id), so
+on Slack a threaded reply, a DM and a routine fire never match and are counted as before. With no window token, or with no stamp on either wake, or on a store error, the gate is simply
 off and the answer lands. The unified window has no question road (OPE-2389), so every inbound
 wake there reaches the seat and is counted.
 
@@ -1742,7 +1746,9 @@ room chatter needs a standing room, so only three can carry that leg.
 The **Message-EDIT wake** row is Slack alone, and the shared code reads wider than the behaviour.
 `shouldDeliverReply` carves `message_changed` out of its blanket subtype refusal, so an edit in an
 engaged Slack thread wakes the seat with `reason="message-edited"` and the pre-edit text in
-`<previous-body>`. The other five surfaces raise no wake from an edit, and each is stopped by a
+`<previous-body>`. An edit that changes no words and no files is not a wake on any Slack door
+(`isUnchangedSlackEdit`, OPE-2577): Slack raises `message_changed` for metadata too, such as a link
+unfurl or the agent-session status OE sets on a DM's root message. The other five surfaces raise no wake from an edit, and each is stopped by a
 different filter. Three sit outside this repository: the Discord relay subscribes to
 `MessageCreate` only, so the event never reaches the deployment at all; Teams sends an edit as a
 `messageUpdate` activity that eve's inbound parser does not admit; and eve's GitHub route dispatches

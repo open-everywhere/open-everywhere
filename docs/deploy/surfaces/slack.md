@@ -955,6 +955,9 @@ is the Messages tab and the side panel:
 
 **Limits.**
 
+- Slack raises a hidden `message_changed` on the session's root message each time OE sets the
+  session's status or title. The edit changes no words and no files, so no Slack door wakes on it
+  (OPE-2577). A person's real edit, which changes the words or the files, still wakes the seat.
 - A channel thread gets no session title from OE, and no session state except the `active` a Stop
   press sets. A shortcut, even on a threaded DM message, sets no session state. A channel turn's status line still rides
   `assistant.threads.setStatus`, and a Stop press that arrives from a channel thread stops that

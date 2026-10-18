@@ -6941,46 +6941,52 @@ export const SCENARIOS: readonly Scenario[] = [
       if (asker === person) return ctx.fixtureMissing("S-COVER needs the second Slack user to differ from the synthetic admin: a person's own mention is no cover question.");
       const ownRow = (r: AuditWireEntry): boolean => r.principalId === `slack/${teamId}/${person}`;
 
-      const onAt = await presenceSince(ctx, "S-COVER on");
-      const on = await synthetic.slash("cover on", { teamId, channelId: ctx.dm!.channelId });
-      const onText = decodeSlackEphemeralText(on.body);
-      if (onText.startsWith("Turn cover on from your direct message") || onText.startsWith("Cover is for members")) {
-        return ctx.fixtureMissing(`S-COVER: the forged command did not bind as a member's own DM — answer head: "${onText.slice(0, 160)}"`);
+      let turnedOff = false;
+      try {
+        const onAt = await presenceSince(ctx, "S-COVER on");
+        const on = await synthetic.slash("cover on", { teamId, channelId: ctx.dm!.channelId });
+        const onText = decodeSlackEphemeralText(on.body);
+        if (onText.startsWith("Turn cover on from your direct message") || onText.startsWith("Cover is for members")) {
+          return ctx.fixtureMissing(`S-COVER: the forged command did not bind as a member's own DM — answer head: "${onText.slice(0, 160)}"`);
+        }
+        ctx.gate(on.status === 200 && (onText.startsWith("Done. Cover is on") || onText.startsWith("It was already on.")), `S-COVER: /oe cover on turns cover on — answer head: "${onText.slice(0, 160)}"`);
+        const onRow = await pollOptional(
+          async () => (await read({ sinceIso: onAt, actions: ["cover.set"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["on"] === true),
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER: the cover.set row (on)" },
+        );
+        ctx.gate(onRow !== undefined, "S-COVER: a cover.set row names the person, on:true");
+
+        const askAt = await presenceSince(ctx, "S-COVER ask");
+        const { ts: anchor } = await slack.post(fixtureLine("(e2e S-COVER) anchor — thread parent for a question to an absent person"));
+        const ask = slack.mention(`<@${person}> is the e2e cover check still scheduled? (answer from this channel only)`);
+        const sent = await synthetic.channelMention({ text: ask, userId: asker, teamId, ts: anchor });
+        ctx.gate(sent.status === 200, `S-COVER: the forged mention is acknowledged (HTTP ${sent.status})`);
+        const reply = await slack.awaitThreadReply(anchor, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+        ctx.gate(reply.text.trimStart().startsWith("Cover for"), `S-COVER: the reply starts with the host's cover label — reply head: "${reply.text.slice(0, 160)}"`);
+        const wakeRow = await pollOptional(
+          async () => (await read({ sinceIso: askAt, actions: ["cover.wake"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["recorded"] === true),
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER: the cover.wake row" },
+        );
+        ctx.gate(wakeRow !== undefined, "S-COVER: a cover.wake row names the person, and the question entered the recap log");
+        const answered = await pollOptional(
+          async () => (await read({ sinceIso: askAt, actions: ["cover.answered"], limit: 50 })).find(ownRow),
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER: the cover.answered row" },
+        );
+        ctx.gate(answered !== undefined && answered.detail?.["wakeId"] === wakeRow?.detail?.["wakeId"], "S-COVER: a cover.answered row names the same wake");
+
+        const offAt = await presenceSince(ctx, "S-COVER off");
+        const off = await synthetic.slash("cover off", { teamId, channelId: ctx.dm!.channelId });
+        const offText = decodeSlackEphemeralText(off.body);
+        ctx.gate(off.status === 200 && offText.startsWith("Cover is off."), `S-COVER: /oe cover off turns cover off — answer head: "${offText.slice(0, 160)}"`);
+        turnedOff = off.status === 200 && offText.startsWith("Cover is off.");
+        const recapRow = await pollOptional(
+          async () => (await read({ sinceIso: offAt, actions: ["cover.recap", "cover.recap_refused"], limit: 50 })).find(ownRow),
+          { timeoutMs: 660_000, initialDelayMs: 15_000, maxDelayMs: 30_000, what: "S-COVER: the recap row (the cover-recap schedule runs every 5 minutes)" },
+        );
+        ctx.gate(recapRow?.action === "cover.recap" && Number(recapRow.detail?.["questions"]) >= 1, `S-COVER: a cover.recap row shows at least one question (got ${recapRow?.action ?? "no row"})`);
+      } finally {
+        if (!turnedOff) await synthetic.slash("cover off", { teamId, channelId: ctx.dm!.channelId }).catch(() => undefined);
       }
-      ctx.gate(on.status === 200 && (onText.startsWith("Done. Cover is on") || onText.startsWith("It was already on.")), `S-COVER: /oe cover on turns cover on — answer head: "${onText.slice(0, 160)}"`);
-      const onRow = await pollOptional(
-        async () => (await read({ sinceIso: onAt, actions: ["cover.set"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["on"] === true),
-        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER: the cover.set row (on)" },
-      );
-      ctx.gate(onRow !== undefined, "S-COVER: a cover.set row names the person, on:true");
-
-      const askAt = await presenceSince(ctx, "S-COVER ask");
-      const { ts: anchor } = await slack.post(fixtureLine("(e2e S-COVER) anchor — thread parent for a question to an absent person"));
-      const ask = slack.mention(`<@${person}> is the e2e cover check still scheduled? (answer from this channel only)`);
-      const sent = await synthetic.channelMention({ text: ask, userId: asker, teamId, ts: anchor });
-      ctx.gate(sent.status === 200, `S-COVER: the forged mention is acknowledged (HTTP ${sent.status})`);
-      const reply = await slack.awaitThreadReply(anchor, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
-      ctx.gate(reply.text.trimStart().startsWith("Cover for"), `S-COVER: the reply starts with the host's cover label — reply head: "${reply.text.slice(0, 160)}"`);
-      const wakeRow = await pollOptional(
-        async () => (await read({ sinceIso: askAt, actions: ["cover.wake"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["recorded"] === true),
-        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER: the cover.wake row" },
-      );
-      ctx.gate(wakeRow !== undefined, "S-COVER: a cover.wake row names the person, and the question entered the recap log");
-      const answered = await pollOptional(
-        async () => (await read({ sinceIso: askAt, actions: ["cover.answered"], limit: 50 })).find(ownRow),
-        { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER: the cover.answered row" },
-      );
-      ctx.gate(answered !== undefined && answered.detail?.["wakeId"] === wakeRow?.detail?.["wakeId"], "S-COVER: a cover.answered row names the same wake");
-
-      const offAt = await presenceSince(ctx, "S-COVER off");
-      const off = await synthetic.slash("cover off", { teamId, channelId: ctx.dm!.channelId });
-      const offText = decodeSlackEphemeralText(off.body);
-      ctx.gate(off.status === 200 && offText.startsWith("Cover is off."), `S-COVER: /oe cover off turns cover off — answer head: "${offText.slice(0, 160)}"`);
-      const recapRow = await pollOptional(
-        async () => (await read({ sinceIso: offAt, actions: ["cover.recap", "cover.recap_refused"], limit: 50 })).find(ownRow),
-        { timeoutMs: 660_000, initialDelayMs: 15_000, maxDelayMs: 30_000, what: "S-COVER: the recap row (the cover-recap schedule runs every 5 minutes)" },
-      );
-      ctx.gate(recapRow?.action === "cover.recap" && Number(recapRow.detail?.["questions"]) >= 1, `S-COVER: a cover.recap row shows at least one question (got ${recapRow?.action ?? "no row"})`);
     },
   },
 

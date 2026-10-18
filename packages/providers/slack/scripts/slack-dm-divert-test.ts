@@ -8,6 +8,8 @@ import { withSlackVoiceClips } from "../agent/channels/slack-voice-clips.js";
 import {
   DM_BOT_AUTHOR_DROP_REASON,
   DM_DRIVER_ADMIT_REASON,
+  isUnchangedSlackEdit,
+  parseMessageEvent,
   slackWakeAuthorFacts,
   type SlackMemberProbe,
 } from "../agent/channels/slack-events.js";
@@ -1070,4 +1072,82 @@ overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "en
   ok((await withSlackVoiceClips(noClip, { hear: async () => { throw new Error("must not run"); } })) === noClip, "a message with no clip is not touched");
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips)`);
+{
+  const ORIGINAL_TS = "1775897187.348000";
+  const editEnvelope = (eventId: string, noticeTs: string, after: Record<string, unknown>, before: Record<string, unknown> | undefined, over: Record<string, unknown> = {}): string =>
+    dmEnvelope(eventId, {
+      subtype: "message_changed",
+      hidden: true,
+      ts: noticeTs,
+      text: undefined,
+      user: undefined,
+      message: { type: "message", user: USER, ts: ORIGINAL_TS, text: "what's the refund status?", ...after },
+      ...(before === undefined ? {} : { previous_message: { type: "message", user: USER, ts: ORIGINAL_TS, text: "what's the refund status?", ...before } }),
+      ...over,
+    });
+
+  const same = { text: "hi", files: [{ id: "F1", name: "a.m4a" }] };
+  ok(isUnchangedSlackEdit({ ...same, assistant_app_thread: { title: "hi" } }, same), "🔴 an edit that adds only metadata (Slack's session title) changes nothing");
+  ok(!isUnchangedSlackEdit({ ...same, text: "hi there" }, same), "…a change in the typed words is a real edit");
+  ok(!isUnchangedSlackEdit({ ...same, files: [{ id: "F2", name: "b.m4a" }] }, same), "…a different file is a real edit");
+  ok(!isUnchangedSlackEdit({ ...same, files: [{ id: "F1", mode: "tombstone" }] }, same), "…a deleted file (same id, `mode: \"tombstone\"`) is a real edit");
+  ok(isUnchangedSlackEdit({ text: "hi", files: [{ id: "F1", mode: "hosted" }] }, { text: "hi", files: [{ id: "F1" }] }), "…while a non-tombstone `mode` that only one copy carries changes nothing");
+  ok(!isUnchangedSlackEdit({ text: "hi", attachments: [{ is_share: true, text: "quoted words" }] }, { text: "hi" }), "…a newly quoted message is a real edit (the inbound text grows)");
+  ok(!isUnchangedSlackEdit({ text: "hi" }, {}), "…and a notice with no pre-edit text to compare is treated as a real edit (fail toward the wake)");
+
+  const parsed = parseMessageEvent(JSON.parse(editEnvelope("Ev16p", "1775897187.003900", {}, {})));
+  eq(parsed?.unchangedEdit, true, "the parse marks a metadata-only `message_changed`");
+  eq(parseMessageEvent(JSON.parse(dmEnvelope("Ev16q")))?.unchangedEdit, undefined, "…and leaves a plain message unmarked");
+
+  const meta = await runFront(editEnvelope("Ev16a", "1775897187.003900", { assistant_app_thread: { title: "refund status" } }, {}), { partnerTrust: "internal" });
+  eq(meta.dispatched.length, 0, "🔴 a metadata-only edit of the person's DM message wakes NOTHING — it is not a new message, so it must not make the real answer stale");
+  ok(!meta.innerCalled, "…and it is not forwarded to eve's native door either");
+  eq(meta.res.status, 200, "…and Slack still gets its 200");
+
+  const real = await runFront(editEnvelope("Ev16b", "1775897210.004100", { text: "what's the refund status for order 4417?" }, {}), { partnerTrust: "internal" });
+  eq(real.dispatched.length, 1, "🔴 NEGATIVE CONTROL: a REAL edit (new words) still wakes the seat");
+  ok(real.dispatched[0]!.message.includes("order 4417"), "…with the post-edit words");
+
+  const noPrev = await runFront(editEnvelope("Ev16c", "1775897211.004300", {}, undefined), { partnerTrust: "internal" });
+  eq(noPrev.dispatched.length, 1, "a `message_changed` with no `previous_message` still wakes — the rule never guesses an edit away");
+
+  const DRIVER_BOT = "B0DRIVER99";
+  overrideSettingsForTest({ wake: { e2eDrivers: [{ surface: "slack" as const, principal: `${TEAM}:${DRIVER_BOT}` }] } });
+  const store = getOperationalStore();
+  const admitted = async (ts: string) =>
+    (await store.readAudit({ org: "default", action: "surface.wake_admitted" })).filter((r) => (r.detail as { ts?: unknown } | undefined)?.ts === ts);
+  const driverTs = "1775897192.004100";
+  const driverMeta = await runFront(editEnvelope("Ev16d", driverTs, { bot_id: DRIVER_BOT }, { bot_id: DRIVER_BOT }), { partnerTrust: "internal" });
+  eq(driverMeta.dispatched.length, 0, "🔴 the driver's metadata-only edit wakes nothing either — the drop sits ABOVE the driver carve-out");
+  eq((await admitted(driverTs)).length, 0, "…and writes no `surface.wake_admitted` row");
+  const typedTs = "1775897220.111111";
+  const typed = await runFront(dmEnvelope("Ev16e", { bot_id: DRIVER_BOT, ts: typedTs }), { partnerTrust: "internal" });
+  eq(typed.dispatched.length, 1, "CONTROL: the driver's typed DM still wakes");
+  eq(((await admitted(typedTs))[0]?.detail as Record<string, unknown> | undefined)?.["subtype"], null, "…and its admission row now names the subtype (null for a typed message), so the next red needs no inference");
+  overrideSettingsForTest({ wake: { e2eDrivers: [] } });
+
+  let channelSeen = 0;
+  const countSeen: Partial<FrontOptions> = { markEventSeen: async () => (channelSeen++, true) };
+  const chanEdit = (eventId: string, after: Record<string, unknown>) =>
+    JSON.stringify({
+      type: "event_callback",
+      event_id: eventId,
+      team_id: TEAM,
+      event: {
+        type: "message",
+        channel_type: "channel",
+        channel: "C0CHAN1",
+        subtype: "message_changed",
+        hidden: true,
+        ts: "1775897320.004000",
+        message: { type: "message", user: USER, ts: "1775897319.100000", thread_ts: "1775896620.000100", text: "see the doc", ...after },
+        previous_message: { type: "message", user: USER, ts: "1775897319.100000", thread_ts: "1775896620.000100", text: "see the doc" },
+      },
+    });
+  await runFront(chanEdit("Ev16f", { attachments: [{ title: "Doc", title_link: "https://example.com" }] }), { extra: countSeen });
+  eq(channelSeen, 0, "🔴 a metadata-only edit in a channel (a link unfurl) stops before the dedupe write — no wake candidate");
+  await runFront(chanEdit("Ev16g", { text: "see the NEW doc" }), { extra: countSeen });
+  eq(channelSeen, 1, "NEGATIVE CONTROL: a real channel edit reaches the dedupe write, the first step of every wake");
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (OPE-2577 unchanged-edit drop, classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips)`);

@@ -2,6 +2,7 @@ import { defineState } from "eve/context";
 import {
   isUnifiedWakeOrigin,
   sameUnifiedConversation,
+  unifiedPlacementRef,
   WAKE_TARGET_TTL_MS,
   type PendingUnifiedWake,
   type UnifiedWakeOrigin,
@@ -23,17 +24,39 @@ export type ReplyFreshness =
   | { readonly stale: false }
   | { readonly stale: true; readonly newer: number; readonly capped: boolean };
 
-async function stampOf(store: ReplyFreshnessStore, org: string, wakeId: string | undefined): Promise<number | undefined> {
-  if (typeof wakeId !== "string" || wakeId.length === 0 || wakeId.length > 200) return undefined;
+interface ShownWake {
+  readonly at: number | undefined;
+  readonly origin: UnifiedWakeOrigin | undefined;
+}
+
+function originOf(targetJson: string): UnifiedWakeOrigin | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(targetJson);
+  } catch {
+    return undefined;
+  }
+  return isUnifiedWakeOrigin(parsed) ? parsed : undefined;
+}
+
+async function shownWake(store: ReplyFreshnessStore, org: string, wakeId: string | undefined): Promise<ShownWake> {
+  const none: ShownWake = { at: undefined, origin: undefined };
+  if (typeof wakeId !== "string" || wakeId.length === 0 || wakeId.length > 200) return none;
   let row: UnifiedWakeRecord | null;
   try {
     row = await store.getUnifiedWakeRecord(org, wakeId);
   } catch {
-    return undefined;
+    return none;
   }
-  if (!row) return undefined;
+  if (!row) return none;
   const at = Date.parse(row.createdAt);
-  return Number.isFinite(at) ? at : undefined;
+  return { at: Number.isFinite(at) ? at : undefined, origin: originOf(row.targetJson) };
+}
+
+function sameMessage(row: UnifiedWakeOrigin, shown: readonly ShownWake[]): boolean {
+  const ref = unifiedPlacementRef(row);
+  if (ref === undefined) return false;
+  return shown.some((w) => w.origin !== undefined && sameUnifiedConversation(w.origin, row) && unifiedPlacementRef(w.origin) === ref);
 }
 
 export async function replyFreshness(
@@ -49,7 +72,8 @@ export async function replyFreshness(
 ): Promise<ReplyFreshness> {
   const fresh: ReplyFreshness = { stale: false };
   if (!input.windowToken) return fresh;
-  const [inputAt, turnAt] = await Promise.all([stampOf(store, org, input.inputWake), stampOf(store, org, input.turnWake)]);
+  const shown = await Promise.all([shownWake(store, org, input.inputWake), shownWake(store, org, input.turnWake)]);
+  const [inputAt, turnAt] = [shown[0].at, shown[1].at];
   if (inputAt === undefined && turnAt === undefined) return fresh;
   const anchorMs = Math.max(inputAt ?? Number.NEGATIVE_INFINITY, turnAt ?? Number.NEGATIVE_INFINITY);
   let rows: readonly PendingUnifiedWake[];
@@ -65,14 +89,10 @@ export async function replyFreshness(
     const at = Date.parse(row.createdAt);
     if (!Number.isFinite(at) || at <= anchorMs) continue;
     if (now - at > WAKE_TARGET_TTL_MS) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.targetJson);
-    } catch {
-      continue;
-    }
-    if (!isUnifiedWakeOrigin(parsed)) continue;
+    const parsed = originOf(row.targetJson);
+    if (parsed === undefined) continue;
     if (!sameUnifiedConversation(parsed, input.target)) continue;
+    if (sameMessage(parsed, shown)) continue;
     newer += 1;
   }
   if (newer === 0) return fresh;
