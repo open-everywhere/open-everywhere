@@ -20,6 +20,7 @@ import {
 export type { AuditCursor } from "./audit-cursor";
 import { REDELIVERY_SIGNATURE, REDELIVERY_STORM_THRESHOLD, RedeliveryStormGuard } from "./redelivery-storm-guard";
 import { installHostFetchStub } from "./fetch-stub";
+import { giveIdleCloseToClient } from "./fork-host-keepalive";
 import { copyPgliteTemplateInto } from "./pglite-template";
 import { createStateDir } from "./state-dir";
 
@@ -469,6 +470,7 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   bootedOutputDir = join(ROOT, ".output");
   const entry = pathToFileURL(join(bootedOutputDir, "server", "index.mjs")).href;
   await reserved.bindListenerOnReservation(() => import(entry));
+  giveIdleCloseToClient(reserved.adoptedListener());
   const base = `http://127.0.0.1:${reserved.port}`;
   const deadline = Date.now() + 60_000;
   for (;;) {

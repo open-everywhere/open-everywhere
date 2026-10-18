@@ -304,6 +304,7 @@
     "test:sandbox-region": "tsx scripts/sandbox-region-test.ts",
     "test:subagent-zero-hands": "tsx scripts/subagent-zero-hands-test.ts",
     "test:ephemeral-port": "tsx scripts/ephemeral-port-test.ts",
+    "test:fork-host-keepalive": "tsx scripts/fork-host-keepalive-test.ts",
     "test:ci-max-workers": "tsx scripts/ci-max-workers-test.ts",
     "test:it-memory-config": "tsx scripts/it-memory-config-test.ts",
     "test:docker-smoke": "bash scripts/docker-smoke.sh",

@@ -8,6 +8,7 @@ export interface ReservedPort {
   readonly port: number;
   release(): Promise<void>;
   bindListenerOnReservation<T>(bind: () => Promise<T>, timeoutMs?: number): Promise<T>;
+  adoptedListener(): Server | undefined;
 }
 
 function listenPort(args: readonly unknown[]): number | undefined {
@@ -34,6 +35,7 @@ export function reserveEphemeralPort(host = "127.0.0.1"): Promise<ReservedPort> 
       const port = address.port;
       let released = false;
       let handoffStarted = false;
+      let adopter: Server | undefined;
       const release = (): Promise<void> =>
         new Promise<void>((res) => {
           if (released) {
@@ -46,6 +48,7 @@ export function reserveEphemeralPort(host = "127.0.0.1"): Promise<ReservedPort> 
       resolve({
         port,
         release,
+        adoptedListener: () => adopter,
         async bindListenerOnReservation<T>(bind: () => Promise<T>, timeoutMs = HANDOFF_TIMEOUT_MS): Promise<T> {
           if (handoffStarted || released) throw new Error("bindListenerOnReservation: this reservation is already released or handed off.");
           handoffStarted = true;
@@ -57,6 +60,7 @@ export function reserveEphemeralPort(host = "127.0.0.1"): Promise<ReservedPort> 
             if (released || listenPort(args) !== port) return (original as (...a: unknown[]) => Server).apply(this, args);
             if (Server.prototype.listen === intercept) Server.prototype.listen = original;
             released = true;
+            adopter = this;
             (srv as unknown as { _handle: unknown })._handle = null;
             handedOff();
             const callback = args.findLast((a) => typeof a === "function");

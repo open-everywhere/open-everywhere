@@ -226,3 +226,4 @@ lint:seat-vocabulary
 test:seat-vocabulary-lint
 test:event-reach-live
 lint:eve-telemetry
+test:fork-host-keepalive
