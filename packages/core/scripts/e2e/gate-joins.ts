@@ -1627,3 +1627,91 @@ export function textOpensWithHeadline(text: string, headline: string): boolean {
   const source = parts.map((p, i) => (i % 2 === 0 ? esc(p) : slot(p))).join("");
   return new RegExp(`^${source}`, "u").test(flat(text));
 }
+
+export const JUDGE_LIFT_ATTEMPTS = 3;
+
+export function judgeLiftAsk(token: string, at: Date): string {
+  const when = `${at.toISOString().slice(0, 16)}Z`;
+  return (
+    `please create a routine for me in this conversation. It runs once only, at ${when} (UTC), and never repeats. ` +
+    `When it runs, it posts exactly the word ${token} back to this conversation, and it does nothing else. Confirm when it is scheduled.`
+  );
+}
+
+function isRoutineApprovalRow(row: AuditWireEntry): boolean {
+  return dstr(row, "tool") === "create_routine" || (dstr(row, "action") ?? dstr(row, "kind") ?? "").startsWith("routine.");
+}
+
+const JUDGE_SOURCE_WORDS: Readonly<Record<string, string>> = {
+  unavailable: "no judge model is registered",
+  error: "the judge model call failed",
+  timeout: "the judge ran out of time",
+  "admin-disarm": "an operator disarmed the judge",
+  "human-only": "the act is in a class only a person may approve",
+  "no-rules": "this place carries no pre-approval rule",
+};
+
+function oneLine(text: string, max = 200): string {
+  const flat = text.replace(/\s+/gu, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+export function judgeNoLiftReason(rows: readonly AuditWireEntry[]): string {
+  const verdict = rows.find((r) => r.action === APPROVAL_JUDGE_VERDICT_ACTION && isRoutineApprovalRow(r));
+  if (verdict !== undefined) {
+    const said = dstr(verdict, "verdict") ?? "no answer";
+    const enforced = dstr(verdict, "enforcedVerdict");
+    const source = dstr(verdict, "source") ?? "";
+    const reason = oneLine(dstr(verdict, "reasoning") ?? "(no reason recorded)");
+    const notDecided = JUDGE_SOURCE_WORDS[source];
+    if (notDecided !== undefined) return `the judge did not decide (${notDecided}): ${reason}`;
+    const citation = dstr(verdict, "ruleCitation");
+    const cited =
+      citation === "unmatched" ? ", citing a rule this place does not carry" : citation === "uncited" ? ", citing no rule" : "";
+    const held = enforced !== undefined && enforced !== said ? `, enforced as "${enforced}"` : "";
+    const cache = verdict.detail?.cacheHit === true || source === "cache" ? " from its cache" : "";
+    return `the judge answered "${said}"${cache}${cited}${held}: ${reason}`;
+  }
+  const chain = rows.find((r) => r.action === "approval.chain" && isRoutineApprovalRow(r));
+  const consult = chainJudgeConsult(chain);
+  if (chain !== undefined && consult !== undefined) {
+    const notDecided = JUDGE_SOURCE_WORDS[consult.source ?? ""];
+    return notDecided !== undefined
+      ? `the judge did not decide (${notDecided}); its verdict row is missing, so no reason was recorded`
+      : `the judge answered "${consult.verdict ?? "no answer"}"; its verdict row is missing, so no reason was recorded`;
+  }
+  if (chain !== undefined) {
+    const raw = chain.detail?.transforms;
+    const transforms = Array.isArray(raw) ? (raw as readonly { reason?: unknown }[]) : [];
+    const why = transforms.map((t) => (typeof t.reason === "string" ? t.reason : "")).filter((s) => s.length > 0);
+    const unattended = chain.detail?.unattended === true ? " on a turn with nobody present" : "";
+    return (
+      `the judge was not asked: the approval chain answered "${dstr(chain, "verdict") ?? "no answer"}" at the ${dstr(chain, "resolvedBy") ?? "unnamed"} step` +
+      `${why.length > 0 ? ` (${why.join(", ")})` : ""}${unattended}`
+    );
+  }
+  return "no approval row for a routine: the seat proposed no routine in the wait";
+}
+
+function chainJudgeConsult(chain: AuditWireEntry | undefined): { readonly verdict?: string; readonly source?: string } | undefined {
+  const j = chain?.detail?.judge;
+  if (typeof j !== "object" || j === null) return undefined;
+  const { verdict, source } = j as { verdict?: unknown; source?: unknown };
+  return { ...(typeof verdict === "string" ? { verdict } : {}), ...(typeof source === "string" ? { source } : {}) };
+}
+
+export type JudgeLiftDecision = { readonly lift: AuditWireEntry } | { readonly noLift: string };
+
+export function judgeLiftDecision(rows: readonly AuditWireEntry[]): JudgeLiftDecision | undefined {
+  const lifted = rows.filter((r) => r.action === "approval.autoapproved" && isRoutineApprovalRow(r));
+  const lift = lifted.find((r) => dstr(r, "resolvedBy") === "judge");
+  if (lift !== undefined) return { lift };
+  if (lifted.length > 0) {
+    return { noLift: `the routine ran with no card, but the ${dstr(lifted[0]!, "resolvedBy") ?? "unnamed"} step lifted it, not the judge, so no notice is owed` };
+  }
+  const chain = rows.find((r) => r.action === "approval.chain" && isRoutineApprovalRow(r));
+  if (chain === undefined || dstr(chain, "verdict") === "allow") return undefined;
+  const verdictLanded = rows.some((r) => r.action === APPROVAL_JUDGE_VERDICT_ACTION && isRoutineApprovalRow(r));
+  if (chainJudgeConsult(chain) !== undefined && !verdictLanded) return undefined;
+  return { noLift: judgeNoLiftReason(rows) };
+}

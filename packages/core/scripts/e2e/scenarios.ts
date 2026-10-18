@@ -184,6 +184,10 @@ import {
   haltSetByThisRun,
   isPersistOutcome,
   judgeDeniedRoutineCreation,
+  JUDGE_LIFT_ATTEMPTS,
+  judgeLiftAsk,
+  judgeLiftDecision,
+  judgeNoLiftReason,
   MEMORY_CLAIM_WITHHELD_ACTION,
   MEMORY_WRITE_ACTION,
   memoryPathReadsBetween,
@@ -9382,67 +9386,82 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-JUDGE-LIFT-NOTICE",
     title: "OPE-1902: an act the ARMED JUDGE lifted posts NO card, and the room still gets a notice carrying the contradict affordance",
-    requires: ["github", "slack"],
-    surface: "cross",
+    requires: ["slack"],
+    surface: "slack",
     suite: "core",
-    timeoutMs: 1_800_000,
+    timeoutMs: 2_100_000,
     judged: false,
     run: async (ctx) => {
       requireAuditRead(ctx);
       const auditRead = ctx.auditRead!;
-      const github = ctx.github!;
       const slack = ctx.slack!;
-      const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
-      const note = factToken("judgelift");
-      const issue = await github.createIssue(`(e2e) S-JUDGE-LIFT-NOTICE ${note}`, `A judge-lift probe for OPE-1902 (${note}). This issue is driven by the e2e pack and is closed on teardown.`);
-      try {
-        const askId = await github.comment(
-          issue,
-          github.mention(`schedule a ONE-SHOT check-in for a couple of minutes from now — a single "at" time, not a recurring cron/interval — that posts exactly the word ${note}. Confirm you've scheduled it.`),
-        );
-        await github.awaitBotReply(issue, askId, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
-
-        const lift = await pollOptional(
-          async () => {
-            const rows = await auditRead({ sinceIso, actions: ["approval.autoapproved"] });
-            const mine = rows.filter((e) => {
-              const d = e.detail as { resolvedBy?: unknown; kind?: unknown; scopeKey?: unknown } | undefined;
-              return d?.resolvedBy === "judge" && String(d?.kind ?? "").startsWith("routine.") && String(d?.scopeKey ?? "").includes(github.repo);
-            });
-            return mine.length > 0 ? mine : undefined;
-          },
-          { timeoutMs: FILE_REPLY_WAIT, what: `an approval.autoapproved row resolved by the JUDGE for a routine act scoped to ${github.repo} (this leg's own lift)` },
-        );
-        if (lift === undefined) {
-          ctx.skip(
-            "the approval judge did not LIFT anything on this run — no `approval.autoapproved` row carries `resolvedBy: \"judge\"` in the window. " +
-              "The judge ships armed (`approvals.judgeMode: \"enforce\"`), so this is the judge's own verdict on this act, which is a model " +
-              "judgement no offline knob drives. A lift also needs a pre-approval rule in this scope that covers a routine (the starter rule " +
-              "`routine-reports-here`); with no such rule the judge never lifts. Nothing about the " +
-              "notice road was measured either way — this is not a deployment verdict, and it is deliberately not a red.",
-          );
-          ctx.gate(false, "S-JUDGE-LIFT-NOTICE reached its own unreachable tail — ctx.skip did not end the leg on a run with no judge lift");
+      const approvalRows = ["approval.autoapproved", APPROVAL_JUDGE_VERDICT_ACTION, "approval.chain"];
+      const onPlace = (r: AuditWireEntry): boolean => r.platform === "slack" && r.surface === slack.channelId;
+      const reasons: string[] = [];
+      let teardownStore: OperationalStore | null | undefined;
+      const expireCards = async (sinceIso: string): Promise<void> => {
+        const carded = (await auditRead({ sinceIso, actions: ["approval.requested"] }))
+          .filter(onPlace)
+          .filter((r) => String(r.detail?.kind ?? "").startsWith("routine.") && typeof r.detail?.id === "string");
+        if (carded.length === 0) return;
+        if (teardownStore === undefined) {
+          const dbUrl = process.env.DATABASE_URL;
+          teardownStore = dbUrl ? await wireNeonOperationalStore(dbUrl).catch(() => null) : null;
+        }
+        if (teardownStore === null) {
+          ctx.log(`S-JUDGE-LIFT-NOTICE: ${String(carded.length)} routine card(s) stay pending for the TTL sweep — no operational store is wired for teardown`);
           return;
         }
-        const row = lift[0].detail as { id?: unknown; kind?: unknown };
+        const nowIso = new Date().toISOString();
+        for (const c of carded) {
+          await teardownStore.decidePendingAction(c.org, c.detail!.id as string, "expired", "system", nowIso).catch(() => false);
+        }
+        ctx.log(`S-JUDGE-LIFT-NOTICE: expired ${String(carded.length)} pending routine card(s) out of band`);
+      };
+      let found: { readonly lift: AuditWireEntry; readonly askTs: string } | undefined;
+      for (let attempt = 1; attempt <= JUDGE_LIFT_ATTEMPTS && found === undefined; attempt++) {
+        const sinceIso = await presenceSince(ctx, "sinceIso", 5_000);
+        const note = factToken("judgelift");
+        const { ts: askTs } = await slack.post(slack.mention(judgeLiftAsk(note, new Date(Date.now() + 4 * 60_000))));
+        const decision = await pollOptional(
+          async () => judgeLiftDecision((await auditRead({ sinceIso, actions: approvalRows })).filter(onPlace)),
+          { timeoutMs: FILE_REPLY_WAIT, what: `the approval plane's decision on ask ${attempt}: a routine lift by the JUDGE, or the reason there was none` },
+        );
+        if (decision !== undefined && "lift" in decision) {
+          found = { lift: decision.lift, askTs };
+          ctx.log(`S-JUDGE-LIFT-NOTICE ask ${attempt}/${JUDGE_LIFT_ATTEMPTS}: the judge LIFTED the routine`);
+        } else {
+          const reason = decision?.noLift ?? judgeNoLiftReason((await auditRead({ sinceIso, actions: approvalRows })).filter(onPlace));
+          reasons.push(`ask ${attempt}: ${reason}`);
+          ctx.log(`S-JUDGE-LIFT-NOTICE ask ${attempt}/${JUDGE_LIFT_ATTEMPTS}: no lift — ${reason}`);
+          await expireCards(sinceIso);
+        }
+      }
+      if (found === undefined) {
+        ctx.skip(
+          `the approval judge lifted none of ${JUDGE_LIFT_ATTEMPTS} routine asks that its starter rule \`routine-reports-here\` covers word for word. ` +
+            `Why, per ask — ${reasons.join("; ")}. The judge's choice is a model judgement no offline knob drives, so this is not a deployment ` +
+            "verdict and it is deliberately not a red. Nothing about the notice road was measured either way.",
+        );
+        ctx.gate(false, "S-JUDGE-LIFT-NOTICE reached its own unreachable tail — ctx.skip did not end the leg on a run with no judge lift");
+        return;
+      }
+      {
+        const row = found.lift.detail as { id?: unknown; kind?: unknown };
         const pendingId = typeof row.id === "string" ? row.id : "";
         const liftedKind = String(row.kind ?? "");
         ctx.gate(pendingId.length > 0, `S-JUDGE-LIFT-NOTICE: the lift row names the pending id the notice is keyed on (kind "${liftedKind}")`);
 
+        const askTs = found.askTs;
         const posted = await pollOptional(
           async () =>
-            (await slack.latest(50)).find(
+            [...(await slack.latest(50)), ...(await slack.replies(askTs))].find(
               (m) => slack.isBotReply(m) && (contradictButton(m)?.pendingId === pendingId || approveButton(m)?.pendingId === pendingId || m.text.includes(pendingId)),
             ),
           { timeoutMs: FILE_REPLY_WAIT, what: `any card or notice naming pending ${pendingId} in the frozen venue room` },
         );
         if (posted === undefined) {
-          ctx.skip(
-            `the lift happened (pending ${pendingId}) but no notice naming it is visible in the Slack room this driver holds. The venue is the FIRST ` +
-              `card-capable room in the acting domain (#911's finding), and e2e-unified reaches two Slack channels — so the notice may have landed in ` +
-              `the other one, which this leg has no driver for. Point E2E_SLACK_CHANNEL at the domain's frozen venue to make this a hard gate.`,
-          );
-          ctx.gate(false, "S-JUDGE-LIFT-NOTICE reached its own unreachable tail — ctx.skip did not end the leg on a run whose notice was not visible");
+          ctx.gate(false, "🔴 S-JUDGE-LIFT-NOTICE (hard): the judge lifted the routine, and no notice of it reached the asking room — an act ran without asking and left no trace in the room");
           return;
         }
         const shown = posted.text.replace(/\s+/g, " ").trim().slice(0, 300);
@@ -9463,8 +9482,6 @@ export const SCENARIOS: readonly Scenario[] = [
           (affordance?.org.length ?? 0) > 0,
           "🔴 S-JUDGE-LIFT-NOTICE (hard): the contradict button carries the org in its `value` — flow.ts refuses a click without it as malformed, so a button missing it is an affordance that cannot be used",
         );
-      } finally {
-        await github.closeIssue(issue).catch(() => undefined);
       }
     },
   },

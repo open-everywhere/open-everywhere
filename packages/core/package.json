@@ -4298,6 +4298,7 @@
     "test:halt": "NODE_NO_WARNINGS=1 tsx scripts/halt-test.ts",
     "test:approver-chain": "NODE_NO_WARNINGS=1 tsx scripts/approver-chain-test.ts",
     "test:approval-judge": "NODE_NO_WARNINGS=1 tsx scripts/approval-judge-test.ts",
+    "test:approval-judge-cases": "NODE_NO_WARNINGS=1 tsx scripts/approval-judge-cases-test.ts",
     "test:pre-approval-rules": "NODE_NO_WARNINGS=1 tsx scripts/pre-approval-rules-test.ts",
     "test:starter-approval-policy": "NODE_NO_WARNINGS=1 tsx scripts/starter-approval-policy-test.ts",
     "test:approver-chain-flow": "NODE_NO_WARNINGS=1 tsx scripts/approver-chain-flow-test.ts",

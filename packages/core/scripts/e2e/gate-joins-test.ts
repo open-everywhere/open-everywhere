@@ -29,6 +29,10 @@ import {
   SETTLEMENT_REPORT_POSTED_ACTION,
   fixtureArithmetic,
   judgeDeniedRoutineCreation,
+  JUDGE_LIFT_ATTEMPTS,
+  judgeLiftAsk,
+  judgeLiftDecision,
+  judgeNoLiftReason,
   fixtureSalt,
   haltSetByThisRun,
   isMemoryDeferredWrite,
@@ -2209,5 +2213,81 @@ console.log("27. the fire report join ignores the creation turn's posts:");
   const plainTokens = "Set the monthly spend limit for #general to 1 tokens/mo and $382/mo\nFrom $50/mo to $382/mo, and from no limit to 1 tokens/mo";
   ok(dollarOnlySpendCardFault(plainTokens)?.includes("1 tokens/mo") === true, `🔴 OPE-2069 on the plain line: a card that also moves the token cap is a fault (got ${JSON.stringify(dollarOnlySpendCardFault(plainTokens))})`);
   ok(dollarOnlySpendCardFault("Set the monthly spend limit for #general to 5 tokens/mo\nFrom no limit to 5 tokens/mo") !== undefined, "…and a tokens-only plain card is a fault for a dollar ask");
+}
+
+{
+  const at = new Date("2026-02-19T05:23:41.512Z");
+  const ask = judgeLiftAsk("judgelift-abc", at);
+  ok(ask.includes("2026-02-19T05:23Z") && !ask.includes(":41"), `the ask names ONE exact minute-precision time, so the frozen schedule can match it (got ${ask})`);
+  ok(/runs once only/u.test(ask) && /never repeats/u.test(ask), "the ask says the routine runs once (at most once an hour holds)");
+  ok(ask.includes("posts exactly the word judgelift-abc") && ask.includes("does nothing else"), "the ask names the prompt exactly, so the prompt can match it");
+  ok((ask.match(/this conversation/gu) ?? []).length >= 2, "🔴 the ask says it reports back to THIS CONVERSATION — the clause the 0.7.0 ask left out");
+  ok(!/a couple of minutes/u.test(ask), "🔴 the vague time the 0.7.0 ask used is gone");
+  ok(JUDGE_LIFT_ATTEMPTS === 3, "the leg makes a bounded three asks");
+
+  const GH = "github";
+  const verdict = (d: Record<string, unknown>): AuditWireEntry =>
+    row(APPROVAL_JUDGE_VERDICT_ACTION, "2026-02-19T05:20:05.000Z", { tool: "create_routine", action: "routine.create", mode: "enforce", ...d }, undefined, GH);
+  const chain = (d: Record<string, unknown>): AuditWireEntry =>
+    row("approval.chain", "2026-02-19T05:20:04.000Z", { tool: "create_routine", action: "routine.create", ...d }, undefined, GH);
+  const lifted = (resolvedBy: string): AuditWireEntry =>
+    row("approval.autoapproved", "2026-02-19T05:20:06.000Z", { id: "pa_1", kind: "routine.create", scopeKey: "github/o/r", resolvedBy }, undefined, GH);
+
+  const asked = judgeNoLiftReason([
+    chain({ verdict: "ask", resolvedBy: "judge" }),
+    verdict({ verdict: "ask", enforcedVerdict: "ask", source: "pass2", reasoning: "The schedule  does not\nmatch the ask.", cacheHit: false }),
+  ]);
+  ok(asked === 'the judge answered "ask": The schedule does not match the ask.', `🔴 a judge ask names the answer and the judge's own reason, on one line (got ${asked})`);
+  ok(
+    judgeNoLiftReason([verdict({ verdict: "allow", enforcedVerdict: "ask", source: "pass2", ruleCitation: "uncited", reasoning: "fine" })]) ===
+      'the judge answered "allow", citing no rule, enforced as "ask": fine',
+    "an allow with no rule citation says it was held at ask, and why",
+  );
+  ok(
+    judgeNoLiftReason([verdict({ verdict: "allow", enforcedVerdict: "ask", source: "pass2", ruleCitation: "unmatched", reasoning: "r" })]).includes("citing a rule this place does not carry"),
+    "an allow citing an unknown rule says so",
+  );
+  ok(
+    judgeNoLiftReason([verdict({ verdict: "defer", enforcedVerdict: "ask", source: "timeout", reasoning: "judge timed out" })]) === "the judge did not decide (the judge ran out of time): judge timed out",
+    "a judge that did not decide says which way it failed",
+  );
+  ok(
+    judgeNoLiftReason([verdict({ verdict: "defer", source: "no-rules", reasoning: "x" })]).startsWith("the judge did not decide (this place carries no pre-approval rule)"),
+    "a place with no rules says so",
+  );
+  ok(judgeNoLiftReason([verdict({ verdict: "ask", source: "cache", reasoning: "r" })]).includes(" from its cache"), "a cached answer says so");
+  const unattended = judgeNoLiftReason([chain({ verdict: "deny", resolvedBy: "registry", transforms: [{ name: "unattended", from: "ask", to: "deny", reason: "ask-unattended" }], unattended: true })]);
+  ok(
+    unattended === 'the judge was not asked: the approval chain answered "deny" at the registry step (ask-unattended) on a turn with nobody present',
+    `🔴 a chain that decided first names the step, the reason and the unattended turn (got ${unattended})`,
+  );
+  ok(judgeNoLiftReason([]) === "no approval row for a routine: the seat proposed no routine in the wait", "no row at all says the seat proposed no routine");
+  ok(
+    judgeNoLiftReason([row(APPROVAL_JUDGE_VERDICT_ACTION, "2026-02-19T05:20:05.000Z", { tool: "open_pull_request", verdict: "ask", reasoning: "r" })]).startsWith("no approval row for a routine"),
+    "a verdict for ANOTHER tool never explains a routine ask",
+  );
+  ok(!/pa_1|cacheKey|create_routine#/u.test(asked + unattended), "no reason carries a raw id");
+
+  const d1 = judgeLiftDecision([chain({ verdict: "allow", resolvedBy: "judge" }), lifted("judge")]);
+  ok(d1 !== undefined && "lift" in d1 && d1.lift.detail?.id === "pa_1", "🔴 a judge lift row ends the ask as a LIFT");
+  ok(judgeLiftDecision([chain({ verdict: "allow", resolvedBy: "judge" })]) === undefined, "a chain allow with no execution row yet keeps waiting");
+  ok(judgeLiftDecision([]) === undefined, "no row yet keeps waiting");
+  const d2 = judgeLiftDecision([chain({ verdict: "ask", resolvedBy: "judge" }), verdict({ verdict: "ask", enforcedVerdict: "ask", source: "pass2", reasoning: "needs a person" })]);
+  ok(d2 !== undefined && "noLift" in d2 && d2.noLift === 'the judge answered "ask": needs a person', "🔴 a chain ask ends the ask at once, with the judge's reason");
+  const consulted = chain({ verdict: "ask", resolvedBy: "judge", judge: { verdict: "ask", source: "pass2", passes: 2, cacheHit: false } });
+  ok(judgeLiftDecision([consulted]) === undefined, "🔴 a consult whose verdict row has not landed keeps waiting, so the judge's reason is not lost");
+  const d4 = judgeLiftDecision([consulted, verdict({ verdict: "ask", enforcedVerdict: "ask", source: "pass2", reasoning: "needs a person" })]);
+  ok(d4 !== undefined && "noLift" in d4 && d4.noLift.includes("needs a person"), "…and ends with the judge's reason once it lands");
+  const lost = judgeNoLiftReason([consulted]);
+  ok(
+    lost === 'the judge answered "ask"; its verdict row is missing, so no reason was recorded' && !lost.includes("not asked"),
+    `🔴 a consult whose verdict row never landed never reads as "the judge was not asked" (got ${lost})`,
+  );
+  ok(
+    judgeNoLiftReason([chain({ verdict: "ask", resolvedBy: "judge", judge: { verdict: "defer", source: "timeout" } })]).startsWith("the judge did not decide (the judge ran out of time)"),
+    "a consult that timed out says so from the chain row alone",
+  );
+  const d3 = judgeLiftDecision([chain({ verdict: "allow", resolvedBy: "mode" }), lifted("mode")]);
+  ok(d3 !== undefined && "noLift" in d3 && d3.noLift.includes("the mode step lifted it, not the judge"), "a lift by another step is not this road, and says so");
 }
 console.log(`✓ ${n} gate-joins assertions passed`);

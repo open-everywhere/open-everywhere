@@ -440,6 +440,7 @@ test:dm-delegation
 test:delegation-worker-failure
 test:worker-stream-drop-retry
 test:approval-judge
+test:approval-judge-cases
 test:pre-approval-rules
 test:starter-approval-policy
 test:verify-audit-chain-cli
