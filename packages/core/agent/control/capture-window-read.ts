@@ -4,7 +4,7 @@ import { resolveAccessForPartition } from "../routines/event-authz.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { evaluateJqFilter, type EventFilterDocument } from "../routines/jq-filter.js";
 import { CAPTURE_MAX_DELIVERIES, type CapturedDeliveryRow } from "../operational/store.js";
-import { resolveHook, type DeliveryHistoryDeps } from "./delivery-history.js";
+import { resolveHook, unknownHookMessage, type DeliveryHistoryDeps } from "./delivery-history.js";
 import { captureDeadline, refuseCaptureArm } from "../webhooks/capture-window.js";
 import { configHookPosture, findWebhook } from "../webhooks/config.js";
 import { getConfig } from "../access/config.js";
@@ -54,7 +54,7 @@ export async function readCaptureWindow(
     return {
       ok: false,
       reason: "unknown-hook",
-      message: `no inbound webhook named "${request.source.slice(0, 80)}" exists for this org — check the name with list_webhooks.`,
+      message: await unknownHookMessage(request.source),
     };
   }
 
@@ -162,7 +162,7 @@ export async function armCaptureWindow(
   const org = request.partition.org;
   const resolved = await resolveHook(org, request.source, deps);
   if (!resolved) {
-    return { ok: false, message: `no inbound webhook named "${request.source.slice(0, 80)}" exists for this org — check the name with list_webhooks.` };
+    return { ok: false, message: await unknownHookMessage(request.source) };
   }
 
   const declared = findWebhook((deps.configHooks ?? (() => getConfig().loadWebhooks?.() ?? []))(), resolved.id)!;

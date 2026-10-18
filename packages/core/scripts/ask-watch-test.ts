@@ -390,5 +390,39 @@ console.log("§6 only an ask arms a routine");
   ok(!callers.some((c) => c.includes("/connections/") || c.includes("/channels/")), "🔴 no connection or channel module arms a routine");
 }
 
+console.log("§8 the webhook tools name an app's own event stream");
+{
+  const listTool = (await import("../agent/tools/list_webhooks.js")).default as unknown as { execute(input: unknown, ctx: unknown): Promise<{ appSources: { source: string; app: string }[]; message: string }> };
+  const { unknownHookMessage, readDeliveryHistory } = await import("../agent/control/delivery-history.js");
+  const { readCaptureWindow, armCaptureWindow } = await import("../agent/control/capture-window-read.js");
+  const partition = { org: ORG, surfaceKey: "slack/T1/CROOM" } as never;
+  const ROAD = 'create_routine (trigger kind "event", source "github")';
+  githubReach = true;
+  const listed = await listTool.execute({}, {});
+  ok(JSON.stringify(listed.appSources) === JSON.stringify([{ source: "github", app: "GitHub" }]), `🔴 list_webhooks names GitHub as an app source that reaches here (${JSON.stringify(listed.appSources)})`);
+  ok(listed.message.startsWith("no inbound webhooks are declared") && listed.message.includes("GitHub sends its own events here, with no declared webhook") && listed.message.includes(ROAD), `🔴 with no declared hook, list_webhooks still says how to subscribe to GitHub (${listed.message})`);
+  const note = await unknownHookMessage("GitHub");
+  ok(note.includes('"github" is not a declared webhook') && note.includes(ROAD) && !note.startsWith("no inbound webhook"), `🔴 a lookup of "github" names the road that works (${note})`);
+  for (const [label, run] of [
+    ["read_webhook_history", () => readDeliveryHistory({ partition, source: "github" })],
+    ["list_recent_events", () => readCaptureWindow({ partition, source: "github" })],
+    ["capture_events", () => armCaptureWindow({ partition, source: "github" } as never)],
+  ] as const) {
+    const res = (await (run as () => Promise<{ ok: boolean; message?: string }>)()) as { ok: boolean; message?: string };
+    ok(!res.ok && res.message === note, `🔴 ${label} on "github" answers with the app-source road (${res.message ?? ""})`);
+  }
+  ok((await unknownHookMessage("my-ci")) === 'no inbound webhook named "my-ci" exists for this org — check the name with list_webhooks.', "negative control: a name that is no app source reads as before");
+  const baseConfig = { loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {}, loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [] };
+  registerConfig({ ...baseConfig, loadWebhooks: () => [{ id: "github", source: "oe-standard-webhook", readableBy: [{ level: "org" }] } as never] } as never);
+  const shadowed = await listTool.execute({}, {});
+  ok(shadowed.appSources.length === 0 && !shadowed.message.includes("with no declared webhook") && shadowed.message.startsWith("1 inbound webhook"), `🔴 a declared hook named "github" is listed once, and never also as an app source (${shadowed.message})`);
+  registerConfig(baseConfig as never);
+  githubReach = false;
+  const deaf = await listTool.execute({}, {});
+  ok(deaf.appSources.length === 0 && !deaf.message.includes("GitHub"), "🔴 negative control: GitHub whose events do not reach here is never named");
+  ok((await unknownHookMessage("github")).startsWith('no inbound webhook named "github"'), "🔴 negative control: a lookup of a deaf app reads as before");
+  githubReach = true;
+}
+
 removeTempDir(tmp);
 console.log(`✓ ask-watch: ${n} assertions`);

@@ -18,6 +18,20 @@ export async function watchableEventSources(): Promise<readonly string[]> {
   return candidates.filter((_, i) => reach[i] === "reaches");
 }
 
+export function appEventSourceWords(source: string): string {
+  return `${sourceWords(source)} sends its own events here, with no declared webhook: a routine subscribes to them directly with create_routine (trigger kind "event", source "${source}") and a jq filter.`;
+}
+
+export async function appEventSourceNote(source: string): Promise<string | undefined> {
+  try {
+    const key = source.trim().toLowerCase();
+    if (!(await watchableEventSources()).includes(key)) return undefined;
+    return `"${key}" is not a declared webhook. ${appEventSourceWords(key)} Its deliveries are not captured for reading here, so write the filter from the event shape create_routine describes.`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function cleanWatchFor(raw: string | undefined): string | undefined {
   if (raw === undefined) return undefined;
   const text = raw.replace(/\s+/gu, " ").trim().replace(/[.!]+$/u, "");

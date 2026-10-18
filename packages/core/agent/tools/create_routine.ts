@@ -78,7 +78,11 @@ const trigger = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("event"),
-    source: z.string().describe("External event source. Must be one registered in this deployment — an unknown source is refused, naming the known set."),
+    source: z
+      .string()
+      .describe(
+        "External event source: a connected app's own key (e.g. \"github\") or a declared webhook's name. An app's own events need no declared webhook, so an app missing from list_webhooks' declared hooks can still be a source (see its `appSources`). An unknown source is refused, naming the known set.",
+      ),
     jq: z
       .string()
       .max(FILTER_MAX_LENGTH)

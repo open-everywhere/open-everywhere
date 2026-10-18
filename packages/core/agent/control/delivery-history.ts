@@ -10,6 +10,7 @@ import { listAllRoutines } from "../routines/store.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import type { Partition } from "../memory/partition.js";
 import type { Routine } from "../routines/routine.js";
+import { appEventSourceNote } from "../routines/ask-watch.js";
 
 export const WEBHOOK_HISTORY_READ = "webhook.history_read";
 
@@ -154,6 +155,11 @@ function rejectedRecord(row: AuditEntry): DeliveryRecord {
   };
 }
 
+export async function unknownHookMessage(source: string): Promise<string> {
+  const app = await appEventSourceNote(source);
+  return app ?? `no inbound webhook named "${source.slice(0, 80)}" exists for this org — check the name with list_webhooks.`;
+}
+
 export async function readDeliveryHistory(
   request: {
     readonly partition: Partition;
@@ -168,7 +174,7 @@ export async function readDeliveryHistory(
     return {
       ok: false,
       reason: "unknown-hook",
-      message: `no inbound webhook named "${request.source.slice(0, 80)}" exists for this org — check the name with list_webhooks.`,
+      message: await unknownHookMessage(request.source),
     };
   }
 

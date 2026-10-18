@@ -176,6 +176,14 @@ during a store outage. Three places read it:
   line and clears the mark. The routine stays active the whole time. An `unknown` answer posts nothing. A
   stopped routine loses its mark with no post, so a re-enable while the app is still deaf is told again.
   One tick posts at most 10 lines, and the rest carry over to the next tick.
+- **The inbound-webhook tools** name an app that `reaches` (OPE-2609). An app's own event stream has
+  no row in the declared-hook config, and `list_webhooks`, `capture_events`, `list_recent_events` and
+  `read_webhook_history` read only that config. In a live run a worker that looked GitHub up there read
+  "no inbound webhooks are declared". It told the room that no GitHub issue-event source exists, and it
+  never called `create_routine`. Now `list_webhooks` lists each app that `reaches` in `appSources`, and
+  its message says how to subscribe. A lookup of that app's key in the other three tools answers that it
+  is not a declared webhook, and names `create_routine` with trigger kind `event` and the app's key. An
+  app that is `deaf` or `unknown` is not named.
 
 The probe reads configuration, not traffic. A count of recent deliveries was the other choice, and it is
 wrong for a watch: a quiet repository sends nothing for weeks, so a silence threshold would call a working

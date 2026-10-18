@@ -2,7 +2,9 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { getConfig } from "../access/config.js";
 import { describeReadableBy } from "../access/read-grant.js";
-import { configHookPosture, isFusedHook, type WebhookHook } from "../webhooks/config.js";
+import { configHookPosture, findWebhook, isFusedHook, type WebhookHook } from "../webhooks/config.js";
+import { appEventSourceWords, watchableEventSources } from "../routines/ask-watch.js";
+import { sourceWords } from "../routines/schedule-words.js";
 
 const POSTURE_CONSEQUENCE: Readonly<Record<ReturnType<typeof configHookPosture>, string>> = {
   "trigger-only": "trigger-only (payload discarded)",
@@ -17,7 +19,7 @@ function describeConfigHook(hook: WebhookHook): string {
 
 export default defineTool({
   description:
-    "List the inbound webhooks declared for this deployment — which external systems can trigger work here, whether each one runs a fixed instruction or just emits events for routines to subscribe to, and how much of the sender's payload reaches you. Use when someone asks what's connected, before proposing a new one (to avoid a duplicate id), or to find the name to pass to rotate_webhook. It deliberately does not include signing secrets: those are handed to a human once, privately, and are not something you can see or repeat.",
+    "List the inbound webhooks declared for this deployment — which external systems can trigger work here, whether each one runs a fixed instruction or just emits events for routines to subscribe to, and how much of the sender's payload reaches you. It also lists the connected apps (such as GitHub) that send their OWN events here with no declared webhook, in `appSources`: a routine subscribes to one of those directly. Use when someone asks what's connected, before proposing a new one (to avoid a duplicate id), or to find the name to pass to rotate_webhook. It deliberately does not include signing secrets: those are handed to a human once, privately, and are not something you can see or repeat.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     webhooks: z.array(
@@ -31,6 +33,7 @@ export default defineTool({
         description: z.string(),
       }),
     ),
+    appSources: z.array(z.object({ source: z.string(), app: z.string() })),
     message: z.string(),
   }),
   async execute() {
@@ -40,6 +43,12 @@ export default defineTool({
     } catch {
       hooks = [];
     }
+    const apps = (await watchableEventSources().catch(() => [] as readonly string[])).filter((s) => findWebhook(hooks, s) === undefined);
+    const appLines = apps.map(appEventSourceWords).join(" ");
+    const declared =
+      hooks.length === 0
+        ? "no inbound webhooks are declared for this deployment yet. Declaring one is a pull request against the config repo — declare_webhook can open it."
+        : `${hooks.length} inbound webhook${hooks.length === 1 ? "" : "s"}. Signing secrets aren't listed — they're given to a person once, privately.`;
     return {
       webhooks: hooks.map((h) => ({
         id: h.id,
@@ -50,10 +59,8 @@ export default defineTool({
         readableBy: describeReadableBy(h.readableBy),
         description: describeConfigHook(h),
       })),
-      message:
-        hooks.length === 0
-          ? "no inbound webhooks are declared for this deployment yet. Declaring one is a pull request against the config repo — declare_webhook can open it."
-          : `${hooks.length} inbound webhook${hooks.length === 1 ? "" : "s"}. Signing secrets aren't listed — they're given to a person once, privately.`,
+      appSources: apps.map((source) => ({ source, app: sourceWords(source) })),
+      message: appLines.length > 0 ? `${declared} ${appLines}` : declared,
     };
   },
 });
