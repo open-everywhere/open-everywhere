@@ -2038,6 +2038,10 @@
       "types": "./dist/agent/hooks/routine-outcome.d.ts",
       "default": "./dist/agent/hooks/routine-outcome.js"
     },
+    "./agent/hooks/routine-report-reply.js": {
+      "types": "./dist/agent/hooks/routine-report-reply.d.ts",
+      "default": "./dist/agent/hooks/routine-report-reply.js"
+    },
     "./agent/hooks/routine-silence.js": {
       "types": "./dist/agent/hooks/routine-silence.d.ts",
       "default": "./dist/agent/hooks/routine-silence.js"

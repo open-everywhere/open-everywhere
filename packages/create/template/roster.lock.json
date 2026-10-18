@@ -57,6 +57,7 @@
         "hook/requester-identity": "mounted",
         "hook/requester-messages": "mounted",
         "hook/routine-outcome": "mounted",
+        "hook/routine-report-reply": "mounted",
         "hook/routine-silence": "mounted",
         "hook/routine-test-run": "mounted",
         "hook/session-park": "mounted",

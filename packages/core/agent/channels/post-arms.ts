@@ -74,6 +74,7 @@ export interface PostArm {
   readonly platform: string;
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
   dispatchReply?(target: ReplyTarget, text: string, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;
+  originOfTarget?(target: ReplyTarget): UnifiedWakeOrigin | undefined;
   isDirectConversation?(locus: { readonly channelId: string }): boolean;
   readonly displayNameCapable?: boolean;
   dispatchUnified?(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps, replier?: ReplierLabel, intent?: PostIntent): Promise<string>;

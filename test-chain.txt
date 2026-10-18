@@ -79,6 +79,7 @@ test:config-diff
 test:pr-walkthrough-facts
 test:overlay-lint
 test:wake-origin-fixtures
+test:routine-report-thread-surfaces
 test:notion-connectors
 test:notion-rest-script
 test:github-personal-credential

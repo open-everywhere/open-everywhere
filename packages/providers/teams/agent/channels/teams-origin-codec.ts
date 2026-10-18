@@ -1,5 +1,6 @@
 import type { UnifiedWakeOrigin, WakeOriginCodec } from "@open-everywhere/core/agent/adapter-api.js";
 import { getSettings } from "@open-everywhere/core/agent/adapter-api.js";
+import { isTeamsChannelConversationId, teamsReplyChainRoot } from "./teams-conversation-id.js";
 
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
@@ -47,4 +48,11 @@ export const teamsWakeOriginCodec: WakeOriginCodec<TeamsOrigin> = {
   threadRef: (origin) => ({ channelKey: noColon(`teams/${origin.conversationId}`), threadKey: noColon(origin.replyToActivityId ?? origin.conversationId) }),
   isThreadScoped: (origin) => typeof origin.replyToActivityId === "string" && origin.replyToActivityId.length > 0,
   containerId: (origin) => origin.conversationId,
+  replyThreadUnder: (origin, messageId) => {
+    if (typeof origin.replyToActivityId === "string" && origin.replyToActivityId.length > 0) return undefined;
+    const root = teamsReplyChainRoot(origin.conversationId);
+    if (root !== undefined) return { ...origin, replyToActivityId: root };
+    if (!isTeamsChannelConversationId(origin.conversationId)) return undefined;
+    return { ...origin, conversationId: `${origin.conversationId};messageid=${messageId}`, replyToActivityId: messageId };
+  },
 };

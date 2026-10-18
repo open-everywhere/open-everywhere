@@ -174,6 +174,10 @@ export const slackPostArm: PostArm = {
   },
   displayNameCapable: true,
   dispatchReply: (target, text, replier, intent) => dispatchSlackReply(target as SlackTarget, text, replier, intent),
+  originOfTarget: (target) => {
+    const t = target as SlackTarget;
+    return { platform: "slack", channelId: t.channelId, ...(t.threadTs !== undefined && t.threadTs.length > 0 ? { threadTs: t.threadTs } : {}) };
+  },
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, replier, intent) =>
     deps.postSlack ? deps.postSlack(origin as SlackOrigin, text) : liveSlackPost(origin as SlackOrigin, text, replier, intent),
   isDirectConversation: (locus) => locus.channelId.startsWith("D"),

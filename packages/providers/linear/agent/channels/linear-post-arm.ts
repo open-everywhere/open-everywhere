@@ -172,6 +172,16 @@ export const linearPostArm: PostArm = {
     "agentSessionId" in target
       ? dispatchLinearReply(target as LinearTarget, text)
       : dispatchLinearAmbientReply(target as LinearAmbientTarget, text),
+  originOfTarget: (target) =>
+    "issueId" in target
+      ? {
+          platform: "linear",
+          ambient: true,
+          issueId: target.issueId,
+          ...(target.parentId !== undefined && target.parentId.length > 0 ? { parentId: target.parentId } : {}),
+          ...(target.organizationId !== undefined ? { organizationId: target.organizationId } : {}),
+        }
+      : undefined,
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
     (deps.postLinear ?? liveLinearPost)(origin as LinearOrigin, text, intent),
   closeUnifiedSilently: (origin, deps: UnifiedReplyDeps, answered) => (deps.closeLinear ?? liveLinearSilenceAck)(origin as LinearOrigin, answered),

@@ -12,19 +12,8 @@ const TEAMS_CONVERSATION_ADDRESS_KIND = "conversation";
 
 const TEAMS_TEAM_ADDRESS_READ_LIMIT = 8;
 
-const TEAMS_REPLY_CHAIN_SUFFIX = ";messageid=";
-
-export function teamsChannelGrainConversationId(conversationId: string): string {
-  const i = conversationId.lastIndexOf(TEAMS_REPLY_CHAIN_SUFFIX);
-  return i < 0 ? conversationId : conversationId.slice(0, i);
-}
-
-export function teamsReplyChainRoot(conversationId: string): string | undefined {
-  const i = conversationId.lastIndexOf(TEAMS_REPLY_CHAIN_SUFFIX);
-  if (i < 0) return undefined;
-  const root = conversationId.slice(i + TEAMS_REPLY_CHAIN_SUFFIX.length);
-  return root.length > 0 ? root : undefined;
-}
+import { teamsChannelGrainConversationId, teamsReplyChainRoot } from "./teams-conversation-id.js";
+export { teamsChannelGrainConversationId, teamsReplyChainRoot };
 
 export interface TeamsConversationRef {
   readonly serviceUrl: string;

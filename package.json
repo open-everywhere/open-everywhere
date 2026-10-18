@@ -218,6 +218,7 @@
     "test:webhook-source-vocabulary-live": "NODE_NO_WARNINGS=1 tsx scripts/webhook-source-vocabulary-live-test.ts",
     "test:event-reach-live": "NODE_NO_WARNINGS=1 tsx scripts/event-reach-live-test.ts",
     "test:wake-origin-fixtures": "NODE_NO_WARNINGS=1 tsx scripts/wake-origin-fixtures-boot.ts",
+    "test:routine-report-thread-surfaces": "NODE_NO_WARNINGS=1 tsx scripts/routine-report-thread-surfaces-test.ts",
     "test:unified-window": "NODE_NO_WARNINGS=1 tsx scripts/unified-window-test.ts",
     "test:slack-cover": "NODE_NO_WARNINGS=1 tsx scripts/slack-cover-test.ts",
     "test:teams-cover": "NODE_NO_WARNINGS=1 tsx scripts/teams-cover-test.ts",

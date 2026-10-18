@@ -277,5 +277,151 @@ async function attentionOf(id: string) {
   ok((await attentionOf(second)) === undefined, "…and clears the record");
 }
 
+const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
+const { postReply } = await import("../agent/channels/reply-post.js");
+const { checkInFromNativeTurn, nativeReportReplier } = await import("../agent/hooks/routine-report-reply.js");
+const { registerSlackFixtureManifest } = await import("./_slack-test-stubs.js");
+const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
+registerSlackFixtureManifest();
+let nativeSeq = 0;
+const nextTs = (): string => `1751460000.${String(++nativeSeq).padStart(6, "0")}`;
+registerPostArm({
+  platform: "slack",
+  resolveTarget: (bag) => {
+    const channelId = bag.str("channelId");
+    return channelId ? { platform: "slack", channelId, threadTs: bag.threadTs } : null;
+  },
+  dispatchReply: async () => nextTs(),
+  dispatchUnified: async () => nextTs(),
+  originOfTarget: (target) => {
+    const t = target as { channelId: string; threadTs?: string };
+    return { platform: "slack", channelId: t.channelId, ...(t.threadTs ? { threadTs: t.threadTs } : {}) };
+  },
+});
+
+function nativeFireCtx(r: Routine, extra: Record<string, string> = {}): never {
+  const attributes = { ...routineFireAttributes(r, { team_id: TEAM, channel_id: CHAN }, "channel", true, true, mintWakeId()), ...extra };
+  return {
+    channel: { kind: "slack" },
+    session: { id: `s-native-${r.id}`, auth: { current: { authenticator: SCHEDULE_APP_AUTHENTICATOR, principalId: SCHEDULE_APP_PRINCIPAL_ID, principalType: SCHEDULE_APP_PRINCIPAL_TYPE, attributes } } },
+  } as never;
+}
+
+function nativeHumanCtx(opts: { readonly threadTs?: string; readonly user?: string; readonly type?: string; readonly external?: boolean; readonly extra?: Record<string, string>; readonly kind?: string } = {}): never {
+  const user = opts.user ?? "U-MEMBER";
+  return {
+    channel: { kind: opts.kind ?? "slack" },
+    session: {
+      id: `s-human-${++nativeSeq}`,
+      auth: {
+        current: {
+          authenticator: "slack",
+          principalId: user,
+          principalType: opts.type ?? "slack-user",
+          attributes: {
+            team_id: TEAM,
+            channel_id: CHAN,
+            user_id: user,
+            channel_type: "channel",
+            is_ext_shared: opts.external === true ? "true" : "false",
+            trust_checked: "true",
+            ...(opts.threadTs !== undefined ? { thread_ts: opts.threadTs } : {}),
+            ...(opts.extra ?? {}),
+          },
+        },
+      },
+    },
+  } as never;
+}
+
+async function postNativeReport(r: Routine, threadTs?: string): Promise<string> {
+  const audit = replyAuditFor(nativeFireCtx(r), "tool");
+  return postReply({ platform: "slack", channelId: CHAN, ...(threadTs !== undefined ? { threadTs } : {}) }, `${r.id}: ${++nativeSeq} incidents are open.`, audit);
+}
+
+{
+  const id = "r-native";
+  const r = routine({ id, attention: { runs: 77 } });
+  await routineStore.addRoutine({} as never, r);
+  const audit = replyAuditFor(nativeFireCtx(r), "tool");
+  ok(audit.fireRoutine?.id === id && audit.fireRoutine.surfaceKey === SURFACE, "🔴 audit: a native fire's own turn names its routine on the reply audit");
+  ok(audit.routine === undefined, "audit: a native fire carries no result-wake routine");
+
+  const ts = await postNativeReport(r);
+  const row = await store.getRoutineReportThread(ORG, `slack/${CHAN}`, ts, new Date().toISOString());
+  ok(row !== null && row.routineId === id && row.routineSurface === SURFACE, "🔴 record: a native report through the per-surface door records the thread a reply under it opens");
+
+  const threaded = "1750939280.004000";
+  const ts2 = await postNativeReport(r, threaded);
+  ok((await store.getRoutineReportThread(ORG, `slack/${CHAN}`, threaded, new Date().toISOString()))?.routineId === id, "record: a native report INSIDE a thread records that thread");
+  ok((await store.getRoutineReportThread(ORG, `slack/${CHAN}`, ts2, new Date().toISOString())) === null, "record: …and no thread under its own ts, because Slack threads do not nest");
+
+  const fireWake = mintWakeId();
+  const resultAttrs = workResultAttributes({ requestId: workRequestIdFor(`fire:${fireWake}`), requester: FIRE_REQUESTER, nonMemberWake: false, tainted: false, fireRoutine: { id, surfaceKey: SURFACE } });
+  const resultAudit = replyAuditFor({ channel: { kind: "unified" }, session: { id: "s-seat", auth: { current: { attributes: resultAttrs } } } } as never, "tool", fireWake);
+  ok(resultAudit.fireRoutine === undefined && resultAudit.routine?.id === id, "audit: a result wake names its routine through `routine`, never `fireRoutine`");
+
+  const humanAudit = replyAuditFor(nativeHumanCtx(), "tool");
+  ok(humanAudit.fireRoutine === undefined, "audit: a person's turn names no routine");
+  const tsHuman = await postReply({ platform: "slack", channelId: CHAN }, "an answer to a person", humanAudit);
+  ok((await store.getRoutineReportThread(ORG, `slack/${CHAN}`, tsHuman, new Date().toISOString())) === null, "🔴 record: a reply on a person's turn records no report thread");
+
+  const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
+  const { markTestRunSession } = await import("../agent/access/test-run-state.js");
+  const testAudit = await inEveContext(new FakeEveContext(), async () => {
+    markTestRunSession({ testId: "t-1", routineId: id, surfaceKey: SURFACE, org: ORG });
+    return replyAuditFor(nativeFireCtx(r), "tool");
+  });
+  ok(testAudit.fireRoutine === undefined, "🔴 audit: a test run of the routine names no routine, so its post records no report thread");
+
+  ok((await reportThread.recordNativeReportThreads({ org: ORG, target: { platform: "discord", channelId: "D1" }, messageId: "m-9", routine: { id, surfaceKey: SURFACE } })) === 0, "record: a surface with no `originOfTarget` records nothing");
+}
+
+{
+  const id = "r-native-count";
+  const r = routine({ id, attention: { runs: 88, warnedAtRun: 100 } });
+  await routineStore.addRoutine({} as never, r);
+  const ts = await postNativeReport(r);
+
+  ok((await checkInFromNativeTurn(nativeHumanCtx())) === "not-a-thread", "🔴 a top-level native message in the room is not a reply to the report");
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: ts, type: "service" }))) === "not-a-member", "🔴 a delivery whose auth is not a person's does not count");
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: ts, external: true }))) === "not-a-member", "🔴 a person in a room the gate did not confirm as internal does not count");
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: ts, extra: { [OE_CHAT_NONMEMBER_ATTR]: "true" } }))) === "not-a-member", "🔴 a delivery with the non-member stamp does not count");
+  ok((await checkInFromNativeTurn(nativeFireCtx(r, { thread_ts: ts }))) === "not-a-member", "a routine fire's own turn in the thread does not count");
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: ts, kind: "unified", extra: { oe_platform: "slack" } }))) === "not-a-member", "🔴 a windowed turn is left to the windowed door");
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: "1750939280.888888" }))) === "no-report", "a native message in ANOTHER thread does not count");
+  ok((await attentionOf(id))?.runs === 88, "…and none of these moved the count");
+  ok(nativeReportReplier(nativeHumanCtx({ threadTs: ts })) === "U-MEMBER", "pure: a vouched member's native delivery names the member");
+
+  const before = (await readAudit({ org: ORG, action: ROUTINE_CHECKIN_ACTION })).length;
+  const memberCtx = nativeHumanCtx({ threadTs: ts });
+  const nativeOutcome = await checkInFromNativeTurn(memberCtx, "turn-native-1");
+  ok(nativeOutcome === "checked-in", "🔴 count: a member's native message in the report's thread checks in");
+  ok((await attentionOf(id)) === undefined, "🔴 count: …and clears the check-in record, as Keep going does");
+  const rows = await readAudit({ org: ORG, action: ROUTINE_CHECKIN_ACTION });
+  const mine = rows.find((row) => (row as { detail?: Record<string, unknown> }).detail?.id === id) as { principalId?: string; detail?: Record<string, unknown> } | undefined;
+  ok(rows.length === before + 1 && mine?.detail?.via === "reply" && mine.detail.runs === 88 && mine.principalId === "U-MEMBER", "count: one `routine.checkin` row, `via: reply`, with the runs it cleared");
+
+  await routineStore.updateRoutine(ORG, SURFACE, id, { attention: { runs: 5 } });
+  ok((await checkInFromNativeTurn(memberCtx, "turn-native-1")) === "duplicate", "🔴 a replay of the same native delivery is a duplicate");
+  const later = Date.now() + 2 * 60 * 60_000;
+  ok((await checkInFromNativeTurn(memberCtx, "turn-native-1", () => later)) === "duplicate", "🔴 …also two hours later, after a later fire set the count again");
+  ok((await attentionOf(id))?.runs === 5, "🔴 …and leaves the count a later fire set");
+  const otherSession = nativeHumanCtx({ threadTs: ts }) as unknown as { session: { id: string } };
+  otherSession.session.id = "s-human-other";
+  ok((await checkInFromNativeTurn(otherSession as never, "turn-native-1")) === "checked-in", "🔴 the same turn id in another session checks in");
+  await routineStore.updateRoutine(ORG, SURFACE, id, { attention: { runs: 6 } });
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: ts }), "turn-native-2")) === "checked-in", "a new delivery in the thread checks in again");
+
+  const paused = "r-native-paused";
+  const rp = routine({ id: paused, attention: { runs: 124, warnedAtRun: 100, cardId: "card-np" } });
+  await routineStore.addRoutine({} as never, rp);
+  const tsPaused = await postNativeReport(rp);
+  await routineStore.updateRoutine(ORG, SURFACE, paused, attentionPausePatch({ attention: { runs: 124, warnedAtRun: 100, cardId: "card-np" } }, 124, new Date()));
+  ok((await checkInFromNativeTurn(nativeHumanCtx({ threadTs: tsPaused }))) === "not-active", "a native reply never resumes a paused routine");
+  const after = await routineStore.getRoutine(ORG, SURFACE, paused);
+  ok(after !== null && isPausedForCheckIn(after), "…and its Resume card still works");
+}
+
 console.log(`✓ routine-report-reply: ${passed} assertions passed`);
 process.exit(0);

@@ -25,6 +25,10 @@ export const discordWakeOriginCodec: WakeOriginCodec<DiscordOrigin> = {
       : { channelKey: noColon(`discord/${origin.guildId}/${origin.channelId}`), threadKey: noColon(origin.channelId) },
   isThreadScoped: (origin) => !isDmOrigin(origin) && origin.thread === true,
   containerId: (origin) => origin.channelId,
+  replyThreadUnder: (origin, messageId) => {
+    if (isDmOrigin(origin) || origin.thread === true || origin.autoThreadName !== undefined) return undefined;
+    return { platform: "discord", guildId: origin.guildId, channelId: messageId, thread: true };
+  },
   placementRef: (origin) => (typeof origin.messageId === "string" && origin.messageId.length > 0 ? origin.messageId : undefined),
   carryPlacement: (target, source) =>
     !(target.messageId && target.messageId.length > 0) && typeof source.messageId === "string" && source.messageId.length > 0

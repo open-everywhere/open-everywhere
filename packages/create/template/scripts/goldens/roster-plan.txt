@@ -42,6 +42,7 @@ agent/hooks/question-ledger.ts	mounted @open-everywhere/core
 agent/hooks/requester-identity.ts	mounted @open-everywhere/core
 agent/hooks/requester-messages.ts	mounted @open-everywhere/core
 agent/hooks/routine-outcome.ts	mounted @open-everywhere/core
+agent/hooks/routine-report-reply.ts	mounted @open-everywhere/core
 agent/hooks/routine-silence.ts	mounted @open-everywhere/core
 agent/hooks/routine-test-run.ts	mounted @open-everywhere/core
 agent/hooks/sandbox-lifecycle.ts	mounted @open-everywhere/adapters

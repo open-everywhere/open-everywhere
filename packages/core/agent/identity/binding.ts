@@ -100,6 +100,11 @@ export function authPrincipalId(ctx: BindableContext): string | undefined {
   return pid && pid.length > 0 ? pid : undefined;
 }
 
+export function authPrincipalType(ctx: BindableContext): string | undefined {
+  const t = authOf(ctx)?.principalType;
+  return t && t.length > 0 ? t : undefined;
+}
+
 function attr(a: AuthPrincipal["attributes"], keys: readonly string[]): string | undefined {
   if (!a) return undefined;
   for (const k of keys) {
@@ -146,6 +151,13 @@ export function fireResultRoutine(ctx: BindableContext): { readonly id: string; 
   const surfaceKey = attr(attributes, [WORK_FIRE_ROUTINE_SURFACE_ATTR]);
   const requestId = attr(attributes, ["oe_work_result"]);
   return id && surfaceKey && requestId ? { id, surfaceKey, requestId } : undefined;
+}
+
+export function fireOwnRoutine(ctx: BindableContext): { readonly id: string; readonly surfaceKey: string } | undefined {
+  const attributes = authOf(ctx)?.attributes;
+  const id = attr(attributes, [ROUTINE_MARKER.id]);
+  const surfaceKey = attr(attributes, [ROUTINE_MARKER.surface]);
+  return id && surfaceKey ? { id, surfaceKey } : undefined;
 }
 
 export function attestedFireCreatorId(ctx: BindableContext): string | undefined {

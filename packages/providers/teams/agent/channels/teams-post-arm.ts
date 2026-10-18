@@ -6,6 +6,7 @@ import {
   updateTeamsActivityBackedOff,
 } from "./teams-connector.js";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
+import { teamsReplyChainRoot } from "./teams-conversation-id.js";
 import {
   teamsPersonalConversationRef,
   teamsSoleTenantRegion,
@@ -182,6 +183,11 @@ export const teamsPostArm: PostArm = {
     return serviceUrl && conversationId ? { platform: "teams", serviceUrl, conversationId } : null;
   },
   dispatchReply: (target, text, _replier, intent) => dispatchTeamsReply(target as TeamsTarget, text, intent),
+  originOfTarget: (target) => {
+    const t = target as TeamsTarget;
+    const root = t.replyToActivityId ?? teamsReplyChainRoot(t.conversationId);
+    return { platform: "teams", serviceUrl: t.serviceUrl, conversationId: t.conversationId, ...(root !== undefined ? { replyToActivityId: root } : {}) };
+  },
   dispatchUnified: (origin, text, deps: UnifiedReplyDeps, _replier, intent) =>
     deps.postTeams ? deps.postTeams(origin as TeamsOrigin, text, intent) : liveTeamsPost(origin as TeamsOrigin, text, intent),
   isDirectConversation: (locus) => isTeamsPersonalConversationId(locus.channelId),

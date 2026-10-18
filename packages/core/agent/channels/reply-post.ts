@@ -1,4 +1,4 @@
-import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireResultCreatorId, fireResultRoutine, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
+import { attestedFireCreatorId, auditSurfaceModeStamp, authPrincipalId, bindFrom, currentTurnId, fireOwnRoutine, fireResultCreatorId, fireResultRoutine, SCHEDULE_APP_PRINCIPAL_ID, workResultFrozenBinding, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
@@ -18,6 +18,8 @@ import { auditWithheldMemoryClaim, guardMemoryClaims } from "./memory-claim-guar
 import { auditWithheldApprovalClaim, guardApprovalClaims } from "./approval-claim-guard.js";
 import { auditWithheldRequestClaim, guardRequestClaims } from "./request-claim-guard.js";
 import { coverLabelForReply, recordCoverReply, withCoverLabel } from "../cover/wake.js";
+import { currentTestRun } from "../access/test-run-state.js";
+import { recordNativeReportThreads } from "../routines/report-thread.js";
 
 export type { ReplierLabel };
 
@@ -57,6 +59,7 @@ export interface ReplyAudit {
   readonly principalId?: string;
   readonly creatorId?: string;
   readonly routine?: { readonly id: string; readonly surfaceKey: string; readonly requestId: string };
+  readonly fireRoutine?: { readonly id: string; readonly surfaceKey: string };
   readonly sessionId?: string;
   readonly wakeId?: string;
   readonly turnId?: string;
@@ -71,6 +74,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
   const attestedCreatorId = attestedFireCreatorId(ctx);
   const creatorId = attestedCreatorId ?? fireResultCreatorId(ctx);
   const routine = fireResultRoutine(ctx);
+  const fireRoutine = currentTestRun() === null ? fireOwnRoutine(ctx) : undefined;
   return {
     org: p.org,
     platform: p.platform,
@@ -87,6 +91,7 @@ export function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], 
           : bindFrom(ctx).principalId,
     ...(creatorId ? { creatorId } : {}),
     ...(routine ? { routine } : {}),
+    ...(fireRoutine ? { fireRoutine } : {}),
     ...(sessionId ? { sessionId } : {}),
     ...(wakeId ? { wakeId } : {}),
     ...(turnId ? { turnId } : {}),
@@ -288,6 +293,7 @@ export async function postReply(
         platform: target.platform,
         wake: audit?.wakeId,
       });
+      if (audit?.fireRoutine !== undefined) await recordNativeReportThreads({ org: audit.org, target, messageId: realId, routine: audit.fireRoutine });
       if (cover && audit?.wakeId) {
         await recordCoverReply({ org: audit.org, platform: audit.platform, workspace: audit.workspace ?? "", surface: audit.surface ?? "" }, audit.wakeId, cover, provenance.body);
       }

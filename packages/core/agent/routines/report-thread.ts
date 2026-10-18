@@ -5,6 +5,8 @@ import { parseScopeKey } from "../access/scope-key.js";
 import { isThreadScopedWakeOrigin, isUnifiedWakeOrigin, unifiedThreadRef, type UnifiedThreadRef, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { wakeOriginCodec } from "../channels/wake-origin-codec.js";
 import { workRequestIdFor } from "../channels/work.js";
+import { postArm } from "../channels/post-arms.js";
+import type { ReplyTarget } from "../channels/reply-post.js";
 import { triggerAuthors } from "../channels/wake-envelope.js";
 import { getRoutine, updateRoutineIf } from "./store.js";
 import { attentionResetPatch, attentionRuns, ROUTINE_CHECKIN_ACTION } from "./attention.js";
@@ -17,7 +19,7 @@ export interface ReplyRoutine {
   readonly requestId: string;
 }
 
-const MEMBER_TIERS: ReadonlySet<string> = new Set(["principal", "peer"]);
+export const MEMBER_TIERS: ReadonlySet<string> = new Set(["principal", "peer"]);
 
 export function vouchedReplier(text: string, principalId: string): string | undefined {
   const mine = triggerAuthors(text).filter((a) => a.from === "human" && a.authorId === principalId);
@@ -42,8 +44,26 @@ export function reportReplyThreads(origin: UnifiedWakeOrigin, messageId: string)
   return refs;
 }
 
+export function originOfReplyTarget(target: ReplyTarget): UnifiedWakeOrigin | undefined {
+  try {
+    const origin = postArm(target.platform)?.originOfTarget?.(target);
+    return origin !== undefined && isUnifiedWakeOrigin(origin) && origin.platform === target.platform ? origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function recordNativeReportThreads(
+  input: { readonly org: string | undefined; readonly target: ReplyTarget; readonly messageId: string; readonly routine: Pick<ReplyRoutine, "id" | "surfaceKey">; readonly now?: Date },
+  store?: Pick<OperationalStore, "putRoutineReportThread">,
+): Promise<number> {
+  const origin = originOfReplyTarget(input.target);
+  if (origin === undefined) return 0;
+  return recordRoutineReportThreads({ org: input.org, origin, messageId: input.messageId, routine: input.routine, ...(input.now !== undefined ? { now: input.now } : {}) }, store);
+}
+
 export async function recordRoutineReportThreads(
-  input: { readonly org: string | undefined; readonly origin: UnifiedWakeOrigin; readonly messageId: string; readonly routine: ReplyRoutine; readonly now?: Date },
+  input: { readonly org: string | undefined; readonly origin: UnifiedWakeOrigin; readonly messageId: string; readonly routine: Pick<ReplyRoutine, "id" | "surfaceKey">; readonly now?: Date },
   store?: Pick<OperationalStore, "putRoutineReportThread">,
 ): Promise<number> {
   if (input.org === undefined) return 0;

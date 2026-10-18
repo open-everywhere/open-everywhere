@@ -69,6 +69,10 @@
       "types": "./dist/agent/channels/teams-connector.d.ts",
       "default": "./dist/agent/channels/teams-connector.js"
     },
+    "./agent/channels/teams-conversation-id.js": {
+      "types": "./dist/agent/channels/teams-conversation-id.d.ts",
+      "default": "./dist/agent/channels/teams-conversation-id.js"
+    },
     "./agent/channels/teams-conversation-ref.js": {
       "types": "./dist/agent/channels/teams-conversation-ref.d.ts",
       "default": "./dist/agent/channels/teams-conversation-ref.js"
