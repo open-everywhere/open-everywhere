@@ -1102,6 +1102,15 @@ room always comes from the conversation, never from the model. The fence runs wh
 again when a person approves it, because the file can leave the room in between. A new canvas is created
 in the asking room.
 
+**The memory canvas refuses a write.** The agent does not add to or rewrite the domain memory canvas:
+the room's channel canvas when the app's bot user made it. The next memory write replaces that canvas
+whole, so the added text would be lost. The tool refuses in one line, when the card posts and again
+when a person approves it, and says to ask the agent to remember or forget the line instead. A lookup
+that fails also refuses. A person's channel canvas, or another canvas the app made, takes the write.
+The check reads the channel canvas from Slack's `properties.canvas` field. When Slack names the canvas
+only as a channel tab, the tool does not see the memory canvas and takes the write. The memory write
+does not see that canvas either, so it does not replace the text.
+
 **A free Slack workspace.** Slack's free plan allows one canvas tab per channel, and refuses a canvas
 with no channel tab. The domain memory canvas or a person's canvas can hold that one tab. Then an
 approved new canvas is not written, and the card says why in one line: the workspace is on the free

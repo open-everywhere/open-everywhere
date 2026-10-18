@@ -224,6 +224,7 @@ export { modelRouteFor, memoryRefs, defineDomain } from "./memory/domain.js";
 export { buildHomeView, runHomeAction, hasHomeAction, homeDomainsFor, registerHomeSection, registerHomeAction, SLACK_HOME_WIRE } from "./home/home-view.js";
 export type { HomeViewer, HomeBlock, HomeItemAction, HomeButton, HomeRoom, HomeDomainMembership, HomeSection, HomeActionResult } from "./home/home-view.js";
 export { MEMORY_HOME_ACTIONS } from "./home/memory-home.js";
+export { channelCanvasIdOf } from "./channels/slack-canvas-list.js";
 export { OPT_OUT_HOME_ACTIONS } from "./home/opt-out-home.js";
 export { readPersonOptOut, auditPersonOptOutRefusal, PERSON_OPT_OUT_SHORTCUT_NOTICE, PERSON_OPT_OUT_UNREADABLE_NOTICE } from "./identity/person-opt-out.js";
 export type { PersonOptOutState, PersonOptOutWhere } from "./identity/person-opt-out.js";

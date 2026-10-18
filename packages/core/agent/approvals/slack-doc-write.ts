@@ -6,6 +6,7 @@ import { channelWords } from "../channels/friendly-ids.js";
 import {
   initialField,
   liveSlackDocCall,
+  refuseMemoryCanvasWrite,
   resolveRoomFile,
   rowWords,
   updateCell,
@@ -81,6 +82,7 @@ const canvasWrite: ActionKind<CanvasWriteArgs> = {
         canvasId = typeof res.canvas_id === "string" ? res.canvas_id : undefined;
       } else {
         await resolveRoomFile(call, args.canvasId ?? "", args.channelId, "canvas");
+        await refuseMemoryCanvasWrite(call, args.canvasId ?? "", args.channelId);
         await call("canvases.edit", {
           canvas_id: args.canvasId ?? "",
           changes: JSON.stringify([

@@ -6,6 +6,7 @@ import { join } from "node:path";
 const dir = join(tmpdir(), `open-everywhere-slack-doc-write-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+delete process.env.DATABASE_URL;
 
 const lib = await import("../agent/channels/slack-canvas-list.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -44,6 +45,10 @@ const CANVAS = "F0CANVAS1";
 const OWN_CANVAS = "F0CHANCV1";
 const FREE_ROOM = "C0FREEROOM";
 const ELSEWHERE = "F0ELSEWH1";
+const BOT = "U0BOTUSR1";
+const MEM_ROOM = "C0MEMROOM";
+const MEM_CANVAS = "F0MEMCNV1";
+const BOT_MADE = "F0BOTMAD1";
 const LIST = "F0LIST001";
 const COLUMNS = [
   { id: "Col0Title", name: "Title", type: "text", is_primary_column: true },
@@ -61,7 +66,9 @@ const ITEMS = [
 
 const files: Record<string, Record<string, unknown>> = {
   [CANVAS]: { id: CANVAS, title: "Launch plan", filetype: "quip", pretty_type: "Canvas", channels: [ROOM] },
-  [OWN_CANVAS]: { id: OWN_CANVAS, title: "Channel canvas", filetype: "quip", pretty_type: "Canvas" },
+  [OWN_CANVAS]: { id: OWN_CANVAS, title: "Channel canvas", filetype: "quip", pretty_type: "Canvas", user: "U0PERSON1" },
+  [MEM_CANVAS]: { id: MEM_CANVAS, title: "What the agent knows", filetype: "quip", pretty_type: "Canvas", user: BOT },
+  [BOT_MADE]: { id: BOT_MADE, title: "Retro", filetype: "quip", pretty_type: "Canvas", user: BOT, channels: [MEM_ROOM] },
   [ELSEWHERE]: { id: ELSEWHERE, title: "Secret plan", filetype: "quip", pretty_type: "Canvas", channels: [OTHER] },
   [LIST]: { id: LIST, title: "Bugs", filetype: "list", pretty_type: "List", shares: { private: { [ROOM]: [] } }, list_metadata: { schema: COLUMNS } },
 };
@@ -74,7 +81,11 @@ const fakeCall: SlackDocCall = async (method, params) => {
     if (!f) throw new Error("Slack files.info failed: file_not_found");
     return { ok: true, file: f };
   }
-  if (method === "conversations.info") return { ok: true, channel: { id: params.channel, properties: params.channel === ROOM ? { canvas: { file_id: OWN_CANVAS } } : {} } };
+  if (method === "conversations.info") {
+    const own = params.channel === ROOM ? OWN_CANVAS : params.channel === MEM_ROOM ? MEM_CANVAS : undefined;
+    return { ok: true, channel: { id: params.channel, properties: own ? { canvas: { file_id: own } } : {} } };
+  }
+  if (method === "auth.test") return { ok: true, user_id: BOT };
   if (method === "slackLists.items.list") return { ok: true, items: ITEMS };
   if (method === "canvases.create") {
     if (params.channel_id === FREE_ROOM) throw new Error("Slack canvases.create failed: free_team_canvas_tab_already_exists");
@@ -134,6 +145,31 @@ const P = { org: "default", scopeKey: `slack/T0TEAM01/${ROOM}`, channelId: ROOM,
   ok(replace.op === "replace", "mode replace freezes a rewrite");
   await refuses(() => buildCanvasWrite({ canvas: ELSEWHERE, markdown: "x" }, P, fakeCall), /write_canvas: .*not shared in this conversation/, "🔴 the builder refuses a canvas from another room before any card");
   await refuses(() => buildCanvasWrite({ title: "Big", markdown: "x".repeat(lib.CANVAS_MARKDOWN_MAX + 1) }, P, fakeCall), /at most 90000/, "an over-long canvas refuses before any card");
+
+  const M = { ...P, scopeKey: `slack/T0TEAM01/${MEM_ROOM}`, channelId: MEM_ROOM };
+  const memLine = new RegExp(`^write_canvas: ${lib.MEMORY_CANVAS_WRITE_REFUSAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  await refuses(() => buildCanvasWrite({ canvas: MEM_CANVAS, markdown: "my notes" }, M, fakeCall), memLine, "🔴 an append to the memory canvas refuses in one honest line before any card");
+  await refuses(() => buildCanvasWrite({ canvas: MEM_CANVAS, mode: "replace", markdown: "all new" }, M, fakeCall), memLine, "🔴 a rewrite of the memory canvas refuses the same way");
+  ok(/remember or forget/.test(lib.MEMORY_CANVAS_WRITE_REFUSAL) && !lib.MEMORY_CANVAS_WRITE_REFUSAL.includes("\n"), "the refusal is one line and points to the memory verbs");
+  ok((await buildCanvasWrite({ canvas: OWN_CANVAS, markdown: "more" }, P, fakeCall)).canvasId === OWN_CANVAS, "a PERSON's channel canvas still takes an append: the observer never touches it");
+  ok((await buildCanvasWrite({ canvas: BOT_MADE, markdown: "more" }, M, fakeCall)).canvasId === BOT_MADE, "a canvas the app made that is NOT the channel canvas still takes an append");
+  const noAuth: SlackDocCall = async (method, params) => {
+    if (method === "auth.test") throw new Error("Slack auth.test failed: invalid_auth");
+    return fakeCall(method, params);
+  };
+  await refuses(() => buildCanvasWrite({ canvas: MEM_CANVAS, markdown: "x" }, M, noAuth), /could not confirm that this canvas is not this channel's memory canvas/, "🔴 an unreadable bot identity refuses: the write could be lost");
+  const noInfo: SlackDocCall = async (method, params) => {
+    if (method === "conversations.info") throw new Error("Slack conversations.info failed: ratelimited");
+    return fakeCall(method, params);
+  };
+  await refuses(() => buildCanvasWrite({ canvas: BOT_MADE, markdown: "x" }, M, noInfo), /could not confirm that this canvas is not this channel's memory canvas/, "🔴 an unreadable channel refuses: the canvas could be the memory canvas");
+  let fileReads = 0;
+  const secondFileFails: SlackDocCall = async (method, params) => {
+    if (method === "files.info" && ++fileReads === 2) throw new Error("Slack files.info failed: ratelimited");
+    return fakeCall(method, params);
+  };
+  await refuses(() => buildCanvasWrite({ canvas: MEM_CANVAS, markdown: "x" }, M, secondFileFails), /could not confirm that this canvas is not this channel's memory canvas/, "🔴 an unreadable creator refuses: the canvas could be the app's");
+  ok(lib.channelCanvasIdOf({ ok: true, channel: { properties: { canvas: { file_id: "F1" } } } }) === "F1" && lib.channelCanvasIdOf(undefined) === undefined && lib.channelCanvasIdOf({ channel: { properties: { canvas: { file_id: "" } } } }) === undefined, "the shared channel canvas reader names the canvas, and nothing for no answer or an empty id");
 
   const lw = await buildListWrite(
     { list: LIST, add: [{ cells: { Title: "New bug", Owner: "<@U0ANN001>", Status: "To do", Due: "2026-10-21" } }], update: [{ row: "fix LOGIN", cells: { Status: "Done" } }] },
@@ -277,6 +313,14 @@ registerSlackBridge({ readCall: async (m: string, p: Record<string, string | num
   ok(JSON.parse(String(calls.find((c) => c.method === "canvases.edit")?.params.changes))[0].operation === "insert_at_end", "an append sends insert_at_end");
 
   calls.length = 0;
+  await refuses(
+    () => ck.execute(canvasArgs({ channelId: MEM_ROOM, scopeKey: `slack/T0TEAM01/${MEM_ROOM}`, canvasId: MEM_CANVAS }) as never, "U0APPROV1"),
+    /was not written\. That canvas is this channel's memory canvas/,
+    "🔴 an approved append to the memory canvas refuses at approval",
+  );
+  ok(!calls.some((c) => c.method === "canvases.edit"), "🔴 and no edit reaches the memory canvas");
+
+  calls.length = 0;
   await refuses(() => ck.execute(canvasArgs({ canvasId: ELSEWHERE }) as never, "U0APPROV1"), /was not written.*not shared in this conversation/, "🔴 a canvas that left the room refuses at approval");
   ok(!calls.some((c) => c.method === "canvases.edit"), "🔴 and no edit is sent");
 
@@ -305,6 +349,7 @@ registerSlackBridge({ readCall: async (m: string, p: Record<string, string | num
   ok(!JSON.stringify(cw!.detail).includes("Decisions") && !JSON.stringify(cw!.detail).includes("Retro"), "the canvas.write row holds no text");
   ok((lw!.detail as Record<string, unknown>).added === 1 && (lw!.detail as Record<string, unknown>).changed === 1, "the list.write row counts the rows");
   ok(!audit.some((a) => a.action === "canvas.write" && (a.detail as Record<string, unknown>).canvasId === ELSEWHERE), "a refused approval writes no audit row");
+  ok(!audit.some((a) => a.action === "canvas.write" && (a.detail as Record<string, unknown>).canvasId === MEM_CANVAS), "a refused memory-canvas write writes no canvas.write row");
   ok(!audit.some((a) => a.action === "canvas.write" && (a.detail as Record<string, unknown>).channel === FREE_ROOM), "a free-plan refusal writes no canvas.write row");
 }
 _resetSlackBridgeForTest();

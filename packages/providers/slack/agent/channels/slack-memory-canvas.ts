@@ -1,6 +1,7 @@
 import {
   agentDisplayName,
   appendAudit,
+  channelCanvasIdOf,
   domainForChannel,
   domainsNamingSilo,
   getConfig,
@@ -136,10 +137,7 @@ async function withdrawIfOurs(channelId: string, reason: WithdrawReason, botUser
   return cleared?.ok === true ? `cleared-${reason}` : "clear-failed";
 }
 
-function canvasIdOf(info: Record<string, unknown>): string | undefined {
-  const props = (info.channel as { properties?: { canvas?: { file_id?: unknown } } } | undefined)?.properties;
-  return typeof props?.canvas?.file_id === "string" ? props.canvas.file_id : undefined;
-}
+const canvasIdOf = channelCanvasIdOf;
 
 export async function publishChannelCanvas(
   channelId: string,

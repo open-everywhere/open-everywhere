@@ -20,7 +20,7 @@ function safeDomains(): readonly Domain[] {
   }
 }
 import type { CanvasWriteArgs } from "../approvals/slack-doc-write.js";
-import { CANVAS_MARKDOWN_MAX, defuseDocText, liveSlackDocCall, resolveRoomFile, type SlackDocCall } from "../channels/slack-canvas-list.js";
+import { CANVAS_MARKDOWN_MAX, defuseDocText, liveSlackDocCall, refuseMemoryCanvasWrite, resolveRoomFile, type SlackDocCall } from "../channels/slack-canvas-list.js";
 import { slackBridge } from "../channels/slack-bridge.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -54,9 +54,14 @@ export async function buildCanvasWrite(
     if (!input.title) throw new Error(`${TOOL}: a new canvas needs a title.`);
     return { ...base, op: "create", title: input.title };
   }
-  const file = await resolveRoomFile(call, input.canvas, p.channelId, "canvas").catch((err: unknown) => {
-    throw new Error(`${TOOL}: ${err instanceof Error ? err.message : String(err)}`);
-  });
+  const file = await resolveRoomFile(call, input.canvas, p.channelId, "canvas")
+    .then(async (f) => {
+      await refuseMemoryCanvasWrite(call, f.id, p.channelId);
+      return f;
+    })
+    .catch((err: unknown) => {
+      throw new Error(`${TOOL}: ${err instanceof Error ? err.message : String(err)}`);
+    });
   return { ...base, op: input.mode ?? "append", canvasId: file.id, title: file.title };
 }
 
@@ -65,7 +70,8 @@ const writeCanvasEntry = defineTool({
     "PROPOSE creating or changing a Slack CANVAS in this conversation — a meeting notes page, a plan, a " +
     "runbook, a summary people keep coming back to. Leave `canvas` out to create a new canvas here; give " +
     "a canvas's link to add to it (`mode: \"append\"`, the default) or rewrite it (`mode: \"replace\"`). " +
-    "Only a canvas this conversation shows can be changed. Consequential: it posts an approval card that " +
+    "Only a canvas this conversation shows can be changed, and never the channel's memory canvas (the next " +
+    "memory write rewrites it): to change a line there, remember or forget it instead. Consequential: it posts an approval card that " +
     "previews the change, and nothing changes until a human confirms. The posted card IS the reply — do " +
     "not repeat its text.",
   inputSchema,

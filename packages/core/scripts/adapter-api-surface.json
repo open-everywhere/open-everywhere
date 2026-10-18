@@ -741,6 +741,7 @@
     "carryTailForward",
     "catchUpSender",
     "catchUpUnavailableReason",
+    "channelCanvasIdOf",
     "chatReadIngestion",
     "chatWakeIngestsNonMember",
     "checkAwsSsoIdentityBinding",

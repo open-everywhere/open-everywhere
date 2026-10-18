@@ -30,9 +30,23 @@ export type ChannelCanvasRead =
   | { readonly kind: "missing-scope"; readonly method: string; readonly scope: string }
   | { readonly kind: "error"; readonly method: string; readonly error: string };
 
+export function channelCanvasIdsOf(info: Record<string, unknown>): string[] {
+  const props = (info.channel as { properties?: { canvas?: { file_id?: unknown }; tabs?: unknown } } | undefined)?.properties;
+  const ids: string[] = [];
+  const add = (id: unknown) => {
+    if (typeof id === "string" && id.length > 0 && !ids.includes(id)) ids.push(id);
+  };
+  add(props?.canvas?.file_id);
+  if (Array.isArray(props?.tabs)) {
+    for (const tab of props.tabs as { type?: unknown; data?: { file_id?: unknown } }[]) {
+      if (tab?.type === "canvas") add(tab.data?.file_id);
+    }
+  }
+  return ids;
+}
+
 export function channelCanvasIdOf(info: Record<string, unknown>): string | undefined {
-  const id = (info.channel as { properties?: { canvas?: { file_id?: unknown } } } | undefined)?.properties?.canvas?.file_id;
-  return typeof id === "string" && id.length > 0 ? id : undefined;
+  return channelCanvasIdsOf(info)[0];
 }
 
 type FailedRead = { readonly kind: "missing-scope"; readonly method: string; readonly scope: string } | { readonly kind: "error"; readonly method: string; readonly error: string };
@@ -46,12 +60,19 @@ export function failedRead(method: string, json: Record<string, unknown>): Faile
   return { kind: "error", method, error };
 }
 
-export async function readChannelCanvas(call: SlackRawCall, channelId: string, text: string): Promise<ChannelCanvasRead> {
+export async function readChannelCanvas(call: SlackRawCall, channelId: string, text: string, creator?: string): Promise<ChannelCanvasRead> {
   const info = await call("conversations.info", { channel: channelId });
   if (info.ok !== true) return failedRead("conversations.info", info);
-  const canvasId = channelCanvasIdOf(info);
-  if (!canvasId) return { kind: "no-canvas" };
-  return readCanvasById(call, canvasId, text);
+  const ids = channelCanvasIdsOf(info);
+  if (ids.length === 0) return { kind: "no-canvas" };
+  const reads: ChannelCanvasRead[] = [];
+  for (const id of ids) {
+    const r = await readCanvasById(call, id, text);
+    if (r.kind !== "canvas") return r;
+    reads.push(r);
+  }
+  const holds = (r: ChannelCanvasRead) => r.kind === "canvas" && r.holdsText;
+  return reads.find((r) => holds(r) && r.kind === "canvas" && creator !== undefined && r.creator === creator) ?? reads.find(holds) ?? reads[0]!;
 }
 
 export async function readCanvasById(call: SlackRawCall, canvasId: string, text: string): Promise<ChannelCanvasRead> {

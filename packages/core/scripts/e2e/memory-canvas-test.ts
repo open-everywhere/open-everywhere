@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { AuditWireEntry } from "./audit-read.js";
-import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, channelCanvasIdOf, classifyChannelTrust, createdCanvasId, readCanvasById, readChannelCanvas, type SlackRawCall } from "./memory-canvas.js";
+import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, channelCanvasIdOf, channelCanvasIdsOf, classifyChannelTrust, createdCanvasId, readCanvasById, readChannelCanvas, type SlackRawCall } from "./memory-canvas.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -42,6 +42,11 @@ const row = (surface: string, outcome: string, ts: string, trigger = "memory-wri
   ok(channelCanvasIdOf({ ok: true, channel: { properties: { canvas: { file_id: "F1" } } } }) === "F1", "reads the channel canvas id");
   ok(channelCanvasIdOf({ ok: true, channel: { properties: {} } }) === undefined, "no canvas property ⇒ undefined");
   ok(channelCanvasIdOf({ ok: true, channel: { properties: { canvas: { file_id: "" } } } }) === undefined, "an empty id is no canvas");
+  const tabbed = { ok: true, channel: { properties: { tabs: [{ id: "Ct1", type: "files" }, { id: "Ct2", type: "canvas", data: { file_id: "F0CA0J8PLDC" } }] } } };
+  ok(channelCanvasIdOf(tabbed) === "F0CA0J8PLDC", "🔴 a canvas named only as a channel tab is read (the OPE-2581 shape)");
+  const both = { ok: true, channel: { properties: { canvas: { file_id: "F1" }, tabs: [{ type: "canvas", data: { file_id: "F1" } }, { type: "canvas", data: { file_id: "F2" } }] } } };
+  ok(JSON.stringify(channelCanvasIdsOf(both)) === JSON.stringify(["F1", "F2"]), "every canvas id is read, the channel canvas first, with no id twice");
+  ok(channelCanvasIdsOf({ ok: true, channel: { properties: { tabs: [{ type: "files", data: { file_id: "F9" } }, { type: "canvas", data: {} }, "junk"] } } }).length === 0, "a non-canvas tab, a tab with no id, and a malformed tab name no canvas");
 }
 
 const fake = (answers: Record<string, Record<string, unknown>>) => {
@@ -81,6 +86,29 @@ const info = (fileId?: string) => ({ ok: true, channel: { properties: fileId ? {
   const r = await readChannelCanvas(s.call, "C1", FACT);
   ok(r.kind === "missing-scope" && r.scope === "canvases:read" && r.method === "canvases.sections.lookup", "a missing_scope answer names the scope Slack wanted");
   ok(!canvasShowsFact(r, BOT), "a missing scope is never read as a verdict that the canvas shows the fact");
+}
+{
+  const s = fake({ "conversations.info": { ok: true, channel: { properties: { tabs: [{ type: "canvas", data: { file_id: "F0TAB" } }] } } }, "files.info": { ok: true, file: { user: BOT } }, "canvases.sections.lookup": { ok: true, sections: [{ id: "temp:C:1" }] } });
+  const r = await readChannelCanvas(s.call, "C1", FACT, BOT);
+  ok(r.kind === "canvas" && r.canvasId === "F0TAB" && canvasShowsFact(r, BOT), "🔴 a bot canvas named only as a tab, holding the fact, SHOWS it");
+  const t = fake({ "conversations.info": { ok: true, channel: { properties: { tabs: [{ type: "canvas", data: { file_id: "F0TAB" } }] } } }, "files.info": { ok: true, file: { user: BOT } }, "canvases.sections.lookup": { ok: true, sections: [] } });
+  ok(!canvasShowsFact(await readChannelCanvas(t.call, "C1", FACT, BOT), BOT), "NEGATIVE control: a tabbed bot canvas WITHOUT the fact shows nothing");
+}
+{
+  const byFile: Record<string, Record<string, unknown>> = { F0PERSON: { ok: true, file: { user: "U0PERSON" } }, F0BOTS: { ok: true, file: { user: BOT } } };
+  const call: SlackRawCall = async (method, params) => {
+    if (method === "conversations.info") return { ok: true, channel: { properties: { tabs: [{ type: "canvas", data: { file_id: "F0PERSON" } }, { type: "canvas", data: { file_id: "F0BOTS" } }] } } };
+    if (method === "files.info") return byFile[params["file"]!] ?? { ok: false, error: "file_not_found" };
+    if (method === "canvases.sections.lookup") return { ok: true, sections: params["canvas_id"] === "F0BOTS" ? [{ id: "s" }] : [] };
+    return { ok: false, error: "unknown_method" };
+  };
+  const r = await readChannelCanvas(call, "C1", FACT, BOT);
+  ok(r.kind === "canvas" && r.canvasId === "F0BOTS" && canvasShowsFact(r, BOT), "🔴 the bot's canvas behind a person's tab is the read: a leak there is not missed");
+  const both: SlackRawCall = async (method, params) => (method === "canvases.sections.lookup" ? { ok: true, sections: [{ id: "s" }] } : call(method, params));
+  ok(canvasShowsFact(await readChannelCanvas(both, "C1", FACT, BOT), BOT), "a bot canvas holding the fact wins over a person's canvas that also holds it");
+  const broken: SlackRawCall = async (method, params) => (method === "files.info" && params["file"] === "F0BOTS" ? { ok: false, error: "missing_scope", needed: "files:read" } : call(method, params));
+  const b = await readChannelCanvas(broken, "C1", FACT, BOT);
+  ok(b.kind === "missing-scope" && b.scope === "files:read", "a failed read of the second canvas is the verdict: no canvas is skipped");
 }
 {
   const s = fake({ "conversations.info": { ok: false, error: "channel_not_found" } });

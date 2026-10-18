@@ -144,6 +144,7 @@ for (const path of [
   "packages/providers/slack/agent/channels/slack-memory-canvas.ts",
   "packages/core/agent/memory/write-road.ts",
   "packages/core/agent/memory/visible.ts",
+  "packages/core/agent/channels/slack-canvas-list.ts",
 ]) {
   ok(`${path} selects S-MEMORY-CANVAS`, beyondFloor(relevantScenarios([path])).includes("S-MEMORY-CANVAS"));
 }

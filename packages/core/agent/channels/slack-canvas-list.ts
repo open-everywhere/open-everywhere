@@ -80,6 +80,27 @@ export function listColumnsOf(file: Record<string, unknown>): ListColumn[] {
   return out;
 }
 
+export function channelCanvasIdOf(info: Record<string, unknown> | undefined): string | undefined {
+  const id = (info?.channel as { properties?: { canvas?: { file_id?: unknown } } } | undefined)?.properties?.canvas?.file_id;
+  return str(id);
+}
+
+export const MEMORY_CANVAS_WRITE_REFUSAL =
+  "That canvas is this channel's memory canvas, and I rewrite it at the next memory write, so a change to it would be lost. " +
+  "To add or correct a line on it, ask me in this channel to remember or forget it.";
+
+export async function refuseMemoryCanvasWrite(call: SlackDocCall, canvasId: string, channelId: string): Promise<void> {
+  const unsure = "I could not confirm that this canvas is not this channel's memory canvas, so I did not change it. Ask again in a moment.";
+  const info = await call("conversations.info", { channel: channelId }).catch(() => undefined);
+  if (!info) throw new Error(unsure);
+  if (channelCanvasIdOf(info) !== canvasId) return;
+  const [file, auth] = await Promise.all([call("files.info", { file: canvasId }).catch(() => undefined), call("auth.test", {}).catch(() => undefined)]);
+  const creator = str((file?.file as { user?: unknown } | undefined)?.user);
+  const bot = str(auth?.user_id);
+  if (!file || !bot) throw new Error(unsure);
+  if (creator === bot) throw new Error(MEMORY_CANVAS_WRITE_REFUSAL);
+}
+
 export async function resolveRoomFile(call: SlackDocCall, ref: string, channelId: string, want: "canvas" | "list"): Promise<RoomFile> {
   const noun = want === "canvas" ? "canvas" : "List";
   const id = slackFileIdOf(ref);
@@ -96,8 +117,7 @@ export async function resolveRoomFile(call: SlackDocCall, ref: string, channelId
   let inRoom = fileRooms(file).has(channelId);
   if (!inRoom && want === "canvas") {
     const info = await call("conversations.info", { channel: channelId }).catch(() => undefined);
-    const own = (info?.channel as { properties?: { canvas?: { file_id?: unknown } } } | undefined)?.properties?.canvas?.file_id;
-    inRoom = own === id;
+    inRoom = channelCanvasIdOf(info) === id;
   }
   if (!inRoom) throw new Error(`That ${noun} is not shared in this conversation. I only change a ${noun} that this conversation shows.`);
   const title = str(file.title) ?? str(file.name) ?? `untitled ${noun}`;

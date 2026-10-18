@@ -250,9 +250,10 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/providers/slack/agent/channels/slack-memory-canvas.ts",
       "packages/core/agent/memory/write-road.ts",
       "packages/core/agent/memory/visible.ts",
+      "packages/core/agent/channels/slack-canvas-list.ts",
     ],
     scenarios: ["S-MEMORY-CANVAS"],
-    why: "S-MEMORY-CANVAS (OPE-2499) is the only leg that reads a channel canvas. It teaches a run-unique fact in the internal e2e channel, gates on the `memory.canvas_refresh` row the write road's Slack observer writes, and reads the channel's canvas back with the driver's own token to find the fact. Its second half classifies the domain's other channels from Slack itself, and in each shared or guest one gates that the refresh held the canvas back and that no canvas of the bot's holds the fact. `write-road.ts` notifies the observer and `visible.ts` renders the canvas document, so a change to either decides what the canvas shows.",
+    why: "S-MEMORY-CANVAS (OPE-2499) is the only leg that reads a channel canvas. It teaches a run-unique fact in the internal e2e channel, gates on the `memory.canvas_refresh` row the write road's Slack observer writes, and reads the channel's canvas back with the driver's own token to find the fact. Its second half classifies the domain's other channels from Slack itself, and in each shared or guest one gates that the refresh held the canvas back and that no canvas of the bot's holds the fact. `write-road.ts` notifies the observer, `visible.ts` renders the canvas document, and `slack-canvas-list.ts` names the channel canvas the observer rewrites, so a change to any of them decides what the canvas shows.",
   },
   {
     area: "agent-canvas-list",

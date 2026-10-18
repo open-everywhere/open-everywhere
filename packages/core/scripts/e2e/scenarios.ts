@@ -6364,7 +6364,7 @@ export const SCENARIOS: readonly Scenario[] = [
       let shown: ChannelCanvasRead = { kind: "no-canvas" };
       await pollOptional(
         async () => {
-          shown = await readChannelCanvas(call, channel, fact);
+          shown = await readChannelCanvas(call, channel, fact, bot);
           return shown.kind === "missing-scope" || canvasShowsFact(shown, bot) ? true : undefined;
         },
         { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-MEMORY-CANVAS: the fact in the base channel's canvas" },
@@ -6404,7 +6404,7 @@ export const SCENARIOS: readonly Scenario[] = [
           verdict.kind === "withheld",
           `S-MEMORY-CANVAS: the trust gate held the canvas back in the ${why} channel ${c} — its row says "${verdict.kind === "none" ? "no row" : verdict.outcome}" (created, updated or clear-failed here is a leak or a canvas that may still be up)`,
         );
-        const r = await readChannelCanvas(call, c, fact);
+        const r = await readChannelCanvas(call, c, fact, bot);
         refuseOnScope(r);
         ctx.gate(r.kind === "canvas" || r.kind === "no-canvas", `S-MEMORY-CANVAS: the canvas of the ${why} channel ${c} can be read (${describe(r)})`);
         ctx.gate(!canvasShowsFact(r, bot), `S-MEMORY-CANVAS: the ${why} channel ${c} shows no canvas of the bot's that holds the fact (${describe(r)})`);
