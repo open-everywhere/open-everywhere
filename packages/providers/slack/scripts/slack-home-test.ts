@@ -503,6 +503,66 @@ console.log("§6b a failed gate clears the app's own canvas");
   ok(liveMemoryCanvasDeps().channelInternal === confirmChannelInternalFresh, "🔴 the LIVE canvas deps use the fresh read, never the wake path's cached one");
 }
 
+console.log("§6d a failed canvas row names the Slack refusal");
+{
+  type Row = { surface?: string; detail: { trigger?: string; outcome?: string; slackError?: string; slackMethod?: string; slackNeeded?: string } };
+  const canvasRows = async (): Promise<Row[]> => (await getOperationalStore().readAudit({ org: "default", action: "memory.canvas_refresh" })) as unknown as Row[];
+  const seen = new Set<string>();
+  const markSeen = async (): Promise<void> => {
+    for (const r of await canvasRows()) seen.add(JSON.stringify(r));
+  };
+  const newRows = async (): Promise<Row[]> => (await canvasRows()).filter((r) => !seen.has(JSON.stringify(r)));
+  await markSeen();
+
+  const noRead = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", marked: ["F_MEM"], lookupFails: true, internal: (c) => c !== "CSHARED" });
+  await refreshMemoryCanvases({ org: "default", silo: "platform-brain" }, noRead);
+  const failedRow = (await newRows()).find((r) => r.surface === "CPLAT" && r.detail.outcome === "failed");
+  ok(failedRow !== undefined, "the scope-gap refresh writes a `failed` row for the channel");
+  ok(
+    failedRow?.detail.slackMethod === "canvases.sections.lookup" && failedRow.detail.slackError === "missing_scope" && failedRow.detail.slackNeeded === "canvases:read",
+    `🔴 …and the row names the Slack call, its error code and the scope Slack needs (got ${JSON.stringify(failedRow?.detail)})`,
+  );
+  ok(!noRead.calls.some((c) => c.method === "canvases.edit" || c.method === "conversations.canvases.create"), "…and a failed decision writes no canvas, so the code reaches no person-facing text");
+  await markSeen();
+
+  const refused = canvasDeps({ existing: "F_OURS", creator: "UBOT", internal: () => false, editFails: true });
+  ok((await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "CPLAT", trigger: "channel-shared" }, refused)) === "clear-failed", "a refused take-down is `clear-failed`");
+  const clearRow = (await newRows()).find((r) => r.detail.trigger === "channel-shared" && r.detail.outcome === "clear-failed");
+  ok(
+    clearRow?.detail.slackMethod === "canvases.edit" && clearRow.detail.slackError === "canvas_editing_failed" && clearRow.detail.slackNeeded === undefined,
+    `🔴 the take-down row names the refused call and its code (got ${JSON.stringify(clearRow?.detail)})`,
+  );
+  await markSeen();
+
+  await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "CPLAT", trigger: "channel-shared" }, canvasDeps({ existing: "F_X", creator: "UBOT", internal: () => false, botUnknown: true }));
+  const authRow = (await newRows()).find((r) => r.detail.outcome === "clear-failed");
+  ok(authRow?.detail.slackMethod === "auth.test" && authRow.detail.slackError === "invalid_auth", `a recheck with no bot identity names the auth.test refusal (got ${JSON.stringify(authRow?.detail)})`);
+  await markSeen();
+
+  const unknownBot = canvasDeps({ existing: "F_X", creator: "UBOT", botUnknown: true });
+  const throwing: MemoryCanvasDeps = { ...unknownBot, channelInternal: async () => { throw new Error("trust read threw"); } };
+  ok((await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "CPLAT", trigger: "channel-shared" }, throwing)) === "clear-failed", "a recheck that throws is `clear-failed`");
+  const thrownRow = (await newRows()).find((r) => r.detail.outcome === "clear-failed");
+  ok(thrownRow !== undefined && thrownRow.detail.slackError === undefined && thrownRow.detail.slackMethod === undefined, `🔴 …and its row names no Slack refusal, not the earlier auth.test one (got ${JSON.stringify(thrownRow?.detail)})`);
+  await markSeen();
+
+  const silent = canvasDeps({ existing: "F_OURS", creator: "UBOT", internal: () => false });
+  const silentCall = silent.call;
+  const mute: MemoryCanvasDeps = { ...silent, call: async (m, b) => (m === "conversations.info" ? undefined : silentCall(m, b)) };
+  ok((await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "CPLAT", trigger: "channel-shared" }, mute)) === "clear-failed", "a take-down whose conversations.info gets no answer is `clear-failed`");
+  const muteRow = (await newRows()).find((r) => r.detail.outcome === "clear-failed");
+  ok(muteRow?.detail.slackMethod === "conversations.info" && muteRow.detail.slackError === "no_response", `…and the row says the call gave no response (got ${JSON.stringify(muteRow?.detail)})`);
+  await markSeen();
+
+  await refreshMemoryCanvases({ org: "default", silo: "platform-brain" }, canvasDeps({ existing: "F_OURS", creator: "UBOT", stored: "F_OURS", internal: (c) => c !== "CSHARED" }));
+  const good = await newRows();
+  ok(good.some((r) => r.detail.outcome === "updated") && good.every((r) => r.detail.slackError === undefined && r.detail.slackMethod === undefined), "NEGATIVE CONTROL: an `updated` or skipped row carries no slackError");
+  await markSeen();
+  await refreshMemoryCanvases({ org: "default", silo: "platform-brain" }, canvasDeps({ storeFails: true, internal: (c) => c !== "CSHARED" }));
+  const storeRow = (await newRows()).find((r) => r.surface === "CPLAT");
+  ok(storeRow?.detail.outcome === "failed" && storeRow.detail.slackError === undefined, "NEGATIVE CONTROL: a `failed` from an unreadable store row names no Slack refusal");
+}
+
 console.log("§7 the boot entry wires the canvas to the write road");
 {
   const methods: string[] = [];

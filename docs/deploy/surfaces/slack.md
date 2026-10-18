@@ -365,7 +365,7 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      channel canvas of the domain's internal channels, and rewrites it when that memory changes (see
      [Memory you can see](../../capabilities/memory.md#memory-you-can-see)). Omit it and each refresh
      fails with `missing_scope`, which the deploy log and a `memory.canvas_refresh` audit row record
-     per channel. Memory itself is unaffected. A workspace on Slack's free plan has no channel
+     per channel (the row's `slackError`, `slackMethod` and `slackNeeded` name the code, the call and the needed scope). Memory itself is unaffected. A workspace on Slack's free plan has no channel
      canvases, and the refresh fails there in the same way. The same scope lets the agent create and change a
      canvas a person asks for (`write_canvas`, see [Canvases and Lists](#canvases-and-lists)).
    - `canvases:read` — **finding a memory canvas the record does not name.** The agent records the

@@ -12,6 +12,8 @@ import {
   storedMemoryCanvas,
   memoryLineForReader,
   renderMemoryMarkdown,
+  scrubAuditText,
+  type AuditDetail,
   type Domain,
   type MemoryCanvasMatch,
   type MemoryWriteEvent,
@@ -49,6 +51,46 @@ export interface MemoryCanvasDeps {
   readonly authorIsMember: (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
   readonly now?: () => Date;
   readonly store?: Pick<OperationalStore, "getMemoryCanvas" | "setMemoryCanvas">;
+}
+
+interface CanvasSlackError {
+  readonly method: string;
+  readonly error: string;
+  readonly needed?: string;
+}
+
+const SLACK_ERROR_TEXT_MAX = 120;
+
+function slackCode(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 && v.length <= SLACK_ERROR_TEXT_MAX && /^[A-Za-z0-9_.:,-]+$/.test(v) ? v : undefined;
+}
+
+function recordSlackRefusals(deps: MemoryCanvasDeps): { deps: MemoryCanvasDeps; refusal: () => CanvasSlackError | undefined } {
+  let last: CanvasSlackError | undefined;
+  return {
+    deps: {
+      ...deps,
+      call: async (method, body) => {
+        const res = await deps.call(method, body);
+        if (res === undefined) last = { method, error: "no_response" };
+        else if (res.ok !== true) {
+          const needed = slackCode(res.needed);
+          last = { method, error: slackCode(res.error) ?? "unknown", ...(needed ? { needed } : {}) };
+        }
+        return res;
+      },
+    },
+    refusal: () => last,
+  };
+}
+
+function refusalFor(outcome: CanvasOutcome, refusal: CanvasSlackError | undefined): CanvasSlackError | undefined {
+  return outcome === "failed" || outcome === "clear-failed" ? refusal : undefined;
+}
+
+function slackErrorDetail(e: CanvasSlackError | undefined): AuditDetail {
+  if (!e) return {};
+  return { slackError: scrubAuditText(e.error), slackMethod: e.method, ...(e.needed ? { slackNeeded: scrubAuditText(e.needed) } : {}) };
 }
 
 export function liveMemoryCanvasDeps(): MemoryCanvasDeps {
@@ -201,6 +243,10 @@ export async function publishChannelCanvas(
   return "updated";
 }
 
+function slackErrorLog(e: CanvasSlackError | undefined): string {
+  return e ? ` (${e.method}: ${e.error}${e.needed ? `, needs ${e.needed}` : ""})` : "";
+}
+
 export type CanvasTrigger = "memory-write" | "member-joined" | "channel-shared";
 
 export async function recheckChannelCanvas(
@@ -217,14 +263,20 @@ export async function recheckChannelCanvas(
   const room: CanvasRoom = { org: input.org, teamId: input.teamId, channelId: input.channelId };
   const domain = domainForChannel(surfaceKey, getConfig().loadDomains());
   const shows = domain !== undefined && domain.memory !== undefined && domain.memoryCanvas !== false;
-  const auth = await deps.call("auth.test", {});
+  const recorded = recordSlackRefusals(deps);
+  const auth = await recorded.deps.call("auth.test", {});
   const botUserId = auth?.ok === true && typeof auth.user_id === "string" ? auth.user_id : undefined;
+  let threw = false;
   const outcome = await (shows
-    ? publishChannelCanvas(room, null, botUserId, deps, input.joinedUserId)
-    : withdrawIfOurs(room, "disabled", botUserId, deps)
-  ).catch((): CanvasOutcome => "clear-failed");
+    ? publishChannelCanvas(room, null, botUserId, recorded.deps, input.joinedUserId)
+    : withdrawIfOurs(room, "disabled", botUserId, recorded.deps)
+  ).catch((): CanvasOutcome => {
+    threw = true;
+    return "clear-failed";
+  });
+  const refusal = threw ? undefined : refusalFor(outcome, recorded.refusal());
   if (outcome !== "unchanged" && outcome !== "skipped-disabled") {
-    console.log(`[open-everywhere:slack-canvas] ${input.trigger} recheck, channel ${input.channelId}: ${outcome}`);
+    console.log(`[open-everywhere:slack-canvas] ${input.trigger} recheck, channel ${input.channelId}: ${outcome}${slackErrorLog(refusal)}`);
   }
   await appendAudit({
     org: input.org,
@@ -232,7 +284,7 @@ export async function recheckChannelCanvas(
     workspace: input.teamId,
     surface: input.channelId,
     action: MEMORY_CANVAS_ACTION,
-    detail: { domain: domain?.name ?? null, trigger: input.trigger, outcome },
+    detail: { domain: domain?.name ?? null, trigger: input.trigger, outcome, ...slackErrorDetail(refusal) },
   }).catch(() => undefined);
   return outcome;
 }
@@ -254,11 +306,17 @@ export async function refreshMemoryCanvases(event: MemoryWriteEvent, deps: Memor
     const markdown = shows ? memoryCanvasMarkdown(domain, await readDomainMemory(event.org, domain), nowIso) : "";
     for (const room of rooms) {
       const canvasRoom: CanvasRoom = { org: event.org, teamId, channelId: room.channelId };
-      const outcome = await (shows ? publishChannelCanvas(canvasRoom, markdown, botUserId, deps) : withdrawIfOurs(canvasRoom, "disabled", botUserId, deps)).catch(
-        (): CanvasOutcome => (shows ? "failed" : "clear-failed"),
+      const recorded = recordSlackRefusals(deps);
+      let threw = false;
+      const outcome = await (shows ? publishChannelCanvas(canvasRoom, markdown, botUserId, recorded.deps) : withdrawIfOurs(canvasRoom, "disabled", botUserId, recorded.deps)).catch(
+        (): CanvasOutcome => {
+          threw = true;
+          return shows ? "failed" : "clear-failed";
+        },
       );
+      const refusal = threw ? undefined : refusalFor(outcome, recorded.refusal());
       if (outcome !== "created" && outcome !== "updated") {
-        console.log(`[open-everywhere:slack-canvas] domain "${domain.name}" channel ${room.channelId}: ${outcome}`);
+        console.log(`[open-everywhere:slack-canvas] domain "${domain.name}" channel ${room.channelId}: ${outcome}${slackErrorLog(refusal)}`);
       }
       const [platform, workspace, surface] = room.surfaceKey.split("/");
       await appendAudit({
@@ -267,7 +325,7 @@ export async function refreshMemoryCanvases(event: MemoryWriteEvent, deps: Memor
         workspace: workspace!,
         surface: surface!,
         action: MEMORY_CANVAS_ACTION,
-        detail: { domain: domain.name, trigger: "memory-write", silo: event.silo, outcome, chars: markdown.length },
+        detail: { domain: domain.name, trigger: "memory-write", silo: event.silo, outcome, chars: markdown.length, ...slackErrorDetail(refusal) },
       }).catch(() => undefined);
     }
   }

@@ -821,12 +821,23 @@ Each channel a canvas decision visits writes one `memory.canvas_refresh` row. It
 | `clear-failed` | The app could not rule out that its canvas still shows memory. |
 | `failed` | A write of memory to the canvas failed, or a lookup failed and the app could not rule out that the channel already shows the memory canvas, so it wrote nothing. |
 
+A `failed` or `clear-failed` row also names the Slack refusal when a Slack call was refused:
+`slackError` is Slack's error code, `slackMethod` is the call, and `slackNeeded` is the scope Slack
+names. A scope gap reads `slackError: "missing_scope"`, `slackMethod: "canvases.sections.lookup"`,
+`slackNeeded: "canvases:read"`. A call that gave no answer reads `slackError: "no_response"`. A failure
+with no Slack refusal, such as an unreadable store row or a throw, carries none of the three fields.
+The fields name the LAST Slack refusal of the decision. That is usually the call that decided the
+outcome. It can also be an earlier refusal that only shaped the path: a refused `auth.test` or
+`conversations.members`, followed by a failure Slack did not cause. The fields are operator data. No
+canvas and no message shows them. The deploy log line for the channel carries the same method, code
+and scope.
+
 **The canvas is a read view.** A direct edit to it is replaced on the next memory change. To correct
 or forget a line, members ask the agent in the channel. The agent's own `write_canvas` tool refuses to
 add to or rewrite this canvas, for the same reason (OPE-2585). A domain turns its canvas off with
 `memoryCanvas: false` (see the [configuration reference](../deploy/configuration-reference.md#memory-domain--silo)),
 which takes the app's canvas down as described above. The canvas needs the `canvases:write` scope,
-and Slack's free plan has no channel canvases; there, each refresh records `failed` and memory is
+and `canvases:read` to find a memory canvas the record does not name, and Slack's free plan has no channel canvases; there, each refresh records `failed` and memory is
 unaffected. A trust-event recheck runs on every person who joins any channel the app is in. In a
 channel that shows no canvas it costs two or three Slack reads. In a canvas-showing channel it also
 lists the members and checks each one (`users.info`, cached), up to 200 per channel.
