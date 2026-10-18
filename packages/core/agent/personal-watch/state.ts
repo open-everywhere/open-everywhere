@@ -237,6 +237,20 @@ export async function setPersonalWatchDial(
   return { previous, changed, written };
 }
 
+export type WatchRefusalReason = "not-member" | "room-unconfirmed";
+
+export async function auditPersonalWatchRefused(where: PersonalWatchWhere, dial: WatchDial, via: Exclude<WatchDialSource, "default">, reason: WatchRefusalReason): Promise<void> {
+  await appendAudit({
+    org: where.org,
+    platform: where.platform,
+    workspace: where.workspace,
+    surface: where.surface,
+    principalId: where.principalKey,
+    action: "personal_watch.dial.refused",
+    detail: { dial, via, reason },
+  }).catch(() => undefined);
+}
+
 export async function recordPersonalWatchResponse(
   where: PersonalWatchWhere,
   fingerprint: string,

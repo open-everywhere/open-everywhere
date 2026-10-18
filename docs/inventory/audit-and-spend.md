@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**726 rows: 723 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**727 rows: 724 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 718 rows are live behaviours and the other five are the retired action
+gives a different number: 719 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 364 | 0 |
+| 4. The audit action vocabulary | 365 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -454,6 +454,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `person.opt_out.refused` | `packages/core/agent/identity/person-opt-out.ts:68` | core/identity | The host refuses an agent act on an opted-out person's content: a memory write, or somebody else's message shortcut. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
 | `person.opt_out.set` | `packages/core/agent/identity/person-opt-out.ts:30` | core/identity | A person opts out of agent actions on their own content. | `docs/capabilities/memory.md#opting-out-of-agent-actions-on-your-content` (+1) | ? |
 | `personal_watch.dial.set` | `packages/core/agent/personal-watch/state.ts:199` | core/personal-watch | A person sets their chief-of-staff watch to more, less or none, with `/oe watch` or the Home tab. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
+| `personal_watch.dial.refused` | `packages/core/agent/personal-watch/state.ts:243` | core/personal-watch | `/oe watch` or the Home tab refuses to turn a person's watch to more or less, writes nothing, and names the reason: not a confirmed member, or a room not confirmed internal. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | ? |
 | `personal_watch.nudge` | `packages/core/agent/personal-watch/watch.ts:278` | core/personal-watch | The watch starts a direct message to the person on its own, with nobody asking. | `docs/capabilities/proactivity-and-routines.md#the-chief-of-staff-watch` (+1) | ? |
 | `personal_watch.proposal` | `packages/core/agent/personal-watch/discovery.ts:303` | core/personal-watch | Workflow discovery posts a routine proposal card into the person's own DM. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |
 | `personal_watch.proposal.accepted` | `packages/core/agent/approvals/routine-suggest.ts:63` | core/personal-watch | The person presses Set it up, and the routine is armed through `routine.create`. | `docs/capabilities/proactivity-and-routines.md#workflow-discovery-a-routine-for-work-you-repeat` (+1) | ? |

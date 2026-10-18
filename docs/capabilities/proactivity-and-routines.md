@@ -1396,6 +1396,14 @@ email sender, a Slack Connect stranger, an unverified person) enrol nobody. `/oe
 Home tab refuse to turn an outsider's watch up, but `none` and `/oe watch` alone work for anybody:
 a member whose lookup fails reads as `external`, and must keep the off switch.
 
+In a direct message, Slack's `/oe watch` asks `users.info` who typed it, as a DM turn does. So a
+guest or a Slack Connect stranger is refused even where the operator declared the whole workspace
+`internal`. A member the lookup confirms needs no declaration. When the lookup gives no answer, the
+command falls back to the declaration. In a channel,
+the command cannot confirm the room: Slack's command payload says nothing about who is in it. So
+`/oe watch more` and `/oe watch less` in a channel are refused, and the answer points to the DM.
+Each refusal writes nothing and files one `personal_watch.dial.refused` row with the reason.
+
 ### The dial: more, less, none
 
 Each person sets their own dial with `/oe watch more`, `/oe watch less` or `/oe watch none`, or with

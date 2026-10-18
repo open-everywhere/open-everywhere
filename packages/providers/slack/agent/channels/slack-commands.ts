@@ -16,6 +16,8 @@ import {
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
+import { slackAuthorIsMember } from "./slack-events.js";
+import { slackMode } from "./slack-identity.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:slack-commands] ${msg}`);
@@ -28,7 +30,7 @@ function formField(params: URLSearchParams, name: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
-export function bindableForSlashCommand(params: URLSearchParams): BindableContext {
+export function bindableForSlashCommand(params: URLSearchParams, invoker?: { readonly dmPartnerTrust?: "internal" | "external" }): BindableContext {
   const enterpriseId = formField(params, "enterprise_id");
   return {
     channel: { kind: "slack" },
@@ -39,6 +41,7 @@ export function bindableForSlashCommand(params: URLSearchParams): BindableContex
             team_id: formField(params, "team_id") ?? "",
             channel_id: formField(params, "channel_id") ?? "",
             ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
+            ...(invoker?.dmPartnerTrust ? { dm_partner_trust: invoker.dmPartnerTrust } : {}),
           },
           principalId: formField(params, "user_id") ?? "",
           principalType: "slack-user",
@@ -46,6 +49,26 @@ export function bindableForSlashCommand(params: URLSearchParams): BindableContex
       },
     },
   };
+}
+
+const INVOKER_PROBE_MS = 1_500;
+
+export async function slashInvokerDmTrust(
+  params: URLSearchParams,
+  probe: (userId: string, teamId: string | undefined) => Promise<boolean | undefined> = slackAuthorIsMember,
+): Promise<{ readonly dmPartnerTrust?: "internal" | "external" }> {
+  const userId = formField(params, "user_id");
+  if (!userId || slackMode(undefined, formField(params, "channel_id")) !== "dm") return {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), INVOKER_PROBE_MS);
+  });
+  try {
+    const member = await Promise.race([probe(userId, formField(params, "team_id")).catch(() => undefined), timeout]);
+    return member === undefined ? {} : { dmPartnerTrust: member ? "internal" : "external" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function auditCommandDropped(teamId: string | undefined, channelId: string | undefined, reason: string, enterpriseId?: string): Promise<void> {
@@ -103,7 +126,7 @@ export default defineChannel({
       }
 
       const cmd = parseSlackCommandText(formField(params, "text"));
-      const binding = bindFrom(bindableForSlashCommand(params));
+      const binding = bindFrom(bindableForSlashCommand(params, await slashInvokerDmTrust(params)));
       try {
         const reply = await runOeCommand(cmd, binding, { attachSession });
         return ephemeralResponse(reply);

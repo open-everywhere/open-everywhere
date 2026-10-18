@@ -1,6 +1,6 @@
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { DEFAULT_WATCH_DIAL, type WatchDial } from "../personal-watch/dial.js";
-import { enrollPersonalWatch, readPersonalWatch, recordPersonalWatchResponse, setPersonalWatchDial, type PersonalWatchWhere } from "../personal-watch/state.js";
+import { auditPersonalWatchRefused, enrollPersonalWatch, readPersonalWatch, recordPersonalWatchResponse, setPersonalWatchDial, type PersonalWatchWhere } from "../personal-watch/state.js";
 import { personalWatchArmed } from "../personal-watch/watch.js";
 import { discoveryOn } from "../personal-watch/discovery.js";
 import { registerHomeAction, registerHomeSection, type HomeBlock, type HomeItemAction, type HomeViewer } from "./home-view.js";
@@ -90,7 +90,10 @@ function dialAction(dial: WatchDial) {
   return async (viewer: HomeViewer) => {
     const where = whereOf(viewer);
     if (!where) return { notice: "I could not tell who you are, so I changed nothing." };
-    if (viewer.trust !== "internal" && dial !== "none") return { notice: "The watch is for members of this organisation, so I changed nothing." };
+    if (viewer.trust !== "internal" && dial !== "none") {
+      await auditPersonalWatchRefused(where, dial, "app-home", "not-member");
+      return { notice: "The watch is for members of this organisation, so I changed nothing." };
+    }
     try {
       const r = await setPersonalWatchDial(where, dial, "app-home", undefined, { existingOnly: viewer.trust !== "internal" });
       if (!r.written) return { notice: "You have no watch: it is for members of this organisation." };

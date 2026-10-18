@@ -2,7 +2,7 @@ import { actingPrincipalId, type SurfaceBinding } from "../identity/binding.js";
 import { agentCommandName } from "../identity/bot-name.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { DEFAULT_WATCH_DIAL, WATCH_DIALS, parseWatchDial, type WatchDial } from "../personal-watch/dial.js";
-import { enrollPersonalWatch, readPersonalWatch, setPersonalWatchDial } from "../personal-watch/state.js";
+import { auditPersonalWatchRefused, enrollPersonalWatch, readPersonalWatch, setPersonalWatchDial } from "../personal-watch/state.js";
 import { personalWatchArmed } from "../personal-watch/watch.js";
 import { discoveryOn } from "../personal-watch/discovery.js";
 
@@ -35,7 +35,14 @@ export async function runWatch(binding: SurfaceBinding, action: "status" | Watch
   const principalKey = acting ? tryPrincipalKey(binding.platform, binding.workspace, acting) : undefined;
   if (!principalKey) return "I could not tell who you are from this command, so I changed nothing.";
   const member = binding.trust === "internal";
-  if (!member && action !== "none" && action !== "status") return "The watch is for members of this organisation, so I changed nothing.";
+  if (!member && action !== "none" && action !== "status") {
+    const inDm = binding.mode === "dm";
+    const where = { org: binding.org, platform: binding.platform, workspace: binding.workspace, surface: binding.surface, principalKey };
+    await auditPersonalWatchRefused(where, action, "command", inDm ? "not-member" : "room-unconfirmed");
+    return inDm
+      ? "The watch is for members of this organisation, so I changed nothing."
+      : `I could not confirm that this room is inside the organisation, so I changed nothing. Send \`${oeSlash(`watch ${action}`)}\` in your direct message with me.`;
+  }
   const armedNote = personalWatchArmed()
     ? ""
     : discoveryOn()

@@ -1,6 +1,10 @@
+process.env.OE_SQLITE_PATH = ":memory:";
+delete process.env.DATABASE_URL;
+
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import type { RouteHandlerArgs } from "eve/channels";
+import { withPatchedFetch } from "./_fetch-test-utils.js";
 
 let n = 0;
 function ok(cond: boolean, label: string): void {
@@ -112,9 +116,70 @@ function ok(cond: boolean, label: string): void {
     }
   }
 
+  {
+    const { registerSurfaces, defineSurface, _resetSurfacesForTest, readAudit, registerIdentityMapper } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const { bindSlack } = await import("../agent/channels/slack-identity.js");
+    registerIdentityMapper("slack", bindSlack);
+    const { _resetAuthorMemberCache } = await import("../agent/channels/slack-events.js");
+    const { slashInvokerDmTrust } = await import("../agent/channels/slack-commands.js");
+    const USERS: Record<string, Record<string, unknown>> = {
+      UGUEST: { id: "UGUEST", team_id: "T1", is_restricted: true },
+      UMEMBER: { id: "UMEMBER", team_id: "T1" },
+    };
+    const json = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    let probes = 0;
+    const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+      if (href.endsWith("/users.info")) {
+        probes++;
+        const user = new URLSearchParams(String(init?.body ?? "")).get("user") ?? "";
+        return json(USERS[user] ? { ok: true, user: USERS[user] } : { ok: false, error: "user_not_found" });
+      }
+      return json({ ok: true });
+    }) as typeof fetch;
+    const signed = async (body: string) => {
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const res = await call(slackRequest(body, { timestamp, signature: slackSignature(secret, timestamp, body) }));
+      return { status: res.status, text: ((await res.json()) as { text: string }).text };
+    };
+    const prevToken = process.env.SLACK_BOT_TOKEN;
+    process.env.SLACK_BOT_TOKEN = "xoxb-slack-commands-test";
+    registerSurfaces([defineSurface({ key: "slack/T1", trust: "internal" })]);
+    _resetAuthorMemberCache();
+    try {
+      await withPatchedFetch(fakeFetch, async () => {
+        const guest = await signed("command=%2Foe&text=watch+more&team_id=T1&channel_id=DGUEST&user_id=UGUEST");
+        ok(guest.status === 200 && guest.text === "The watch is for members of this organisation, so I changed nothing.", `🔴 a guest's /oe watch more in their DM is refused in one line (got "${guest.text.slice(0, 100)}")`);
+        const guestRows = await readAudit({ org: "default", action: "personal_watch.dial.refused", principalId: "slack/T1/UGUEST" });
+        ok(guestRows.length === 1 && guestRows[0]!.detail?.["reason"] === "not-member" && guestRows[0]!.detail?.["via"] === "command", "🔴 …and files one personal_watch.dial.refused row, reason not-member");
+        ok((await readAudit({ org: "default", action: "personal_watch.dial.set", principalId: "slack/T1/UGUEST" })).length === 0, "🔴 …and no dial.set row: nothing was bound");
+
+        const member = await signed("command=%2Foe&text=watch+more&team_id=T1&channel_id=DMEMBER&user_id=UMEMBER");
+        ok(member.text.startsWith("Done. More:"), `the legitimate member's /oe watch more in their DM still binds (got "${member.text.slice(0, 100)}")`);
+        ok((await readAudit({ org: "default", action: "personal_watch.dial.set", principalId: "slack/T1/UMEMBER" })).length === 1, "…with one dial.set row");
+
+        const before = probes;
+        const room = await signed("command=%2Foe&text=watch+more&team_id=T1&channel_id=C1&user_id=UMEMBER");
+        ok(room.text.startsWith("I could not confirm that this room is inside the organisation") && room.text.includes("in your direct message"), `a channel command names the room and the DM door, not the member (got "${room.text.slice(0, 100)}")`);
+        ok(probes === before, "a channel command asks users.info nothing: the room's verdict is the binding's trust there");
+      });
+      const dmParams = new URLSearchParams("team_id=T1&channel_id=DX&user_id=UX");
+      ok(JSON.stringify(await slashInvokerDmTrust(dmParams, async () => undefined)) === "{}", "an unanswered probe stamps nothing");
+      ok(JSON.stringify(await slashInvokerDmTrust(dmParams, () => new Promise<boolean | undefined>(() => undefined))) === "{}", "a probe slower than the ack budget stamps nothing");
+      ok(JSON.stringify(await slashInvokerDmTrust(dmParams, () => Promise.reject(new Error("boom")))) === "{}", "a throwing probe stamps nothing");
+      ok((await slashInvokerDmTrust(dmParams, async () => false)).dmPartnerTrust === "external", "a guest verdict stamps external");
+      ok((await slashInvokerDmTrust(dmParams, async () => true)).dmPartnerTrust === "internal", "a member verdict stamps internal");
+    } finally {
+      _resetSurfacesForTest();
+      _resetAuthorMemberCache();
+      if (prevToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = prevToken;
+    }
+  }
+
   if (prevSecret === undefined) delete process.env.SLACK_SIGNING_SECRET;
   else process.env.SLACK_SIGNING_SECRET = prevSecret;
 }
 
 
-console.log(`\n✓ slack-commands: ${n} assertions passed (mount path + signature gate matrix + signed /oe responses)`);
+console.log(`\n✓ slack-commands: ${n} assertions passed (mount path + signature gate matrix + signed /oe responses + the DM invoker verdict)`);

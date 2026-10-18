@@ -803,6 +803,14 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
       "S-WATCH drives both doors (a forged `/oe watch` and a forged Home-tab click) and gates on this row, but it is NON_LAUNCH: its Home-tab leg needs the fixture app reinstalled with the Home tab on, as S-APP-HOME does.",
   },
   {
+    action: "personal_watch.dial.refused",
+    fields: ["dial", "via", "reason"],
+    proves:
+      "a door refused to turn a person's watch to more or less and wrote nothing, and why: `not-member` (the person is not confirmed a member) or `room-unconfirmed` (the command came from a room not confirmed internal)",
+    notExercised:
+      "no live leg forges a guest's or an outsider's `/oe watch`: the board has no guest fixture. `test:personal-watch` drives both reasons through the real command and Home-tab doors, and `test:slack-commands` drives a guest's signed command through the real Slack route.",
+  },
+  {
     action: "personal_watch.response",
     fields: ["response", "dampening", "via", "fingerprint"],
     proves: "a person marked a nudge useful or not useful, and the dose that answer left",

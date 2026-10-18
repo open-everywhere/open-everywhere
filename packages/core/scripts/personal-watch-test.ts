@@ -438,6 +438,15 @@ console.log("§7 the command");
   const outsider = { ...hal, principalId: "UOUT", trust: "external" } as SurfaceBinding;
   ok((await runOeCommand({ kind: "watch", action: "more" }, outsider)).startsWith("The watch is for members"), "an outsider gets no watch from the command");
   ok((await state.readPersonalWatch(ORG, "slack/T1/UOUT")).state === undefined, "…and no row is written for them");
+  const outsiderRefusals = await readAudit({ org: ORG, action: "personal_watch.dial.refused", principalId: "slack/T1/UOUT" });
+  ok(outsiderRefusals.length === 1 && outsiderRefusals[0]!.detail?.["reason"] === "not-member" && outsiderRefusals[0]!.detail?.["via"] === "command" && outsiderRefusals[0]!.detail?.["dial"] === "more", "…and one `personal_watch.dial.refused` row names reason not-member, via command, dial more");
+  const roomMember = { ...hal, principalId: "UROOM", surface: "C1", mode: "channel", trust: "external" } as SurfaceBinding;
+  const roomAnswer = await runOeCommand({ kind: "watch", action: "less" }, roomMember);
+  ok(roomAnswer.startsWith("I could not confirm that this room is inside the organisation") && roomAnswer.includes("/oe watch less") && !roomAnswer.includes("for members"), "a command from an unconfirmed room names the room and the DM door, not the person's membership");
+  ok((await state.readPersonalWatch(ORG, "slack/T1/UROOM")).state === undefined, "…writes no watch row");
+  const roomRefusals = await readAudit({ org: ORG, action: "personal_watch.dial.refused", principalId: "slack/T1/UROOM" });
+  ok(roomRefusals.length === 1 && roomRefusals[0]!.detail?.["reason"] === "room-unconfirmed" && roomRefusals[0]!.surface === "C1", "…and files one refused row with reason room-unconfirmed, under the room");
+  ok((await readAudit({ org: ORG, action: "personal_watch.dial.set", principalId: "slack/T1/UROOM" })).length === 0, "…and no dial.set row");
   ok((await runOeCommand({ kind: "watch", action: "status" }, outsider)).startsWith("You have no watch"), "an outsider's status read enrols nobody");
   ok((await runOeCommand({ kind: "watch", action: "none" }, outsider)).startsWith("You have no watch"), "an outsider's `none` with no row creates none");
   ok((await state.readPersonalWatch(ORG, "slack/T1/UOUT")).state === undefined, "…still no row");
@@ -464,6 +473,10 @@ console.log("§8 the home section");
   ok((await runHomeAction(other, WATCH_HOME_ACTIONS.dismiss, "fpivy")).notice.startsWith("I could not find"), "a forged ref from another person changes nothing");
   ok((await runHomeAction(viewer, WATCH_HOME_ACTIONS.dismiss, "fpivy")).notice.startsWith("Thanks. I hold back more"), "Not useful records the dismissal");
   ok((await state.readPersonalWatch(ORG, "slack/T1/UIVY")).state?.dampening === 1, "…and lowers the dose");
+  const guestViewer: HomeViewer = { ...viewer, principalId: "UGUESTHOME", trust: "external" };
+  ok((await runHomeAction(guestViewer, WATCH_HOME_ACTIONS.more)).notice.startsWith("The watch is for members"), "the More button refuses a viewer who is not a member");
+  const homeRefusals = await readAudit({ org: ORG, action: "personal_watch.dial.refused", principalId: "slack/T1/UGUESTHOME" });
+  ok(homeRefusals.length === 1 && homeRefusals[0]!.detail?.["via"] === "app-home" && homeRefusals[0]!.detail?.["reason"] === "not-member", "…and files one refused row naming the Home tab");
 }
 
 {
