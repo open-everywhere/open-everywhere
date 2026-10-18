@@ -7,7 +7,8 @@ import { walkAuditChain } from "../audit/chain.js";
 import { EXIT_TABLES, EXPORT_SECRET_MARKER } from "./catalogue.js";
 import { EXIT_PAGE_BYTES } from "./sql.js";
 import { listLocalRuns } from "./workflow-world.js";
-import { HOSTED_TRANSCRIPTS_NOTE, type TranscriptStore } from "./transcript-store.js";
+import { HOSTED_TRANSCRIPTS_NOTE, UNREACHED_TRANSCRIPTS_NOTE, orgSessionIds, type TranscriptStore } from "./transcript-store.js";
+import { TRANSCRIPT_EXPORT_MAX_LIMIT, TranscriptNotFoundError, type TranscriptPageReader } from "../control/transcript-export.js";
 
 export const EXIT_EXPORT_ACTION = "exit.export";
 
@@ -21,6 +22,7 @@ export interface ExportOptions {
   readonly outDir: string;
   readonly memory?: readonly MemoryProvider[];
   readonly transcripts?: TranscriptStore;
+  readonly transcriptReader?: { readonly baseUrl: string; readonly pages: TranscriptPageReader } | { readonly missing: readonly string[] };
   readonly actor: string;
   readonly now?: Date;
   readonly pageBytes?: number;
@@ -34,7 +36,14 @@ export interface ExportManifest {
   readonly store: string;
   readonly tables: readonly { readonly table: string; readonly file: string; readonly rows: number; readonly holds: string; readonly secretColumns: readonly string[] }[];
   readonly memory: readonly { readonly backing: string; readonly file?: string; readonly files: number; readonly note?: string }[];
-  readonly transcripts: { readonly store: "local" | "hosted" | "none"; readonly runs: number; readonly dir?: string; readonly note?: string };
+  readonly transcripts: {
+    readonly store: "local" | "hosted" | "none" | "deployment";
+    readonly runs: number;
+    readonly dir?: string;
+    readonly note?: string;
+    readonly unreached?: readonly { readonly sessionId: string; readonly reason: string }[];
+    readonly incomplete?: readonly { readonly sessionId: string; readonly events: number; readonly reason: string }[];
+  };
   readonly auditChain: { readonly rows: number; readonly breaks: number; readonly verified: boolean };
   readonly notExported: readonly string[];
   readonly sha256: string;
@@ -110,14 +119,17 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
     }
     digest.update(dir).update(String(runs));
     transcripts = { store: "local", runs, dir, note: "the copy is the host's whole local workflow world: on a host that serves several orgs it holds every org's runs" };
-  } else if (opts.transcripts?.kind === "hosted") {
-    transcripts = { store: "hosted", runs: 0, note: HOSTED_TRANSCRIPTS_NOTE };
   } else {
-    transcripts = {
-      store: "none",
-      runs: 0,
-      note: "transcripts were not reached: on Vercel they are in the hosted workflow store, which offers no export; off Vercel, export on the host that serves the agent or name its workflow directory",
-    };
+    const sessions = await orgSessionIds(store.exitTables, org);
+    const reader = opts.transcriptReader;
+    if (reader !== undefined && "pages" in reader) {
+      transcripts = await readDeploymentTranscripts(outDir, sessions, reader, digest);
+    } else {
+      const base = opts.transcripts?.kind === "hosted" ? HOSTED_TRANSCRIPTS_NOTE : UNREACHED_TRANSCRIPTS_NOTE;
+      const how = reader !== undefined && reader.missing.length > 0 ? ` Set ${reader.missing.join(" and ")} to read them through the deployment's transcript route.` : "";
+      const note = `${base.endsWith(".") ? base : `${base}.`}${how}`;
+      transcripts = { store: opts.transcripts?.kind ?? "none", runs: 0, note, unreached: sessions.map((sessionId) => ({ sessionId, reason: note })) };
+    }
   }
 
   const chain: AuditChainRow[] = [];
@@ -131,7 +143,13 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
   const notExported = [
     `secret values: the ${EXIT_TABLES.filter((t) => t.secretColumns).map((t) => t.table).join(" and ")} columns ${EXIT_TABLES.flatMap((t) => t.secretColumns ?? []).join(", ")} are written as "${EXPORT_SECRET_MARKER}"`,
     "settings, access bundles, domains and roles: they are config in your deployment's Git repository (agent/), which you already hold",
-    ...(transcripts.store !== "local" ? [transcripts.note!] : []),
+    ...(transcripts.unreached !== undefined && transcripts.unreached.length > 0
+      ? [`${transcripts.unreached.length} session transcript(s) the store's rows name: manifest.json lists each one under transcripts.unreached, with the reason`]
+      : []),
+    ...(transcripts.incomplete !== undefined && transcripts.incomplete.length > 0
+      ? [`the rest of ${transcripts.incomplete.length} session transcript(s) whose file ends before a terminal event: manifest.json lists each one under transcripts.incomplete`]
+      : []),
+    ...(transcripts.store !== "local" && transcripts.store !== "deployment" ? [transcripts.note!] : []),
   ];
 
   const manifest: ExportManifest = {
@@ -163,6 +181,8 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
       memoryFiles: memory.reduce((n, m) => n + m.files, 0),
       transcriptStore: transcripts.store,
       transcriptRuns: transcripts.runs,
+      transcriptsUnreached: transcripts.unreached?.length ?? 0,
+      transcriptsIncomplete: transcripts.incomplete?.length ?? 0,
       auditChainVerified: manifest.auditChain.verified,
       sha256: manifest.sha256,
     },
@@ -179,6 +199,7 @@ function readme(m: ExportManifest): string {
     "- `operational/<table>.jsonl` — one JSON object per row of that table, with the column names the database uses.",
     "- `memory/<backing>.jsonl` — one object per memory file: `tierPath` (whose memory), `relPath` (the file) and `content` (Markdown).",
     "- `transcripts/workflow-data/` — eve's session runs, file for file: `runs/` (one per session), `events/`, `steps/`, `hooks/` and `streams/`.",
+    "- `transcripts/sessions/<id>.jsonl` — when the export read transcripts through the deployment: one session's events, one JSON object per line (`index`, `at`, `type`, `data` — eve's own event shape).",
     "",
     `The audit log is \`operational/audit_entry.jsonl\`. Each row's \`prev_sha\` is the sha256 of the row before it. The chain walk at export time covered ${m.auditChain.rows} row(s) and found ${m.auditChain.breaks} break(s).`,
     "",
@@ -187,4 +208,65 @@ function readme(m: ExportManifest): string {
     ...m.notExported.map((n) => `- ${n}`),
     "",
   ].join("\n");
+}
+
+async function readDeploymentTranscripts(
+  outDir: string,
+  sessions: readonly string[],
+  reader: { readonly baseUrl: string; readonly pages: TranscriptPageReader },
+  digest: ReturnType<typeof createHash>,
+): Promise<ExportManifest["transcripts"]> {
+  const dir = "transcripts/sessions";
+  mkdirSync(join(outDir, dir), { recursive: true });
+  const unreached: { sessionId: string; reason: string }[] = [];
+  const incomplete: { sessionId: string; events: number; reason: string }[] = [];
+  let runs = 0;
+  let stopped: string | undefined;
+  for (const sessionId of sessions) {
+    if (stopped !== undefined) {
+      unreached.push({ sessionId, reason: stopped });
+      continue;
+    }
+    let body = "";
+    let events = 0;
+    let complete = false;
+    try {
+      for (let startIndex = 0; ; ) {
+        const page = await reader.pages({ sessionId, startIndex, limit: TRANSCRIPT_EXPORT_MAX_LIMIT });
+        for (const event of page.events) body += `${JSON.stringify(event)}\n`;
+        events += page.events.length;
+        complete = page.complete;
+        if (page.complete || page.events.length === 0 || page.nextIndex <= startIndex) break;
+        startIndex = page.nextIndex;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof TranscriptNotFoundError) {
+        unreached.push({ sessionId, reason: `the deployment holds no such session (expired, or removed by the store's retention): ${message}` });
+      } else {
+        stopped = `not read: ${message}`;
+        unreached.push({ sessionId, reason: stopped });
+      }
+      continue;
+    }
+    if (events === 0) {
+      unreached.push({ sessionId, reason: "the route returned no event for this session: it idled out before the first event" });
+      continue;
+    }
+    if (!complete) {
+      incomplete.push({ sessionId, events, reason: "the read ended before a terminal event: the session is parked or still running, or the route idled out before the next event" });
+    }
+    const file = `${dir}/${sessionId}.jsonl`;
+    writeFileSync(join(outDir, file), body);
+    digest.update(file).update(body);
+    runs++;
+  }
+  return {
+    store: "deployment",
+    runs,
+    dir,
+    note: `read through ${reader.baseUrl}'s transcript route: the sessions the org's operational rows name, one file per session`,
+    unreached,
+    incomplete,
+  };
 }

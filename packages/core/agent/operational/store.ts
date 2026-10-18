@@ -6,7 +6,7 @@ import type { SessionTailEntry } from "../channels/session-tail.js";
 import type { CredentialGrantAskRow, CredentialGrantAskState, CredentialGrantMode, CredentialGrantRow } from "./credential-grant-rows.js";
 import type { AuditEpochSeal } from "../audit/chain.js";
 import type { AuditDetail } from "../audit/scrubbed-text.js";
-import type { ExitRowFilter } from "../exit/sql.js";
+import type { ExitDistinctPage, ExitRowFilter } from "../exit/sql.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -1057,7 +1057,7 @@ export interface ClaimedIngressDelivery extends DueIngressDelivery {
 
 export interface ExitTableAccess {
   readRows(table: string, org: string | null, offset: number, limit: number, maxBytes?: number): Promise<Record<string, unknown>[]>;
-  selectDistinct(table: string, org: string, column: string, filter: ExitRowFilter): Promise<string[]>;
+  selectDistinct(table: string, org: string, column: string, filter: ExitRowFilter, page?: ExitDistinctPage): Promise<string[]>;
   deleteRows(table: string, org: string, filter: ExitRowFilter): Promise<number>;
 }
 

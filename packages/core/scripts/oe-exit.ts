@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { exportOrg } from "../agent/exit/export.js";
 import { erasePerson } from "../agent/exit/erase.js";
 import { deleteTranscript } from "../agent/exit/transcript-delete.js";
-import { HOSTED_TRANSCRIPTS_NOTE, type TranscriptStore } from "../agent/exit/transcript-store.js";
+import { HOSTED_TRANSCRIPTS_NOTE, UNREACHED_TRANSCRIPTS_NOTE, type TranscriptStore } from "../agent/exit/transcript-store.js";
 import { LOCAL_WORKFLOW_DATA_DIR } from "../agent/exit/workflow-world.js";
 import { deploymentOrg } from "../agent/identity/deployment-identity.js";
 import { endPersonAuthority, type AuthorityEnded } from "../agent/exit/authority.js";
@@ -19,6 +19,7 @@ import {
   loadRootOfTrustEnv,
   type OperatorBoxBackend,
 } from "./operator-store-connect.js";
+import { resolveTranscriptSource } from "./control-transcript-source.js";
 
 export interface ExitCliIo {
   out(line: string): void;
@@ -37,6 +38,8 @@ const USAGE = [
   "  --org ORG               the org (default \"default\")",
   "  --root-env PATH         read DATABASE_URL from PATH (default ./.env.local)",
   "  --transcripts-dir DIR   eve's workflow data on the host that serves the agent (default ./.eve/.workflow-data when it exists)",
+  "                          With none, export reads each session the org's rows name through the deployment's transcript route (OE_DEPLOY_CONTROL_TOKEN",
+  "                          and E2E_TARGET_URL / OE_DEPLOY_BASE_URL / OE_DEPLOY_ALIAS). Nothing deletes one on Vercel's hosted store.",
   "  --box-backend KIND      erase: the deployment's box backend, vercel or docker, so the person's saved browser profile",
   "                          can be deleted (none by default — a profile then stays, and the erase exits 1)",
   "  --json                  print the report as JSON",
@@ -81,9 +84,7 @@ export function operatorTranscriptStore(args: readonly string[], cwd: string): T
 }
 
 function transcriptLine(store: TranscriptStore | undefined): string {
-  if (store === undefined) {
-    return "transcripts: not reached — on Vercel they are in the hosted workflow store, which offers no export or delete; off Vercel, run on the host that serves the agent or pass --transcripts-dir";
-  }
+  if (store === undefined) return UNREACHED_TRANSCRIPTS_NOTE;
   return store.kind === "local" ? `transcripts: ${store.dataDir}` : `transcripts: ${HOSTED_TRANSCRIPTS_NOTE}`;
 }
 
@@ -118,12 +119,16 @@ export async function runExitCommand(command: string, args: readonly string[], i
       }
       const target = await connectOperatorStore();
       const memory = await connectOperatorMemory();
+      const source = transcripts === undefined ? resolveTranscriptSource() : undefined;
+      const transcriptReader =
+        source === undefined ? undefined : source.pages !== undefined && source.baseUrl !== undefined ? { baseUrl: source.baseUrl, pages: source.pages } : { missing: source.missing };
       const manifest = await exportOrg({
         store: getOperationalStore(),
         org: deploymentOrg(),
         outDir: resolve(io.cwd, out),
         memory: memory.providers,
         ...(transcripts ? { transcripts } : {}),
+        ...(transcriptReader ? { transcriptReader } : {}),
         actor: SET_BY_CLI,
       });
       if (json) io.out(JSON.stringify(manifest, null, 2));
@@ -131,7 +136,20 @@ export async function runExitCommand(command: string, args: readonly string[], i
         const rows = manifest.tables.reduce((n, t) => n + t.rows, 0);
         io.out(`✓ exported org "${manifest.org}" from ${target.label} to ${resolve(io.cwd, out)}`);
         io.out(`  ${manifest.tables.length} tables, ${rows} rows · memory: ${memory.label}, ${manifest.memory.reduce((n, m) => n + m.files, 0)} files`);
-        io.out(`  ${transcriptLine(transcripts)} (${manifest.transcripts.runs} runs)`);
+        io.out(
+          manifest.transcripts.store === "deployment"
+            ? `  transcripts: ${manifest.transcripts.note} (${manifest.transcripts.runs} sessions)`
+            : `  ${transcriptLine(transcripts)} (${manifest.transcripts.runs} runs)`,
+        );
+        const unreached = manifest.transcripts.unreached ?? [];
+        if (unreached.length > 0) {
+          io.out(`  ! ${unreached.length} session transcript(s) are NOT in the export. manifest.json lists each one under transcripts.unreached. The first reason:`);
+          io.out(`    ${unreached[0]!.reason}`);
+        }
+        const incomplete = manifest.transcripts.incomplete ?? [];
+        if (incomplete.length > 0) {
+          io.out(`  ! ${incomplete.length} session transcript(s) end before a terminal event (parked, running, or the read idled out). manifest.json lists each one under transcripts.incomplete.`);
+        }
         io.out(`  audit chain: ${manifest.auditChain.rows} rows, ${manifest.auditChain.verified ? "verified" : `${manifest.auditChain.breaks} break(s) — see manifest.json`}`);
         io.out("  Secret values are not in the export. manifest.json lists everything that is not.");
       }
@@ -182,6 +200,10 @@ export async function runExitCommand(command: string, args: readonly string[], i
         io.out(`  Ended first: ${authorityLine(authority)}`);
         if (report.dmRooms.length === 0) io.out("  No DM room found. Pass --dm ROOM, or the DM tail, DM memory and DM transcripts stay.");
         io.out(`  ${transcriptLine(transcripts)} — ${report.transcripts.deleted} deleted, ${report.transcripts.live} still running (not touched)`);
+        if (report.transcripts.unreached.length > 0) {
+          io.out(`  ! ${report.transcripts.unreached.length} of the person's own session transcript(s) are NOT deleted: ${report.transcripts.unreachedReason ?? ""}`);
+          for (const s of report.transcripts.unreached) io.out(`    ${s}`);
+        }
         if (report.transcripts.shared.length > 0) {
           io.out(`  ${report.transcripts.shared.length} shared session(s) kept, because other people took part. Delete one with \`oe transcript delete <id>\`:`);
           for (const s of report.transcripts.shared) io.out(`    ${s}`);
@@ -212,7 +234,7 @@ export async function runExitCommand(command: string, args: readonly string[], i
         return 2;
       }
       if (transcripts === undefined) {
-        io.err(`✗ oe transcript delete: ${transcriptLine(undefined)}.`);
+        io.err(`✗ oe transcript delete: ${sessionId} is NOT deleted. ${transcriptLine(undefined)}.`);
         return 1;
       }
       await connectOperatorStore();
@@ -225,8 +247,9 @@ export async function runExitCommand(command: string, args: readonly string[], i
             : `✗ ${sessionId} is still running. Stop it first, then delete it.`,
         );
       }
+      else if (r.outcome === "hosted") io.err(`✗ ${sessionId} is NOT deleted (${r.captures} captures removed). ${HOSTED_TRANSCRIPTS_NOTE}`);
       else io.out(r.outcome === "deleted" ? `✓ deleted ${sessionId} (${r.files} files, ${r.captures} captures)` : `✓ ${sessionId} is not in ${transcripts.kind === "local" ? transcripts.dataDir : "the hosted store"} — nothing to delete there (${r.captures} captures removed)`);
-      return r.outcome === "refused-live" ? 1 : 0;
+      return r.outcome === "refused-live" || r.outcome === "hosted" ? 1 : 0;
     }
 
     io.err(`oe: unknown exit-kit command "${command}".`);

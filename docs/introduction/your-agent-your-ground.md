@@ -71,7 +71,10 @@ claim true and the gate that proves it. The full map is
 - **A mapping to the OWASP Top 10 for Agentic Applications**, with the gaps stated.
   [The OWASP mapping](../security/owasp-agentic-top-10.md)
 - **A way out.** `oe export`, `oe erase` and `oe transcript delete` take your data out or delete
-  it. [Exit and your data](../security/exit-and-your-data.md)
+  it. One limit: no command can delete a session transcript on Vercel's hosted workflow store, which
+  offers no delete call. Each command names the transcripts that the org's rows name and that it
+  leaves there.
+  [Exit and your data](../security/exit-and-your-data.md)
 
 ## The limits, stated plainly
 

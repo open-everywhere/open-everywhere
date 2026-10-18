@@ -451,6 +451,7 @@ const FIRE = {
     deploymentTranscriptReader,
     renderTranscriptExport,
     TranscriptExportError,
+    TranscriptNotFoundError,
     TRANSCRIPT_EXPORT_DEFAULT_LIMIT,
     TRANSCRIPT_EXPORT_MAX_LIMIT,
   } = await import("../agent/control/transcript-export.js");
@@ -505,9 +506,9 @@ const FIRE = {
   }
 
   {
-    const cases: { label: string; respond: () => Response; expect: RegExp }[] = [
+    const cases: { label: string; respond: () => Response; expect: RegExp; notFound?: boolean }[] = [
       { label: "401 names the token, not the session", respond: () => jsonRes(401, { error: "unauthorized" }), expect: /OE_CONTROL_READ_TOKENS/ },
-      { label: "a JSON 404 with found:false is a missing session", respond: () => jsonRes(404, { error: "no such session", found: false, sessionId: "wrun_x" }), expect: /no such session/ },
+      { label: "a JSON 404 with found:false is a missing session", respond: () => jsonRes(404, { error: "no such session", found: false, sessionId: "wrun_x" }), expect: /no such session/, notFound: true },
       { label: "a bare 404 is a disarmed read plane or a wrong base URL", respond: () => new Response("not found", { status: 404 }), expect: /disarmed|not the deployment/ },
       { label: "any other status is surfaced with its code", respond: () => jsonRes(500, { error: "boom" }), expect: /500/ },
       { label: "a 200 with no events array is malformed, not empty", respond: () => jsonRes(200, { complete: true }), expect: /no events array/ },
@@ -517,13 +518,16 @@ const FIRE = {
       const read = deploymentTranscriptReader({ baseUrl: "https://a.example", token: TOKEN, fetchImpl: stub.impl });
       let message = "";
       let isExportError = false;
+      let isNotFound = false;
       try {
         await read({ sessionId: "wrun_x", startIndex: 0, limit: 10 });
       } catch (err) {
         isExportError = err instanceof TranscriptExportError;
+        isNotFound = err instanceof TranscriptNotFoundError;
         message = err instanceof Error ? err.message : String(err);
       }
       ok(isExportError, `export: ${c.label} — raised as TranscriptExportError`);
+      ok(isNotFound === (c.notFound === true), `export: ${c.label} — ${c.notFound ? "IS" : "is NOT"} a TranscriptNotFoundError`);
       ok(c.expect.test(message), `export: ${c.label} — the message names the fix (got: ${message.slice(0, 80)})`);
       ok(!message.includes(TOKEN), `🔴 export: ${c.label} — the message carries no token value`);
     }

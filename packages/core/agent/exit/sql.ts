@@ -90,12 +90,20 @@ export function rowsWithinBytes(sizes: readonly number[], maxBytes: number): num
   return k;
 }
 
-export function buildExitSelectDistinct(style: ExitPlaceholderStyle, table: string, org: string, col: string, filter: ExitRowFilter): ExitSql {
+export interface ExitDistinctPage {
+  readonly after?: string;
+  readonly limit: number;
+}
+
+export function buildExitSelectDistinct(style: ExitPlaceholderStyle, table: string, org: string, col: string, filter: ExitRowFilter, page?: ExitDistinctPage): ExitSql {
   const spec = specOf(table);
   const p = new Params(style);
   const name = column(spec, col);
   const where = whereClause(spec, org, filter, p);
-  return { sql: `SELECT DISTINCT ${name} AS v FROM ${spec.table}${where}${where ? " AND" : " WHERE"} ${name} IS NOT NULL`, params: p.values };
+  const base = `SELECT DISTINCT ${name} AS v FROM ${spec.table}${where}${where ? " AND" : " WHERE"} ${name} IS NOT NULL`;
+  if (page === undefined) return { sql: base, params: p.values };
+  const after = page.after !== undefined ? ` AND ${name} > ${p.add(page.after)}` : "";
+  return { sql: `${base}${after} ORDER BY ${name} LIMIT ${p.add(Math.max(1, Math.floor(page.limit)))}`, params: p.values };
 }
 
 export function buildExitDelete(style: ExitPlaceholderStyle, table: string, org: string, filter: ExitRowFilter): ExitSql {

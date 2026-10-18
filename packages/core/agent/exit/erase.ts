@@ -5,8 +5,8 @@ import { SURFACE } from "../memory/store.js";
 import type { Partition } from "../memory/partition.js";
 import { EXIT_TABLES } from "./catalogue.js";
 import type { ExitRowFilter } from "./sql.js";
-import { deleteLocalRun } from "./workflow-world.js";
-import type { TranscriptStore } from "./transcript-store.js";
+import { deleteLocalRun, isRunId } from "./workflow-world.js";
+import { HOSTED_TRANSCRIPTS_NOTE, UNREACHED_TRANSCRIPTS_NOTE, type TranscriptStore } from "./transcript-store.js";
 import type { AuthorityEnded } from "./authority.js";
 
 export const EXIT_PERSON_ERASED_ACTION = "exit.person_erased";
@@ -68,6 +68,8 @@ export interface ErasePersonReport {
     readonly deleted: number;
     readonly live: number;
     readonly shared: readonly string[];
+    readonly unreached: readonly string[];
+    readonly unreachedReason?: string;
   };
 }
 
@@ -146,9 +148,10 @@ export async function erasePerson(opts: ErasePersonOptions): Promise<ErasePerson
 
   let deleted = 0;
   let live = 0;
+  const ownRuns = [...own].filter(isRunId).sort();
+  const unreached = opts.transcripts?.kind === "local" ? [] : ownRuns;
   if (opts.transcripts?.kind === "local") {
-    for (const session of [...own].sort()) {
-      if (!/^wrun_[A-Za-z0-9]+$/u.test(session)) continue;
+    for (const session of ownRuns) {
       const r = deleteLocalRun(opts.transcripts.dataDir, session);
       if (r.outcome === "deleted") deleted++;
       else if (r.outcome === "refused-live") live++;
@@ -164,7 +167,14 @@ export async function erasePerson(opts: ErasePersonOptions): Promise<ErasePerson
     authority: opts.authority ?? null,
     dmRooms,
     memoryTiers,
-    transcripts: { store: opts.transcripts?.kind ?? "none", deleted, live, shared: shared.sort() },
+    transcripts: {
+      store: opts.transcripts?.kind ?? "none",
+      deleted,
+      live,
+      shared: shared.sort(),
+      unreached,
+      ...(unreached.length > 0 ? { unreachedReason: opts.transcripts?.kind === "hosted" ? HOSTED_TRANSCRIPTS_NOTE : UNREACHED_TRANSCRIPTS_NOTE } : {}),
+    },
   };
   await opts.store.appendAudit({
     ts: (opts.now ?? new Date()).toISOString(),
@@ -183,6 +193,7 @@ export async function erasePerson(opts: ErasePersonOptions): Promise<ErasePerson
       transcriptsDeleted: deleted,
       transcriptsLive: live,
       transcriptsShared: shared.length,
+      transcriptsUnreached: unreached.length,
       authorityEnded: opts.authority !== undefined && opts.authority.started && opts.authority.failures.length === 0,
       ...(opts.authority !== undefined
         ? {

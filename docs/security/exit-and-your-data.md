@@ -34,6 +34,9 @@ The command opens the deployment's own store with `DATABASE_URL`, like `oe secre
 - `transcripts/workflow-data/` — eve's session runs, file for file (`runs/`, `events/`, `steps/`,
   `hooks/`, `streams/`), when the transcripts are on the local world. The copy is the host's whole
   local world: on a host that serves several orgs, it holds every org's runs.
+- `transcripts/sessions/<id>.jsonl` — when the command finds no workflow directory and can read
+  through the deployment (see below): one session's events, one JSON object per line (`index`, `at`,
+  `type`, `data`, in eve's own event shape).
 - `manifest.json` — the format version, the row count per table, a sha256 (see below), the result of
   an audit-chain walk from genesis, and the list of what is not in the export.
 - `README.md` — how to read the rest.
@@ -47,16 +50,46 @@ you can repeat the chain walk on the export.
 - **Secret values.** The `stored_credential.ciphertext` column and the identity-link nonce hashes are
   written as `[secret — not exported]`. The secret names, connectors and owners are exported.
 - **Config.** Settings, bundles, domains and roles are in your Git repository.
-- **Transcripts on Vercel.** Vercel's hosted workflow store offers this process no export and no
-  delete call. Read one session with the control MCP's `session_transcript` tool.
+- **Each transcript the command could not read.** The manifest lists each one under
+  `transcripts.unreached`, with the reason, and the README says how many. See below.
 - **Git history of a Git memory backing.** The export reads the working tree. Earlier versions stay
   in that repository's history, which you already hold.
 - **Memory on a GitHub or Notion backing.** Those files live in your own GitHub or Notion workspace.
 
+**Transcripts on Vercel (OPE-2561).** On Vercel the transcripts are in Vercel's hosted workflow store.
+This command cannot list that store, so it accounts for the sessions that the org's operational rows
+name: the usage and tool-call ledgers, the soak captures, the turn anchors and the status lines. A
+session that no row names is not in that list. When the command finds no workflow directory, it reads each of those
+sessions through the deployment's own transcript route,
+`GET /control/v1/session/:sessionId/transcript`. It uses the deploy plane's names, the same ones that
+`deploy:smoke` and the `session_transcript` tool use:
+
+- the token: `OE_DEPLOY_CONTROL_TOKEN`, else `E2E_CONTROL_READ_TOKEN`. Its sha256 must be in the
+  deployment's `OE_CONTROL_READ_TOKENS`;
+- the deployment: `E2E_TARGET_URL`, else `OE_DEPLOY_BASE_URL`, else `https://$OE_DEPLOY_ALIAS`.
+
+Each read writes one `control.service_call` audit row on the deployment, as every read of that route
+does. The manifest's `transcripts.store` is then `deployment`. The manifest names each session the
+route could not read, with the reason:
+
+- the deployment holds no such session (it expired, or the store's retention removed it). The command
+  goes on with the next session;
+- any other failure (a refused token, a disarmed read plane, the network). The command stops reading,
+  and names that session and every later one with the same reason.
+
+A read that returns no event at all writes no file, and the session is named as not reached. A read
+that ends before a terminal event (the session is parked or still running, or the route stopped after
+1.5 s with no new event) writes what it read. The manifest lists that session under
+`transcripts.incomplete`, with the event count.
+
+With no token or no deployment URL, the command reads nothing, names every session, and the reason
+says which names to set. The command prints how many sessions are not in the export, and exits 0.
+
 **The digest.** The manifest's `sha256` covers, in the order the export wrote them: each non-empty
 table file's name, then its bytes; each `memory/<backing>.jsonl` file's name, then its bytes, also when
-that file is empty; and, for a local transcript copy, `transcripts/workflow-data`, then the run count as a
-decimal string. The transcript files themselves are counted, not hashed.
+that file is empty; for a local transcript copy, `transcripts/workflow-data`, then the run count as a
+decimal string (those transcript files are counted, not hashed); and for transcripts read through the
+deployment, each `transcripts/sessions/<id>.jsonl` file's name, then its bytes.
 
 **The export reads in pages (OPE-2574).** No database read returns a whole table. Each table, the
 audit chain and the memory files on a Postgres or sqlite backing come back in pages of at most 1,000
@@ -158,7 +191,8 @@ holding is still listed, but as "left alone".
   store, plus each `--dm` room you name. The report warns when it finds none.
 - The personal memory of those DM rooms, on the database backing.
 - The session transcripts that are the person's alone: a DM session, or a session whose every model
-  call the usage ledger attributes to the person.
+  call the usage ledger attributes to the person. Only on the local world: on Vercel's hosted store,
+  see the backing table below.
 
 **What the erasure keeps, and why:**
 
@@ -219,7 +253,7 @@ and every other table is still erased. Run it again with the owner `DATABASE_URL
 | sqlite floor | The rows and memory files are deleted from the file. Copies of the file are not touched. |
 | Git memory | DM memory never lands in Git. A shared Git memory tier is not touched by the erasure. |
 | Local workflow world | The run's files are deleted: run, events, steps, hooks and streams. |
-| Vercel hosted workflow store | Not reachable. The report prints "transcripts: not reached" and why. Vercel's own retention applies. |
+| Vercel hosted workflow store | Not deleted. The store offers no delete call: eve's workflow `World` interface (eve 0.71) can list and read a run, but cannot delete one. The report names each of the person's own sessions that stays, with the reason, and the audit row counts them as `transcriptsUnreached`. Vercel's own retention applies. |
 | A deployment that swapped in another workflow world (for example `@workflow/world-postgres`) | Not reachable. The transcripts are in that world's own tables. |
 
 The erasure writes one `exit.person_erased` audit row. The row names the person only by the sha256 of
@@ -237,7 +271,9 @@ The session id is the `wrun_…` id that audit rows carry as `sessionId`. The co
 files from the local world and the soak captures recorded for the same session. It refuses a run that
 is still going, and a run whose record is unreadable or missing, because then nothing proves the run
 finished. It writes one `exit.transcript_deleted` audit row. Off the serving host (for example against
-a Vercel deployment) the command refuses with "transcripts: not reached" and the reason.
+a Vercel deployment) the command refuses, exits 1, and says that the session is NOT deleted and why.
+No command can delete a transcript on Vercel's hosted workflow store, because the store offers no
+delete call.
 
 **Run it on the right host.** A laptop is off Vercel even when the deployment is on Vercel. So the
 operator commands never guess where the agent's transcripts are. They use `--transcripts-dir` when you

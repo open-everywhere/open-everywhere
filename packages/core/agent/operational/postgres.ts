@@ -3566,8 +3566,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         const { sql, params } = buildExitSelectPage("dollar", table, org, offset, limit);
         return (await client.query(sql, params)).rows as Record<string, unknown>[];
       },
-      async selectDistinct(table, org, column, filter) {
-        const { sql, params } = buildExitSelectDistinct("dollar", table, org, column, filter);
+      async selectDistinct(table, org, column, filter, page) {
+        const { sql, params } = buildExitSelectDistinct("dollar", table, org, column, filter, page);
         return ((await client.query(sql, params)).rows as { v: unknown }[]).map((r) => String(r.v));
       },
       async deleteRows(table, org, filter) {

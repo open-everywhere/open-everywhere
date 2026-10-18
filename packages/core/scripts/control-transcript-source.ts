@@ -1,9 +1,10 @@
-import { deploymentTranscriptReader, type TranscriptExportReader } from "../agent/control/transcript-export.js";
+import { deploymentTranscriptPages, deploymentTranscriptReader, type TranscriptExportReader, type TranscriptPageReader } from "../agent/control/transcript-export.js";
 
 type Env = NodeJS.ProcessEnv;
 
 export interface TranscriptSourceResolution {
   readonly reader?: TranscriptExportReader;
+  readonly pages?: TranscriptPageReader;
   readonly baseUrl?: string;
   readonly missing: readonly string[];
 }
@@ -25,5 +26,5 @@ export function resolveTranscriptSource(env: Env = process.env): TranscriptSourc
   if (!baseUrl) missing.push("E2E_TARGET_URL (or OE_DEPLOY_BASE_URL / OE_DEPLOY_ALIAS)");
   if (!token) missing.push("OE_DEPLOY_CONTROL_TOKEN (or E2E_CONTROL_READ_TOKEN)");
   if (missing.length > 0) return { missing };
-  return { reader: deploymentTranscriptReader({ baseUrl, token }), baseUrl, missing: [] };
+  return { reader: deploymentTranscriptReader({ baseUrl, token }), pages: deploymentTranscriptPages({ baseUrl, token }), baseUrl, missing: [] };
 }

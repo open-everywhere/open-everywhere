@@ -17,6 +17,9 @@ const { personIds, erasePerson, EXIT_PERSON_ERASED_ACTION } = await import("../a
 const { exportOrg, EXIT_EXPORT_ACTION } = await import("../agent/exit/export.js");
 const { retentionSweep, EXIT_RETENTION_SWEPT_ACTION } = await import("../agent/exit/retention.js");
 const { deleteTranscript, EXIT_TRANSCRIPT_DELETED_ACTION } = await import("../agent/exit/transcript-delete.js");
+const { HOSTED_TRANSCRIPTS_NOTE, orgSessionIds } = await import("../agent/exit/transcript-store.js");
+const { TranscriptExportError, TranscriptNotFoundError } = await import("../agent/control/transcript-export.js");
+type TranscriptPageReader = import("../agent/control/transcript-export.js").TranscriptPageReader;
 const { LOCAL_WORKFLOW_DATA_DIR, listLocalRuns } = await import("../agent/exit/workflow-world.js");
 const { walkAuditChain } = await import("../agent/audit/chain.js");
 const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
@@ -137,6 +140,21 @@ function throws(fn: () => unknown, re: RegExp, label: string): void {
   ok(r.refused.length === 1 && r.refused[0] === "memory_proposal", `erase: a refused table is reported (${r.refused.join(", ")})`);
   ok(tried.indexOf("memory_proposal") < tried.length - 1, "erase: the tables after a refused one are still erased");
   ok(!tried.includes("pending_actions") && !tried.includes("person_opt_out"), "erase: a table kept by design is never matched by person");
+}
+
+{
+  const iso = new Date().toISOString();
+  const db = new DatabaseSync(pinnedSuiteStorePath());
+  db.prepare("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) VALUES ('hostedco', 'slack/T1/C1', 'wrun_OWN1', 'U1', ?)").run(iso);
+  db.prepare("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) VALUES ('hostedco', 'slack/T1/C1', 'wrun_SHARED1', 'U1', ?)").run(iso);
+  db.prepare("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) VALUES ('hostedco', 'slack/T1/C1', 'wrun_SHARED1', 'U2', ?)").run(iso);
+  db.close();
+  const r = await erasePerson({ store: sqliteOperationalStore, org: "hostedco", person: "slack/T1/U1", transcripts: { kind: "hosted" }, actor: "test" });
+  ok(r.transcripts.store === "hosted" && r.transcripts.deleted === 0, "erase hosted: nothing is deleted on the hosted store");
+  ok(JSON.stringify(r.transcripts.unreached) === JSON.stringify(["wrun_OWN1"]) && r.transcripts.unreachedReason === HOSTED_TRANSCRIPTS_NOTE, `erase hosted: the report names the person's own session it left, and why (${JSON.stringify(r.transcripts)})`);
+  ok(JSON.stringify(r.transcripts.shared) === JSON.stringify(["wrun_SHARED1"]), "erase hosted: a shared session is still reported as kept, not as unreached");
+  const row = (await sqliteOperationalStore.readAuditChain("hostedco")).find((x) => x.action === EXIT_PERSON_ERASED_ACTION);
+  ok(row?.detail?.["transcriptsUnreached"] === 1, `erase hosted: the audit row counts the transcripts left (${JSON.stringify(row?.detail)})`);
 }
 
 const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
@@ -294,6 +312,70 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   await exportOrg({ store: e.store, org, outDir: out, actor: "x" }).catch(() => (refused = true));
   ok(refused, `${L} export: a non-empty directory is refused`);
 
+  const tag = e.name.split(" ")[0];
+  const rowSessions = [soleRun, sharedRun, dmRun, liveRun].sort();
+  const hostedOut = join(SUITE_DIR, `export-hosted-${tag}`);
+  const hosted = await exportOrg({ store: e.store, org, outDir: hostedOut, transcripts: { kind: "hosted" }, actor: "x", now });
+  ok(
+    hosted.transcripts.store === "hosted" && JSON.stringify(hosted.transcripts.unreached?.map((u) => u.sessionId)) === JSON.stringify(rowSessions),
+    `${L} export hosted: the manifest names every session the rows name, and only run ids (${JSON.stringify(hosted.transcripts.unreached)})`,
+  );
+  ok(hosted.transcripts.unreached!.every((u) => u.reason.startsWith(HOSTED_TRANSCRIPTS_NOTE)), `${L} export hosted: each unreached session carries the reason`);
+  ok(readFileSync(join(hostedOut, "README.md"), "utf8").includes("4 session transcript(s)"), `${L} export hosted: the README says how many transcripts are not in the export`);
+  const noTokenOut = join(SUITE_DIR, `export-notoken-${tag}`);
+  const noToken = await exportOrg({ store: e.store, org, outDir: noTokenOut, transcriptReader: { missing: ["OE_DEPLOY_CONTROL_TOKEN (or E2E_CONTROL_READ_TOKEN)"] }, actor: "x", now });
+  ok(noToken.transcripts.store === "none" && noToken.transcripts.unreached!.every((u) => u.reason.includes("Set OE_DEPLOY_CONTROL_TOKEN (or E2E_CONTROL_READ_TOKEN) to read them")), `${L} export none: the reason names what to set (${noToken.transcripts.note})`);
+
+  const served: string[] = [];
+  const pages: TranscriptPageReader = async ({ sessionId, startIndex }) => {
+    served.push(`${sessionId}@${startIndex}`);
+    if (sessionId === dmRun) throw new TranscriptNotFoundError('no such session: {"found":false}');
+    const all =
+      sessionId === soleRun
+        ? [0, 1, 2].map((i) => ({ index: i, at: iso, type: i === 2 ? "session.completed" : "message.received", data: { sessionId } }))
+        : sessionId === sharedRun
+          ? []
+          : [{ index: 0, at: iso, type: "session.waiting", data: null }];
+    const slice = all.slice(startIndex, startIndex + 2);
+    return { sessionId, startIndex, nextIndex: startIndex + slice.length, complete: sessionId === soleRun && startIndex + slice.length >= all.length, events: slice };
+  };
+  const viaOut = join(SUITE_DIR, `export-deployment-${tag}`);
+  const via = await exportOrg({ store: e.store, org, outDir: viaOut, transcriptReader: { baseUrl: "https://agent.example", pages }, actor: "x", now });
+  ok(via.transcripts.store === "deployment" && via.transcripts.runs === 2, `${L} export deployment: two sessions read (${JSON.stringify(via.transcripts)})`);
+  const soleLines = readFileSync(join(viaOut, "transcripts/sessions", `${soleRun}.jsonl`), "utf8").trim().split("\n");
+  ok(soleLines.length === 3 && (JSON.parse(soleLines[2]!) as { type: string }).type === "session.completed", `${L} export deployment: a session read over two pages arrives whole, in order`);
+  ok(served.includes(`${soleRun}@2`) && !served.includes(`${soleRun}@3`), `${L} export deployment: the read pages on, and stops at the terminal event (${served.join(", ")})`);
+  ok(served.includes(`${liveRun}@1`) && readFileSync(join(viaOut, "transcripts/sessions", `${liveRun}.jsonl`), "utf8").trim().split("\n").length === 1, `${L} export deployment: a parked session ends on an empty page`);
+  const unreachedVia = new Map((via.transcripts.unreached ?? []).map((u) => [u.sessionId, u.reason]));
+  ok(
+    unreachedVia.size === 2 && unreachedVia.get(dmRun)?.includes("no such session") === true,
+    `${L} export deployment: a session the deployment no longer holds is named, with the reason (${JSON.stringify(via.transcripts.unreached)})`,
+  );
+  ok(unreachedVia.get(sharedRun)?.includes("no event") === true, `${L} export deployment: a read with no event is named as unreached, not counted as read`);
+  ok(!existsSync(join(viaOut, "transcripts/sessions", `${dmRun}.jsonl`)) && !existsSync(join(viaOut, "transcripts/sessions", `${sharedRun}.jsonl`)), `${L} export deployment: no empty file stands in for an unreached session`);
+  ok(
+    JSON.stringify(via.transcripts.incomplete?.map((i) => [i.sessionId, i.events])) === JSON.stringify([[liveRun, 1]]),
+    `${L} export deployment: a read that ends before a terminal event is listed as incomplete, a whole one is not (${JSON.stringify(via.transcripts.incomplete)})`,
+  );
+  ok(readFileSync(join(viaOut, "README.md"), "utf8").includes("the rest of 1 session transcript(s)"), `${L} export deployment: the README says how many transcripts end early`);
+  {
+    const { createHash } = await import("node:crypto");
+    const again = createHash("sha256");
+    const sessionFiles = rowSessions.filter((s) => s !== dmRun && s !== sharedRun).map((s) => `transcripts/sessions/${s}.jsonl`);
+    for (const f of [...via.tables.filter((t) => t.rows > 0).map((t) => t.file), ...sessionFiles]) again.update(f).update(readFileSync(join(viaOut, f), "utf8"));
+    ok(again.digest("hex") === via.sha256, `${L} export deployment: the digest covers each session file, as the manifest says`);
+  }
+  served.length = 0;
+  const refusing: TranscriptPageReader = async (req) => {
+    if (req.sessionId === rowSessions[1]) throw new TranscriptExportError("the deployment refused this process's control-read token (401).");
+    return pages(req);
+  };
+  const stopOut = join(SUITE_DIR, `export-stopped-${tag}`);
+  const stopped = await exportOrg({ store: e.store, org, outDir: stopOut, transcriptReader: { baseUrl: "https://agent.example", pages: refusing }, actor: "x", now });
+  const stoppedIds = (stopped.transcripts.unreached ?? []).filter((u) => u.reason.startsWith("not read: the deployment refused")).map((u) => u.sessionId);
+  ok(JSON.stringify(stoppedIds) === JSON.stringify(rowSessions.slice(1)), `${L} export deployment: a refused token names the session and every later one (${JSON.stringify(stopped.transcripts.unreached)})`);
+  ok(!served.some((s) => s.startsWith(rowSessions[2]!) || s.startsWith(rowSessions[3]!)), `${L} export deployment: after a refused token, no later session is asked for`);
+
   const keepBefore = snapshot(worldDir, [sharedRun, liveRun, otherRun]);
   const report = await erasePerson({ store: e.store, org, person: PERSON, memory: [e.memory], transcripts: { kind: "local", dataDir: worldDir }, actor: "operator:cli", now });
   const n = (sql: string, ...params: unknown[]) => e.count(sql, params);
@@ -316,6 +398,7 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   ok(filesOf(worldDir, dmRun).length === 0, `${L} erase: the DM session transcript is gone`);
   ok(filesOf(worldDir, sharedRun).length > 0 && report.transcripts.shared.includes(sharedRun), `${L} erase: a shared session stays, and the report names it`);
   ok(filesOf(worldDir, liveRun).length > 0 && report.transcripts.live === 1, `${L} erase: a live run is never touched`);
+  ok(report.transcripts.unreached.length === 0 && report.transcripts.unreachedReason === undefined, `${L} erase: on the local world no own transcript is left unreached`);
   ok(filesOf(worldDir, otherRun).length > 0, `${L} erase: an unrelated run stays`);
   ok(snapshot(worldDir, [sharedRun, liveRun, otherRun]) === keepBefore, `${L} erase: every kept run's file set is unchanged, file for file`);
   ok((await n("SELECT COUNT(*) AS n FROM attention_state WHERE org_id = $1 AND person_platform = 'discord'", org)) === 1, `${L} erase: the same bare id on ANOTHER platform is not matched`);
@@ -433,6 +516,12 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   const again = createHash("sha256");
   for (const f of [...manifest.tables.filter((t) => t.rows > 0).map((t) => t.file), ...manifest.memory.flatMap((m) => (m.file ? [m.file] : []))]) again.update(f).update(readFileSync(join(out, f), "utf8"));
   ok(again.digest("hex") === manifest.sha256, "export cap: the digest does not depend on where the pages split");
+  await opened.client.query("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) SELECT 'manysessions', 'c', 'wrun_' || lpad(g::text, 5, '0'), 'u', $1 FROM generate_series(1, 2100) g", [iso]);
+  watching = true;
+  const sessionIds = await orgSessionIds(store.exitTables!, "manysessions");
+  watching = false;
+  ok(unbounded.length === 0, `export cap: the session-id read is paged (unbounded: ${JSON.stringify(unbounded)})`);
+  ok(sessionIds.length === 2100 && sessionIds[0] === "wrun_00001" && sessionIds.at(-1) === "wrun_02100", `export cap: every session id arrives across the pages (${sessionIds.length})`);
   await opened.close();
   rmSync(out, { recursive: true, force: true });
   console.log("  ✓ export cap: wide tables, memory and a long audit chain export in pages under the response cap");
@@ -481,15 +570,60 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   const io = { out: (l: string) => lines.push(l), err: (l: string) => lines.push(l), cwd };
   const db = new DatabaseSync(pinnedSuiteStorePath());
   db.prepare("INSERT INTO question_ledger (org_id, ts, surface_key, surface_mode, principal_id, fingerprint, words) VALUES ('default', '2026-10-01T00:00:00.000Z', 'slack/T9/C9', 'channel', 'U9', 'f', 'w')").run();
+  db.prepare("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) VALUES ('default', 'slack/T9/C9', 'wrun_CLI9', 'U9', '2026-10-01T00:00:00.000Z')").run();
+  db.prepare("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) VALUES ('default', 'slack/T9/C9', 'wrun_AGONE9', 'U8', '2026-10-01T00:00:00.000Z')").run();
+  const SOURCE_ENV = ["OE_DEPLOY_CONTROL_TOKEN", "E2E_CONTROL_READ_TOKEN", "E2E_TARGET_URL", "OE_DEPLOY_BASE_URL", "OE_DEPLOY_ALIAS"];
+  for (const k of SOURCE_ENV) delete process.env[k];
   ok((await runExitCommand("erase", ["--person", "slack/T9/U9"], io)) === 2, "cli: erase without --yes is refused");
   ok(Number((db.prepare("SELECT COUNT(*) AS n FROM question_ledger WHERE org_id = 'default'").get() as { n: number }).n) === 1, "cli: a refused erase deletes nothing");
   ok((await runExitCommand("export", ["--out", "exp"], io)) === 0 && existsSync(join(cwd, "exp", "manifest.json")), `cli: export writes the manifest (${lines.slice(-3).join(" | ")})`);
   ok(lines.some((l) => l.includes("transcripts: not reached")), "cli: with no world on this host, the export says the transcripts were not reached");
+  const expManifest = JSON.parse(readFileSync(join(cwd, "exp", "manifest.json"), "utf8")) as { transcripts: { unreached?: { sessionId: string; reason: string }[] } };
+  ok(
+    expManifest.transcripts.unreached?.some((u) => u.sessionId === "wrun_CLI9" && u.reason.includes("Set E2E_TARGET_URL")),
+    `cli: the export names the session it left out, and what to set to read it (${JSON.stringify(expManifest.transcripts.unreached)})`,
+  );
+  ok(lines.some((l) => l.includes("session transcript(s) are NOT in the export")), `cli: the export report says transcripts are missing (${lines.slice(-4).join(" | ")})`);
+
+  {
+    const { createServer } = await import("node:http");
+    const auths: string[] = [];
+    const server = createServer((req, res) => {
+      auths.push(String(req.headers.authorization));
+      res.setHeader("content-type", "application/json");
+      if (/^\/control\/v1\/session\/wrun_CLI9\/transcript\?/u.test(req.url ?? "")) {
+        res.end(JSON.stringify({ sessionId: "wrun_CLI9", found: true, startIndex: 0, nextIndex: 1, complete: true, count: 1, events: [{ index: 0, at: "2026-10-01T00:00:00.000Z", type: "session.completed", data: { n: 9 } }] }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: "no such session", found: false }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as import("node:net").AddressInfo;
+    process.env.E2E_TARGET_URL = `http://127.0.0.1:${port}`;
+    process.env.OE_DEPLOY_CONTROL_TOKEN = "exit-kit-test-token";
+    const before = lines.length;
+    ok((await runExitCommand("export", ["--out", "exp-deployment"], io)) === 0, `cli: the export through the deployment runs (${lines.slice(before).join(" | ")})`);
+    const m = JSON.parse(readFileSync(join(cwd, "exp-deployment", "manifest.json"), "utf8")) as { transcripts: { store: string; unreached?: { sessionId: string }[] } };
+    ok(m.transcripts.store === "deployment" && !m.transcripts.unreached?.some((u) => u.sessionId === "wrun_CLI9"), `cli: the manifest says the transcripts came through the deployment (${JSON.stringify(m.transcripts)})`);
+    ok(
+      (m.transcripts.unreached as { sessionId: string; reason?: string }[] | undefined)?.some((u) => u.sessionId === "wrun_AGONE9" && u.reason?.includes("no such session") === true) === true,
+      "cli: the real reader maps the route's found:false 404 to one unreached session, and reads on past it",
+    );
+    ok(readFileSync(join(cwd, "exp-deployment", "transcripts/sessions/wrun_CLI9.jsonl"), "utf8").includes('"n":9'), "cli: the session's events are in the export");
+    ok(auths.length > 0 && auths.every((a) => a === "Bearer exit-kit-test-token"), "cli: every read presents the deploy plane's control-read token");
+    ok(lines.slice(before).some((l) => l.includes(`transcripts: read through http://127.0.0.1:${port}`)), "cli: the report names the deployment it read from");
+    await new Promise<void>((r) => server.close(() => r()));
+    for (const k of SOURCE_ENV) delete process.env[k];
+  }
   ok((await runExitCommand("erase", ["--person", "slack/T9/U9", "--yes"], io)) === 0, `cli: erase with --yes runs (${lines.slice(-2).join(" | ")})`);
   ok(Number((db.prepare("SELECT COUNT(*) AS n FROM question_ledger WHERE org_id = 'default'").get() as { n: number }).n) === 0, "cli: the erase removed the row");
   ok(lines.some((l) => l.includes("Ended first: no link-set, 0 stored credential(s) purged")), `cli: the erase report says what ended first (${lines.slice(-6).join(" | ")})`);
+  const notDeleted = lines.findIndex((l) => l.includes("of the person's own session transcript(s) are NOT deleted"));
+  ok(notDeleted >= 0 && lines[notDeleted + 1]?.trim() === "wrun_CLI9", `cli: the erase names each own transcript it could not delete (${lines.slice(-8).join(" | ")})`);
   ok((await runExitCommand("erase", ["--person", "slack/T9/U9", "--box-backend", "lambda", "--yes"], io)) === 2, "cli: an unknown --box-backend is refused");
   ok((await runExitCommand("transcript", ["delete", "wrun_ABC"], io)) === 1, "cli: a transcript delete with no world directory is refused");
+  ok(lines.at(-1)?.includes("wrun_ABC is NOT deleted") === true, `cli: the refusal names the session and why (${lines.at(-1)})`);
   ok((await runExitCommand("transcript", ["delete", "wrun_ABC", "--transcripts-dir", "nowhere"], io)) === 0, "cli: a named directory without the run deletes nothing and says so");
   db.close();
 }

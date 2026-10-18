@@ -46,7 +46,19 @@ function toRenderable(raw: unknown, fallbackIndex: number): RenderableTranscript
   };
 }
 
-export function deploymentTranscriptReader(source: DeploymentTranscriptSource): TranscriptExportReader {
+export interface TranscriptPage {
+  readonly sessionId: string;
+  readonly startIndex: number;
+  readonly nextIndex: number;
+  readonly complete: boolean;
+  readonly events: readonly unknown[];
+}
+
+export type TranscriptPageReader = (req: TranscriptExportRequest) => Promise<TranscriptPage>;
+
+export class TranscriptNotFoundError extends TranscriptExportError {}
+
+export function deploymentTranscriptPages(source: DeploymentTranscriptSource): TranscriptPageReader {
   const base = source.baseUrl.replace(/\/+$/, "");
   const doFetch = source.fetchImpl ?? fetch;
   return async (req) => {
@@ -72,7 +84,7 @@ export function deploymentTranscriptReader(source: DeploymentTranscriptSource): 
       } catch {
         foundFalse = false;
       }
-      if (foundFalse) throw new TranscriptExportError(`no such session: ${body.slice(0, 400)}`);
+      if (foundFalse) throw new TranscriptNotFoundError(`no such session: ${body.slice(0, 400)}`);
       throw new TranscriptExportError(
         `${base} did not answer as this deployment's transcript route (404). Either its control read plane is disarmed ` +
           "(OE_CONTROL_READ_TOKENS unset, which 404s every control read route), or that base URL is not the deployment.",
@@ -91,15 +103,29 @@ export function deploymentTranscriptReader(source: DeploymentTranscriptSource): 
     }
     if (!Array.isArray(body.events)) throw new TranscriptExportError("the transcript route returned no events array (malformed response)");
 
-    const events = body.events.map((raw, i) => toRenderable(raw, req.startIndex + i));
-    const complete = body.complete === true;
+    const events: readonly unknown[] = body.events;
     return {
       sessionId: req.sessionId,
       startIndex: req.startIndex,
       nextIndex: typeof body.nextIndex === "number" ? body.nextIndex : req.startIndex + events.length,
-      complete,
+      complete: body.complete === true,
+      events,
+    };
+  };
+}
+
+export function deploymentTranscriptReader(source: DeploymentTranscriptSource): TranscriptExportReader {
+  const pages = deploymentTranscriptPages(source);
+  return async (req) => {
+    const page = await pages(req);
+    const events = page.events.map((raw, i) => toRenderable(raw, req.startIndex + i));
+    return {
+      sessionId: req.sessionId,
+      startIndex: req.startIndex,
+      nextIndex: page.nextIndex,
+      complete: page.complete,
       eventCount: events.length,
-      text: renderTranscript(events, { complete, eventCount: events.length }),
+      text: renderTranscript(events, { complete: page.complete, eventCount: events.length }),
     };
   };
 }

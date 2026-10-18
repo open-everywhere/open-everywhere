@@ -2942,8 +2942,8 @@ export const sqliteOperationalStore: OperationalStore = {
       const { sql, params } = buildExitSelectPage("qmark", table, org, offset, limit);
       return getDb().prepare(sql).all(...(params as (string | number)[])) as Record<string, unknown>[];
     },
-    async selectDistinct(table, org, column, filter) {
-      const { sql, params } = buildExitSelectDistinct("qmark", table, org, column, filter);
+    async selectDistinct(table, org, column, filter, page) {
+      const { sql, params } = buildExitSelectDistinct("qmark", table, org, column, filter, page);
       return (getDb().prepare(sql).all(...(params as (string | number)[])) as { v: unknown }[]).map((r) => String(r.v));
     },
     async deleteRows(table, org, filter) {
