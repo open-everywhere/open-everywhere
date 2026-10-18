@@ -65,6 +65,8 @@ import {
   spendCardComponents,
   isDescribeImageOk,
   textOpensWithHeadline,
+  isTestRunStampPost,
+  leakedTestRunPosts,
   turnStartMs,
   unattendedArmRoad,
   unifiedTurnSessionId,
@@ -2289,5 +2291,36 @@ console.log("27. the fire report join ignores the creation turn's posts:");
   );
   const d3 = judgeLiftDecision([chain({ verdict: "allow", resolvedBy: "mode" }), lifted("mode")]);
   ok(d3 !== undefined && "noLift" in d3 && d3.noLift.includes("the mode step lifted it, not the judge"), "a lift by another step is not this road, and says so");
+}
+{
+  const { testRunKickoffText, renderTestRunSummary } = await import("../../agent/routines/test-run.js");
+  const kickoff = testRunKickoffText({ routine: "the digest", askedBy: "Ana" });
+  const summary = renderTestRunSummary({ routine: "the digest", blocked: [{ tool: "post_message", what: "post message: “rtpostd-1234”" }], threaded: false });
+  ok(isTestRunStampPost(kickoff) && isTestRunStampPost(summary), "the product's own opening post and summary carry the stamp");
+  ok(isTestRunStampPost(kickoff.replace("🧪", ":test_tube:")), "🔴 A live run S-ROUTINE-TEST: the opening post as Slack's history spells it (:test_tube:) reads as the stamp");
+  ok(isTestRunStampPost(summary.replace("🧪", ":test_tube:")), "…and so does the summary");
+  ok(!isTestRunStampPost("rtest-1234"), "🔴 NEGATIVE CONTROL: the run's plain answer is not a stamp post");
+  ok(!isTestRunStampPost(":test_tube: The test run of the digest stopped"), "…and neither is a line that does not open with \"Test run of\"");
+  ok(!isTestRunStampPost("Here is the Test run of the digest"), "…nor one with the words but no stamp");
+
+  const root = { id: "100", text: kickoff };
+  const sum = { id: "102", text: summary };
+  const answer = { id: "101", text: "rtestd-4465" };
+  ok(leakedTestRunPosts([root, answer, sum], "rtpostd-1234", [root.id, sum.id]).length === 0, "🔴 A live run S-ROUTINE-TEST-discord: the summary's quote of the blocked post is not a leak");
+  const leak = { id: "103", text: "rtpostd-1234" };
+  ok(leakedTestRunPosts([root, answer, leak, sum], "rtpostd-1234", [root.id, sum.id]).map((m) => m.id).join() === "103", "🔴 NEGATIVE CONTROL: a real post of the blocked word is a leak");
+  ok(leakedTestRunPosts([root, sum], "rtpostd-1234", [root.id]).length === 1, "…and a summary the leg did not name as the host's own still counts");
+
+  const legSrc = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const slackAt = legSrc.indexOf('id: "S-ROUTINE-TEST",');
+  const discordAt = legSrc.indexOf('id: "S-ROUTINE-TEST-discord",');
+  const slackBody = legSrc.slice(slackAt, discordAt);
+  const discordBody = legSrc.slice(discordAt, legSrc.indexOf('id: "S-ASK-WATCH"', discordAt));
+  ok(slackAt > 0 && discordAt > slackAt, "both routine test legs are present");
+  const gateJoinsImport = legSrc.slice(0, legSrc.indexOf('} from "./gate-joins.js";'));
+  ok(/\bisTestRunStampPost,/u.test(gateJoinsImport) && /\bleakedTestRunPosts,/u.test(gateJoinsImport), "🔴 scenarios.ts imports both readers from gate-joins.ts, so neither leg throws a ReferenceError on the board");
+  ok(!slackBody.includes('startsWith("🧪') && slackBody.match(/isTestRunStampPost\(m\.text\)/gu)?.length === 2, "🔴 S-ROUTINE-TEST: the root and the summary are found through the stamp reader, not a byte compare");
+  ok(!discordBody.includes('startsWith("🧪') && discordBody.includes("leakedTestRunPosts(") && discordBody.includes("[root!.id, summary!.id]"), "🔴 S-ROUTINE-TEST-discord: the leak gate skips only the host's opening post and summary");
+  ok(!/!after\.some\(\(m\) => m\.content\.includes\(posted\)\)/u.test(discordBody), "…and no longer counts every message that quotes the word");
 }
 console.log(`✓ ${n} gate-joins assertions passed`);

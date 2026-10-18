@@ -1628,6 +1628,16 @@ export function textOpensWithHeadline(text: string, headline: string): boolean {
   return new RegExp(`^${source}`, "u").test(flat(text));
 }
 
+const TEST_RUN_STAMP = /^(?:🧪|:test_tube:)\s*Test run of /u;
+
+export function isTestRunStampPost(text: string): boolean {
+  return TEST_RUN_STAMP.test(text);
+}
+
+export function leakedTestRunPosts<M extends { readonly id: string; readonly text: string }>(messages: readonly M[], word: string, hostIds: readonly string[]): M[] {
+  return messages.filter((m) => !hostIds.includes(m.id) && m.text.includes(word));
+}
+
 export const JUDGE_LIFT_ATTEMPTS = 3;
 
 export function judgeLiftAsk(token: string, at: Date): string {

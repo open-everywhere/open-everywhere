@@ -217,6 +217,8 @@ import {
   dollarOnlySpendCardFault,
   isDescribeImageOk,
   textOpensWithHeadline,
+  isTestRunStampPost,
+  leakedTestRunPosts,
   type SettlementReplyVerdict,
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
@@ -6695,10 +6697,10 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(started !== undefined, "S-ROUTINE-TEST: the dispatcher took the test request within two ticks (a routine.test_fired row)");
         ctx.gate(started!.detail?.["started"] === true, `S-ROUTINE-TEST: the test started (routine.test_fired started:true, reason ${String(started!.detail?.["reason"] ?? "none")})`);
 
-        const root = (await slack.history((Date.parse(sinceIso) / 1000).toFixed(6))).find((m) => m.text.startsWith("🧪 Test run of"));
+        const root = (await slack.history((Date.parse(sinceIso) / 1000).toFixed(6))).find((m) => isTestRunStampPost(m.text));
         ctx.gate(root !== undefined, "S-ROUTINE-TEST: the host posted the test's thread root in the routine's channel");
         const summary = await pollOptional(
-          async () => (await slack.replies(root!.ts)).find((m) => m.text.startsWith("🧪 Test run of") && m.ts !== root!.ts),
+          async () => (await slack.replies(root!.ts)).find((m) => isTestRunStampPost(m.text) && m.ts !== root!.ts),
           { timeoutMs: 600_000, initialDelayMs: 10_000, maxDelayMs: 20_000, what: "S-ROUTINE-TEST: the summary in the test thread" },
         );
         ctx.gate(summary !== undefined, "S-ROUTINE-TEST: the test thread ends with the host-written summary");
@@ -6777,18 +6779,19 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(started!.detail?.["started"] === true, `S-ROUTINE-TEST-discord: the test started (routine.test_fired started:true, reason ${String(started!.detail?.["reason"] ?? "none")})`);
 
         const ours = async () => (await discord.messagesAfter(floor)).filter((m) => discord.isBotReply(m));
-        const root = (await ours()).filter((m) => m.content.startsWith("🧪 Test run of")).sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))[0];
+        const root = (await ours()).filter((m) => isTestRunStampPost(m.content)).sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))[0];
         ctx.gate(root !== undefined, "S-ROUTINE-TEST-discord: the host posted the test's opening message in the routine's channel");
         ctx.gate(root!.content.includes("in this room") && !root!.content.includes(id), "S-ROUTINE-TEST-discord: the opening message makes no thread promise and names no raw id");
         const summary = await pollOptional(
-          async () => (await ours()).find((m) => m.content.startsWith("🧪 Test run of") && m.id !== root!.id),
+          async () => (await ours()).find((m) => isTestRunStampPost(m.content) && m.id !== root!.id),
           { timeoutMs: 600_000, initialDelayMs: 10_000, maxDelayMs: 20_000, what: "S-ROUTINE-TEST-discord: the summary after the opening message" },
         );
         ctx.gate(summary !== undefined, "S-ROUTINE-TEST-discord: the test ends with the host-written summary");
         ctx.gate(summary!.content.includes("post message"), "S-ROUTINE-TEST-discord: the summary names the blocked post");
         const after = await ours();
         ctx.gate(after.some((m) => m.content.includes(word)), "S-ROUTINE-TEST-discord: the run's answer landed in the routine's channel");
-        ctx.gate(!after.some((m) => m.content.includes(posted)), "S-ROUTINE-TEST-discord: the blocked post never reached the channel");
+        const leaked = leakedTestRunPosts(after.map((m) => ({ id: m.id, text: m.content })), posted, [root!.id, summary!.id]);
+        ctx.gate(leaked.length === 0, `S-ROUTINE-TEST-discord: the blocked post never reached the channel (${leaked.length} leaked message(s))`);
 
         const blocked = (await read({ sinceIso, actions: ["routine.test_blocked"], limit: 100 })).filter((r) => r.detail?.["test"] === testId);
         ctx.gate(blocked.some((r) => r.detail?.["tool"] === "post_message"), `S-ROUTINE-TEST-discord: the run's post_message call was blocked and recorded (${blocked.length} routine.test_blocked row(s))`);
