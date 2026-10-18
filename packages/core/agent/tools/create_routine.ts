@@ -27,6 +27,7 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { endFirstRoutineOffer } from "../onboarding/first-routine.js";
 import { cleanWatchFor } from "../routines/ask-watch.js";
+import { testRunSurfaceSupported } from "../routines/test-run.js";
 import { eventReach } from "../routines/event-reach.js";
 import { sourceWords } from "../routines/schedule-words.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
@@ -146,7 +147,7 @@ export default defineTool({
           "instead of starting cold each time — the fires all live in one thread. Set it ONLY when the " +
           "work has an END the job itself can recognise, because a job runs until its own session calls " +
           "complete_job: \"watch this PR until it's merged\" ends — job. \"Check the dashboard every " +
-          "morning\" never ends — leave `job` off. Slack-only, and scheduled triggers only (not `event`).",
+          "morning\" never ends — leave `job` off. Slack, Teams and Discord only, and scheduled triggers only (not `event`).",
       ),
     permissions: z
       .array(z.string())
@@ -329,8 +330,8 @@ export default defineTool({
     assertReportConsistent(t, report, input.job ? "job" : undefined);
 
     if (input.job) {
-      if (binding.platform !== "slack") {
-        throw new Error(`Durable jobs are Slack-only for now — this is "${binding.platform}". Create a plain routine here, or a job from Slack.`);
+      if (!testRunSurfaceSupported(binding.platform)) {
+        throw new Error(`Durable jobs are not available on "${binding.platform}" yet — there is no way to keep one session for the job here. Create a plain routine here, or a job from Slack, Teams or Discord.`);
       }
       if (t.kind === "event") {
         throw new Error("A durable job fires on a schedule (cron / everyMinutes / a one-shot), not on an external event — drop `job`, or use a scheduled trigger.");

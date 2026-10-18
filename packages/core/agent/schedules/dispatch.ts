@@ -1,6 +1,6 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import { bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
-import { resolveRoutineTarget } from "./routine-dispatch.js";
+import { resolveRegisteredRoutineDispatch, resolveRoutineTarget } from "./routine-dispatch.js";
 import { routineFireAttributes } from "../routines/fire-auth.js";
 import { recheckFireCreator, type CreatorStandingCheck } from "../routines/fire-creator.js";
 import {
@@ -61,8 +61,11 @@ async function liveJobKickoff(channelId: string, text: string): Promise<string |
   }
 }
 
-function jobKickoffText(r: Routine): string {
-  return `🔄 Starting job — I'll keep this thread as my working context and update it as I go.\n> ${r.prompt.slice(0, 240)}`;
+function jobKickoffText(r: Routine, slack = true): string {
+  const head = slack
+    ? "🔄 Starting job — I'll keep this thread as my working context and update it as I go."
+    : "🔄 Starting job — I'll keep this post as my working context and update it as I go.";
+  return `${head}\n> ${r.prompt.slice(0, 240)}`;
 }
 
 export async function dispatchTick(
@@ -276,6 +279,8 @@ export async function dispatchTick(
       }));
       let fireTarget = dest.target;
       let jobAnchor = r.jobSessionAnchor;
+      let jobAnchorAttrs: Readonly<Record<string, string>> = {};
+      let anchoredOffSlack = false;
       if (isJobRoutine(r)) {
         if (firePlatform === "slack" && "channelId" in dest.target && typeof dest.target.channelId === "string") {
           const channelId: string = dest.target.channelId;
@@ -289,7 +294,24 @@ export async function dispatchTick(
           }
           if (jobAnchor) fireTarget = { channelId, threadTs: jobAnchor };
         } else {
-          log(`job ${r.id} on ${r.surfaceKey}: durable-job session-join is Slack-only in v1 — firing with ledger continuity only`);
+          const anchorArm = firePlatform === undefined ? undefined : resolveRegisteredRoutineDispatch(firePlatform)?.testRun;
+          if (anchorArm === undefined) {
+            log(`job ${r.id} on ${r.surfaceKey}: this platform has no anchor arm, so the job cannot join a session — firing with ledger continuity only`);
+          } else {
+            if (!jobAnchor) {
+              jobAnchor = await anchorArm.post(dest, jobKickoffText(r, false)).catch(() => undefined);
+              if (jobAnchor) {
+                await updateRoutine(r.org, r.surfaceKey, r.id, { jobSessionAnchor: jobAnchor });
+              } else {
+                log(`job ${r.id}: kickoff post failed — firing fresh this tick (no session join)`);
+              }
+            }
+            if (jobAnchor) {
+              fireTarget = anchorArm.target(dest, jobAnchor);
+              jobAnchorAttrs = anchorArm.attributes?.(dest, jobAnchor) ?? {};
+              anchoredOffSlack = true;
+            }
+          }
         }
       }
       const fireWakeId = mintWakeId();
@@ -299,13 +321,16 @@ export async function dispatchTick(
           ...appAuth.attributes,
           ...routineFireAttributes(r, dest.attributes, mode, internal, creatorInternal, fireWakeId),
           ...(firePlatform === "slack" && isJobRoutine(r) && jobAnchor ? { thread_ts: jobAnchor } : {}),
+          ...jobAnchorAttrs,
           ...taintedFireAttrs(pre.tainted),
         },
       };
       const fireOrigin: UnifiedWakeOrigin | undefined =
-        dest.origin && dest.origin.platform === "slack" && isJobRoutine(r) && jobAnchor
-          ? { ...dest.origin, threadTs: jobAnchor }
-          : dest.origin;
+        anchoredOffSlack
+          ? undefined
+          : dest.origin && dest.origin.platform === "slack" && isJobRoutine(r) && jobAnchor
+            ? { ...dest.origin, threadTs: jobAnchor }
+            : dest.origin;
       const message = renderFireMessage(r, pre.collected);
       const deliver = async (): Promise<void> => {
         await auditFireAttrsSent(r, markedAuth.attributes, fireWakeId);

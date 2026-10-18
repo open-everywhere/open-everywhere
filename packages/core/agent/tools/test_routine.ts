@@ -46,6 +46,7 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const id = input.id.trim();
 
+    // principal-gate: presence — the loop guard, the same one run_routine_now holds. A fire has no
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(

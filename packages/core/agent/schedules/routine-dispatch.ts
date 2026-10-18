@@ -30,6 +30,7 @@ export type DeclaredTargetResolution =
 export interface RoutineTestRunArm {
   readonly post: (dest: DispatchTarget, text: string, anchor?: string) => Promise<string | undefined>;
   readonly target: (dest: DispatchTarget, anchor: string) => Readonly<Record<string, unknown>>;
+  readonly attributes?: (dest: DispatchTarget, anchor: string) => Readonly<Record<string, string>>;
 }
 
 export interface RoutineDispatchProvider {

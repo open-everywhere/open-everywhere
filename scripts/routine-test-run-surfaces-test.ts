@@ -33,6 +33,10 @@ const { registerDiscordProvider } = await import("@open-everywhere/provider-disc
 const { registerTeamsProvider } = await import("@open-everywhere/provider-teams/agent/register.js");
 const { rawIdLeaks } = await import("@open-everywhere/core/agent/channels/friendly-ids.js");
 const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
+const { resolveReplyTarget } = await import("@open-everywhere/core/agent/channels/reply-post.js");
+const { postArm } = await import("@open-everywhere/core/agent/channels/post-arms.js");
+const { bindFrom } = await import("@open-everywhere/core/agent/identity/binding.js");
+const { isWakeSurfaceBinding } = await import("@open-everywhere/core/agent/channels/unified-window.js");
 type Routine = import("@open-everywhere/core/agent/routines/routine.js").Routine;
 
 ok(testRun.testRunRefusal({ status: "active", trigger: { kind: "cron" }, surfaceKey: "discord/G1/C1" }) !== null, "before the bundles register, a Discord routine cannot be tested");
@@ -99,6 +103,16 @@ function routine(over: Partial<Routine> & Pick<Routine, "id" | "surfaceKey" | "t
   };
 }
 
+function replyTargetOf(attrs: Record<string, string>): Record<string, unknown> | null {
+  return resolveReplyTarget({ channel: { kind: "teams" }, session: { auth: { current: { attributes: attrs, principalId: "", principalType: "teams-user" } } } } as never) as Record<string, unknown> | null;
+}
+
+async function replyOnWire(target: Record<string, unknown>, text: string): Promise<Wire | undefined> {
+  const before = wire.length;
+  await postArm("teams")!.dispatchReply!(target as never, text, undefined as never);
+  return wire.slice(before).find((w) => String(w.body["text"] ?? "") === text);
+}
+
 async function requestTest(r: Routine, id: string, at: string): Promise<void> {
   await routineStore.updateRoutine(r.org, r.surfaceKey, r.id, { testRun: { id, requestedBy: "U-ASKER", requestedAt: at } });
 }
@@ -162,6 +176,11 @@ try {
     ok(fire.target["conversationId"] === CONV && fire.target["replyToActivityId"] === rootId, "🔴 teams 1:1: the fire keys its session on the opening activity, never on the person's own chat session");
     ok(fire.target["serviceUrl"] === SERVICE_URL && fire.target["initialMessage"] === undefined, "teams 1:1: the routine's own reference, and no eve root (a 1:1 eve root keeps no reply id)");
     ok(fire.attrs["conversation_id"] === CONV && fire.attrs[ROUTINE_MARKER.id] === "r-teams-dm", "🔴 teams 1:1: the bag is the routine's own bag");
+    ok(fire.attrs["reply_to_activity_id"] === rootId, "🔴 teams 1:1: the bag names the opening activity, so the turn's binding knows where to answer (OPE-2568)");
+    const answerTo = replyTargetOf(fire.attrs);
+    ok(answerTo?.["conversationId"] === CONV && answerTo?.["replyToActivityId"] === rootId, "🔴 teams 1:1: the turn's `reply` resolves to the opening activity, not to the routine's chat (OPE-2568)");
+    const answer = await replyOnWire(answerTo!, "3 incidents open");
+    ok(answer !== undefined && answer.url.endsWith(`/v3/conversations/${encodeURIComponent(CONV)}/activities/${rootId}`), "🔴 teams 1:1: …and the answer goes on the wire as a reply to the opening activity");
 
     const summaryWireBefore = wire.length;
     const text = await postTestRunSummary(fire.attrs, false, { read: async () => [] });
@@ -190,6 +209,13 @@ try {
     const rootId = fire.attrs[testRun.ROUTINE_TEST_ANCHOR_ATTR];
     ok(fire.target["conversationId"] === BASE && fire.target["replyToActivityId"] === rootId, "🔴 teams channel: the fire keys its session on the new chain, not on the routine's chain");
     ok(fire.attrs["conversation_id"] === CONV && fire.attrs["channel_id"] === BASE, "teams channel: the bag still names the routine's own conversation and channel");
+    const answerTo = replyTargetOf(fire.attrs);
+    ok(answerTo?.["conversationId"] === BASE && answerTo?.["replyToActivityId"] === rootId, "🔴 teams channel: the turn's `reply` resolves to the test's own chain, not the routine's chain (OPE-2568)");
+    const answer = await replyOnWire(answerTo!, "2 incidents open");
+    ok(answer !== undefined && answer.url.endsWith(`/v3/conversations/${encodeURIComponent(BASE)}/activities/${rootId}`), "🔴 teams channel: …and the answer goes on the wire under the opening post");
+    const { reply_to_activity_id: _stamp, ...unstamped } = fire.attrs;
+    const plain = replyTargetOf(unstamped);
+    ok(plain?.["conversationId"] === CONV && plain?.["replyToActivityId"] === undefined, "teams channel: a turn with no host stamp still answers in its own conversation (negative control)");
 
     await requestTest(r, "t-0000e003", "2026-07-02T14:10:00.000Z");
     const before = sends.length;
@@ -204,6 +230,62 @@ try {
     ok(sends.length === unresolvedBefore + 1, "teams channel: an unresolved room check lets the test start");
     const rows = await readAudit({ org: "acme", action: "routine.eligibility_unresolved" });
     ok(rows.some((row) => (row.detail as Record<string, unknown>)?.["routineId"] === "r-teams-ch" && (row.detail as Record<string, unknown>)?.["test"] === "t-0000e004"), "🔴 teams channel: …and writes a routine.eligibility_unresolved row, so the fail-open does not read as a pass");
+  }
+
+  {
+    const BASE = "19:channel-job@thread.tacv2";
+    const CONV = `${BASE};messageid=1700000000222`;
+    const r = routine({
+      id: "r-teams-job",
+      surfaceKey: `teams/${TENANT}/19_channel-job_thread.tacv2_messageid_1700000000222`,
+      target: { serviceUrl: SERVICE_URL, conversationId: CONV, conversationType: "channel", tenantId: TENANT, channelId: BASE, teamId: "19:team@thread.tacv2", aadObjectId: "aad-owner" },
+      sessionMode: "job",
+      prompt: "Chase the incident review until it is filed.",
+      nextRunAt: "2026-07-03T09:00:00.000Z",
+    });
+    await routineStore.addRoutine({} as never, r);
+    const wireBefore = wire.length;
+    const sendsBefore = sends.length;
+    await tick("2026-07-03T09:00:00.000Z");
+    const kickoff = wire.slice(wireBefore).find((w) => String(w.body["text"] ?? "").startsWith("🔄 Starting job"));
+    ok(kickoff !== undefined && kickoff.url.endsWith(`/v3/conversations/${encodeURIComponent(BASE)}/activities`), "🔴 teams job: the first fire posts a kickoff in the CHANNEL, so the job has a reply chain of its own (OPE-2568)");
+    ok(String(kickoff!.body["text"]).includes("this post") && !String(kickoff!.body["text"]).includes("this thread"), "teams job: the kickoff names a post, not a Slack thread");
+    ok(sends.length === sendsBefore + 1, "teams job: the job fires once");
+    const fire1 = sends.at(-1)!;
+    const anchor = (await routineStore.getRoutine("acme", r.surfaceKey, r.id))?.jobSessionAnchor;
+    ok(typeof anchor === "string" && anchor.startsWith("17600000"), "🔴 teams job: the kickoff's activity id is stored as the job's anchor");
+    ok(fire1.target["conversationId"] === BASE && fire1.target["replyToActivityId"] === anchor, "🔴 teams job: the fire keys its session on the kickoff — eve's (tenant, conversation, reply id) token");
+    ok(fire1.attrs["reply_to_activity_id"] === anchor && fire1.attrs["conversation_id"] === CONV, "🔴 teams job: the bag names the kickoff, and is otherwise the routine's own bag");
+    const answerTo = replyTargetOf(fire1.attrs);
+    ok(answerTo?.["conversationId"] === BASE && answerTo?.["replyToActivityId"] === anchor, "🔴 teams job: the job's `reply` lands under the kickoff post");
+    const jobBinding = bindFrom({ channel: { kind: "teams" }, session: { auth: { current: { attributes: fire1.attrs, principalId: "", principalType: "teams-user" } } } } as never);
+    ok(jobBinding.target?.["replyToActivityId"] === anchor && isWakeSurfaceBinding(jobBinding), "🔴 teams job: the stamped binding passes the frozen-binding check a windowed fire meets");
+
+    const wireBefore2 = wire.length;
+    await tick("2026-07-03T10:01:00.000Z");
+    ok(!wire.slice(wireBefore2).some((w) => String(w.body["text"] ?? "").startsWith("🔄 Starting job")), "🔴 teams job: a re-fire posts no second kickoff");
+    const jobFires = sends.slice(sendsBefore).filter((f) => f.attrs[ROUTINE_MARKER.id] === "r-teams-job");
+    const fire2 = jobFires.at(-1)!;
+    ok(jobFires.length === 2 && fire2.target["replyToActivityId"] === anchor && fire2.attrs["reply_to_activity_id"] === anchor, "🔴 teams job: a re-fire reuses the SAME anchor ⇒ one durable session (the join)");
+
+  }
+
+  {
+    const GUILD = "1300000000000000100";
+    const CHANNEL = "1300000000000000300";
+    const r = routine({ id: "r-discord-job", surfaceKey: `discord/${GUILD}/${CHANNEL}`, target: { channelId: CHANNEL, guildId: GUILD }, sessionMode: "job", nextRunAt: "2026-07-04T09:00:00.000Z" });
+    await routineStore.addRoutine({} as never, r);
+    const mine = (): typeof sends => sends.filter((f) => f.attrs[ROUTINE_MARKER.id] === "r-discord-job");
+    const wireBefore = wire.length;
+    await tick("2026-07-04T09:00:00.000Z");
+    const kickoff = wire.slice(wireBefore).find((w) => String(w.body["content"] ?? "").startsWith("🔄 Starting job"));
+    ok(kickoff !== undefined && kickoff.url.endsWith(`/channels/${CHANNEL}/messages`), "🔴 discord job: the first fire posts a kickoff in the routine's channel");
+    const anchor = (await routineStore.getRoutine("acme", r.surfaceKey, r.id))?.jobSessionAnchor;
+    const fire = mine().at(-1);
+    ok(mine().length === 1 && typeof anchor === "string" && fire?.target["channelId"] === CHANNEL && fire?.target["conversationId"] === anchor, "🔴 discord job: the fire keys its session on the kickoff message");
+    ok(fire!.attrs["channel_id"] === CHANNEL && fire!.attrs["thread_ts"] === undefined && fire!.attrs["reply_to_activity_id"] === undefined, "discord job: the bag is the routine's own bag, with no stamp");
+    await tick("2026-07-04T10:01:00.000Z");
+    ok(mine().length === 2 && mine().at(-1)!.target["conversationId"] === anchor, "🔴 discord job: a re-fire reuses the same anchor");
   }
 
 } finally {

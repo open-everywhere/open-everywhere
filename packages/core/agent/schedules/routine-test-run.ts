@@ -77,6 +77,7 @@ function slackTestRunArm(post: TestRunPost = liveTestRunPost): RoutineTestRunArm
       return channelId === undefined ? undefined : post(channelId, text, anchor).catch(() => undefined);
     },
     target: (dest, anchor) => ({ channelId: slackChannelOf(dest) ?? "", threadTs: anchor }),
+    attributes: (_dest, anchor) => ({ thread_ts: anchor }),
   };
 }
 
@@ -317,7 +318,7 @@ export async function dispatchTestRuns(all: readonly Routine[], args: TestRunDis
         attributes: {
           ...args.appAuth.attributes,
           ...routineFireAttributes(r, dest!.attributes, mode, internal, creatorInternal, fireId),
-          ...(platform === "slack" ? { thread_ts: root } : {}),
+          ...(arm!.attributes?.(dest!, root) ?? {}),
           ...taintedFireAttrs(plan !== undefined ? !plan.redacted || pre.tainted : pre.tainted),
           ...testRunAttrs(test, root),
         },

@@ -27,6 +27,8 @@ const TEAMS_USER_TYPE_ATTR = "user_type";
 
 const TEAMS_HOME_TENANT_ATTR = "tenant_home";
 
+export const TEAMS_REPLY_TO_ATTR = "reply_to_activity_id";
+
 export function withTeamsUserType<A extends OpenEverywhereTeamsAuth>(auth: A, userType: string | undefined, homeTenant?: boolean): A {
   if (!userType) return auth;
   return {
@@ -181,6 +183,7 @@ export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
             teamId: teamsAttr(a, ["team_id", "teamId"]),
             conversationType: scope,
             aadObjectId: teamsAttr(a, ["aad_object_id", "aadObjectId"]),
+            ...(teamsAttr(a, [TEAMS_REPLY_TO_ATTR]) !== undefined ? { replyToActivityId: teamsAttr(a, [TEAMS_REPLY_TO_ATTR]) } : {}),
           }
         : undefined,
   };

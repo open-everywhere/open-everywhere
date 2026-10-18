@@ -6,7 +6,7 @@ import {
   updateTeamsActivityBackedOff,
 } from "./teams-connector.js";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
-import { teamsReplyChainRoot } from "./teams-conversation-id.js";
+import { teamsChannelGrainConversationId, teamsReplyChainRoot } from "./teams-conversation-id.js";
 import {
   teamsPersonalConversationRef,
   teamsSoleTenantRegion,
@@ -180,7 +180,11 @@ export const teamsPostArm: PostArm = {
   resolveTarget: (bag: TargetResolveBag): ReplyTarget | null => {
     const serviceUrl = bag.str("serviceUrl");
     const conversationId = bag.str("conversationId");
-    return serviceUrl && conversationId ? { platform: "teams", serviceUrl, conversationId } : null;
+    if (!serviceUrl || !conversationId) return null;
+    const replyToActivityId = bag.str("replyToActivityId");
+    return replyToActivityId
+      ? { platform: "teams", serviceUrl, conversationId: teamsChannelGrainConversationId(conversationId), replyToActivityId }
+      : { platform: "teams", serviceUrl, conversationId };
   },
   dispatchReply: (target, text, _replier, intent) => dispatchTeamsReply(target as TeamsTarget, text, intent),
   originOfTarget: (target) => {

@@ -1,3 +1,5 @@
+// proves: ROUT-13
+
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -385,9 +387,44 @@ const ORG = "default";
   ok(jobArgs?.["sessionMode"] === "job", "dm: …and it is frozen as a JOB, not silently downgraded to a plain one-shot");
   ok(typeof jobArgs?.["boundPolicy"] === "string" && String(jobArgs["boundPolicy"]).length > 0, "dm: …carrying the ceiling it will retire itself at, which is the answer that replaced the refusal");
 
+  {
+    const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+    registerIdentityMapper("fixjob", (c) => ({
+      workspace: "W1",
+      surface: "R1",
+      mode: "dm",
+      visibility: "private",
+      trust: "internal",
+      trustVerified: true,
+      principalId: c.session?.auth?.current?.principalId || undefined,
+      target: { channelId: "R1" },
+    }));
+    (await import("../agent/approvals/flow.js")).registerCardPoster("fixjob", async () => "fixjob-card-1");
+    const fixCtx = { channel: { kind: "fixjob" }, session: { auth: { current: { attributes: {}, principalId: "U1", principalType: "fixjob-user" } } } } as never;
+    routineDispatch.registerRoutineDispatch("fixjob", { resolveTarget: () => null });
+    await refuses(
+      () => createTool.execute({ prompt: "chase the fixture", trigger: once, job: true } as never, fixCtx),
+      /Durable jobs are not available on "fixjob"/,
+      "job off slack: 🔴 a platform with no anchor arm refuses a durable job, and the words name the platform",
+    );
+    routineDispatch.registerRoutineDispatch("fixjob", { resolveTarget: () => null, testRun: { post: async () => undefined, target: () => ({}) } });
+    let msg = "";
+    let pending = false;
+    try {
+      pending = ((await createTool.execute({ prompt: "chase the fixture", trigger: once, job: true } as never, fixCtx)) as { pending: boolean }).pending;
+    } catch (err) {
+      msg = err instanceof Error ? err.message : String(err);
+    }
+    ok(pending && msg === "", `job off slack: 🔴 a platform whose bundle declares an anchor arm admits a durable job (got: ${msg || "no throw"})`);
+    const fixArgs = (await pendingArgs()).find((a) => a["prompt"] === "chase the fixture");
+    ok(fixArgs?.["sessionMode"] === "job", "job off slack: …and it is frozen as a JOB");
+  }
+
   const dmOnce = (await createTool.execute({ prompt: "check back on this", trigger: once } as never, slackCtx(dmAttrs))) as { pending: boolean };
   ok(dmOnce.pending === true, "dm: a ONE-SHOT in a DM is created — 'check back in an hour' is unchanged by any of this");
 }
 
 await removeTempDir(dir);
 console.log(`✓ routine targeting (OPE-148): ${passed} assertions passed (dispatch predicate + report model + card venue + config lint + REAL fires reaching their destination)`);
+
+// proves: AP-MOD-core-approvals-card-venue

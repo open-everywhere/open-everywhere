@@ -226,8 +226,7 @@ blocked*. Ask for it, and `test_routine` runs the routine **once as a test**:
 - **Where the answer lands depends on the platform.**
   - **Slack:** the opening post is a thread root, and the answer and the list land in that thread.
   - **Teams:** the opening post starts a reply chain of its own (in a channel, a new post in the
-    channel; in a chat, a new message), and the list replies to it. The run's answer goes where the
-    routine's answers always go: the routine's own conversation.
+    channel; in a chat, a new message). The run's answer and the list both reply to it.
   - **Discord:** Discord has no thread for this, so the answer lands in the routine's own channel
     after the opening post, and the list is a Discord reply to the opening post.
 
@@ -1053,6 +1052,17 @@ durable session. This introduces **no new token shape** — a job session is a p
 token with a stable anchor, the same principle the per-user DM seat uses to give a long-lived DM one
 durable session.
 
+**Off Slack the anchor is a post (OPE-2568).** On Teams and Discord the first fire posts the kickoff
+through the bundle's anchor arm, the same arm a [test run](#test-it-before-it-runs) anchors on, and
+stores the id the platform returned. Every fire then goes to that post. On **Teams** the session keys on
+`(tenant, conversation, reply id)`, and the job's answers reply to the kickoff post. In a channel the kickoff is a new post in the channel,
+so the job has a reply chain of its own. On **Discord** the session keys on `(channel, kickoff message
+id)`, and the answers go to the routine's channel: Discord has no thread for this. A Teams or
+Discord job fire that has its anchor never takes the window, as a test run never does: it goes native,
+where the anchor keys its session. The window's guard would also refuse it, because the fire's binding
+names the routine's own conversation and the anchored post sits in a different one. A fire whose
+kickoff post failed has no anchor: it is an ordinary fresh fire and takes the routine's usual delivery.
+
 **A working-state ledger (belt-and-braces continuity).** The job's fired session records its
 progress with `record_job_state` — a short note (goal, what's done, what's next; capped at 16 KB).
 The dispatcher renders that ledger into every fire's preamble as a *"where you were"* block — as
@@ -1092,11 +1102,11 @@ agent chooses nothing. If a source you need has no webhook, say so on the issue 
 working around it — the capability would need its own narrow tool, with the reachable hosts declared
 on the routine when you arm it and shown on the arming card.
 
-**Scope (v1).** Durable jobs are **Slack-only** today — the surface whose continuation token Open
-Everywhere fully controls and can host-post an anchor into — and require a **scheduled trigger** (not
-an `event` subscription, which fires through a different path). A job on any other surface is refused
-at creation. (A **Slack** job whose anchor post fails degrades cleanly: it still fires and still
-carries the ledger note — it just doesn't resume one session.)
+**Scope.** Durable jobs work on **Slack, Teams and Discord**: the platforms that can host-post an
+anchor (on Teams and Discord, through the same arm a test run uses). They require a **scheduled
+trigger** (not an `event` subscription, which fires through a different path). A job on any other
+surface, Linear included, is refused at creation. (A job whose anchor post fails degrades cleanly: it
+still fires and still carries the ledger note — it just doesn't resume one session.)
 
 ## Silent routines (`postPolicy: never`)
 
@@ -2894,7 +2904,9 @@ divert, because a test needs a session that is a test from its first turn to its
 
 **The anchor, per surface (OPE-2540).** A `RoutineTestRunArm` (`schedules/routine-dispatch.ts`) has two
 edges: `post` (a host post in the routine's room, at the top level or beside the anchor) and `target`
-(the receive target for a fire anchored on a post). Core's Slack arm is inline in
+(the receive target for a fire anchored on a post). An optional third member follows (OPE-2568):
+`attributes`, the host-set bag stamp that tells the turn's `reply` where the anchor is. A
+[durable job](#durable-jobs-persistent-multi-step-work) anchors through the same arm. Core's Slack arm is inline in
 `schedules/routine-test-run.ts`: the target is the thread. A bundle registers its arm on its routine
 dispatcher (`registerRoutineDispatch(…, { testRun })`), and `registerRoutineDispatch` notes the
 platform for `testRunRefusal`.
@@ -2908,10 +2920,16 @@ platform for `testRunRefusal`.
   `(tenant, conversation, reply id)`. eve's own `initialMessage` root keeps no reply id in a 1:1 chat,
   so a 1:1 test fired through it would continue the person's own chat session.
 
-Only the delivery changes. The bag stays the routine's own bag, so the test binds to the routine's
-surface, memory and spend grain. A fired turn's closing prose is dropped, so the run's answer is the
-`reply` it makes. On Teams and Discord that `reply` goes to the routine's own conversation, as a real
-run's does, and not under the opening post. Only the host summary goes beside the opening post.
+Only the delivery changes, plus one stamp. The bag stays the routine's own bag, so the test binds to
+the routine's surface, memory and spend grain. A fired turn's closing prose is dropped, so the run's
+answer is the `reply` it makes, and `reply` posts where the turn's binding says. The binding is built
+from the bag, not from the receive target, so the arm's `attributes` add the anchor to the bag. On
+Slack the stamp is `thread_ts`. On Teams it is `reply_to_activity_id`
+(`provider-teams/agent/channels/teams-identity.ts` `TEAMS_REPLY_TO_ATTR`): `bindTeams` carries it to the
+binding's target as `replyToActivityId`, and the Teams post arm's `resolveTarget` replies to that
+activity in the conversation the opening post went to (OPE-2568). Only the host sets it, and an inbound
+activity never carries it. Discord declares no stamp: its `reply` goes to the routine's own channel,
+after the opening post, and the host summary is a Discord reply to the opening post.
 
 **An event routine's replay (OPE-2540).** The event fan-out (`routines/ingress.ts`) keeps the matched
 event on the row as `lastEvent` (`captureReplayEvent`, `routines/match-stamp.ts`), after the read grant
