@@ -189,8 +189,8 @@ product's function.
 **"What if our models are restricted?"** Change `models.stack` in one line, or point the target's
 `url` (`models.targets.gateway.url` for a route or stack role with no `via`) at a gateway that serves
 the models you can still use. The limits: a route or stack role whose `via` names another target moves
-only with that target's `url`, a direct transcription route does not move with the gateway, and both shipped
-stacks run through an AI Gateway-compatible endpoint. A backend that is not compatible needs its own
+only with that target's `url`, a direct transcription route does not move with the gateway, and every shipped
+stack runs through an AI Gateway-compatible endpoint. A backend that is not compatible needs its own
 model adapter, which is a code change ([Models & the AI Gateway](../extending/models-and-gateway.md)).
 
 **"Does a vendor train on our data?"** No Open Everywhere vendor receives your data: telemetry carries

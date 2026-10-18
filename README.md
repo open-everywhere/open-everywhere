@@ -2,10 +2,10 @@
 
 # Open Everywhere
 
-<!-- HERO LINE: the maintainer decides -->
+### Your team's AI chief of staff. On infrastructure you own.
 
-**An open-source AI agent that your team runs on its own infrastructure and works with in chat,
-issues, docs and code.**
+An open-source AI agent that works with your team in chat, issues and docs. It runs multi-step
+tasks and remembers context for each team.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![DCO](https://img.shields.io/badge/contributions-DCO-green.svg)](./CONTRIBUTING.md)
@@ -24,6 +24,25 @@ Then open the new app in your coding agent and ask it to finish the setup. The a
 instructions, the ops MCP server and the setup skill that the agent needs. The app's `AGENTS.md`
 tells the agent to ask for your consent at each command. See the
 [quick start](./docs/introduction/quick-start.md).
+
+## What stays yours
+
+"Infrastructure you own" means the host account, the database and the Git repository that you
+choose. You choose where the memory, the logs, the keys and the config live. You hold the gateway
+setting, and you choose where the models run.
+
+| What | Where it is, and what decides it | Backed in |
+|---|---|---|
+| **Data** | Memory, the audit log and the encrypted credentials live in the Postgres you choose. Config lives in your Git repository. Behaviour changes by pull request, and the environment holds connection strings and bootstrap credentials. No Open Everywhere vendor runs your deployment. | [data map](./docs/security/sovereignty.md#the-data-map) |
+| **Models** | `models.stack` moves all five model roles in one line. Three stacks ship. `models.dataPolicy` demands zero retention, no training or an EU or US region on every call through the model adapter. A call that no provider can serve fails. | [models](./docs/security/sovereignty.md#the-model-is-one-config-line) · [data policy](./docs/extending/models-and-gateway.md) |
+| **Gateway** | Each model call through the model adapter goes to a target in `models.targets`. A target's `url` points it at a gateway you run, and `providers.only` names the providers that may serve it. | [gateway](./docs/security/sovereignty.md#the-claim-in-layers) |
+
+The limits: the model provider sees each prompt it serves, and the chat platform keeps its
+messages. On Vercel, Vercel runs the compute and holds the transcripts, the logs and the credential
+key. The project environment also holds `DATABASE_URL`, so Vercel alone can reach both the key and
+the ciphertext. `npx oe sovereignty` prints, for your own deployment, where each piece of data lives and which
+company could be compelled to hand it over.
+[Your agent, your ground](./docs/introduction/your-agent-your-ground.md)
 
 ## How the parts fit
 
@@ -60,8 +79,9 @@ No single feature is the point. The parts work together:
    on (a new app from `@open-everywhere/create` turns it on; the framework default is off), it starts the dev server and checks a screenshot of the page. It
    walks a reviewer through a pull request from the diff.
    [Source control](./docs/capabilities/source-control.md) · [browser](./docs/capabilities/browser-qa.md) · [walkthroughs](./docs/capabilities/pr-walkthrough.md)
-7. **Any model.** One setting, `models.stack`, switches every model role at once. Two stacks ship:
-   an all-closed default and an all-open-weights stack. A live lane, `npm run e2e:stack`, checks
+7. **Any model.** One setting, `models.stack`, switches every model role at once. Three stacks
+   ship: an American closed default, a Chinese open-weights stack and a European open-weights
+   stack. A live lane, `npm run e2e:stack`, checks
    which models really ran.
    [Models](./docs/extending/models-and-gateway.md)
 
