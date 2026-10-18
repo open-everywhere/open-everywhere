@@ -55,6 +55,7 @@ export const OPERATIONAL_TABLES = [
   "personal_cover",
   "question_ledger",
   "room_watch",
+  "memory_canvas",
   "ingress_delivery",
   "attention_state",
   "dm_rule",
@@ -886,6 +887,12 @@ export interface RoutineReportThreadRow {
   readonly routineId: string;
 }
 
+export interface MemoryCanvasRow {
+  readonly surfaceKey: string;
+  readonly canvasId: string;
+  readonly updatedAt: string;
+}
+
 export interface RoomWatchRow {
   readonly surfaceKey: string;
   readonly stateJson: string;
@@ -1196,6 +1203,8 @@ export interface OperationalStore {
   listPersonalWatches(org: string): Promise<PersonalWatchRow[]>;
   getRoomWatch(org: string, surfaceKey: string): Promise<RoomWatchRow | null>;
   casRoomWatch(org: string, surfaceKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
+  getMemoryCanvas(org: string, surfaceKey: string): Promise<MemoryCanvasRow | null>;
+  setMemoryCanvas(org: string, surfaceKey: string, canvasId: string, at: string): Promise<void>;
   getPersonalCover(org: string, principalKey: string): Promise<PersonalCoverRow | null>;
   casPersonalCover(org: string, principalKey: string, stateJson: string, at: string, expected: number | null): Promise<number | null>;
   listPersonalCovers(org: string): Promise<PersonalCoverRow[]>;

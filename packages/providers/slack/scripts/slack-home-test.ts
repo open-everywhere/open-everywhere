@@ -227,13 +227,45 @@ console.log("§5 the route");
   ok(unsigned.status === 401 && opened.length === 1, "NEGATIVE: an unsigned Home open is refused before classification");
 }
 
+const ROOM = { org: "default", teamId: TEAM, channelId: "CPLAT" };
 console.log("§6 the canvas");
 function canvasDeps(
-  over: { existing?: string; creator?: string; internal?: (c: string) => boolean; members?: string[]; guests?: string[]; membersPaged?: boolean; editFails?: boolean; infoFails?: boolean; filesFails?: boolean; botUnknown?: boolean } = {},
-): MemoryCanvasDeps & { calls: { method: string; body: Record<string, unknown> }[] } {
+  over: {
+    existing?: string;
+    creator?: string;
+    tabs?: string[];
+    creators?: Record<string, string>;
+    filesFailFor?: string;
+    editFailsFor?: string;
+    marked?: string[];
+    lookupFails?: boolean;
+    stored?: string;
+    storeFails?: boolean;
+    internal?: (c: string) => boolean;
+    members?: string[];
+    guests?: string[];
+    membersPaged?: boolean;
+    editFails?: boolean;
+    infoFails?: boolean;
+    filesFails?: boolean;
+    botUnknown?: boolean;
+  } = {},
+): MemoryCanvasDeps & { calls: { method: string; body: Record<string, unknown> }[]; rows: Map<string, string> } {
   const calls: { method: string; body: Record<string, unknown> }[] = [];
+  const rows = new Map<string, string>(over.stored ? [[`slack/${TEAM}/CPLAT`, over.stored]] : []);
   return {
     calls,
+    rows,
+    store: {
+      getMemoryCanvas: async (_org, surfaceKey) => {
+        if (over.storeFails) throw new Error("store down");
+        const canvasId = rows.get(surfaceKey);
+        return canvasId ? { surfaceKey, canvasId, updatedAt: "2026-10-11T00:00:00Z" } : null;
+      },
+      setMemoryCanvas: async (_org, surfaceKey, canvasId) => {
+        rows.set(surfaceKey, canvasId);
+      },
+    },
     now: () => new Date("2026-10-11T00:00:00Z"),
     channelInternal: async (c) => (over.internal ? over.internal(c) : true),
     authorIsMember: async (u) => (u === "U_UNKNOWN" ? undefined : !(over.guests ?? []).includes(u)),
@@ -245,13 +277,30 @@ function canvasDeps(
         case "users.conversations":
           return { ok: true, channels: [{ id: "CPLAT" }, { id: "CSHARED" }, { id: "CQUIET" }, { id: "COTHER" }] };
         case "conversations.info":
-          return over.infoFails ? { ok: false, error: "ratelimited" } : { ok: true, channel: { id: body.channel, properties: over.existing ? { canvas: { file_id: over.existing } } : {} } };
+          return over.infoFails
+            ? { ok: false, error: "ratelimited" }
+            : {
+                ok: true,
+                channel: {
+                  id: body.channel,
+                  properties: {
+                    ...(over.existing ? { canvas: { file_id: over.existing } } : {}),
+                    ...(over.tabs ? { tabs: [{ type: "files", id: "Ct_files" }, ...over.tabs.map((id) => ({ type: "canvas", data: { file_id: id } }))] } : {}),
+                  },
+                },
+              };
         case "files.info":
-          return over.filesFails ? { ok: false, error: "ratelimited" } : { ok: true, file: { id: body.file, user: over.creator } };
+          return over.filesFails || body.file === over.filesFailFor
+            ? { ok: false, error: "ratelimited" }
+            : { ok: true, file: { id: body.file, user: over.creators?.[String(body.file)] ?? over.creator } };
         case "conversations.members":
           return { ok: true, members: over.members ?? ["UBOT", USER], ...(over.membersPaged ? { response_metadata: { next_cursor: "more" } } : {}) };
         case "canvases.edit":
-          return over.editFails ? { ok: false, error: "canvas_editing_failed" } : { ok: true };
+          return over.editFails || body.canvas_id === over.editFailsFor ? { ok: false, error: "canvas_editing_failed" } : { ok: true };
+        case "canvases.sections.lookup":
+          return over.lookupFails ? { ok: false, error: "missing_scope", needed: "canvases:read" } : { ok: true, sections: (over.marked ?? []).includes(String(body.canvas_id)) ? [{ id: "temp:C:1" }] : [] };
+        case "conversations.canvases.create":
+          return over.existing ? { ok: false, error: "channel_canvas_already_exists" } : { ok: true, canvas_id: "F_NEW" };
         default:
           return { ok: true };
       }
@@ -271,6 +320,7 @@ function canvasDeps(
   ok(creates.length === 1 && creates[0]!.body.channel_id === "CPLAT", "a channel with no canvas gets one — and only the confirmed-internal channel");
   const md = JSON.stringify(creates[0]!.body.document_content);
   ok(md.includes("Deploys freeze on Fridays"), "the canvas holds the domain's lines");
+  ok(md.includes("Edits made directly to this canvas get replaced."), "…and the memory canvas marker (OPE-2587), so a canvas whose row is lost is still found");
   ok(!md.includes("<!channel>") && md.includes("‹!channel"), "…with a remembered `<!channel>` defused, so the canvas pings nobody");
   ok(
     !fresh.calls.some((c) => (c.method === "conversations.canvases.create" || c.method === "canvases.edit") && c.body.channel_id === "CSHARED"),
@@ -281,21 +331,23 @@ function canvasDeps(
   ok(rows.some((r) => (r.detail as { outcome?: string }).outcome === "created") && rows.some((r) => (r.detail as { outcome?: string }).outcome === "skipped-external"), "each channel visited writes a memory.canvas_refresh row with its outcome");
 
   const ours = canvasDeps({ existing: "F_CANVAS", creator: "UBOT" });
-  ok((await publishChannelCanvas("CPLAT", "# x", "UBOT", ours)) === "updated", "the app's own canvas is replaced");
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", ours)) === "updated", "the app's own canvas is replaced");
   const edit = ours.calls.find((c) => c.method === "canvases.edit");
   ok(edit?.body.canvas_id === "F_CANVAS" && JSON.stringify(edit.body.changes).includes('"operation":"replace"'), "…with one whole-document replace");
 
   const theirs = canvasDeps({ existing: "F_HUMAN", creator: "U_SOMEONE" });
-  ok((await publishChannelCanvas("CPLAT", "# x", "UBOT", theirs)) === "skipped-foreign", "🔴 a canvas a PERSON made is never overwritten");
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", theirs)) === "skipped-foreign", "🔴 a canvas a PERSON made is never overwritten");
   ok(!theirs.calls.some((c) => c.method === "canvases.edit"), "…not one edit call is made");
-  ok((await publishChannelCanvas("CPLAT", "# x", undefined, canvasDeps({ existing: "F_X", creator: "UBOT" }))) === "skipped-foreign", "an unknown bot identity owns nothing (fail-closed)");
+  const noBot = canvasDeps({ existing: "F_X", creator: "UBOT" });
+  ok((await publishChannelCanvas(ROOM, "# x", undefined, noBot)) === "failed", "an unknown bot identity cannot find the memory canvas, so it writes nothing (fail-closed)");
+  ok(!noBot.calls.some((c) => c.method === "canvases.edit" || c.method === "conversations.canvases.create"), "…no edit and no new canvas");
 
   const guestRoom = canvasDeps({ members: ["UBOT", USER, "U_GUEST"], guests: ["U_GUEST"] });
-  ok((await publishChannelCanvas("CPLAT", "# x", "UBOT", guestRoom, TEAM)) === "skipped-guest", "🔴 a channel with a guest member gets no canvas");
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", guestRoom)) === "skipped-guest", "🔴 a channel with a guest member gets no canvas");
   ok(!guestRoom.calls.some((c) => c.method === "conversations.canvases.create" || c.method === "canvases.edit"), "…not one canvas write is made");
-  ok((await publishChannelCanvas("CPLAT", "# x", "UBOT", canvasDeps({ members: ["UBOT", "U_UNKNOWN"] }), TEAM)) === "skipped-guest", "a member the lookup cannot resolve counts as a guest (fail-closed)");
-  ok((await publishChannelCanvas("CPLAT", "# x", "UBOT", canvasDeps({ membersPaged: true }), TEAM)) === "skipped-guest", "a channel larger than one page is refused, never half-checked");
-  ok((await publishChannelCanvas("CPLAT", "# x", "UBOT", canvasDeps({ members: ["UBOT", USER, "U_BOB"] }), TEAM)) === "created", "NEGATIVE CONTROL: an all-member channel still gets its canvas");
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", canvasDeps({ members: ["UBOT", "U_UNKNOWN"] }))) === "skipped-guest", "a member the lookup cannot resolve counts as a guest (fail-closed)");
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", canvasDeps({ membersPaged: true }))) === "skipped-guest", "a channel larger than one page is refused, never half-checked");
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", canvasDeps({ members: ["UBOT", USER, "U_BOB"] }))) === "created", "NEGATIVE CONTROL: an all-member channel still gets its canvas");
 
   const quiet = canvasDeps({ existing: "F_OURS", creator: "UBOT" });
   await refreshMemoryCanvases({ org: "default", silo: "quiet-brain" }, quiet);
@@ -308,6 +360,77 @@ function canvasDeps(
   ok(defuseCanvasText("![](@U1) <@U2>") === "!\\[](@U1) ‹@U2>", "mention syntax is defused in both spellings");
 }
 
+console.log("§6c only the memory canvas, in the field or as a tab");
+{
+  const SECRETLINE = "# m\n- the launch date is 3 March";
+  type Deps = { calls: { method: string; body: Record<string, unknown> }[] };
+  const edits = (d: Deps) => d.calls.filter((c) => c.method === "canvases.edit");
+  const editedIds = (d: Deps) => JSON.stringify(edits(d).map((c) => c.body.canvas_id));
+  const creates = (d: Deps) => d.calls.filter((c) => c.method === "conversations.canvases.create");
+  const KEY = `slack/${TEAM}/CPLAT`;
+
+  const fresh = canvasDeps();
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", fresh)) === "created" && fresh.rows.get(KEY) === "F_NEW", "a new memory canvas's id is recorded in the room's memory_canvas row");
+
+  const tabStored = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", stored: "F_MEM" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", tabStored)) === "updated", "🔴 the memory canvas held only as a TAB is refreshed in place");
+  ok(creates(tabStored).length === 0 && editedIds(tabStored) === JSON.stringify(["F_MEM"]), "🔴 …with one edit on it, and no duplicate canvas");
+
+  const beside = canvasDeps({ tabs: ["F_WC", "F_MEM"], creator: "UBOT", marked: ["F_MEM"], stored: "F_MEM" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", beside)) === "updated" && editedIds(beside) === JSON.stringify(["F_MEM"]), "🔴 a write_canvas canvas beside the memory canvas is never rewritten");
+  const besideDown = canvasDeps({ tabs: ["F_WC", "F_MEM"], creator: "UBOT", stored: "F_MEM", internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", besideDown)) === "cleared-external" && editedIds(besideDown) === JSON.stringify(["F_MEM"]), "🔴 …and never cleared: the take-down replaces only the memory canvas");
+  ok(JSON.stringify(edits(besideDown)[0]!.body).includes("withdrawn") && !JSON.stringify(edits(besideDown)[0]!.body).includes("launch date"), "…with a notice that carries no memory");
+
+  const wcOnly = canvasDeps({ tabs: ["F_WC"], creator: "UBOT" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", wcOnly)) === "created" && edits(wcOnly).length === 0, "🔴 a channel with only a write_canvas canvas gets a memory canvas created, and the write_canvas canvas is untouched");
+  ok(wcOnly.rows.get(KEY) === "F_NEW", "…and the new canvas is the one the row records");
+  const wcOnlyDown = canvasDeps({ tabs: ["F_WC"], creator: "UBOT", internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", wcOnlyDown)) === "skipped-external" && edits(wcOnlyDown).length === 0, "🔴 a take-down never clears a write_canvas canvas");
+
+  const gone = canvasDeps({ tabs: ["F_WC"], creator: "UBOT", stored: "F_OLD" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", gone)) === "created" && edits(gone).length === 0 && gone.rows.get(KEY) === "F_NEW", "a deleted memory canvas is replaced by a new one, and the row names it");
+
+  const stale = canvasDeps({ tabs: ["F_WC", "F_Y"], creator: "UBOT", marked: ["F_Y"], stored: "F_X", internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", stale)) === "cleared-external" && editedIds(stale) === JSON.stringify(["F_Y"]), "🔴 a stale row still finds the marked memory canvas, and the take-down clears it");
+  ok(stale.rows.get(KEY) === "F_Y", "…and the row is corrected to the canvas on screen");
+  const staleNoRead = canvasDeps({ tabs: ["F_WC"], creator: "UBOT", stored: "F_X", lookupFails: true });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", staleNoRead)) === "failed" && creates(staleNoRead).length === 0 && edits(staleNoRead).length === 0, "🔴 a stale row and a write_canvas tab with no canvases:read: `failed`, no new canvas, no edit");
+  const staleRefresh = canvasDeps({ tabs: ["F_WC", "F_Y"], creator: "UBOT", marked: ["F_Y"], stored: "F_X" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", staleRefresh)) === "updated" && editedIds(staleRefresh) === JSON.stringify(["F_Y"]) && creates(staleRefresh).length === 0, "🔴 …and a refresh rewrites it in place: no duplicate");
+
+  const legacyTab = canvasDeps({ tabs: ["F_WC", "F_MEM"], creator: "UBOT", marked: ["F_MEM"] });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", legacyTab)) === "updated" && editedIds(legacyTab) === JSON.stringify(["F_MEM"]), "🔴 [legacy] the bot-made tab that carries the marker is the memory canvas; the write_canvas tab is not");
+  ok(legacyTab.rows.get(KEY) === "F_MEM", "[legacy] …and it is adopted into the row");
+  const legacyTabDown = canvasDeps({ tabs: ["F_WC", "F_MEM"], creator: "UBOT", marked: ["F_MEM"], internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", legacyTabDown)) === "cleared-external" && editedIds(legacyTabDown) === JSON.stringify(["F_MEM"]), "🔴 [legacy] a take-down clears the marked tab only");
+  const legacyField = canvasDeps({ existing: "F_FIELD", tabs: ["F_FIELD", "F_WC"], creator: "UBOT" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", legacyField)) === "updated" && editedIds(legacyField) === JSON.stringify(["F_FIELD"]), "[legacy] the bot-made canvas in properties.canvas is the memory canvas, as before tabs were read");
+  ok(!legacyField.calls.some((c) => c.method === "canvases.sections.lookup"), "…with no section read: that rule needs no canvases:read");
+
+  const personTab = canvasDeps({ tabs: ["F_HUMAN"], creator: "U_SOMEONE" });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", personTab)) === "created" && edits(personTab).length === 0, "a person's canvas tab is left alone, and the memory canvas is made beside it");
+
+  const noRead = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", marked: ["F_MEM"], lookupFails: true });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", noRead)) === "failed" && creates(noRead).length === 0 && edits(noRead).length === 0, "🔴 [legacy] with no canvases:read, a bot-made tab could be the memory canvas: no edit, and no duplicate");
+  const noReadDown = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", marked: ["F_MEM"], lookupFails: true, internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", noReadDown)) === "clear-failed", "🔴 …and its take-down says `clear-failed`, never a skip");
+  const noFile = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", marked: ["F_MEM"], filesFailFor: "F_MEM", internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", noFile)) === "clear-failed", "🔴 a failed files.info on a tab with no row is `clear-failed`");
+  const storeDown = canvasDeps({ storeFails: true });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", storeDown)) === "failed" && creates(storeDown).length === 0, "🔴 an unreadable memory_canvas row creates nothing: the channel could already show the memory canvas");
+  const storeDownMarked = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", marked: ["F_MEM"], storeFails: true, internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", storeDownMarked)) === "cleared-external", "…but a take-down still finds the memory canvas by its marker");
+  const refused = canvasDeps({ tabs: ["F_MEM"], creator: "UBOT", stored: "F_MEM", editFailsFor: "F_MEM", internal: () => false });
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", refused)) === "clear-failed", "a clear Slack refuses on the memory canvas is `clear-failed`");
+
+  const quietTab = canvasDeps({ tabs: ["F_WC", "F_MEM"], creator: "UBOT", marked: ["F_MEM"] });
+  ok((await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "CQUIET", trigger: "channel-shared" }, quietTab)) === "cleared-disabled" && editedIds(quietTab) === JSON.stringify(["F_MEM"]), "🔴 the recheck takes a tab memory canvas down, and only that canvas");
+
+  const filesTabOnly = canvasDeps({ tabs: [] });
+  ok((await publishChannelCanvas(ROOM, "# x", "UBOT", filesTabOnly)) === "created" && creates(filesTabOnly).length === 1, "NEGATIVE CONTROL: a channel with only a non-canvas tab gets its canvas");
+}
+
 console.log("§6b a failed gate clears the app's own canvas");
 {
   const SECRETLINE = "# m\n- the launch date is 3 March";
@@ -315,23 +438,23 @@ console.log("§6b a failed gate clears the app's own canvas");
     JSON.stringify(d.calls.filter((c) => c.method === "canvases.edit").map((c) => c.body.changes));
 
   const shared = canvasDeps({ existing: "F_OURS", creator: "UBOT", internal: () => false });
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, "UBOT", shared, TEAM)) === "cleared-external", "🔴 the app's canvas in a channel that became SHARED is cleared, not skipped");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", shared)) === "cleared-external", "🔴 the app's canvas in a channel that became SHARED is cleared, not skipped");
   ok(editedMarkdown(shared).includes("withdrawn") && !editedMarkdown(shared).includes("launch date"), "…replaced by a notice that carries no memory");
   ok(!shared.calls.some((c) => c.method === "conversations.canvases.create"), "…and no new canvas is made");
 
   const guest = canvasDeps({ existing: "F_OURS", creator: "UBOT", members: ["UBOT", USER, "U_GUEST"], guests: ["U_GUEST"] });
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, "UBOT", guest, TEAM)) === "cleared-guest", "🔴 the app's canvas in a channel a GUEST joined is cleared");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", guest)) === "cleared-guest", "🔴 the app's canvas in a channel a GUEST joined is cleared");
   ok(!editedMarkdown(guest).includes("launch date"), "…with no memory line left on it");
 
   const theirs = canvasDeps({ existing: "F_HUMAN", creator: "U_SOMEONE", internal: () => false });
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, "UBOT", theirs, TEAM)) === "skipped-external", "a canvas a PERSON made is left alone, even on a failed gate");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", theirs)) === "skipped-external", "a canvas a PERSON made is left alone, even on a failed gate");
   ok(!theirs.calls.some((c) => c.method === "canvases.edit"), "…not one edit call");
 
   const refused = canvasDeps({ existing: "F_OURS", creator: "UBOT", internal: () => false, editFails: true });
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, "UBOT", refused, TEAM)) === "clear-failed", "a clear Slack refuses says `clear-failed` — the memory may still be on screen — never a quiet skip");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", refused)) === "clear-failed", "a clear Slack refuses says `clear-failed` — the memory may still be on screen — never a quiet skip");
 
   const passing = canvasDeps({ existing: "F_OURS", creator: "UBOT" });
-  ok((await publishChannelCanvas("CPLAT", null, "UBOT", passing, TEAM)) === "unchanged", "NEGATIVE CONTROL: a recheck on a channel that still passes writes nothing");
+  ok((await publishChannelCanvas(ROOM, null, "UBOT", passing)) === "unchanged", "NEGATIVE CONTROL: a recheck on a channel that still passes writes nothing");
   ok(!passing.calls.some((c) => c.method === "canvases.edit" || c.method === "conversations.info"), "…and does not even look up the canvas");
 
   const joined = canvasDeps({ existing: "F_OURS", creator: "UBOT", members: ["UBOT", USER, "U_GUEST"], guests: ["U_GUEST"] });
@@ -349,9 +472,9 @@ console.log("§6b a failed gate clears the app's own canvas");
   const personsCanvas = canvasDeps({ existing: "F_HUMAN", creator: "U_SOMEONE" });
   ok((await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "COTHER", trigger: "member-joined" }, personsCanvas)) === "skipped-disabled", "a person's canvas there is left alone");
 
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, "UBOT", canvasDeps({ internal: () => false, infoFails: true }), TEAM)) === "clear-failed", "🔴 a failed conversations.info after a failed gate is `clear-failed`, never a skip");
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, "UBOT", canvasDeps({ existing: "F_X", internal: () => false, filesFails: true }), TEAM)) === "clear-failed", "🔴 a failed files.info after a failed gate is `clear-failed`");
-  ok((await publishChannelCanvas("CPLAT", SECRETLINE, undefined, canvasDeps({ existing: "F_X", creator: "UBOT", internal: () => false }), TEAM)) === "clear-failed", "🔴 an unknown bot identity after a failed gate is `clear-failed`");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", canvasDeps({ internal: () => false, infoFails: true }))) === "clear-failed", "🔴 a failed conversations.info after a failed gate is `clear-failed`, never a skip");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, "UBOT", canvasDeps({ existing: "F_X", internal: () => false, filesFails: true }))) === "clear-failed", "🔴 a failed files.info after a failed gate is `clear-failed`");
+  ok((await publishChannelCanvas(ROOM, SECRETLINE, undefined, canvasDeps({ existing: "F_X", creator: "UBOT", internal: () => false }))) === "clear-failed", "🔴 an unknown bot identity after a failed gate is `clear-failed`");
   ok((await recheckChannelCanvas({ org: "default", teamId: TEAM, channelId: "CPLAT", trigger: "channel-shared" }, canvasDeps({ existing: "F_X", creator: "UBOT", internal: () => false, botUnknown: true }))) === "clear-failed", "…including when auth.test failed in the recheck");
 
   const lagging = canvasDeps({ existing: "F_OURS", creator: "UBOT", members: ["UBOT", USER], guests: ["U_NEWGUEST"] });

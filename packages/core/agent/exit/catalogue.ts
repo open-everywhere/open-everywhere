@@ -127,7 +127,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     table: "model_call_capture",
     orgColumn: "org_id",
     orderBy: ["seq"],
-    holds: "soak-suite captures of whole model requests — written only while `soak.capture` is on",
+    holds: "soak-lane captures of whole model requests — written only while `soak.capture` is on",
     surfaceColumn: "surface_key",
     sessionColumn: "session_id",
     ageColumn: "ts",
@@ -198,6 +198,7 @@ export const EXIT_TABLES: readonly ExitTableSpec[] = [
     ageColumn: "ts",
   },
   { table: "room_watch", orgColumn: "org_id", orderBy: ["org_id", "surface_key"], holds: "a room's discovery settings — no person id" },
+  { table: "memory_canvas", orgColumn: "org_id", orderBy: ["org_id", "surface_key"], holds: "the id of a channel's memory canvas — no person id, no content" },
   { table: "ingress_delivery", orgColumn: "org_id", orderBy: ["org_id", "source", "authority_id", "delivery_id"], holds: "accepted inbound deliveries — pending work is never aged out" },
   {
     table: "attention_state",

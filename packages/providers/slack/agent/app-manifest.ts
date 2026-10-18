@@ -116,6 +116,7 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "pins:write",
             "users:read",
             "canvases:write",
+            "canvases:read",
             "lists:read",
             "lists:write",
             "assistant:write",

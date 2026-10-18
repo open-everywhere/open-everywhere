@@ -791,6 +791,15 @@ function getDb(): DatabaseSync {
       updated_at  TEXT NOT NULL,
       PRIMARY KEY (org_id, surface_key)
     );
+    -- memory_canvas (OPE-2587): one row per Slack channel the memory canvas observer made a canvas in —
+    -- store.ts's MemoryCanvasRow. An id and no content.
+    CREATE TABLE IF NOT EXISTS memory_canvas (
+      org_id      TEXT NOT NULL,
+      surface_key TEXT NOT NULL,
+      canvas_id   TEXT NOT NULL,
+      updated_at  TEXT NOT NULL,
+      PRIMARY KEY (org_id, surface_key)
+    );
     -- meeting_data (OPE-2461): the meeting rows, each with its OWN expiry — store.ts's meeting_data section.
     -- A read ignores a row past expires_at, a write deletes only such rows, and the meeting sweep deletes
     -- them on a timer. Never task_result: that table's prune runs by the calling writer's TTL, not the row's.
@@ -2822,6 +2831,19 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("UPDATE room_watch SET state_json = ?, version = version + 1, updated_at = ? WHERE org_id = ? AND surface_key = ? AND version = ?")
       .run(stateJson, at, org, surfaceKey, expected).changes;
     return changes > 0 ? expected + 1 : null;
+  },
+
+  async getMemoryCanvas(org, surfaceKey) {
+    const row = getDb().prepare("SELECT surface_key, canvas_id, updated_at FROM memory_canvas WHERE org_id = ? AND surface_key = ?").get(org, surfaceKey) as
+      | { surface_key: string; canvas_id: string; updated_at: string }
+      | undefined;
+    return row ? { surfaceKey: row.surface_key, canvasId: row.canvas_id, updatedAt: row.updated_at } : null;
+  },
+
+  async setMemoryCanvas(org, surfaceKey, canvasId, at) {
+    getDb()
+      .prepare("INSERT INTO memory_canvas (org_id, surface_key, canvas_id, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (org_id, surface_key) DO UPDATE SET canvas_id = excluded.canvas_id, updated_at = excluded.updated_at")
+      .run(org, surfaceKey, canvasId, at);
   },
 
   async getPersonalCover(org, principalKey) {

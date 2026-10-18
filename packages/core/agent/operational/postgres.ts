@@ -652,6 +652,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      updated_at  text NOT NULL,
      PRIMARY KEY (org_id, surface_key)
    )`,
+  `CREATE TABLE IF NOT EXISTS memory_canvas (
+     org_id      text NOT NULL,
+     surface_key text NOT NULL,
+     canvas_id   text NOT NULL,
+     updated_at  text NOT NULL,
+     PRIMARY KEY (org_id, surface_key)
+   )`,
   `CREATE TABLE IF NOT EXISTS meeting_data (
      org_id      text NOT NULL,
      data_key    text NOT NULL,
@@ -819,6 +826,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE personal_cover ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE question_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE room_watch ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE memory_canvas ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE meeting_data ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine_report_thread ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE dm_rule ENABLE ROW LEVEL SECURITY`,
@@ -882,6 +890,7 @@ const POLICY_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS personal_cover_org_isolation ON personal_cover`,
   `DROP POLICY IF EXISTS question_ledger_org_isolation ON question_ledger`,
   `DROP POLICY IF EXISTS room_watch_org_isolation ON room_watch`,
+  `DROP POLICY IF EXISTS memory_canvas_org_isolation ON memory_canvas`,
   `DROP POLICY IF EXISTS meeting_data_org_isolation ON meeting_data`,
   `DROP POLICY IF EXISTS routine_report_thread_org_isolation ON routine_report_thread`,
   `DROP POLICY IF EXISTS dm_rule_org_isolation ON dm_rule`,
@@ -1017,6 +1026,9 @@ const POLICY_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY room_watch_org_isolation ON room_watch
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY memory_canvas_org_isolation ON memory_canvas
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY meeting_data_org_isolation ON meeting_data
@@ -1607,6 +1619,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   personal_cover: ["SELECT", "INSERT", "UPDATE"],
   question_ledger: ["SELECT", "INSERT", "DELETE"],
   room_watch: ["SELECT", "INSERT", "UPDATE"],
+  memory_canvas: ["SELECT", "INSERT", "UPDATE"],
   meeting_data: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   routine_report_thread: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   dm_rule: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -3444,6 +3457,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       );
       const row = rows[0] as { version: number } | undefined;
       return row === undefined ? null : Number(row.version);
+    },
+
+    async getMemoryCanvas(org, surfaceKey) {
+      const { rows } = await client.query("SELECT surface_key, canvas_id, updated_at FROM memory_canvas WHERE org_id = $1 AND surface_key = $2", [org, surfaceKey]);
+      const row = rows[0] as { surface_key: string; canvas_id: string; updated_at: string } | undefined;
+      return row ? { surfaceKey: row.surface_key, canvasId: row.canvas_id, updatedAt: row.updated_at } : null;
+    },
+
+    async setMemoryCanvas(org, surfaceKey, canvasId, at) {
+      await client.query(
+        "INSERT INTO memory_canvas (org_id, surface_key, canvas_id, updated_at) VALUES ($1, $2, $3, $4) ON CONFLICT (org_id, surface_key) DO UPDATE SET canvas_id = EXCLUDED.canvas_id, updated_at = EXCLUDED.updated_at",
+        [org, surfaceKey, canvasId, at],
+      );
     },
 
     async getPersonalCover(org, principalKey) {

@@ -354,6 +354,14 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      per channel. Memory itself is unaffected. A workspace on Slack's free plan has no channel
      canvases, and the refresh fails there in the same way. The same scope lets the agent create and change a
      canvas a person asks for (`write_canvas`, see [Canvases and Lists](#canvases-and-lists)).
+   - `canvases:read` — **finding a memory canvas the record does not name.** The agent records the
+     id of each memory canvas it creates. A memory canvas made before that record existed, or after a
+     failed write of the record, and held only as a channel tab, is found by the marker line it
+     carries, and this scope reads it (OPE-2587). Omit it, and a channel that does not show its
+     recorded memory canvas and shows any canvas tab the app made (a memory canvas or a
+     `write_canvas` canvas) cannot be judged. Its refresh records `failed` and creates no new memory
+     canvas, and its take-down records `clear-failed`, even when no memory is on screen. The agent
+     overwrites no canvas.
    - `lists:read` and `lists:write` — **Slack Lists.** The agent reads a List's rows to find the one
      a person names, and adds or changes rows on a person's approval (`update_list`, see
      [Canvases and Lists](#canvases-and-lists)). Omit them and every List change fails with
@@ -1088,7 +1096,10 @@ proves that Slack itself draws the buttons.
 A person can ask the agent to **create or change a canvas**, or to **add or change rows in a Slack
 List** (Slack's built-in tracker, with columns such as owner, status and due date). A domain's routine
 work can ask the same way. The feature is on by default. It needs the `canvases:write`, `files:read`,
-`lists:read` and `lists:write` bot scopes, and no setting or env var.
+`lists:read` and `lists:write` bot scopes, and no setting or env var. In a channel that does not show
+the memory canvas the app recorded (for example one made before 0.8.0), a change to another canvas the
+agent made also needs `canvases:read`: without it the tool cannot tell that canvas from the memory
+canvas, so it refuses.
 
 | What the person sees | What OE does |
 | --- | --- |
@@ -1102,14 +1113,20 @@ room always comes from the conversation, never from the model. The fence runs wh
 again when a person approves it, because the file can leave the room in between. A new canvas is created
 in the asking room.
 
-**The memory canvas refuses a write.** The agent does not add to or rewrite the domain memory canvas:
-the room's channel canvas when the app's bot user made it. The next memory write replaces that canvas
-whole, so the added text would be lost. The tool refuses in one line, when the card posts and again
-when a person approves it, and says to ask the agent to remember or forget the line instead. A lookup
-that fails also refuses. A person's channel canvas, or another canvas the app made, takes the write.
-The check reads the channel canvas from Slack's `properties.canvas` field. When Slack names the canvas
-only as a channel tab, the tool does not see the memory canvas and takes the write. The memory write
-does not see that canvas either, so it does not replace the text.
+**The memory canvas refuses a write.** The agent does not add to or rewrite the domain memory canvas.
+The next memory write replaces that canvas whole, so the added text would be lost. The tool refuses in
+one line, when the card posts and again when a person approves it, and says to ask the agent to
+remember or forget the line instead. A lookup that fails also refuses. The memory canvas is the canvas
+the memory write itself rewrites, found by the same rule (OPE-2587): the id the app recorded when it
+created the canvas. A memory canvas made before that record existed is the app's canvas in the
+channel's canvas field, or a canvas tab the app made that carries the memory canvas footer line (this
+read needs `canvases:read`). The same rule applies when the recorded canvas is no longer on screen.
+Every other canvas takes the write: a person's canvas, and a canvas the agent created through
+`write_canvas`, although Slack shows that canvas as a tab with the app's bot user as its creator.
+`write_canvas` refuses text that quotes the footer line, when the card posts and again when a person
+approves it, so the agent never writes the line into such a canvas. A person who types the line into
+it by hand, in a channel that does not show its recorded memory canvas, makes the next memory write
+take that canvas as the memory canvas and rewrite it.
 
 **A free Slack workspace.** Slack's free plan allows one canvas tab per channel, and refuses a canvas
 with no channel tab. The domain memory canvas or a person's canvas can hold that one tab. Then an

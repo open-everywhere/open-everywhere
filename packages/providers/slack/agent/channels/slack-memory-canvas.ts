@@ -1,15 +1,22 @@
 import {
   agentDisplayName,
   appendAudit,
-  channelCanvasIdOf,
   domainForChannel,
   domainsNamingSilo,
   getConfig,
+  getOperationalStore,
+  MEMORY_CANVAS_MARKER,
+  memoryCanvasAmong,
+  memoryCanvasSurfaceKey,
   readDomainMemory,
+  storedMemoryCanvas,
   memoryLineForReader,
   renderMemoryMarkdown,
   type Domain,
+  type MemoryCanvasMatch,
   type MemoryWriteEvent,
+  type OperationalStore,
+  type SlackCanvasRead,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { confirmChannelInternalFresh, slackAuthorIsMember, slackForm } from "./slack-events.js";
 import { encodeSlackForm } from "./slack-web-api.js";
@@ -41,6 +48,7 @@ export interface MemoryCanvasDeps {
   readonly channelInternal: (channelId: string) => Promise<boolean>;
   readonly authorIsMember: (userId: string, teamId: string | undefined) => Promise<boolean | undefined>;
   readonly now?: () => Date;
+  readonly store?: Pick<OperationalStore, "getMemoryCanvas" | "setMemoryCanvas">;
 }
 
 export function liveMemoryCanvasDeps(): MemoryCanvasDeps {
@@ -60,7 +68,7 @@ function memoryCanvasMarkdown(domain: Domain, groups: Parameters<typeof renderMe
   const body = renderMemoryMarkdown(`What ${name} knows — ${domain.title ?? domain.name}`, groups, nowIso);
   const footer =
     `\n---\n${name} keeps this canvas up to date. To correct or forget a line, ask ${name} in this channel. ` +
-    `Edits made directly to this canvas get replaced.\n`;
+    `${MEMORY_CANVAS_MARKER}\n`;
   const text = defuseCanvasText(memoryLineForReader(body));
   const cut = text.length > CANVAS_MARKDOWN_MAX ? text.slice(0, CANVAS_MARKDOWN_MAX) + "\n\n_This canvas is full. Ask in this channel for the rest._\n" : text;
   return cut + footer;
@@ -114,59 +122,83 @@ function withdrawnCanvasMarkdown(): string {
   return (
     `# ${name}'s memory canvas was withdrawn\n\n` +
     `This channel includes guests or people from outside your organisation, so ${name} no longer shows its memory here. ` +
-    `The memory itself is unchanged. Members can still ask ${name} about it in an internal channel.\n`
+    `The memory itself is unchanged. Members can still ask ${name} about it in an internal channel. ` +
+    `${MEMORY_CANVAS_MARKER}\n`
   );
 }
 
 type WithdrawReason = "external" | "guest" | "disabled";
 
-async function withdrawIfOurs(channelId: string, reason: WithdrawReason, botUserId: string | undefined, deps: MemoryCanvasDeps): Promise<CanvasOutcome> {
-  const info = await deps.call("conversations.info", { channel: channelId });
-  if (info?.ok !== true) return "clear-failed";
-  const existing = canvasIdOf(info);
-  if (!existing) return `skipped-${reason}`;
-  const file = await deps.call("files.info", { file: existing });
-  if (file?.ok !== true) return "clear-failed";
-  const creator = (file.file as { user?: unknown } | undefined)?.user;
-  if (botUserId === undefined) return "clear-failed";
-  if (creator !== botUserId) return `skipped-${reason}`;
-  const cleared = await deps.call("canvases.edit", {
-    canvas_id: existing,
-    changes: [{ operation: "replace", document_content: { type: "markdown", markdown: withdrawnCanvasMarkdown() } }],
-  });
-  return cleared?.ok === true ? `cleared-${reason}` : "clear-failed";
+export interface CanvasRoom {
+  readonly org: string;
+  readonly teamId: string;
+  readonly channelId: string;
 }
 
-const canvasIdOf = channelCanvasIdOf;
+function readOk(deps: MemoryCanvasDeps): SlackCanvasRead {
+  return async (method, params) => {
+    const res = await deps.call(method, params);
+    return res?.ok === true ? res : undefined;
+  };
+}
+
+async function findMemoryCanvas(room: CanvasRoom, info: Record<string, unknown>, botUserId: string | undefined, deps: MemoryCanvasDeps): Promise<MemoryCanvasMatch> {
+  const stored = await storedMemoryCanvas(deps.store ?? getOperationalStore(), room.org, memoryCanvasSurfaceKey(room.teamId, room.channelId));
+  return memoryCanvasAmong(readOk(deps), info, stored, botUserId);
+}
+
+async function recordMemoryCanvas(room: CanvasRoom, canvasId: string, deps: MemoryCanvasDeps): Promise<void> {
+  const at = (deps.now?.() ?? new Date()).toISOString();
+  await (deps.store ?? getOperationalStore()).setMemoryCanvas(room.org, memoryCanvasSurfaceKey(room.teamId, room.channelId), canvasId, at).catch(() => undefined);
+}
+
+async function withdrawIfOurs(room: CanvasRoom, reason: WithdrawReason, botUserId: string | undefined, deps: MemoryCanvasDeps): Promise<CanvasOutcome> {
+  const info = await deps.call("conversations.info", { channel: room.channelId });
+  if (info?.ok !== true) return "clear-failed";
+  const match = await findMemoryCanvas(room, info, botUserId, deps);
+  if (match.kind === "unsure") return "clear-failed";
+  if (match.kind === "none") return `skipped-${reason}`;
+  const cleared = await deps.call("canvases.edit", {
+    canvas_id: match.canvasId,
+    changes: [{ operation: "replace", document_content: { type: "markdown", markdown: withdrawnCanvasMarkdown() } }],
+  });
+  if (cleared?.ok !== true) return "clear-failed";
+  if (match.adopt) await recordMemoryCanvas(room, match.canvasId, deps);
+  return `cleared-${reason}`;
+}
+
+const CANVAS_SLOT_TAKEN = new Set(["channel_canvas_already_exists", "free_team_canvas_tab_already_exists"]);
 
 export async function publishChannelCanvas(
-  channelId: string,
+  room: CanvasRoom,
   markdown: string | null,
   botUserId: string | undefined,
   deps: MemoryCanvasDeps,
-  teamId?: string,
   joinedUserId?: string,
 ): Promise<CanvasOutcome> {
+  const { channelId, teamId } = room;
   const blocked: "external" | "guest" | undefined = !(await deps.channelInternal(channelId))
     ? "external"
     : (joinedUserId !== undefined && joinedUserId !== botUserId && (await deps.authorIsMember(joinedUserId, teamId)) !== true) ||
         !(await everyMemberIsFull(channelId, teamId, botUserId, deps))
       ? "guest"
       : undefined;
-  if (blocked) return withdrawIfOurs(channelId, blocked, botUserId, deps);
+  if (blocked) return withdrawIfOurs(room, blocked, botUserId, deps);
   if (markdown === null) return "unchanged";
   const info = await deps.call("conversations.info", { channel: channelId });
   if (info?.ok !== true) return "failed";
-  const existing = canvasIdOf(info);
-  if (!existing) {
+  const match = await findMemoryCanvas(room, info, botUserId, deps);
+  if (match.kind === "unsure") return "failed";
+  if (match.kind === "none") {
     const created = await deps.call("conversations.canvases.create", { channel_id: channelId, document_content: { type: "markdown", markdown } });
-    return created?.ok === true ? "created" : "failed";
+    if (created?.ok !== true) return typeof created?.error === "string" && CANVAS_SLOT_TAKEN.has(created.error) ? "skipped-foreign" : "failed";
+    if (typeof created.canvas_id === "string" && created.canvas_id.length > 0) await recordMemoryCanvas(room, created.canvas_id, deps);
+    return "created";
   }
-  const file = await deps.call("files.info", { file: existing });
-  const creator = file?.ok === true ? (file.file as { user?: unknown } | undefined)?.user : undefined;
-  if (botUserId === undefined || creator !== botUserId) return "skipped-foreign";
-  const edited = await deps.call("canvases.edit", { canvas_id: existing, changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }] });
-  return edited?.ok === true ? "updated" : "failed";
+  const edited = await deps.call("canvases.edit", { canvas_id: match.canvasId, changes: [{ operation: "replace", document_content: { type: "markdown", markdown } }] });
+  if (edited?.ok !== true) return "failed";
+  if (match.adopt) await recordMemoryCanvas(room, match.canvasId, deps);
+  return "updated";
 }
 
 export type CanvasTrigger = "memory-write" | "member-joined" | "channel-shared";
@@ -182,13 +214,14 @@ export async function recheckChannelCanvas(
   deps: MemoryCanvasDeps,
 ): Promise<CanvasOutcome> {
   const surfaceKey = `slack/${input.teamId}/${input.channelId}`;
+  const room: CanvasRoom = { org: input.org, teamId: input.teamId, channelId: input.channelId };
   const domain = domainForChannel(surfaceKey, getConfig().loadDomains());
   const shows = domain !== undefined && domain.memory !== undefined && domain.memoryCanvas !== false;
   const auth = await deps.call("auth.test", {});
   const botUserId = auth?.ok === true && typeof auth.user_id === "string" ? auth.user_id : undefined;
   const outcome = await (shows
-    ? publishChannelCanvas(input.channelId, null, botUserId, deps, input.teamId, input.joinedUserId)
-    : withdrawIfOurs(input.channelId, "disabled", botUserId, deps)
+    ? publishChannelCanvas(room, null, botUserId, deps, input.joinedUserId)
+    : withdrawIfOurs(room, "disabled", botUserId, deps)
   ).catch((): CanvasOutcome => "clear-failed");
   if (outcome !== "unchanged" && outcome !== "skipped-disabled") {
     console.log(`[open-everywhere:slack-canvas] ${input.trigger} recheck, channel ${input.channelId}: ${outcome}`);
@@ -220,7 +253,8 @@ export async function refreshMemoryCanvases(event: MemoryWriteEvent, deps: Memor
     const shows = domain.memoryCanvas !== false;
     const markdown = shows ? memoryCanvasMarkdown(domain, await readDomainMemory(event.org, domain), nowIso) : "";
     for (const room of rooms) {
-      const outcome = await (shows ? publishChannelCanvas(room.channelId, markdown, botUserId, deps, teamId) : withdrawIfOurs(room.channelId, "disabled", botUserId, deps)).catch(
+      const canvasRoom: CanvasRoom = { org: event.org, teamId, channelId: room.channelId };
+      const outcome = await (shows ? publishChannelCanvas(canvasRoom, markdown, botUserId, deps) : withdrawIfOurs(canvasRoom, "disabled", botUserId, deps)).catch(
         (): CanvasOutcome => (shows ? "failed" : "clear-failed"),
       );
       if (outcome !== "created" && outcome !== "updated") {

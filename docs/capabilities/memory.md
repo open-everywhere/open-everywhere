@@ -747,8 +747,31 @@ the turn) can hold the reply for up to 1.5 seconds per silo it changes.
   stricter than the room gate: a wake in a private channel with a guest still reads the domain's
   memory, because that gate looks at the channel, not at its members. The canvas would put every line
   in front of every member at once, so it asks about each person.
-- The app rewrites a channel canvas only when **the app created it** (`files.info` names the app's
-  bot user). A canvas a person made stays theirs, and the refresh skips that channel.
+- **The app writes only its own memory canvas.** It records the id of each memory canvas it creates
+  (the `memory_canvas` table, OPE-2587). A refresh rewrites, and a take-down replaces, only that
+  canvas. Every other canvas stays as its owner left it: a canvas a person made, and a canvas the agent
+  made for a person through `write_canvas`, although Slack names the app's bot user as that canvas's
+  creator too. The one exception is a canvas into which a person types the memory canvas footer line
+  by hand (see the last bullet of this list).
+- **The app reads the canvas field and every canvas tab.** Slack names a channel canvas in the
+  `properties.canvas` field, as a canvas tab under `properties.tabs[]`, or both. A channel that shows
+  no memory canvas gets a new one, beside any other canvas. When Slack keeps the channel canvas slot
+  for another canvas (a person's, or one the agent made through `write_canvas`), the channel gets
+  none (`skipped-foreign`).
+- **A memory canvas the record does not name** is found by one of two rules. That is a canvas made
+  before the record existed, or one made after a person deleted the recorded canvas when the write of
+  its new id failed. When Slack names it
+  in the canvas field and the app's bot user made it, it is the memory canvas, as before. When Slack
+  shows it only as a tab, it is found by a line its footer carries ("Edits made directly to this
+  canvas get replaced."), which the `canvases:read` bot scope reads. The app then records its id.
+- **Without `canvases:read`**, a channel that does not show its recorded memory canvas and shows any
+  canvas tab the app made (a memory canvas or a `write_canvas` canvas) cannot be judged. Its refresh
+  records `failed` and creates no new memory canvas, and its take-down records `clear-failed`, even
+  when no memory is on screen. The app overwrites nothing.
+- The agent's `write_canvas` refuses text that quotes that footer line, so the agent never writes it
+  into a canvas it makes for a person. A person who types the line by hand into a canvas the agent
+  made, in a channel that does not show its recorded memory canvas, makes the next memory write take
+  that canvas as the memory canvas and rewrite it.
 - Member text is **defused**: a remembered `<!channel>` or a mention cannot ping anyone from the
   canvas, and the Home tab escapes the same characters.
 - **A canvas comes down when its channel stops passing.** When the gate fails on a channel that
@@ -775,10 +798,6 @@ the turn) can hold the reply for up to 1.5 seconds per silo it changes.
   needs fails, the row says `clear-failed` and the canvas may still show memory. The next memory write
   or trust event tries again; nothing else does.
 - **A canvas a person made is never touched.** A guest can read anything a person pasted into it.
-- **A canvas named only as a channel tab is not seen.** The app reads the channel canvas from Slack's
-  `properties.canvas` field. When Slack lists the canvas only under `properties.tabs`, a refresh does
-  not update it, and a take-down records `skipped-*` but does not replace the app's canvas. That canvas
-  can then still show memory after a share or a guest join (OPE-2581).
 
 Each channel a canvas decision visits writes one `memory.canvas_refresh` row. Its `trigger` is
 `memory-write`, `member-joined` or `channel-shared`, and its outcome is one of these:
@@ -787,11 +806,11 @@ Each channel a canvas decision visits writes one `memory.canvas_refresh` row. It
 | --- | --- |
 | `created`, `updated` | The domain's memory was written to the app's canvas. |
 | `unchanged` | A trust-event recheck passed, and nothing was written. |
-| `skipped-external`, `skipped-guest`, `skipped-disabled` | The gate failed or the canvas is off, and Slack's `properties.canvas` names no canvas of the app's. A canvas that Slack names only as a channel tab is not seen (see the limits above). |
-| `skipped-foreign` | The channel canvas is a person's, so the app left it alone. |
+| `skipped-external`, `skipped-guest`, `skipped-disabled` | The gate failed or the canvas is off, and the channel shows no memory canvas, in the canvas field or as a canvas tab. |
+| `skipped-foreign` | The channel shows no memory canvas, and Slack refused a new one because another canvas (a person's, or one the agent made through `write_canvas`) holds the channel canvas slot. The app left that canvas alone. |
 | `cleared-external`, `cleared-guest`, `cleared-disabled` | The app's canvas was replaced with the notice. |
 | `clear-failed` | The app could not rule out that its canvas still shows memory. |
-| `failed` | A write of memory to the canvas failed. |
+| `failed` | A write of memory to the canvas failed, or a lookup failed and the app could not rule out that the channel already shows the memory canvas, so it wrote nothing. |
 
 **The canvas is a read view.** A direct edit to it is replaced on the next memory change. To correct
 or forget a line, members ask the agent in the channel. The agent's own `write_canvas` tool refuses to

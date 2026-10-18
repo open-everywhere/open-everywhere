@@ -1,4 +1,6 @@
 import { bridgeSlackReadCall } from "./slack-bridge.js";
+import { getOperationalStore } from "../operational/provider.js";
+import type { OperationalStore } from "../operational/store.js";
 
 export type SlackDocCall = (method: string, params: Record<string, string | number | boolean>) => Promise<Record<string, unknown>>;
 
@@ -80,25 +82,128 @@ export function listColumnsOf(file: Record<string, unknown>): ListColumn[] {
   return out;
 }
 
+export function channelCanvasIdsOf(info: Record<string, unknown> | undefined): string[] {
+  const props = (info?.channel as { properties?: { canvas?: { file_id?: unknown }; tabs?: unknown } } | undefined)?.properties;
+  const ids: string[] = [];
+  const add = (id: unknown) => {
+    const s = str(id);
+    if (s && !ids.includes(s)) ids.push(s);
+  };
+  add(props?.canvas?.file_id);
+  if (Array.isArray(props?.tabs)) {
+    for (const tab of props.tabs as ({ type?: unknown; data?: { file_id?: unknown } } | null)[]) {
+      if (tab?.type === "canvas") add(tab.data?.file_id);
+    }
+  }
+  return ids;
+}
+
 export function channelCanvasIdOf(info: Record<string, unknown> | undefined): string | undefined {
   const id = (info?.channel as { properties?: { canvas?: { file_id?: unknown } } } | undefined)?.properties?.canvas?.file_id;
   return str(id);
+}
+
+export const MEMORY_CANVAS_MARKER = "Edits made directly to this canvas get replaced.";
+
+export function quotesMemoryCanvasMarker(markdown: string): boolean {
+  const plain = markdown
+    .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, "")
+    .replace(/\]\([^)]*\)/g, "")
+    .replace(/[*_~`\\[\]]/g, "");
+  return /edits\s+made\s+directly\s+to\s+this\s+canvas\s+get\s+replaced/i.test(plain);
+}
+
+export const MEMORY_CANVAS_MARKER_REFUSAL =
+  "That text quotes the line that marks this channel's memory canvas, and a canvas that carries it can be rewritten as the memory canvas. Leave that line out.";
+
+export type SlackCanvasRead = (method: string, params: Record<string, string>) => Promise<Record<string, unknown> | undefined>;
+
+export type MemoryCanvasMatch =
+  | { readonly kind: "found"; readonly canvasId: string; readonly adopt: boolean }
+  | { readonly kind: "none" }
+  | { readonly kind: "unsure" };
+
+export async function memoryCanvasAmong(
+  read: SlackCanvasRead,
+  info: Record<string, unknown>,
+  stored: { readonly canvasId?: string; readonly unreadable?: boolean },
+  botUserId: string | undefined,
+): Promise<MemoryCanvasMatch> {
+  const ids = channelCanvasIdsOf(info);
+  if (stored.canvasId !== undefined && ids.includes(stored.canvasId)) return { kind: "found", canvasId: stored.canvasId, adopt: false };
+  if (ids.length === 0) return stored.unreadable ? { kind: "unsure" } : { kind: "none" };
+  if (botUserId === undefined) return { kind: "unsure" };
+  const field = channelCanvasIdOf(info);
+  let unsure = stored.unreadable === true;
+  for (const id of ids) {
+    const file = await read("files.info", { file: id });
+    if (!file) {
+      unsure = true;
+      continue;
+    }
+    if ((file.file as { user?: unknown } | undefined)?.user !== botUserId) continue;
+    if (id === field) return { kind: "found", canvasId: id, adopt: true };
+    const lookup = await read("canvases.sections.lookup", { canvas_id: id, criteria: JSON.stringify({ contains_text: MEMORY_CANVAS_MARKER }) });
+    if (!lookup) {
+      unsure = true;
+      continue;
+    }
+    if (Array.isArray(lookup.sections) && lookup.sections.length > 0) return { kind: "found", canvasId: id, adopt: true };
+  }
+  return unsure ? { kind: "unsure" } : { kind: "none" };
+}
+
+export function memoryCanvasSurfaceKey(teamId: string, channelId: string): string {
+  return `slack/${teamId}/${channelId}`;
+}
+
+export async function storedMemoryCanvas(
+  store: Pick<OperationalStore, "getMemoryCanvas">,
+  org: string,
+  surfaceKey: string,
+): Promise<{ readonly canvasId?: string; readonly unreadable?: boolean }> {
+  try {
+    const row = await store.getMemoryCanvas(org, surfaceKey);
+    return row ? { canvasId: row.canvasId } : {};
+  } catch {
+    return { unreadable: true };
+  }
 }
 
 export const MEMORY_CANVAS_WRITE_REFUSAL =
   "That canvas is this channel's memory canvas, and I rewrite it at the next memory write, so a change to it would be lost. " +
   "To add or correct a line on it, ask me in this channel to remember or forget it.";
 
-export async function refuseMemoryCanvasWrite(call: SlackDocCall, canvasId: string, channelId: string): Promise<void> {
+export async function refuseMemoryCanvasWrite(
+  call: SlackDocCall,
+  canvasId: string,
+  room: { readonly org: string; readonly scopeKey: string; readonly channelId: string },
+  store: Pick<OperationalStore, "getMemoryCanvas"> = getOperationalStore(),
+): Promise<void> {
   const unsure = "I could not confirm that this canvas is not this channel's memory canvas, so I did not change it. Ask again in a moment.";
-  const info = await call("conversations.info", { channel: channelId }).catch(() => undefined);
+  const read: SlackCanvasRead = (method, params) => call(method, params).catch(() => undefined);
+  const info = await read("conversations.info", { channel: room.channelId });
   if (!info) throw new Error(unsure);
-  if (channelCanvasIdOf(info) !== canvasId) return;
-  const [file, auth] = await Promise.all([call("files.info", { file: canvasId }).catch(() => undefined), call("auth.test", {}).catch(() => undefined)]);
-  const creator = str((file?.file as { user?: unknown } | undefined)?.user);
-  const bot = str(auth?.user_id);
-  if (!file || !bot) throw new Error(unsure);
-  if (creator === bot) throw new Error(MEMORY_CANVAS_WRITE_REFUSAL);
+  const ids = channelCanvasIdsOf(info);
+  if (!ids.includes(canvasId)) return;
+  const team = room.scopeKey.split("/")[1] ?? "";
+  const stored = await storedMemoryCanvas(store, room.org, memoryCanvasSurfaceKey(team, room.channelId));
+  if (stored.canvasId !== undefined && ids.includes(stored.canvasId)) {
+    if (stored.canvasId === canvasId) throw new Error(MEMORY_CANVAS_WRITE_REFUSAL);
+    return;
+  }
+  const auth = await read("auth.test", {});
+  const only = { ...info, channel: onlyCanvas(info, canvasId) };
+  const match = await memoryCanvasAmong(read, only, stored, str(auth?.user_id));
+  if (match.kind === "unsure") throw new Error(unsure);
+  if (match.kind === "found") throw new Error(MEMORY_CANVAS_WRITE_REFUSAL);
+}
+
+function onlyCanvas(info: Record<string, unknown>, canvasId: string): Record<string, unknown> {
+  const channel = (info.channel as Record<string, unknown> | undefined) ?? {};
+  const inField = channelCanvasIdOf(info) === canvasId;
+  const properties = inField ? { canvas: { file_id: canvasId } } : { tabs: [{ type: "canvas", data: { file_id: canvasId } }] };
+  return { ...channel, properties };
 }
 
 export async function resolveRoomFile(call: SlackDocCall, ref: string, channelId: string, want: "canvas" | "list"): Promise<RoomFile> {
@@ -117,7 +222,7 @@ export async function resolveRoomFile(call: SlackDocCall, ref: string, channelId
   let inRoom = fileRooms(file).has(channelId);
   if (!inRoom && want === "canvas") {
     const info = await call("conversations.info", { channel: channelId }).catch(() => undefined);
-    inRoom = channelCanvasIdOf(info) === id;
+    inRoom = channelCanvasIdsOf(info).includes(id);
   }
   if (!inRoom) throw new Error(`That ${noun} is not shared in this conversation. I only change a ${noun} that this conversation shows.`);
   const title = str(file.title) ?? str(file.name) ?? `untitled ${noun}`;

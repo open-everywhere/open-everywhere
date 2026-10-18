@@ -5809,6 +5809,7 @@ export const SECTION_DEPLOY: readonly DocEntry[] = [
       "        \"pins:write\",",
       "        \"users:read\",",
       "        \"canvases:write\",",
+      "        \"canvases:read\",",
       "        \"lists:read\",",
       "        \"lists:write\",",
       "        \"assistant:write\"",

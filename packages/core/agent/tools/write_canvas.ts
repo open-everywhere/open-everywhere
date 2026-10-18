@@ -20,7 +20,16 @@ function safeDomains(): readonly Domain[] {
   }
 }
 import type { CanvasWriteArgs } from "../approvals/slack-doc-write.js";
-import { CANVAS_MARKDOWN_MAX, defuseDocText, liveSlackDocCall, refuseMemoryCanvasWrite, resolveRoomFile, type SlackDocCall } from "../channels/slack-canvas-list.js";
+import {
+  CANVAS_MARKDOWN_MAX,
+  defuseDocText,
+  liveSlackDocCall,
+  MEMORY_CANVAS_MARKER_REFUSAL,
+  quotesMemoryCanvasMarker,
+  refuseMemoryCanvasWrite,
+  resolveRoomFile,
+  type SlackDocCall,
+} from "../channels/slack-canvas-list.js";
 import { slackBridge } from "../channels/slack-bridge.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -48,6 +57,7 @@ export async function buildCanvasWrite(
   if (input.markdown.length > CANVAS_MARKDOWN_MAX) {
     throw new Error(`${TOOL}: that text is ${input.markdown.length} characters, and a canvas takes at most ${CANVAS_MARKDOWN_MAX}. Shorten it or split it.`);
   }
+  if (quotesMemoryCanvasMarker(`${input.title ?? ""}\n${input.markdown}`)) throw new Error(`${TOOL}: ${MEMORY_CANVAS_MARKER_REFUSAL}`);
   const markdown = defuseDocText(input.markdown);
   const base = { org: p.org, scopeKey: p.scopeKey, channelId: p.channelId, markdown, requestedBy: p.requestedBy, ...(p.tainted ? { tainted: true } : {}) };
   if (input.canvas === undefined) {
@@ -56,7 +66,7 @@ export async function buildCanvasWrite(
   }
   const file = await resolveRoomFile(call, input.canvas, p.channelId, "canvas")
     .then(async (f) => {
-      await refuseMemoryCanvasWrite(call, f.id, p.channelId);
+      await refuseMemoryCanvasWrite(call, f.id, p);
       return f;
     })
     .catch((err: unknown) => {

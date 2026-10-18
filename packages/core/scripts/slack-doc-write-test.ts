@@ -49,6 +49,13 @@ const BOT = "U0BOTUSR1";
 const MEM_ROOM = "C0MEMROOM";
 const MEM_CANVAS = "F0MEMCNV1";
 const BOT_MADE = "F0BOTMAD1";
+const TAB_ROOM = "C0TABROOM";
+const TAB_PERSON = "F0TABPER1";
+const TAB_MEM = "F0TABMEM1";
+const ROW_ROOM = "C0ROWROOM";
+const ROW_MEM = "F0ROWMEM1";
+const ROW_WC = "F0ROWWCV1";
+const MARKED = new Set([TAB_MEM, ROW_MEM]);
 const LIST = "F0LIST001";
 const COLUMNS = [
   { id: "Col0Title", name: "Title", type: "text", is_primary_column: true },
@@ -68,6 +75,10 @@ const files: Record<string, Record<string, unknown>> = {
   [CANVAS]: { id: CANVAS, title: "Launch plan", filetype: "quip", pretty_type: "Canvas", channels: [ROOM] },
   [OWN_CANVAS]: { id: OWN_CANVAS, title: "Channel canvas", filetype: "quip", pretty_type: "Canvas", user: "U0PERSON1" },
   [MEM_CANVAS]: { id: MEM_CANVAS, title: "What the agent knows", filetype: "quip", pretty_type: "Canvas", user: BOT },
+  [TAB_PERSON]: { id: TAB_PERSON, title: "Team notes", filetype: "quip", pretty_type: "Canvas", user: "U0PERSON1" },
+  [TAB_MEM]: { id: TAB_MEM, title: "What the agent knows", filetype: "quip", pretty_type: "Canvas", user: BOT },
+  [ROW_MEM]: { id: ROW_MEM, title: "What the agent knows", filetype: "quip", pretty_type: "Canvas", user: BOT },
+  [ROW_WC]: { id: ROW_WC, title: "How the memory canvas works", filetype: "quip", pretty_type: "Canvas", user: BOT, channels: [ROW_ROOM] },
   [BOT_MADE]: { id: BOT_MADE, title: "Retro", filetype: "quip", pretty_type: "Canvas", user: BOT, channels: [MEM_ROOM] },
   [ELSEWHERE]: { id: ELSEWHERE, title: "Secret plan", filetype: "quip", pretty_type: "Canvas", channels: [OTHER] },
   [LIST]: { id: LIST, title: "Bugs", filetype: "list", pretty_type: "List", shares: { private: { [ROOM]: [] } }, list_metadata: { schema: COLUMNS } },
@@ -82,10 +93,15 @@ const fakeCall: SlackDocCall = async (method, params) => {
     return { ok: true, file: f };
   }
   if (method === "conversations.info") {
-    const own = params.channel === ROOM ? OWN_CANVAS : params.channel === MEM_ROOM ? MEM_CANVAS : undefined;
+    const tabOf = (id: string) => ({ type: "canvas", data: { file_id: id } });
+    if (params.channel === TAB_ROOM) return { ok: true, channel: { id: params.channel, properties: { tabs: [{ type: "files" }, tabOf(TAB_PERSON), tabOf(TAB_MEM)] } } };
+    if (params.channel === ROW_ROOM) return { ok: true, channel: { id: params.channel, properties: { tabs: [tabOf(ROW_WC), tabOf(ROW_MEM)] } } };
+    if (params.channel === MEM_ROOM) return { ok: true, channel: { id: params.channel, properties: { canvas: { file_id: MEM_CANVAS }, tabs: [tabOf(MEM_CANVAS), tabOf(BOT_MADE)] } } };
+    const own = params.channel === ROOM ? OWN_CANVAS : undefined;
     return { ok: true, channel: { id: params.channel, properties: own ? { canvas: { file_id: own } } : {} } };
   }
   if (method === "auth.test") return { ok: true, user_id: BOT };
+  if (method === "canvases.sections.lookup") return { ok: true, sections: MARKED.has(String(params.canvas_id)) ? [{ id: "temp:C:1" }] : [] };
   if (method === "slackLists.items.list") return { ok: true, items: ITEMS };
   if (method === "canvases.create") {
     if (params.channel_id === FREE_ROOM) throw new Error("Slack canvases.create failed: free_team_canvas_tab_already_exists");
@@ -170,6 +186,37 @@ const P = { org: "default", scopeKey: `slack/T0TEAM01/${ROOM}`, channelId: ROOM,
   };
   await refuses(() => buildCanvasWrite({ canvas: MEM_CANVAS, markdown: "x" }, M, secondFileFails), /could not confirm that this canvas is not this channel's memory canvas/, "🔴 an unreadable creator refuses: the canvas could be the app's");
   ok(lib.channelCanvasIdOf({ ok: true, channel: { properties: { canvas: { file_id: "F1" } } } }) === "F1" && lib.channelCanvasIdOf(undefined) === undefined && lib.channelCanvasIdOf({ channel: { properties: { canvas: { file_id: "" } } } }) === undefined, "the shared channel canvas reader names the canvas, and nothing for no answer or an empty id");
+  const T = { ...P, scopeKey: `slack/T0TEAM01/${TAB_ROOM}`, channelId: TAB_ROOM };
+  await refuses(() => buildCanvasWrite({ canvas: TAB_MEM, markdown: "my notes" }, T, fakeCall), memLine, "🔴 [OPE-2587] a memory canvas held only as a TAB (made before the row existed) refuses by its marker");
+  ok((await buildCanvasWrite({ canvas: TAB_PERSON, markdown: "more" }, T, fakeCall)).canvasId === TAB_PERSON, "🔴 [OPE-2587] a person's canvas TAB is this room's canvas, so it takes an append");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  await getOperationalStore().setMemoryCanvas("default", lib.memoryCanvasSurfaceKey("T0TEAM01", ROW_ROOM), ROW_MEM, "2026-06-21T23:30:00Z");
+  const R = { ...P, scopeKey: `slack/T0TEAM01/${ROW_ROOM}`, channelId: ROW_ROOM };
+  await refuses(() => buildCanvasWrite({ canvas: ROW_MEM, markdown: "x" }, R, fakeCall), memLine, "🔴 [OPE-2587] the canvas the memory_canvas row names refuses");
+  ok((await buildCanvasWrite({ canvas: ROW_WC, markdown: "more" }, R, fakeCall)).canvasId === ROW_WC, "🔴 [OPE-2587] a write_canvas canvas beside it takes an append");
+  const markerLine = new RegExp(`^write_canvas: ${lib.MEMORY_CANVAS_MARKER_REFUSAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+  await refuses(() => buildCanvasWrite({ title: "How it works", markdown: `Notes.\n\n${lib.MEMORY_CANVAS_MARKER}` }, R, fakeCall), markerLine, "🔴 [OPE-2587] a create whose text quotes the memory canvas marker refuses");
+  await refuses(() => buildCanvasWrite({ canvas: ROW_WC, markdown: "EDITS  made directly to this canvas get replaced" }, R, fakeCall), markerLine, "🔴 …and so does an append with a near copy (case, spacing, no full stop)");
+  await refuses(() => buildCanvasWrite({ canvas: ROW_WC, markdown: "Edits made **directly** to _this_ canvas get `replaced`." }, R, fakeCall), markerLine, "🔴 …and a copy with formatting inside it, which Slack shows as the plain line");
+  await refuses(() => buildCanvasWrite({ canvas: ROW_WC, markdown: "[Edits made](https://example.com) directly to this canvas get replaced" }, R, fakeCall), markerLine, "🔴 …and a copy split by a link");
+  await refuses(() => buildCanvasWrite({ canvas: ROW_WC, markdown: "Edits made dir\u200Bectly to this\u00A0canvas get replaced" }, R, fakeCall), markerLine, "🔴 …and a copy with a zero-width or non-breaking space");
+  await refuses(() => buildCanvasWrite({ title: "Edits made directly to this canvas get replaced.", markdown: "notes" }, R, fakeCall), markerLine, "🔴 …and a create whose TITLE quotes the marker");
+  ok((await buildCanvasWrite({ title: "How it works", markdown: "Edits made here are kept." }, R, fakeCall)).op === "create", "NEGATIVE CONTROL: text that does not quote the marker takes the write");
+  const noLookup: SlackDocCall = async (method, params) => {
+    if (method === "canvases.sections.lookup") throw new Error("Slack canvases.sections.lookup failed: missing_scope");
+    return fakeCall(method, params);
+  };
+  await refuses(() => buildCanvasWrite({ canvas: TAB_MEM, markdown: "x" }, T, noLookup), /could not confirm that this canvas is not this channel's memory canvas/, "🔴 [OPE-2587] with no canvases:read, a bot-made tab could be the memory canvas: it refuses");
+  ok((await buildCanvasWrite({ canvas: ROW_WC, markdown: "x" }, R, noLookup)).canvasId === ROW_WC, "…but a room whose row names a canvas on screen needs no section read");
+  await getOperationalStore().setMemoryCanvas("default", lib.memoryCanvasSurfaceKey("T0TEAM01", TAB_ROOM), "F0GONECV1", "2026-06-21T23:30:00Z");
+  await refuses(() => buildCanvasWrite({ canvas: TAB_MEM, markdown: "x" }, T, fakeCall), memLine, "🔴 [OPE-2587] with a stale row, the marked memory canvas tab still refuses");
+  ok((await buildCanvasWrite({ canvas: TAB_PERSON, markdown: "more" }, T, fakeCall)).canvasId === TAB_PERSON, "…and a person's canvas tab still takes the write");
+  const both = { ok: true, channel: { properties: { canvas: { file_id: "F1" }, tabs: [{ type: "canvas", data: { file_id: "F2" } }, { type: "canvas", data: { file_id: "F1" } }] } } };
+  ok(JSON.stringify(lib.channelCanvasIdsOf(both)) === JSON.stringify(["F1", "F2"]) && lib.channelCanvasIdOf(both) === "F1", "every canvas id is read, the canvas field first, with no id twice");
+  ok(
+    lib.channelCanvasIdsOf({ ok: true, channel: { properties: { tabs: [{ type: "files", data: { file_id: "F9" } }, { type: "canvas", data: {} }, null, "junk"] } } }).length === 0 && lib.channelCanvasIdsOf(undefined).length === 0,
+    "a non-canvas tab, a tab with no id, a malformed tab and no answer name no canvas",
+  );
 
   const lw = await buildListWrite(
     { list: LIST, add: [{ cells: { Title: "New bug", Owner: "<@U0ANN001>", Status: "To do", Due: "2026-10-21" } }], update: [{ row: "fix LOGIN", cells: { Status: "Done" } }] },
@@ -301,6 +348,15 @@ registerSlackBridge({ readCall: async (m: string, p: Record<string, string | num
   calls.length = 0;
   await ck.execute(free as never, "U0APPROV1").catch(() => undefined);
   ok(calls.filter((c) => c.method === "canvases.create").length === 1 && !calls.some((c) => c.method === "canvases.edit"), "🔴 the refusal sends no second create and edits no other canvas");
+
+  calls.length = 0;
+  let markerErr = "";
+  await ck.execute(canvasArgs({ op: "create", canvasId: undefined, title: "Old card", markdown: lib.MEMORY_CANVAS_MARKER }) as never, "U0APPROV1").catch((e: unknown) => (markerErr = e instanceof Error ? e.message : String(e)));
+  ok(markerErr.includes(lib.MEMORY_CANVAS_MARKER_REFUSAL) && calls.length === 0, "🔴 [OPE-2587] an approved card whose text quotes the marker writes nothing");
+  calls.length = 0;
+  let titleErr = "";
+  await ck.execute(canvasArgs({ op: "create", canvasId: undefined, title: lib.MEMORY_CANVAS_MARKER, markdown: "notes" }) as never, "U0APPROV1").catch((e: unknown) => (titleErr = e instanceof Error ? e.message : String(e)));
+  ok(titleErr.includes(lib.MEMORY_CANVAS_MARKER_REFUSAL) && calls.length === 0, "🔴 [OPE-2587] …and so does one whose title quotes it");
 
   calls.length = 0;
   await ck.execute(canvasArgs({ op: "replace" }) as never, "U0APPROV1");

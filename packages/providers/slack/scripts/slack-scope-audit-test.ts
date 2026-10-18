@@ -48,6 +48,7 @@ const REQUIRED_SCOPES: Record<string, string[]> = {
   "files.info": ["files:read"],
   "conversations.canvases.create": ["canvases:write"],
   "canvases.edit": ["canvases:write"],
+  "canvases.sections.lookup": ["canvases:read"],
   "canvases.create": ["canvases:write"],
   "slackLists.items.list": ["lists:read"],
   "slackLists.items.create": ["lists:write"],

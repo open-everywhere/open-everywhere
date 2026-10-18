@@ -6,6 +6,8 @@ import { channelWords } from "../channels/friendly-ids.js";
 import {
   initialField,
   liveSlackDocCall,
+  MEMORY_CANVAS_MARKER_REFUSAL,
+  quotesMemoryCanvasMarker,
   refuseMemoryCanvasWrite,
   resolveRoomFile,
   rowWords,
@@ -73,6 +75,7 @@ const canvasWrite: ActionKind<CanvasWriteArgs> = {
     const call = liveSlackDocCall;
     let canvasId = args.canvasId;
     try {
+      if (quotesMemoryCanvasMarker(`${args.title}\n${args.markdown}`)) throw new Error(MEMORY_CANVAS_MARKER_REFUSAL);
       if (args.op === "create") {
         const res = await call("canvases.create", {
           title: args.title,
@@ -82,7 +85,7 @@ const canvasWrite: ActionKind<CanvasWriteArgs> = {
         canvasId = typeof res.canvas_id === "string" ? res.canvas_id : undefined;
       } else {
         await resolveRoomFile(call, args.canvasId ?? "", args.channelId, "canvas");
-        await refuseMemoryCanvasWrite(call, args.canvasId ?? "", args.channelId);
+        await refuseMemoryCanvasWrite(call, args.canvasId ?? "", args);
         await call("canvases.edit", {
           canvas_id: args.canvasId ?? "",
           changes: JSON.stringify([
