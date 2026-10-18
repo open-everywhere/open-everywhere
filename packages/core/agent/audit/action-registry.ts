@@ -616,6 +616,8 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     action: "exit.transcript_deleted",
     fields: ["sessionId", "outcome", "files", "captures"],
     proves: "one session transcript was deleted, and whether the store that holds it could be reached",
+    notExercised:
+      "the e2e deployment runs on Vercel's hosted workflow store, which has no delete call, so no leg can delete a real transcript there, and `oe transcript delete` refuses off the serving host. `test:exit-kit` drives the row offline against a local world.",
   },
   {
     action: "exit.retention_swept",

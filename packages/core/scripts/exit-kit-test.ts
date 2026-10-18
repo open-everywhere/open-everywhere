@@ -826,5 +826,17 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   console.log("  ✓ cli: oe erase ends the person's links, credentials and holdings first");
 }
 
+{
+  const { consequentialAuditActions } = await import("../agent/audit/action-registry.js");
+  const { judgeAuditRow } = await import("../agent/ops/census.js");
+  const decl = (action: string) => consequentialAuditActions().find((d) => d.action === action);
+  const deleted = decl(EXIT_TRANSCRIPT_DELETED_ACTION);
+  ok(deleted !== undefined && (deleted.notExercised ?? "").includes("test:exit-kit"), `census: exit.transcript_deleted states why no leg drives it and names this suite (${deleted?.notExercised})`);
+  ok(deleted !== undefined && judgeAuditRow(deleted, undefined).ok === true, "census: an empty window passes for exit.transcript_deleted");
+  const exported = decl(EXIT_EXPORT_ACTION);
+  ok(exported !== undefined && exported.notExercised === undefined && judgeAuditRow(exported, undefined).ok === false, "census: negative control — an empty window still fails exit.export, which a leg drives");
+  console.log("  ✓ census: exit.transcript_deleted is a stated gap; exit.export still gates");
+}
+
 rmSync(join(SUITE_DIR, "export-sqlite"), { recursive: true, force: true });
 console.log(`exit-kit: ${passed} assertions passed`);
