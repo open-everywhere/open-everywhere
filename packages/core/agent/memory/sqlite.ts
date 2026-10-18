@@ -176,13 +176,15 @@ export const sqliteProvider: MemoryProvider = {
   },
 
   async exportFiles(org) {
-    return getDb()
-      .prepare("SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = ? ORDER BY tier_path, rel_path")
-      .all(org)
-      .map((r) => {
-        const row = r as { tier_path: string; rel_path: string; content: string };
-        return { tierPath: row.tier_path, relPath: row.rel_path, content: row.content };
-      });
+    const out: { tierPath: string; relPath: string; content: string }[] = [];
+    const first = getDb().prepare("SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = ? ORDER BY tier_path, rel_path LIMIT 1000");
+    const next = getDb().prepare("SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = ? AND (tier_path, rel_path) > (?, ?) ORDER BY tier_path, rel_path LIMIT 1000");
+    for (let after: { tier_path: string; rel_path: string } | undefined; ; ) {
+      const page = (after === undefined ? first.all(org) : next.all(org, after.tier_path, after.rel_path)) as { tier_path: string; rel_path: string; content: string }[];
+      for (const row of page) out.push({ tierPath: row.tier_path, relPath: row.rel_path, content: row.content });
+      after = page.at(-1);
+      if (after === undefined) return out;
+    }
   },
 
   root() {

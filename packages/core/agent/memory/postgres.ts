@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 import { seedFor, tierRelDir } from "./layout.js";
 import type { Partition } from "./partition.js";
-import type { MemoryProvider } from "./provider.js";
+import { EXIT_PAGE_BYTES, rowsWithinBytes } from "../exit/sql.js";
+import type { MemoryExportFile, MemoryProvider } from "./provider.js";
 import type { MemoryFiles, Tier } from "./store.js";
+
+const MEMORY_EXPORT_PROBE_ROWS = 1000;
 
 export interface PgClient {
   query(text: string, params?: readonly unknown[]): Promise<{ rows: unknown[] }>;
@@ -304,12 +307,29 @@ export function makePostgresProvider(client: PgClient): MemoryProvider {
       await client.query("DELETE FROM memory_tier WHERE org_id = $1 AND tier_path = $2", [p.org, path]);
     },
 
-    async exportFiles(org) {
-      const { rows } = await client.query(
-        "SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = $1 ORDER BY tier_path, rel_path",
-        [org],
-      );
-      return (rows as { tier_path: string; rel_path: string; content: string }[]).map((r) => ({ tierPath: r.tier_path, relPath: r.rel_path, content: r.content }));
+    async exportFiles(org, opts) {
+      const budget = opts?.pageBytes ?? EXIT_PAGE_BYTES;
+      const out: MemoryExportFile[] = [];
+      let after: readonly [string, string] | null = null;
+      for (;;) {
+        const cursor = after === null ? "" : " AND (tier_path, rel_path) > ($2, $3)";
+        const params = after === null ? [org] : [org, after[0], after[1]];
+        const probe = await client.query(
+          `SELECT octet_length(tier_path) + octet_length(rel_path) + octet_length(content) AS n FROM memory_file WHERE org_id = $1${cursor} ORDER BY tier_path, rel_path LIMIT ${MEMORY_EXPORT_PROBE_ROWS}`,
+          params,
+        );
+        const take = rowsWithinBytes((probe.rows as { n: number | string }[]).map((r) => Number(r.n)), budget);
+        if (take === 0) return out;
+        const { rows } = await client.query(
+          `SELECT tier_path, rel_path, content FROM memory_file WHERE org_id = $1${cursor} ORDER BY tier_path, rel_path LIMIT ${take}`,
+          params,
+        );
+        const page = rows as { tier_path: string; rel_path: string; content: string }[];
+        for (const r of page) out.push({ tierPath: r.tier_path, relPath: r.rel_path, content: r.content });
+        const last = page.at(-1);
+        if (last === undefined) return out;
+        after = [last.tier_path, last.rel_path];
+      }
     },
 
     async deleteFile(p, tier, relPath) {

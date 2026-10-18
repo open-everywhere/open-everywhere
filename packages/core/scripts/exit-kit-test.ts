@@ -12,7 +12,7 @@ process.env.OE_MEMORY_DIR = join(SUITE_DIR, "git-memory");
 
 const { OPERATIONAL_TABLES } = await import("../agent/operational/store.js");
 const { EXIT_TABLES, EXPORT_SECRET_MARKER, catalogueColumns } = await import("../agent/exit/catalogue.js");
-const { buildExitDelete, buildExitSelectDistinct, buildExitSelectPage } = await import("../agent/exit/sql.js");
+const { buildExitDelete, buildExitRowSizes, buildExitSelectDistinct, buildExitSelectPage, rowsWithinBytes } = await import("../agent/exit/sql.js");
 const { personIds, erasePerson, EXIT_PERSON_ERASED_ACTION } = await import("../agent/exit/erase.js");
 const { exportOrg, EXIT_EXPORT_ACTION } = await import("../agent/exit/export.js");
 const { retentionSweep, EXIT_RETENTION_SWEPT_ACTION } = await import("../agent/exit/retention.js");
@@ -86,6 +86,12 @@ function throws(fn: () => unknown, re: RegExp, label: string): void {
   ok(empty.sql.includes("1 = 0"), "sql: a filter that names nobody matches nothing");
   const d = buildExitSelectDistinct("dollar", "usage_events", "o", "session_id", { anyOf: [{ column: "principal_id", values: ["a", "b"] }] });
   ok(d.sql === "SELECT DISTINCT session_id AS v FROM usage_events WHERE org_id = $1 AND (principal_id IN ($2, $3)) AND session_id IS NOT NULL" && d.params.length === 3, `sql: distinct is bound, not interpolated (${d.sql})`);
+
+  ok(rowsWithinBytes([4, 4, 4], 8) === 2 && rowsWithinBytes([4, 4, 4], 100) === 3, "page: the rows that fit the budget, in order");
+  ok(rowsWithinBytes([50, 1], 8) === 1 && rowsWithinBytes([], 8) === 0, "page: a row wider than the budget is read alone; an empty probe is the end");
+  const probe = buildExitRowSizes("model_call_capture", "o", 10, 5);
+  ok(probe.sql === "SELECT octet_length(CAST(t AS text)) AS n FROM (SELECT * FROM model_call_capture WHERE org_id = $1 ORDER BY seq LIMIT $2 OFFSET $3) t ORDER BY seq" && probe.params.join(",") === "o,5,10", `sql: the size probe pages like the read it sizes (${probe.sql})`);
+  throws(() => buildExitRowSizes("users; --", "o", 0, 1), /not an operational table/u, "sql: the size probe refuses an unknown table");
 
   const pgSrc = readFileSync(join(CORE, "agent/operational/postgres.ts"), "utf8");
   const verbsBlock = pgSrc.slice(pgSrc.indexOf("const MUTABLE_TABLE_VERBS"), pgSrc.indexOf("\n};", pgSrc.indexOf("const MUTABLE_TABLE_VERBS")));
@@ -368,6 +374,76 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   if (w.close) await w.close();
   await e.close();
   console.log(`  ✓ ${L}: export, erase, transcript delete and retention`);
+}
+
+{
+  type PgClient = import("../agent/operational/postgres.js").PgClient;
+  const CAP = 1024 * 1024;
+  const opened = await openOperationalPglite(join(SUITE_DIR, "pglite-cap"));
+  await initOperationalSchema(opened.client);
+  await initPostgresSchema(opened.client);
+  let watching = false;
+  let largest = 0;
+  const unbounded: string[] = [];
+  const capped = (c: PgClient): PgClient => ({
+    async query(text, params) {
+      const res = await c.query(text, params);
+      const bytes = Buffer.byteLength(JSON.stringify(res.rows));
+      if (watching) {
+        largest = Math.max(largest, bytes);
+        if (/^\s*SELECT\b[\s\S]*\bFROM\b/iu.test(text) && !/\bLIMIT\b/iu.test(text)) unbounded.push(text.replace(/\s+/gu, " ").slice(0, 120));
+      }
+      if (bytes > CAP) throw new Error(`Server error (HTTP status 507): response is too large (max is ${CAP} bytes)`);
+      return res;
+    },
+    ...(c.withConnection ? { withConnection: <T>(fn: (inner: PgClient) => Promise<T>) => c.withConnection!((inner) => fn(capped(inner))) } : {}),
+  });
+  const client = capped(opened.client);
+  const store = makeOperationalPostgresStore(client);
+  const memory = makePostgresProvider(client);
+  const org = "bigco";
+  const iso = new Date().toISOString();
+  const wide = "x".repeat(100 * 1024);
+  for (let i = 0; i < 40; i++) {
+    await opened.client.query(
+      "INSERT INTO model_call_capture (org_id, surface_key, session_id, turn_id, step_index, ts, model, provider, schema_version, sha256, body_bytes, body_gzip_b64) VALUES ($1, 'c', 's', 't', $2, $3, 'm', 'p', 1, 'h', 1, $4)",
+      [org, i, iso, `${i}:${wide}`],
+    );
+  }
+  await opened.client.query("INSERT INTO usage_events (org_id, surface_key, session_id, principal_id, ts) SELECT $1, 'c', 's' || g, 'u', $2 FROM generate_series(1, 2500) g", [org, iso]);
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 12; i++) files[`f${String(i).padStart(2, "0")}.md`] = `${i}:${wide}`;
+  await memory.writeTier({ org, platform: "slack", workspace: "T1", surface: "C1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C1", key: "slack/T1/C1" }, SURFACE, files, "seed");
+  const note = "y".repeat(1200);
+  for (let i = 0; i < 1100; i++) await store.appendAudit({ ts: iso, org, platform: "slack", workspace: "T1", action: "memory.write", detail: { i, note } });
+
+  const out = join(SUITE_DIR, "export-cap");
+  watching = true;
+  const manifest = await exportOrg({ store, org, outDir: out, memory: [memory], actor: "operator:cli", pageBytes: CAP / 4 });
+  watching = false;
+  ok(unbounded.length === 0, `export cap: every SELECT the export runs is paged (unbounded: ${JSON.stringify(unbounded)})`);
+  ok(largest > 0 && largest <= CAP, `export cap: no response passes the cap (largest ${largest} bytes)`);
+  ok(manifest.tables.find((t) => t.table === "model_call_capture")?.rows === 40, "export cap: every wide row is exported");
+  const captured = readFileSync(join(out, "operational/model_call_capture.jsonl"), "utf8").trim().split("\n").map((l) => String((JSON.parse(l) as { body_gzip_b64: string }).body_gzip_b64).split(":")[0]);
+  ok(captured.join(",") === Array.from({ length: 40 }, (_, i) => String(i)).join(","), "export cap: the wide rows arrive once each, in order");
+  ok(manifest.tables.find((t) => t.table === "usage_events")?.rows === 2500, "export cap: a table longer than one page exports every row");
+  ok(manifest.memory[0]?.files === 12, `export cap: every wide memory file is exported (${JSON.stringify(manifest.memory)})`);
+  ok(manifest.auditChain.verified && manifest.auditChain.rows === 1100, `export cap: the paged audit chain walks whole and verifies (${JSON.stringify(manifest.auditChain)})`);
+  const { createHash } = await import("node:crypto");
+  const again = createHash("sha256");
+  for (const f of [...manifest.tables.filter((t) => t.rows > 0).map((t) => t.file), ...manifest.memory.flatMap((m) => (m.file ? [m.file] : []))]) again.update(f).update(readFileSync(join(out, f), "utf8"));
+  ok(again.digest("hex") === manifest.sha256, "export cap: the digest does not depend on where the pages split");
+  await opened.close();
+  rmSync(out, { recursive: true, force: true });
+  console.log("  ✓ export cap: wide tables, memory and a long audit chain export in pages under the response cap");
+}
+
+{
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 1100; i++) files[`f${String(i).padStart(4, "0")}.md`] = `- fact ${i}\n`;
+  await sqliteProvider.writeTier({ org: "manyco", platform: "slack", workspace: "T1", surface: "C1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C1", key: "slack/T1/C1" }, SURFACE, files, "seed");
+  const got = (await sqliteProvider.exportFiles!("manyco")).filter((f) => f.relPath.startsWith("f"));
+  ok(got.length === 1100 && new Set(got.map((f) => f.relPath)).size === 1100 && got[1099]!.relPath === "f1099.md", `export pages: the sqlite memory pages join whole, once each, in order (${got.length})`);
 }
 
 {

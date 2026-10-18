@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OperationalStore } from "../operational/store.js";
+import type { AuditChainRow, OperationalStore } from "../operational/store.js";
 import type { MemoryProvider } from "../memory/provider.js";
 import { walkAuditChain } from "../audit/chain.js";
 import { EXIT_TABLES, EXPORT_SECRET_MARKER } from "./catalogue.js";
+import { EXIT_PAGE_BYTES } from "./sql.js";
 import { listLocalRuns } from "./workflow-world.js";
 import { HOSTED_TRANSCRIPTS_NOTE, type TranscriptStore } from "./transcript-store.js";
 
@@ -22,6 +23,7 @@ export interface ExportOptions {
   readonly transcripts?: TranscriptStore;
   readonly actor: string;
   readonly now?: Date;
+  readonly pageBytes?: number;
 }
 
 export interface ExportManifest {
@@ -48,6 +50,7 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
   if (existsSync(outDir) && readdirSync(outDir).length > 0) throw new Error(`${outDir} is not empty — name a new directory for the export`);
   mkdirSync(join(outDir, "operational"), { recursive: true });
   const digest = createHash("sha256");
+  const pageBytes = opts.pageBytes ?? EXIT_PAGE_BYTES;
 
   const tables: ExportManifest["tables"][number][] = [];
   for (const spec of EXIT_TABLES) {
@@ -56,8 +59,9 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
     writeFileSync(path, "");
     const secrets = new Set(spec.secretColumns ?? []);
     let rows = 0;
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await store.exitTables.readRows(spec.table, spec.orgColumn === null ? null : org, offset, PAGE);
+    for (let offset = 0; ; ) {
+      const page = await store.exitTables.readRows(spec.table, spec.orgColumn === null ? null : org, offset, PAGE, pageBytes);
+      if (page.length === 0) break;
       let chunk = "";
       for (const row of page) {
         for (const col of secrets) if (col in row && row[col] !== null) row[col] = EXPORT_SECRET_MARKER;
@@ -65,10 +69,11 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
       }
       if (chunk.length > 0) {
         appendFileSync(path, chunk);
-        digest.update(file).update(chunk);
+        if (rows === 0) digest.update(file);
+        digest.update(chunk);
       }
       rows += page.length;
-      if (page.length < PAGE) break;
+      offset += page.length;
     }
     tables.push({ table: spec.table, file, rows, holds: spec.holds, secretColumns: [...secrets] });
   }
@@ -84,7 +89,7 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
     }
     mkdirSync(join(outDir, "memory"), { recursive: true });
     const file = `memory/${provider.id}.jsonl`;
-    const files = await provider.exportFiles(org);
+    const files = await provider.exportFiles(org, { pageBytes });
     const body = files.map((f) => jsonLine({ tierPath: f.tierPath, relPath: f.relPath, content: f.content })).join("");
     writeFileSync(join(outDir, file), body);
     digest.update(file).update(body);
@@ -115,7 +120,12 @@ export async function exportOrg(opts: ExportOptions): Promise<ExportManifest> {
     };
   }
 
-  const chain = await store.readAuditChain(org);
+  const chain: AuditChainRow[] = [];
+  for (;;) {
+    const page = await store.readAuditChain(org, { afterSeq: chain.at(-1)?.seq ?? 0, limit: PAGE, maxBytes: pageBytes });
+    if (page.length === 0) break;
+    chain.push(...page);
+  }
   const walk = walkAuditChain(chain, { expectGenesis: true });
 
   const notExported = [

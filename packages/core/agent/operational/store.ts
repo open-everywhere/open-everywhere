@@ -132,6 +132,7 @@ export interface AuditChainReadOptions {
   readonly tailLimit?: number;
   readonly afterSeq?: number;
   readonly limit?: number;
+  readonly maxBytes?: number;
 }
 
 export interface AuditChainEpochWritten {
@@ -1055,7 +1056,7 @@ export interface ClaimedIngressDelivery extends DueIngressDelivery {
 }
 
 export interface ExitTableAccess {
-  readRows(table: string, org: string | null, offset: number, limit: number): Promise<Record<string, unknown>[]>;
+  readRows(table: string, org: string | null, offset: number, limit: number, maxBytes?: number): Promise<Record<string, unknown>[]>;
   selectDistinct(table: string, org: string, column: string, filter: ExitRowFilter): Promise<string[]>;
   deleteRows(table: string, org: string, filter: ExitRowFilter): Promise<number>;
 }

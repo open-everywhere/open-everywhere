@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { AUDIT_CHAIN_EPOCH_ACTION, auditEpochDetail, auditEpochSealFor, auditRowSha, withOrgAuditLock } from "../audit/chain.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { assembleAnalyticsSql } from "../analytics/compile.js";
-import { buildExitDelete, buildExitSelectDistinct, buildExitSelectPage } from "../exit/sql.js";
+import { buildExitDelete, buildExitRowSizes, buildExitSelectDistinct, buildExitSelectPage, rowsWithinBytes } from "../exit/sql.js";
 import type { AuditDetailBuilder } from "../audit/scrubbed-text.js";
 
 export type { PgClient } from "../memory/postgres.js";
@@ -2287,10 +2287,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async readAuditChain(org, opts) {
-      const page =
+      let page =
         !(opts?.tailLimit && opts.tailLimit > 0) && opts?.afterSeq !== undefined
           ? { after: opts.afterSeq, limit: Math.max(1, Math.floor(opts.limit ?? 1)) }
           : undefined;
+      if (page !== undefined && opts?.maxBytes !== undefined) {
+        const { rows } = await client.query("SELECT octet_length(CAST(a AS text)) AS n FROM audit_entry a WHERE org_id = $1 AND seq > $2 ORDER BY seq ASC LIMIT $3", [org, page.after, page.limit]);
+        page = { ...page, limit: rowsWithinBytes((rows as { n: number | string }[]).map((r) => Number(r.n)), opts.maxBytes) };
+        if (page.limit === 0) return [];
+      }
       return readAuditChainRows(client, org, opts?.tailLimit, page);
     },
 
@@ -3552,7 +3557,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     exitTables: {
-      async readRows(table, org, offset, limit) {
+      async readRows(table, org, offset, limit, maxBytes) {
+        if (maxBytes !== undefined) {
+          const probe = buildExitRowSizes(table, org, offset, limit);
+          limit = rowsWithinBytes(((await client.query(probe.sql, probe.params)).rows as { n: number | string | null }[]).map((r) => Number(r.n ?? 0)), maxBytes);
+          if (limit === 0) return [];
+        }
         const { sql, params } = buildExitSelectPage("dollar", table, org, offset, limit);
         return (await client.query(sql, params)).rows as Record<string, unknown>[];
       },

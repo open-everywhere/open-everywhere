@@ -1,5 +1,7 @@
 import { catalogueColumns, exitTableSpec, type ExitTableSpec } from "./catalogue.js";
 
+export const EXIT_PAGE_BYTES = 8 * 1024 * 1024;
+
 export type ExitPlaceholderStyle = "dollar" | "qmark";
 
 export interface ExitRowFilter {
@@ -66,6 +68,26 @@ export function buildExitSelectPage(style: ExitPlaceholderStyle, table: string, 
   const order = spec.orderBy.map((c) => column(spec, c)).join(", ");
   const sql = `SELECT * FROM ${spec.table}${where} ORDER BY ${order} LIMIT ${p.add(Math.max(1, Math.floor(limit)))} OFFSET ${p.add(Math.max(0, Math.floor(offset)))}`;
   return { sql, params: p.values };
+}
+
+export function buildExitRowSizes(table: string, org: string | null, offset: number, limit: number): ExitSql {
+  const spec = specOf(table);
+  const p = new Params("dollar");
+  const where = whereClause(spec, org, undefined, p);
+  const order = spec.orderBy.map((c) => column(spec, c)).join(", ");
+  const sql = `SELECT octet_length(CAST(t AS text)) AS n FROM (SELECT * FROM ${spec.table}${where} ORDER BY ${order} LIMIT ${p.add(Math.max(1, Math.floor(limit)))} OFFSET ${p.add(Math.max(0, Math.floor(offset)))}) t ORDER BY ${order}`;
+  return { sql, params: p.values };
+}
+
+export function rowsWithinBytes(sizes: readonly number[], maxBytes: number): number {
+  let total = 0;
+  let k = 0;
+  for (const n of sizes) {
+    total += Number(n);
+    if (k > 0 && total > maxBytes) break;
+    k++;
+  }
+  return k;
 }
 
 export function buildExitSelectDistinct(style: ExitPlaceholderStyle, table: string, org: string, col: string, filter: ExitRowFilter): ExitSql {

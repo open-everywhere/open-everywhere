@@ -47,7 +47,7 @@ export interface MemoryProvider {
 
   root?(): string;
 
-  exportFiles?(org: string): Promise<MemoryExportFile[]>;
+  exportFiles?(org: string, opts?: { readonly pageBytes?: number }): Promise<MemoryExportFile[]>;
 }
 
 export interface MemoryExportFile {
