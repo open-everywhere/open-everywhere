@@ -16,7 +16,7 @@ import {
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackTenantAdmission } from "./slack-tenant-fence.js";
-import { slackAuthorIsMember } from "./slack-events.js";
+import { slackAuthorIsMember, slackChannelFactsFor } from "./slack-events.js";
 import { slackMode } from "./slack-identity.js";
 
 function log(msg: string): void {
@@ -30,7 +30,12 @@ function formField(params: URLSearchParams, name: string): string | undefined {
   return v && v.length > 0 ? v : undefined;
 }
 
-export function bindableForSlashCommand(params: URLSearchParams, invoker?: { readonly dmPartnerTrust?: "internal" | "external" }): BindableContext {
+export interface SlashTrustFacts {
+  readonly dmPartnerTrust?: "internal" | "external";
+  readonly room?: { readonly extShared: boolean };
+}
+
+export function bindableForSlashCommand(params: URLSearchParams, invoker?: SlashTrustFacts): BindableContext {
   const enterpriseId = formField(params, "enterprise_id");
   return {
     channel: { kind: "slack" },
@@ -42,6 +47,7 @@ export function bindableForSlashCommand(params: URLSearchParams, invoker?: { rea
             channel_id: formField(params, "channel_id") ?? "",
             ...(enterpriseId ? { enterprise_id: enterpriseId } : {}),
             ...(invoker?.dmPartnerTrust ? { dm_partner_trust: invoker.dmPartnerTrust } : {}),
+            ...(invoker?.room ? { is_ext_shared: String(invoker.room.extShared), trust_checked: "true" } : {}),
           },
           principalId: formField(params, "user_id") ?? "",
           principalType: "slack-user",
@@ -59,13 +65,41 @@ export async function slashInvokerDmTrust(
 ): Promise<{ readonly dmPartnerTrust?: "internal" | "external" }> {
   const userId = formField(params, "user_id");
   if (!userId || slackMode(undefined, formField(params, "channel_id")) !== "dm") return {};
+  const member = await withinAckBudget(probe(userId, formField(params, "team_id")));
+  return member === undefined ? {} : { dmPartnerTrust: member ? "internal" : "external" };
+}
+
+export type SlashRoomFacts = (channelId: string) => Promise<{ readonly channelType?: string; readonly extShared?: boolean; readonly trustChecked?: boolean }>;
+
+export async function slashRoomVerdict(
+  params: URLSearchParams,
+  roomFacts: SlashRoomFacts = slackChannelFactsFor,
+  probe: (userId: string, teamId: string | undefined) => Promise<boolean | undefined> = slackAuthorIsMember,
+): Promise<SlashTrustFacts> {
+  const channelId = formField(params, "channel_id");
+  if (!channelId || slackMode(undefined, channelId) === "dm") return {};
+  const userId = formField(params, "user_id");
+  const [facts, member] = await Promise.all([
+    withinAckBudget(roomFacts(channelId)),
+    userId ? withinAckBudget(probe(userId, formField(params, "team_id"))) : Promise.resolve(undefined),
+  ]);
+  if (!facts || facts.trustChecked !== true || typeof facts.extShared !== "boolean") return {};
+  if (facts.channelType !== "channel" && facts.channelType !== "group") return {};
+  if (member !== true) return {};
+  return { room: { extShared: facts.extShared } };
+}
+
+export async function slashTrustFacts(params: URLSearchParams): Promise<SlashTrustFacts> {
+  return slackMode(undefined, formField(params, "channel_id")) === "dm" ? slashInvokerDmTrust(params) : slashRoomVerdict(params);
+}
+
+async function withinAckBudget<T>(p: Promise<T>): Promise<T | undefined> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<undefined>((resolve) => {
     timer = setTimeout(() => resolve(undefined), INVOKER_PROBE_MS);
   });
   try {
-    const member = await Promise.race([probe(userId, formField(params, "team_id")).catch(() => undefined), timeout]);
-    return member === undefined ? {} : { dmPartnerTrust: member ? "internal" : "external" };
+    return await Promise.race([p.catch(() => undefined), timeout]);
   } finally {
     clearTimeout(timer);
   }
@@ -126,7 +160,7 @@ export default defineChannel({
       }
 
       const cmd = parseSlackCommandText(formField(params, "text"));
-      const binding = bindFrom(bindableForSlashCommand(params, await slashInvokerDmTrust(params)));
+      const binding = bindFrom(bindableForSlashCommand(params, await slashTrustFacts(params)));
       try {
         const reply = await runOeCommand(cmd, binding, { attachSession });
         return ephemeralResponse(reply);

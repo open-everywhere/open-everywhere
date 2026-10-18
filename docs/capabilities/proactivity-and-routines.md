@@ -1399,10 +1399,11 @@ a member whose lookup fails reads as `external`, and must keep the off switch.
 In a direct message, Slack's `/oe watch` asks `users.info` who typed it, as a DM turn does. So a
 guest or a Slack Connect stranger is refused even where the operator declared the whole workspace
 `internal`. A member the lookup confirms needs no declaration. When the lookup gives no answer, the
-command falls back to the declaration. In a channel,
-the command cannot confirm the room: Slack's command payload says nothing about who is in it. So
-`/oe watch more` and `/oe watch less` in a channel are refused, and the answer points to the DM.
-Each refusal writes nothing and files one `personal_watch.dial.refused` row with the reason.
+command falls back to the declaration. In a channel, the command reads the room's
+`conversations.info` verdict, as a message in that room does, and asks `users.info` who typed it.
+So `/oe watch more` and `/oe watch less` work in an internal channel for a person the lookup confirms
+a member. In a Slack Connect room, in a room Slack gives no verdict for, or for a person the lookup
+does not confirm, they are refused, and the answer points to the DM. Each refusal writes nothing and files one `personal_watch.dial.refused` row with the reason.
 
 ### The dial: more, less, none
 

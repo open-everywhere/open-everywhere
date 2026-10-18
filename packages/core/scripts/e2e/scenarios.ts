@@ -6596,7 +6596,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-DOING",
     title: "What I do for you (OPE-2522): a signed Home-tab Pause on the person's own watch turns it off, a Pause naming nothing of theirs changes nothing",
-    requires: ["slack", "synthetic"],
+    requires: ["slack", "synthetic", "syntheticDm"],
     surface: "slack",
     suite: "core",
     timeoutMs: 300_000,
@@ -6612,7 +6612,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const ownRow = (r: AuditWireEntry): boolean => r.principalId === person || r.principalId === `slack/${teamId}/${person}`;
       const watchRef = createHash("sha256").update("doing:watch:chief-of-staff").digest("hex");
 
-      const reset = await synthetic.slash("watch less", { teamId });
+      const dmChannelId = ctx.dm!.channelId;
+      const reset = await synthetic.slash("watch less", { teamId, channelId: dmChannelId });
       ctx.gate(reset.status === 200 && watchDialAnswerSets(decodeSlackEphemeralText(reset.body), "less"), `S-DOING: /oe watch less starts the person's watch (HTTP ${reset.status})`);
 
       const openedAt = await presenceSince(ctx, "S-DOING open");
@@ -6644,7 +6645,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.gate(noneRow !== undefined, "S-DOING: Pause on the person's own watch item turned it off (a personal_watch.dial.set row, dial none, via app-home)");
 
-      const restore = await synthetic.slash("watch less", { teamId });
+      const restore = await synthetic.slash("watch less", { teamId, channelId: dmChannelId });
       ctx.gate(restore.status === 200 && watchDialAnswerSets(decodeSlackEphemeralText(restore.body), "less"), `S-DOING: the dial is restored to less (HTTP ${restore.status})`);
     },
   },

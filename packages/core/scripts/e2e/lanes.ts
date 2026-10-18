@@ -143,7 +143,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "S-CANVAS-LIST", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-WATCH", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-ROOM-SUGGEST", parallel: "safe", resources: ["seat:e2e-unified"] },
-  { id: "S-DOING", parallel: "safe", resources: ["seat:e2e-unified"] },
+  { id: "S-DOING", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-ROUTINE-TEST", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-ROUTINE-TEST-discord", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-ASK-WATCH", parallel: "safe", resources: ["seat:e2e-unified"] },

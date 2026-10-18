@@ -41,7 +41,7 @@ export async function runWatch(binding: SurfaceBinding, action: "status" | Watch
     await auditPersonalWatchRefused(where, action, "command", inDm ? "not-member" : "room-unconfirmed");
     return inDm
       ? "The watch is for members of this organisation, so I changed nothing."
-      : `I could not confirm that this room is inside the organisation, so I changed nothing. Send \`${oeSlash(`watch ${action}`)}\` in your direct message with me.`;
+      : `I could not confirm that this room and you are inside the organisation, so I changed nothing. Send \`${oeSlash(`watch ${action}`)}\` in your direct message with me.`;
   }
   const armedNote = personalWatchArmed()
     ? ""

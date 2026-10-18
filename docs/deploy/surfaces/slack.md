@@ -93,10 +93,13 @@ Open Everywhere reads the enterprise id wherever Slack puts it on that route:
   a per-workspace install on a Grid, so both are read;
 - an `enterprise_id` **form field** on the `/oe` slash-command route.
 
-The `/oe` command is narrower than the wake doors, and only here: it carries the rung into your
-declaration, but it cannot make a **channel** command's room internal, because a slash-command
-payload carries no `conversations.info` verdict and that check fails closed. Nothing about a
-mention, a DM or a shortcut in the same room changes. In a **DM**, the command asks `users.info`
+The `/oe` command carries the rung into your declaration. In a **channel**, the room's own verdict
+answers before the declaration does. The command reads the same TTL-cached `conversations.info` a
+message in that room reads, so a Slack Connect room stays external under any line. The command also
+asks `users.info` who typed it, and the room's verdict counts only for a person that lookup confirms
+a member. A guest, a Slack Connect stranger, or a person the lookup cannot check reads as external,
+also in an internal room. When either read gives no answer within 1.5 seconds, the command fails
+closed to external. Nothing about a mention, a DM or a shortcut in the same room changes. In a **DM**, the command asks `users.info`
 who typed it, as a DM turn does, and that answer outranks your declaration: a guest or a Slack
 Connect stranger reads as external under a workspace line, and a confirmed member reads as internal
 with no line. When the lookup gives no answer within 1.5 seconds, the declaration decides.
@@ -1155,7 +1158,7 @@ Commands (typed as free text after `/oe`):
 | `/oe stop` | Stands down the turn currently running in this channel: resolves it from the durable turn-anchor registry and cancels it. **No model turn, nothing spent** — so it works while the channel is over its cap, which is when you are most likely to want it. | Ephemeral |
 | `/oe rate <1-5>` | Records one human mark on the [model A/B test](../../extending/models-and-gateway.md#ab-testing-a-challenger-model): rates this channel's most recent champion/challenger turn, on the arm that turn actually ran. Answers "nothing to rate" — the normal reply — while the test is off. | Ephemeral |
 | `/oe optout on` / `/oe optout off` / `/oe optout` | Turns on (or off, or shows) **your own** opt-out of agent actions on your content: no memory is saved from your own turns (in a shared conversation, a later turn by somebody else can still save what you said, and a [domain question](../../capabilities/domain-questions.md) you ask is not covered yet), and the agent refuses when somebody else hands it one of your messages with a shortcut. Keyed to you alone — there is no argument that names another person. The Home tab has the same switch. See [Opting out](../../capabilities/memory.md#opting-out-of-agent-actions-on-your-content). | Ephemeral |
-| `/oe watch more` / `/oe watch less` / `/oe watch none` / `/oe watch` | Sets (or shows) **your own** dial for the [chief-of-staff watch](../../capabilities/proactivity-and-routines.md#the-chief-of-staff-watch): how often the agent may message you on its own about something that needs you, such as two meetings that overlap. Everyone starts at `less`. `none` turns it off. Keyed to you alone. The Home tab has the same three buttons. `more` and `less` work in your DM with the app: in a channel they are refused, because the command cannot confirm who is in the room. | Ephemeral |
+| `/oe watch more` / `/oe watch less` / `/oe watch none` / `/oe watch` | Sets (or shows) **your own** dial for the [chief-of-staff watch](../../capabilities/proactivity-and-routines.md#the-chief-of-staff-watch): how often the agent may message you on its own about something that needs you, such as two meetings that overlap. Everyone starts at `less`. `none` turns it off. Keyed to you alone. The Home tab has the same three buttons. `more` and `less` work in your DM with the app, and in a channel only when that channel is internal and `users.info` confirms you are a member. | Ephemeral |
 | `/oe cover on` / `/oe cover on until <date>` / `/oe cover off` / `/oe cover` | Turns **your own** [out-of-office cover](../../capabilities/out-of-office-cover.md) on (from your DM with the agent, members only) or off (anywhere), or shows it. While cover is on, a question that mentions you in a channel the agent is in gets an answer from what that channel already knows, labelled as cover; when cover ends you get one recap in your DM. | Ephemeral |
 | `/oe suggest off` / `/oe suggest on` / `/oe suggest` | Stops (or allows, or shows) the agent's [routine suggestions](../../capabilities/proactivity-and-routines.md#shared-rooms) in **this channel** (OPE-2550). Anybody in the channel may stop them. Only a member of the organisation may turn them back on. The stop is kept on the channel's own row and audited with who typed it. In a DM it changes nothing and points to `/oe watch none`. | Ephemeral |
 | `/oe help` | Lists the commands. | Ephemeral |

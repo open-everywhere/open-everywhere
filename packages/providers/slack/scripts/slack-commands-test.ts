@@ -121,11 +121,18 @@ function ok(cond: boolean, label: string): void {
     const { bindSlack } = await import("../agent/channels/slack-identity.js");
     registerIdentityMapper("slack", bindSlack);
     const { _resetAuthorMemberCache } = await import("../agent/channels/slack-events.js");
-    const { slashInvokerDmTrust } = await import("../agent/channels/slack-commands.js");
+    const { slashInvokerDmTrust, slashRoomVerdict } = await import("../agent/channels/slack-commands.js");
     const USERS: Record<string, Record<string, unknown>> = {
       UGUEST: { id: "UGUEST", team_id: "T1", is_restricted: true },
       UMEMBER: { id: "UMEMBER", team_id: "T1" },
     };
+    const ROOMS: Record<string, Record<string, unknown>> = {
+      CINTERNAL: { id: "CINTERNAL", is_channel: true, is_private: false, is_ext_shared: false },
+      CEXTERNAL: { id: "CEXTERNAL", is_channel: true, is_private: false, is_ext_shared: true },
+      GPRIVATE: { id: "GPRIVATE", is_channel: true, is_private: true, is_ext_shared: false },
+      CGROUPDM: { id: "CGROUPDM", is_mpim: true, is_private: true, is_ext_shared: false },
+    };
+    let roomReads = 0;
     const json = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     let probes = 0;
     const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -134,6 +141,11 @@ function ok(cond: boolean, label: string): void {
         probes++;
         const user = new URLSearchParams(String(init?.body ?? "")).get("user") ?? "";
         return json(USERS[user] ? { ok: true, user: USERS[user] } : { ok: false, error: "user_not_found" });
+      }
+      if (href.endsWith("/conversations.info")) {
+        roomReads++;
+        const channel = new URLSearchParams(String(init?.body ?? "")).get("channel") ?? "";
+        return json(ROOMS[channel] ? { ok: true, channel: ROOMS[channel] } : { ok: true });
       }
       return json({ ok: true });
     }) as typeof fetch;
@@ -158,11 +170,45 @@ function ok(cond: boolean, label: string): void {
         ok(member.text.startsWith("Done. More:"), `the legitimate member's /oe watch more in their DM still binds (got "${member.text.slice(0, 100)}")`);
         ok((await readAudit({ org: "default", action: "personal_watch.dial.set", principalId: "slack/T1/UMEMBER" })).length === 1, "…with one dial.set row");
 
-        const before = probes;
+        const readsBefore = roomReads;
         const room = await signed("command=%2Foe&text=watch+more&team_id=T1&channel_id=C1&user_id=UMEMBER");
-        ok(room.text.startsWith("I could not confirm that this room is inside the organisation") && room.text.includes("in your direct message"), `a channel command names the room and the DM door, not the member (got "${room.text.slice(0, 100)}")`);
-        ok(probes === before, "a channel command asks users.info nothing: the room's verdict is the binding's trust there");
+        ok(room.text.startsWith("I could not confirm that this room and you are inside the organisation") && room.text.includes("in your direct message"), `a channel Slack gives no verdict for stays refused, and the answer names the room and the DM door (got "${room.text.slice(0, 100)}")`);
+        ok(roomReads === readsBefore + 1, "a channel command reads the room's conversations.info");
+
+        const memberOff = await signed("command=%2Foe&text=suggest+off&team_id=T1&channel_id=CINTERNAL&user_id=UMEMBER");
+        ok(memberOff.text.startsWith("Done. I won't suggest routines here."), `the stop lands in the internal channel (got "${memberOff.text.slice(0, 100)}")`);
+        const memberOn = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=CINTERNAL&user_id=UMEMBER");
+        ok(memberOn.text.startsWith("Done. I may suggest a routine here again."), `🔴 a member's /oe suggest on in an internal channel lifts the stop (got "${memberOn.text.slice(0, 100)}")`);
+        const memberWatch = await signed("command=%2Foe&text=watch+less&team_id=T1&channel_id=CINTERNAL&user_id=UMEMBER");
+        ok(memberWatch.text.startsWith("Done. Less:"), `🔴 a member's /oe watch less in an internal channel binds (got "${memberWatch.text.slice(0, 100)}")`);
+        await signed("command=%2Foe&text=suggest+off&team_id=T1&channel_id=GPRIVATE&user_id=UMEMBER");
+        const privateOn = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=GPRIVATE&user_id=UMEMBER");
+        ok(privateOn.text.startsWith("Done. I may suggest a routine here again."), `a member's /oe suggest on in an internal private channel lifts the stop too (got "${privateOn.text.slice(0, 100)}")`);
+        const externalOn = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=CEXTERNAL&user_id=UMEMBER");
+        ok(externalOn.text.startsWith("Only a member"), `🔴 a Slack Connect room stays refused, even for a member and under a workspace vouch (got "${externalOn.text.slice(0, 100)}")`);
+        const guestOn = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
+        ok(guestOn.text.startsWith("Only a member"), `🔴 a guest's /oe suggest on in an internal channel is refused (got "${guestOn.text.slice(0, 100)}")`);
+        const groupOn = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=CGROUPDM&user_id=UMEMBER");
+        ok(groupOn.text.startsWith("Only a member"), `a group DM's verdict is not stamped: its command stays fail-closed external (got "${groupOn.text.slice(0, 100)}")`);
+        const unknownOn = await signed("command=%2Foe&text=suggest+on&team_id=T1&channel_id=CINTERNAL&user_id=UNOBODY");
+        ok(unknownOn.text.startsWith("Only a member"), `🔴 a person users.info cannot check is not admitted on the room's verdict (got "${unknownOn.text.slice(0, 100)}")`);
+        const guestWatch = await signed("command=%2Foe&text=watch+more&team_id=T1&channel_id=CINTERNAL&user_id=UGUEST");
+        ok(guestWatch.text.startsWith("I could not confirm that this room and you are inside the organisation"), `🔴 a guest's /oe watch more in an internal channel binds nothing (got "${guestWatch.text.slice(0, 100)}")`);
+        ok((await readAudit({ org: "default", action: "personal_watch.dial.set", principalId: "slack/T1/UGUEST" })).length === 0, "🔴 …and the guest still has no dial.set row");
       });
+      const roomParams = (channel: string, user = "UX") => new URLSearchParams(`team_id=T1&channel_id=${channel}&user_id=${user}`);
+      const internalRoom = async () => ({ channelType: "channel", extShared: false, trustChecked: true });
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => true)) === '{"room":{"extShared":false}}', "an internal room with a confirmed member stamps the room");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => undefined)) === "{}", "🔴 an unanswered invoker probe withholds the room's verdict: the channel command fails closed");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, () => new Promise(() => undefined))) === "{}", "an invoker probe slower than the ack budget withholds it too");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({ channelType: "channel", extShared: true, trustChecked: true }), async () => true)) === '{"room":{"extShared":true}}', "an external room stamps its external verdict");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), internalRoom, async () => false)) === "{}", "a refuted invoker withholds the room's verdict");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({}), async () => true)) === "{}", "an unchecked room stamps nothing");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), async () => ({ channelType: "mpim", extShared: false, trustChecked: true }), async () => true)) === "{}", "a group DM stamps nothing: its binding is unchanged");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), () => new Promise(() => undefined), async () => true)) === "{}", "a room read slower than the ack budget stamps nothing");
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("CX"), () => Promise.reject(new Error("boom")), async () => true)) === "{}", "a throwing room read stamps nothing");
+      let asked = 0;
+      ok(JSON.stringify(await slashRoomVerdict(roomParams("DX"), async () => (asked++, internalRoom()), async () => true)) === "{}" && asked === 0, "a 1:1 DM reads no room: its invoker leg answers there");
       const dmParams = new URLSearchParams("team_id=T1&channel_id=DX&user_id=UX");
       ok(JSON.stringify(await slashInvokerDmTrust(dmParams, async () => undefined)) === "{}", "an unanswered probe stamps nothing");
       ok(JSON.stringify(await slashInvokerDmTrust(dmParams, () => new Promise<boolean | undefined>(() => undefined))) === "{}", "a probe slower than the ack budget stamps nothing");
@@ -182,4 +228,4 @@ function ok(cond: boolean, label: string): void {
 }
 
 
-console.log(`\n✓ slack-commands: ${n} assertions passed (mount path + signature gate matrix + signed /oe responses + the DM invoker verdict)`);
+console.log(`\n✓ slack-commands: ${n} assertions passed (mount path + signature gate matrix + signed /oe responses + the DM invoker verdict + the channel room verdict)`);
