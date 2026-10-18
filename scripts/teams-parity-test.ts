@@ -369,6 +369,56 @@ function partitionOf(a: TeamsMessageActivity): Partition {
   });
   ok(failing.posted === false && sent.length === before + 1, "intro: a marker that cannot be claimed posts NOTHING — fail-closed, or every mention would re-introduce");
 
+  {
+    const { teamsReplyChainSurface } = await import("../packages/core/scripts/e2e/teams-driver.js");
+    const { teamsSegment } = await import("../packages/core/scripts/e2e/fixture-inventory-lib.js");
+    const root = "1760781234567";
+    const inChain = core.resolvePartition({
+      channel: { kind: "teams" },
+      session: { auth: { current: buildTeamsAuth({ userId: HUMAN, tenantId: TENANT, conversationId: `${CHAN_ON};messageid=${root}`, channelId: CHAN_ON, teamId: TEAM, serviceUrl: SERVICE_URL, scope: "channel" }) } },
+    });
+    ok(inChain.surface === teamsReplyChainSurface(CHAN_ON, root), `sibling: the harness's chain surface is the product's reply.post surface (harness ${teamsReplyChainSurface(CHAN_ON, root)}, product ${inChain.surface})`);
+    ok(inChain.surface.includes("-messageid-") && inChain.surface !== teamsSegment(CHAN_ON), "sibling: the chain surface is NOT the bare channel id — the exact-equality filter on the channel read nothing (a live run)");
+    ok(core.domainKeyOf(inChain).split("/").pop() === teamsSegment(CHAN_ON), "sibling: the domain grain's last segment is the sanitised channel id, the wake.ingress container the gate joins on");
+  }
+
+  {
+    const { teamsIntroMarkerPartition, teamsIntroClaimKey, resetTeamsIntroMarker } = await import("../packages/core/scripts/e2e/teams-intro-fixture.js");
+    const { sqliteProvider } = await import("@open-everywhere/core/agent/memory/sqlite.js");
+    const { SURFACE } = await import("@open-everywhere/core/agent/memory/store.js");
+    const { ONBOARDED_MARKER } = await import("@open-everywhere/core/agent/onboarding/onboarding.js");
+    const store = core.getOperationalStore();
+    const reChannel = "19:resetfixture@thread.tacv2";
+    const target = teamsFirstContactTarget(message({ channel: reChannel, mentioned: true, text: "hi" }))!;
+    const product = teamsIntroPartition(target);
+    const harness = teamsIntroMarkerPartition({ org: product.org, tenantId: TENANT, channelId: reChannel });
+    ok(
+      harness.surfaceKey === product.surfaceKey && harness.workspaceKey === product.workspaceKey && harness.surface === product.surface && harness.workspace === product.workspace,
+      `intro reset: the harness keys the marker on the product's own channel partition (harness ${harness.surfaceKey}, product ${product.surfaceKey})`,
+    );
+    const realDeps = {
+      ...deps,
+      isOnboarded: async (p: Partition) => (await sqliteProvider.readTier(p, SURFACE))[ONBOARDED_MARKER] !== undefined,
+      markOnboarded: async (p: Partition) => void (await sqliteProvider.writeTier(p, SURFACE, { [ONBOARDED_MARKER]: new Date().toISOString(), "keep.md": "x" }, "test")),
+      claim: (org: string, key: string, atIso: string) => store.markEventSeen(org, key, atIso, 24 * 60 * 60 * 1000),
+    };
+    const sentBefore = sent.length;
+    ok((await teamsChannelIntro(target, "first-contact", realDeps)).posted === true, "intro reset: the first contact introduces the channel");
+    ok((await teamsChannelIntro(target, "first-contact", realDeps)).posted === false, "intro reset: a second contact does not — the channel is introduced (the board's usual state)");
+    ok(teamsIntroClaimKey(harness) === `teams-intro:${product.surfaceKey}`, "intro reset: the claim key is the product's spelling");
+    const reset = await resetTeamsIntroMarker({ memory: sqliteProvider, store }, harness);
+    ok(reset.markerBefore !== undefined && !reset.markerRemains, `intro reset: the reset finds the marker and leaves none (${JSON.stringify(reset)})`);
+    ok((await sqliteProvider.readTier(product, SURFACE))["keep.md"] === "x", "intro reset: the reset deletes the marker file alone, never the rest of the tier");
+    ok((await teamsChannelIntro(target, "first-contact", realDeps)).posted === true && sent.length === sentBefore + 2, "🔴 intro reset: after the reset the next @mention is a FIRST contact again — the leg measures the door every board");
+    const clean = await resetTeamsIntroMarker({ memory: sqliteProvider, store }, teamsIntroMarkerPartition({ org: product.org, tenantId: TENANT, channelId: "19:neverintroduced@thread.tacv2" }));
+    ok(clean.markerBefore === undefined && !clean.markerRemains, "intro reset: a channel never introduced resets to the same state");
+    const noDelete = await resetTeamsIntroMarker({ memory: { readTier: sqliteProvider.readTier }, store }, harness).then(
+      () => "no throw",
+      (err: unknown) => String(err),
+    );
+    ok(noDelete.includes("no per-file delete"), "intro reset: a provider with no per-file delete THROWS — a reset that did not happen never reads as one that did");
+  }
+
   const intros: string[] = [];
   let forwards = 0;
   const handler = buildTeamsFrontHandler(

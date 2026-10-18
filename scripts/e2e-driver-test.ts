@@ -7326,6 +7326,11 @@ await removeTempDir(dir);
   ok(seatContinuity([seatPost(SEAT), seatPost("")]).unattributed === 1, "NEGATIVE: an EMPTY sessionId names no session either");
   ok(seatContinuity([seatPost(SEAT, "C1"), seatPost(OTHER_SEAT, "CZ")], { surface: "C1" }).sessionIds.join(",") === SEAT, "the surface scope keeps another room's seat out of this room's continuity claim");
   ok(
+    seatContinuity([seatPost(SEAT, "C1-messageid-1"), seatPost(OTHER_SEAT, "C1-messageid-2"), seatPost("wrun_example8", "C1-messageid-3")], { surface: ["C1-messageid-1", "C1-messageid-2"] }).sessionIds.join(",") ===
+      `${SEAT},${OTHER_SEAT}`,
+    "🔴 OPE-2604: a LIST scope admits each named reply chain exactly, so two seats across the two chains still read as two, and a third chain stays out",
+  );
+  ok(
     seatContinuity([seatPost(SEAT)], { surface: "slack/T1/C1" }).replies === 0,
     "NEGATIVE: the QUALIFIED key matches no reply.post row — the shape mistake this file's header exists for, and here it would report zero replies rather than a wrong session",
   );
@@ -7488,6 +7493,28 @@ await removeTempDir(dir);
         );
       }, { sinceIso: "2026-05-20T23:30:00Z", platform: "notion", surface: "C1", container: "C1", minWakes: 2, budget: fast(2_000, "joined replies and admissions") });
       ok(admissionReads === 3 && evidence?.wakeIds.includes("second") === true, "joined waiter waits through unrelated admissions and audit visibility skew");
+    }
+
+    {
+      const CHAIN_A = "19-chan-thread.tacv2-messageid-111";
+      const CHAIN_B = "19-chan-thread.tacv2-messageid-222";
+      const asked: string[] = [];
+      const read = async (query: { surface?: string; actions?: readonly string[] }) => {
+        if (query.actions?.includes(REPLY_POST_ACTION)) {
+          asked.push(String(query.surface));
+          return [row(REPLY_POST_ACTION, { sessionId: "seat", wakeId: "a" }, CHAIN_A), row(REPLY_POST_ACTION, { sessionId: "seat", wakeId: "b" }, CHAIN_B)];
+        }
+        return ["a", "b"].map((wakeId) => row(WAKE_INGRESS_ACTION, { wakeId, surfaceKey: "teams/tenant/19-chan-thread.tacv2" }));
+      };
+      const both = await awaitRepliesForAdmittedWakes(read, {
+        sinceIso: "2026-06-21T23:30:00Z", platform: "teams", surface: [CHAIN_A, CHAIN_B], container: "19-chan-thread.tacv2", minWakes: 2, budget: fast(2_000, "two chains"),
+      });
+      ok(both?.posts.length === 4 && asked.join(",") === `${CHAIN_A},${CHAIN_B}`, "🔴 OPE-2604: the joined waiter reads EACH reply chain of a list scope and joins both chains' replies to their admitted wakes");
+      ok(seatContinuity(both?.posts ?? [], { surface: [CHAIN_A, CHAIN_B], admittedWakeIds: both?.wakeIds ?? [] }).seatIds.join(",") === "seat", "…and the two chains' replies resolve to ONE seat");
+      const bare = await awaitRepliesForAdmittedWakes(read, {
+        sinceIso: "2026-06-21T23:30:00Z", platform: "teams", surface: "19-chan-thread.tacv2", container: "19-chan-thread.tacv2", minWakes: 2, budget: fast(200, "bare channel"),
+      });
+      ok(bare === undefined, "NEGATIVE (the pre-OPE-2604 shape): under a bare-channel scope the exact-equality filter refuses both chains' rows, so the gate had nothing to read");
     }
 
     {

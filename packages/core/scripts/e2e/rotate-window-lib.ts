@@ -9,17 +9,20 @@ import type { Domain } from "../../agent/memory/domain.js";
 import { generationOwedTaskIds } from "../../agent/channels/generation-retirement.js";
 
 export async function wireNeonOperationalStore(dbUrl: string): Promise<OperationalStore> {
+  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+  registerOperationalPostgres(await neonPgClient(dbUrl));
+  return getOperationalStore();
+}
+
+export async function neonPgClient(dbUrl: string): Promise<PgClient> {
   const pkg = "@neondatabase/serverless";
   const { neon } = (await import(pkg)) as {
     neon: (url: string) => { query(text: string, params?: unknown[]): Promise<unknown> };
   };
   const sql = neon(dbUrl);
-  const client: PgClient = {
+  return {
     query: async (text, params) => ({ rows: (await sql.query(text, (params ?? []) as unknown[])) as unknown[] }),
   };
-  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
-  registerOperationalPostgres(client);
-  return getOperationalStore();
 }
 
 export interface RotateResult {

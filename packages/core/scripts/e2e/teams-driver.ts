@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import type { TeamsDriverConfig } from "./env.js";
 import { pollUntil, sleep, UnrecognisedShape } from "./poll.js";
+import { teamsSegment } from "./fixture-inventory-lib.js";
 
 const TOKEN_BASE = "https://login.microsoftonline.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -15,6 +16,10 @@ export interface TeamsMessage {
   readonly text: string;
   readonly createdDateTime?: string;
   readonly attachments?: readonly TeamsMessageAttachment[];
+}
+
+export function teamsReplyChainSurface(channelId: string, rootMessageId: string): string {
+  return teamsSegment(`${channelId};messageid=${rootMessageId}`);
 }
 
 export interface TeamsMessageAttachment {
@@ -97,6 +102,10 @@ export function teamsCardShape(m: Pick<TeamsMessage, "attachments">): TeamsCardS
     seen.push(`an Adaptive Card with ${actions.length} button(s) and no button with a readable "${TEAMS_APPROVAL_DATA_KEY}" payload (${described.join(" ")})`);
   }
   return seen.length > 0 ? { kind: "unrecognised", saw: seen.join("; ") } : { kind: "none" };
+}
+
+export function isTeamsPendingApprovalCard(m: TeamsMessage, args: { readonly askedAt: string; readonly isBot: (m: TeamsMessage) => boolean }): boolean {
+  return args.isBot(m) && (m.createdDateTime ?? "") >= args.askedAt && teamsCardShape(m).kind === "approval";
 }
 
 function isEveDefaultCardButton(action: unknown): boolean {
@@ -224,6 +233,10 @@ export class TeamsDriver {
 
   get channelId(): string {
     return this.cfg.channelId;
+  }
+
+  get tenantId(): string {
+    return this.cfg.tenantId;
   }
 
   private cached?: { token: string; expiresAt: number };

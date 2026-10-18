@@ -202,13 +202,23 @@ export function seatOfSession(sessionId: string, workerRows: readonly AuditWireE
   return current;
 }
 
+export type SurfaceScope = string | readonly string[];
+
+export function surfaceScopeList(scope: SurfaceScope): readonly string[] {
+  return typeof scope === "string" ? [scope] : scope;
+}
+
+function onSurface(r: AuditWireEntry, scope: SurfaceScope | undefined): boolean {
+  return scope === undefined || (typeof r.surface === "string" && surfaceScopeList(scope).includes(r.surface));
+}
+
 export function seatContinuity(
   rows: readonly AuditWireEntry[],
-  opts: { readonly surface?: string; readonly admittedWakeIds?: readonly string[]; readonly workerRows?: readonly AuditWireEntry[] } = {},
+  opts: { readonly surface?: SurfaceScope; readonly admittedWakeIds?: readonly string[]; readonly workerRows?: readonly AuditWireEntry[] } = {},
 ): SeatContinuity {
   const admitted = opts.admittedWakeIds;
   const posts = rows.filter((r) => {
-    if (r.action !== REPLY_POST_ACTION || (opts.surface !== undefined && r.surface !== opts.surface)) return false;
+    if (r.action !== REPLY_POST_ACTION || !onSurface(r, opts.surface)) return false;
     if (admitted === undefined) return true;
     const wakeId = detailString(r, "wakeId");
     return wakeId !== undefined && wakeId.length > 0 && admitted.includes(wakeId);
@@ -279,7 +289,7 @@ export async function awaitRepliesForAdmittedWakes(
   opts: {
     readonly sinceIso: string;
     readonly platform: string;
-    readonly surface: string;
+    readonly surface: SurfaceScope;
     readonly container: string;
     readonly minWakes: number;
     readonly budget: EngagedWaitBudget;
@@ -287,10 +297,11 @@ export async function awaitRepliesForAdmittedWakes(
 ): Promise<{ posts: readonly AuditWireEntry[]; wakeIds: readonly string[] } | undefined> {
   return pollOptional(async () => {
     const query = { sinceIso: opts.sinceIso, platform: opts.platform };
-    const [posts, admissions] = await Promise.all([
-      read({ ...query, surface: opts.surface, actions: [REPLY_POST_ACTION] }),
+    const [postReads, admissions] = await Promise.all([
+      Promise.all(surfaceScopeList(opts.surface).map((surface) => read({ ...query, surface, actions: [REPLY_POST_ACTION] }))),
       read({ ...query, actions: [WAKE_INGRESS_ACTION] }),
     ]);
+    const posts = postReads.flat();
     const wakeIds = wakeIngressIds(admissions, { container: opts.container });
     const answered = seatContinuity(posts, { surface: opts.surface, admittedWakeIds: wakeIds });
     return answered.answeredWakeIds.length >= opts.minWakes ? { posts, wakeIds } : undefined;

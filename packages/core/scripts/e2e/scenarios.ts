@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { CAPABILITY_REMEDY, auditSilencesExpected, ENV, S24_DEFAULT_QUERY, type Capability, type EngagedRoomConfig, type SlackUser2Config } from "./env.js";
-import { capFixtureFor, resolveCapFixtureCap, roomIdFor } from "./fixture-inventory-lib.js";
+import { capFixtureFor, resolveCapFixtureCap, roomIdFor, teamsSegment } from "./fixture-inventory-lib.js";
 import { A2A_AGENTS_FILE, loadAppA2aAgents, loadAppSpendBudgets } from "./app-config.js";
 import { classifyAnswers, renderRepliesPerWake, repliesPerWake } from "./duplicate-post.js";
 import type { SkipKind } from "./skip-summary.js";
-import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
+import { neonPgClient, wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
+import { resetTeamsIntroMarker, teamsIntroMarkerPartition, type TeamsIntroReset } from "./teams-intro-fixture.js";
+import { makePostgresProvider } from "../../agent/memory/postgres.js";
 import { exportOrg } from "../../agent/exit/export.js";
 import { erasePerson, EXIT_PERSON_ERASED_ACTION } from "../../agent/exit/erase.js";
 import { EXPORT_SECRET_MARKER } from "../../agent/exit/catalogue.js";
@@ -25,7 +27,7 @@ import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
 import { isTurnCancelNote } from "../../agent/hooks/turn-anchor.js";
 import type { TeamsDriver } from "./teams-driver.js";
-import { isMissingChatScopeError, teamsApprovalCardActions, teamsDmApprovalCard, type TeamsMessage } from "./teams-driver.js";
+import { isMissingChatScopeError, isTeamsPendingApprovalCard, teamsApprovalCardActions, teamsDmApprovalCard, teamsReplyChainSurface, type TeamsMessage } from "./teams-driver.js";
 import { engagedRepoSkipReason, type GithubDriver } from "./github-driver.js";
 import { commentAtOrAfter } from "./comment-window.js";
 import { capDriveOutcome } from "./cap-drive-outcome.js";
@@ -101,6 +103,8 @@ import {
   reportedSeatedChannelWatch,
   reportedThreadFollow,
   seatContinuity,
+  surfaceScopeList,
+  type SurfaceScope,
   standDownAttemptedButUnmarked,
   standDownMarked,
   standDownReachedRegistry,
@@ -1011,10 +1015,11 @@ async function gateOneSeatAcrossNameDrops(
   opts: {
     readonly sinceIso: string;
     readonly platform: string;
-    readonly surface: string;
+    readonly surface: SurfaceScope;
     readonly container: string;
   },
 ): Promise<void> {
+  const onSurface = surfaceScopeList(opts.surface).join(" + ");
   if (!ctx.auditRead) {
     ctx.gate(false, `one-seat: ctx.auditRead is unwired, so neither the seat continuity nor the wake admission can be read — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. In the room the two shapes this gate tells apart look identical, so there is nothing else to assert on`);
     return;
@@ -1025,7 +1030,7 @@ async function gateOneSeatAcrossNameDrops(
     surface: opts.surface,
     container: opts.container,
     minWakes: 2,
-    budget: { timeoutMs: REPLY_WAIT, what: `second name-drop: replies to two admitted wakes on ${opts.surface}` },
+    budget: { timeoutMs: REPLY_WAIT, what: `second name-drop: replies to two admitted wakes on ${onSurface}` },
   });
   const posts = evidence?.posts ?? [];
   const wakes = evidence?.wakeIds ?? [];
@@ -1034,9 +1039,10 @@ async function gateOneSeatAcrossNameDrops(
     return [];
   });
   const seat = seatContinuity(posts, { surface: opts.surface, admittedWakeIds: wakes, workerRows });
+  const carried = seat.replies >= 2 ? [] : replyPostSurfaces(await ctx.auditRead({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION] }).catch(() => []));
   ctx.gate(
     seat.replies >= 2,
-    `second name-drop: two scoped replies landed before continuity was evaluated — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${opts.surface} since the first ask. Fewer than two and the continuity gate below has nothing to be about`,
+    `second name-drop: two scoped replies landed before continuity was evaluated — ${seat.replies} ${REPLY_POST_ACTION} row(s) on ${onSurface} since the first ask (the window's ${REPLY_POST_ACTION} surfaces: ${JSON.stringify(carried)}). Fewer than two and the continuity gate below has nothing to be about`,
   );
   ctx.gate(
     seat.unattributed === 0,
@@ -5576,7 +5582,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       const askedAt = driven.createdDateTime ?? sinceIso;
 
-      const isCard = (m: TeamsMessage): boolean => teams.isBotAuthored(m) && teamsApprovalCardActions(m).length > 0 && (m.createdDateTime ?? "") >= askedAt;
+      const isCard = (m: TeamsMessage): boolean => isTeamsPendingApprovalCard(m, { askedAt, isBot: (x) => teams.isBotAuthored(x) });
       const carded = await pollOptional<{ readonly card: TeamsMessage } | { readonly allow: true }>(
         async () => {
           const card = (await teams.channelRootMessages()).find(isCard) ?? (await teams.replies(driven.id)).find(isCard);
@@ -5775,26 +5781,47 @@ export const SCENARIOS: readonly Scenario[] = [
       const teams = ctx.teamsEngaged!;
       if (!ctx.auditRead) ctx.skip("S-INTRO-teams: the leg reads the teams.intro_posted row — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.");
       const auditRead = ctx.auditRead!;
+      const marker = teamsIntroMarkerPartition({ org: process.env[ENV.org]?.trim() || "default", tenantId: teams.tenantId, channelId: teams.channelId });
+      let reset: TeamsIntroReset | undefined;
+      let noReset: string | undefined;
+      const dbUrl = process.env.DATABASE_URL;
+      if (!dbUrl) {
+        noReset = "the reset needs the deployment's store — set DATABASE_URL";
+      } else {
+        try {
+          const store = await wireNeonOperationalStore(dbUrl);
+          reset = await resetTeamsIntroMarker({ memory: makePostgresProvider(await neonPgClient(dbUrl)), store }, marker);
+          if (reset.markerRemains) noReset = `the intro marker on ${marker.surfaceKey} is still present after the reset`;
+        } catch (err) {
+          noReset = `the intro-marker reset on ${marker.surfaceKey} failed (${String(err)})`;
+        }
+      }
+      if (noReset === undefined) ctx.log(`S-INTRO-teams: cleared the intro state on ${marker.surfaceKey} (marker before: ${reset!.markerBefore ?? "none"})`);
       const sinceIso = await presenceSince(ctx, "S-INTRO-teams", 15_000);
-      const intros = async () => auditRead({ sinceIso, platform: "teams", actions: ["teams.intro_posted"] });
+      const ofThisChannel = (r: { surface?: string; detail?: Record<string, unknown> }): boolean =>
+        String(r.detail?.conversationId ?? "").split(";messageid=")[0] === teams.channelId || r.surface === marker.surfaceKey || r.surface === marker.surface;
+      const intros = async () => (await auditRead({ sinceIso, platform: "teams", actions: ["teams.intro_posted"] })).filter(ofThisChannel);
       const first = await teams.postMention("Quick check: acknowledge in one line.");
       await teams.awaitReply(first.id, { timeoutMs: REPLY_WAIT });
-      const afterFirst = await pollOptional(async () => {
+      const afterFirst = noReset !== undefined ? undefined : await pollOptional(async () => {
         const rows = await intros();
         return rows.length > 0 ? rows : undefined;
-      }, { timeoutMs: AUDIT_ROW_WAIT, what: "a teams.intro_posted row" });
+      }, { timeoutMs: AUDIT_ROW_WAIT, what: "a teams.intro_posted row for this channel" });
       const second = await teams.postMention("And once more: acknowledge in one line.");
       await teams.awaitReply(second.id, { timeoutMs: REPLY_WAIT });
       await sleep(AUDIT_ROW_WAIT / 2);
       const total = (await intros()).length;
       ctx.gate(total <= 1, `S-INTRO-teams: at most ONE intro in this run across two @mentions — the marker is once per channel (got ${total})`);
-      if (afterFirst === undefined) {
+      if (noReset !== undefined) {
         ctx.skip(
-          "S-INTRO-teams: no teams.intro_posted row in this run, and TWO causes look identical here: (1) this channel was introduced on an " +
-            "earlier board (the marker is once per channel ever); (2) the first-contact door is dead. The once-only half passed. A fresh " +
-            "fixture channel, or a board right after this code ships, separates them.",
+          `S-INTRO-teams: the once-only half passed, but ${noReset}. Without the reset, an introduced channel and a dead first-contact door give the same silence, so the door is not measured.`,
         );
       }
+      ctx.gate(
+        afterFirst !== undefined,
+        `S-INTRO-teams: the first @mention after the reset wrote a teams.intro_posted row for this channel — the reset cleared the marker (before: ${reset!.markerBefore ?? "none"}) and the claim on ${marker.surfaceKey}, so no row is a dead first-contact door`,
+      );
+      ctx.gate(total === 1, `S-INTRO-teams: exactly ONE intro in this run across two @mentions (got ${total})`);
       const row = afterFirst![0]!;
       ctx.gate(row.detail?.door === "first-contact", `S-INTRO-teams: the intro came through the first-contact door (got ${String(row.detail?.door)})`);
       const posted = (await teams.channelRootMessages()).find((m) => teams.isBotAuthored(m) && m.text.includes("👋") && (m.createdDateTime ?? "") >= sinceIso);
@@ -5949,16 +5976,25 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S-SIBLING-teams",
-    title: "Sibling wake on Teams: two addressed messages are admitted as their own wakes into ONE standing seat (OPE-1836) — RED until the Teams seat grain is measured",
+    title: "Sibling wake on Teams: two @mentions, each in its own reply chain, are admitted as their own wakes into ONE standing seat (OPE-1836)",
     requires: ["teams"],
     surface: "teams",
     suite: "core",
     timeoutMs: 900_000,
     judged: false,
     run: async (ctx) => {
-      ctx.skip(
-        "RED-until-measured: Teams binds the audit `surface` to the CONVERSATION id at the reply-chain grain (19:…@thread.tacv2;ni=<root>), not the bare channel id, so the one-seat gate's exact-equality filter reads nothing — and separately, two mentions open two reply chains, so 'one seat across both' may not be this surface's shape at all. Read one live reply.post row's `surface` for a mentioned Teams turn, and settle whether two reply chains share a seat, before scoping this gate. Guessing either would red a healthy deployment.",
-      );
+      const teams = ctx.teams!;
+      const sinceIso = await presenceSince(ctx, "sinceIso", 30_000);
+      const first = await teams.postMention(`what's 12*12? reply with just the number. (${factToken("sibling-a")})`);
+      await teams.awaitReply(first.id, { timeoutMs: REPLY_WAIT });
+      const second = await teams.postMention(`separately — what's 13*13? reply with just the number. (${factToken("sibling-b")})`);
+      await teams.awaitReply(second.id, { timeoutMs: REPLY_WAIT });
+      await gateOneSeatAcrossNameDrops(ctx, {
+        sinceIso,
+        platform: "teams",
+        surface: [teamsReplyChainSurface(teams.channelId, first.id), teamsReplyChainSurface(teams.channelId, second.id)],
+        container: teamsSegment(teams.channelId),
+      });
     },
   },
   {

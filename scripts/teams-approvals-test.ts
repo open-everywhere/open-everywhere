@@ -573,6 +573,17 @@ async function auditFor(action: string, id: string) {
   ok(teamsDmApprovalCard({ dm: [card], channel: [card], askedAt, isBot, note, what })?.id === "card", "a card in the chat wins over a card in the channel");
   const unreadable = throwsShape(() => teamsDmApprovalCard({ dm: [{ ...card, id: "old", ...wire(oldCard) }], channel: [], askedAt, isBot, note, what }));
   ok(unreadable.includes("message old") && unreadable.includes("Action.Submit{oe_approval}"), `🔴 an unreadable bot card in the chat throws at once and names its buttons (got: ${unreadable})`);
+
+  const { isTeamsPendingApprovalCard } = await import("../packages/core/scripts/e2e/teams-driver.js");
+  const at = { askedAt, isBot };
+  const fresh = { ...bot, createdDateTime: "2026-10-18T10:00:05.000Z" };
+  ok(isTeamsPendingApprovalCard({ ...fresh, id: "p", ...wire(pendingTeamsCard(r, ["l"])) }, at), "S-CARD-teams: the real pending card is the card (the correct shape passes)");
+  ok(!isTeamsPendingApprovalCard({ ...fresh, id: "n", ...wire(judgeLiftNoticeTeamsCard(r, ["l"], "ran")) }, at), "🔴 S-CARD-teams: the real judge-lift notice (a contradict button only) is NOT the card");
+  ok(!isTeamsPendingApprovalCard({ ...fresh, id: "d", ...wire(decidedTeamsCard(r, ["l"], "Approved")) }, at), "S-CARD-teams: the real decided card is not a pending card");
+  ok(!isTeamsPendingApprovalCard({ ...fresh, id: "e", createdDateTime: "2026-10-18T09:59:00.000Z", ...wire(pendingTeamsCard(r, ["l"])) }, at), "S-CARD-teams: a card from BEFORE the ask is not this ask's card");
+  ok(!isTeamsPendingApprovalCard({ ...fresh, id: "o", fromApplicationId: "someone-else", ...wire(pendingTeamsCard(r, ["l"])) }, at), "S-CARD-teams: a card by another app is not the bot's card");
+  const rejectOnly = pendingTeamsCard(r, ["l"]) as unknown as { actions: unknown[] };
+  ok(isTeamsPendingApprovalCard({ ...fresh, id: "h", ...wire({ ...rejectOnly, actions: rejectOnly.actions.slice(1) }) }, at), "S-CARD-teams: a card with only one decision button still matches, so the leg's Approve-and-Reject gate reds on it");
 }
 
 console.log(`teams-approvals-test: ${n} assertions passed`);
