@@ -219,6 +219,9 @@ import {
   textOpensWithHeadline,
   isTestRunStampPost,
   leakedTestRunPosts,
+  auditRowKey,
+  rowsNotIn,
+  watchCardHeadline,
   type SettlementReplyVerdict,
   turnStartMs,
   UNACCOUNTED_WAKES_ACTION,
@@ -237,7 +240,7 @@ import {
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
 import { noteNamesViewedRoom, slackTsAt, toolCallsNamingRoom, turnRows, viewedRoomRows } from "./side-panel.js";
-import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, seatDelegationRows, TASK_WAKE_ACTION, WORK_FORWARDED_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, ingressOfDriverPost, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, seatDelegationRows, TASK_WAKE_ACTION, WORK_FORWARDED_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -2543,6 +2546,10 @@ export const SCENARIOS: readonly Scenario[] = [
             "without it a report with no (dms) bucket cannot be told apart from a window holding no DM spend",
         );
       }
+      const auditRead = ctx.auditRead;
+      if (auditRead === undefined) {
+        return ctx.fixtureMissing("S-SPEND-DM-MASK needs the control-plane audit reader to hold the report wait until a delegated task settles (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)");
+      }
       ctx.log(`S-SPEND-DM-MASK: reading the org-scope report as ${standing.principalKey} in ${room.channelId}`);
 
       await fenceDmSeat(ctx, "S-SPEND-DM-MASK");
@@ -2594,15 +2601,40 @@ export const SCENARIOS: readonly Scenario[] = [
           posted.push(m.text);
         }
       };
+      const awaitSettledAnswer = async (askTs: string, afterTs: string | undefined, floorIso: string): Promise<void> => {
+        const startedAt = Date.now();
+        const first = await room.awaitThreadReply(askTs, { ...(afterTs !== undefined ? { afterTs } : {}), timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+        const settled = await awaitDelegatedAnswer<SlackMessage>(
+          {
+            sleep,
+            now: () => Date.now(),
+            fetchRows: () => auditRead({ sinceIso: floorIso, actions: [REPLY_POST_ACTION, DELEGATION_TASK_STARTED_ACTION, DELEGATION_TASK_SETTLED_ACTION], limit: 1000 }),
+            nextReply: async (after, timeoutMs) => {
+              try {
+                return await room.awaitThreadReply(askTs, { afterTs: after, timeoutMs, skip: (m) => isFillerAck(m.text) });
+              } catch (err) {
+                if (err instanceof PollTimeout) return undefined;
+                throw err;
+              }
+            },
+            log: (line) => ctx.log(line),
+          },
+          first,
+          { floorMs: Date.parse(floorIso), timeoutMs: Math.max(0, FILE_REPLY_WAIT - (Date.now() - startedAt)), pollMs: DEFAULT_INITIAL_DELAY_MS, maxSteps: 3 },
+        );
+        ctx.log(`S-SPEND-DM-MASK: report wait ${settled.kind} (stepped over ${settled.stepped} interim post(s)) — ${settled.detail}`);
+      };
+      const askFloor = await presenceSince(ctx, "S-SPEND-DM-MASK ask");
       const { ts: askTs } = await room.post(room.mention(surfaceRowAsk));
-      await room.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      await awaitSettledAnswer(askTs, undefined, askFloor);
       await collectSinceAsk(askTs);
       let verdict = spendMaskVerdictOver(posted, keys);
 
       if (!verdict.bucket && verdict.bareBucketOnly) {
         ctx.log(`S-SPEND-DM-MASK: the reply named "(dms)" but not ${bucketKey} — asking once for the keys verbatim`);
+        const againFloor = await presenceSince(ctx, "S-SPEND-DM-MASK second ask");
         const { ts: againTs } = await room.post("print the surfaceKey of every aggregate row in that report exactly as the tool returned it, one per line, and nothing else", askTs);
-        await room.awaitThreadReply(askTs, { afterTs: againTs, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+        await awaitSettledAnswer(askTs, againTs, againFloor);
         await collectSinceAsk(askTs);
         verdict = spendMaskVerdictOver(posted, keys);
       }
@@ -2843,7 +2875,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 690_000,
+    timeoutMs: 860_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
@@ -2859,9 +2891,23 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.text.toLowerCase().includes(VOICE_CLIP_WORD),
         `🔴 the reply carries the word the clip SPOKE ("${VOICE_CLIP_WORD}") — the clip has no typed text, so only a heard clip gives it (reply: ${JSON.stringify(reply.text.slice(0, 160))})`,
       );
-      await assertDmDoorAdmitted(ctx, sinceIso, "S-VOICE-CLIP");
       if (ctx.auditRead) {
         const auditRead = ctx.auditRead;
+        const { teamId } = await dm.identity();
+        const dmSurfaceKey = `slack/${teamId}/${dm.channelId}`;
+        const clipVendorMs = slackVendorEventTime(clipMsg.ts)?.ms;
+        const ingress =
+          clipVendorMs === undefined
+            ? undefined
+            : await pollOptional(
+                async () =>
+                  ingressOfDriverPost(await auditRead({ sinceIso, actions: [WAKE_INGRESS_ACTION], limit: 200 }), { vendorMs: clipVendorMs, surfaceKey: dmSurfaceKey }),
+                { timeoutMs: 60_000, what: `a wake.ingress row for the clip message ${clipMsg.ts} on ${dmSurfaceKey}` },
+              );
+        ctx.gate(
+          ingress !== undefined,
+          `S-VOICE-CLIP: a wake.ingress row on ${dmSurfaceKey} names the clip message's own vendor instant (${clipMsg.ts}) — the real DM front door, not a forge, woke the seat on the uploaded clip`,
+        );
         const row = await pollOptional(
           async () => (await auditRead({ sinceIso, actions: ["voice.transcribed"] })).find((r) => Number((r.detail as { heard?: unknown } | undefined)?.heard) >= 1),
           { timeoutMs: 60_000, what: "a voice.transcribed audit row with heard >= 1" },
@@ -6626,6 +6672,8 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(published !== undefined, "S-DOING: the page with the list was published (a home.publish row with ok:true names the person)");
 
       const forgedAt = await presenceSince(ctx, "S-DOING forged pause");
+      const pauseActions = ["routine.paused", "personal_watch.dial.set"];
+      const beforeForged = new Set((await read({ sinceIso: forgedAt, actions: pauseActions, limit: 50 })).map(auditRowKey));
       const forged = await synthetic.homeSubmit({ teamId, action: "doing.pause", ref: "1".repeat(64) });
       ctx.gate(forged.status === 200, `S-DOING: the forged Pause submission is acknowledged (HTTP ${forged.status})`);
       const answered = await pollOptional(
@@ -6633,8 +6681,11 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-DOING: the republish after the forged Pause" },
       );
       ctx.gate(answered !== undefined, "S-DOING: the forged Pause was answered by republishing the page with a notice");
-      const pausedRows = (await read({ sinceIso: forgedAt, actions: ["routine.paused", "personal_watch.dial.set"], limit: 50 })).filter(ownRow);
-      ctx.gate(pausedRows.length === 0, `S-DOING: a digest that names nothing on the person's list paused nothing (${pausedRows.length} routine.paused / personal_watch.dial.set row(s))`);
+      const pausedRows = rowsNotIn(await read({ sinceIso: forgedAt, actions: pauseActions, limit: 50 }), beforeForged).filter(ownRow);
+      ctx.gate(
+        pausedRows.length === 0,
+        `S-DOING: a digest that names nothing on the person's list paused nothing (${pausedRows.length} routine.paused / personal_watch.dial.set row(s) after the forged submission, ${beforeForged.size} earlier row(s) excluded: ${JSON.stringify(pausedRows.map((r) => ({ action: r.action, ...r.detail })))})`,
+      );
 
       const pauseAt = await presenceSince(ctx, "S-DOING pause watch");
       const pause = await synthetic.homeSubmit({ teamId, action: "doing.pause", ref: watchRef });
@@ -6836,9 +6887,10 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(cardOrAllow !== undefined, "S-ASK-WATCH: the ask ended in a routine card (or the judge's allow)");
       if ("card" in cardOrAllow!) {
         const card = cardOrAllow.card;
-        const head = card.text.split("\n")[0] ?? "";
-        ctx.gate(/Start a watch in .* that watches GitHub for when /u.test(card.text), `S-ASK-WATCH: the card's headline names the app and the condition in words (${head.slice(0, 160)})`);
-        ctx.gate(!head.includes(".scope") && !head.includes("on github event"), "S-ASK-WATCH: the headline carries no raw filter");
+        const { head, namesInWords, rawFilter } = watchCardHeadline(card);
+        const raw = JSON.stringify(card.text.slice(0, 240));
+        ctx.gate(namesInWords, `S-ASK-WATCH: the card's headline block names the app and the condition in words (${JSON.stringify(head.slice(0, 160))}; text: ${raw})`);
+        ctx.gate(!rawFilter, `S-ASK-WATCH: the headline block carries no raw filter (${JSON.stringify(head.slice(0, 160))})`);
         ctx.gate(ctx.synthetic !== undefined, "S-ASK-WATCH: deciding the card needs the synthetic capability");
         const btn = approveButton(card)!;
         const rejected = await ctx.synthetic!.click({ pendingId: btn.pendingId, org: btn.org, decision: "reject", messageTs: card.ts, channelId: slack.channelId, teamId: (await slack.identity()).teamId });

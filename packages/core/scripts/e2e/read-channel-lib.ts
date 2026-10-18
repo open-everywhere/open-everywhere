@@ -246,7 +246,7 @@ export interface OwnWakeDriverPost {
   readonly surfaceKey?: string;
 }
 
-function ingressOfDriverPost(rows: readonly AuditWireEntry[], post: OwnWakeDriverPost): AuditWireEntry | undefined {
+export function ingressOfDriverPost(rows: readonly AuditWireEntry[], post: OwnWakeDriverPost): AuditWireEntry | undefined {
   return rows.find((r) => {
     if (r.action !== WAKE_INGRESS_ACTION) return false;
     if ((dS(r, "wakeId") ?? "").length === 0) return false;

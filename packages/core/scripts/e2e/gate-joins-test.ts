@@ -67,6 +67,9 @@ import {
   textOpensWithHeadline,
   isTestRunStampPost,
   leakedTestRunPosts,
+  auditRowKey,
+  rowsNotIn,
+  watchCardHeadline,
   turnStartMs,
   unattendedArmRoad,
   unifiedTurnSessionId,
@@ -75,7 +78,7 @@ import {
 } from "./gate-joins.js";
 import { runFallbackCheck } from "./judge.js";
 import { nextReplyCandidate, SlackDriver, type SlackMessage, type SteppedOverMessage } from "./slack-driver.js";
-import { classifyDelegatedAnswer, forwardedJobsDispatchedAtOrAfter, tasksDispatchedAtOrAfter } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, classifyDelegatedAnswer, forwardedJobsDispatchedAtOrAfter, ingressOfDriverPost, tasksDispatchedAtOrAfter } from "./read-channel-lib.js";
 import { seatCatchUpWake, SEAT_READ_RESULT_TYPES, SEAT_READ_TOOL, type TranscriptWireEvent } from "./transcript-read.js";
 
 let n = 0;
@@ -2322,5 +2325,73 @@ console.log("27. the fire report join ignores the creation turn's posts:");
   ok(!slackBody.includes('startsWith("🧪') && slackBody.match(/isTestRunStampPost\(m\.text\)/gu)?.length === 2, "🔴 S-ROUTINE-TEST: the root and the summary are found through the stamp reader, not a byte compare");
   ok(!discordBody.includes('startsWith("🧪') && discordBody.includes("leakedTestRunPosts(") && discordBody.includes("[root!.id, summary!.id]"), "🔴 S-ROUTINE-TEST-discord: the leak gate skips only the host's opening post and summary");
   ok(!/!after\.some\(\(m\) => m\.content\.includes\(posted\)\)/u.test(discordBody), "…and no longer counts every message that quotes the word");
+}
+{
+  const legSrc = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const legBody = (id: string): string => {
+    const at = legSrc.indexOf(`id: "${id}",`);
+    const end = legSrc.indexOf("\n    id: \"", at + 1);
+    return at > 0 ? legSrc.slice(at, end > at ? end : undefined) : "";
+  };
+
+  const reset = row("personal_watch.dial.set", "2026-02-19T23:07:08.548Z", { dial: "less", previous: "less", via: "command" }, 900);
+  const before = new Set([reset].map(auditRowKey));
+  ok(rowsNotIn([reset], new Set()).length === 1, "control: with an empty snapshot the reset row counts, so the drop comes from the snapshot alone");
+  ok(rowsNotIn([reset], before).length === 0, "🔴 A live run S-DOING: a row the read held BEFORE the forged submission is not the submission's effect");
+  const pausedByForge = row("personal_watch.dial.set", "2026-02-19T23:07:10.700Z", { dial: "none", previous: "less", via: "app-home" }, 905);
+  ok(rowsNotIn([reset, pausedByForge], before).map((r) => r.seq).join() === "905", "🔴 NEGATIVE CONTROL: a dial change the forged Pause wrote still counts");
+  const routinePaused = row("routine.paused", "2026-02-19T23:07:10.800Z", { id: "r1" }, 906);
+  ok(rowsNotIn([reset, routinePaused], before).length === 1, "…and so does a routine.paused row");
+  const noSeqReset = row("personal_watch.dial.set", "2026-02-19T23:07:08.548Z", { dial: "less", via: "command" });
+  const noSeqLater = row("personal_watch.dial.set", "2026-02-19T23:07:10.700Z", { dial: "none", via: "app-home" });
+  ok(rowsNotIn([noSeqReset, noSeqLater], new Set([auditRowKey(noSeqReset)])).length === 1, "on a build with no seq, the key falls back to action and ts, and the later row still counts");
+  const doing = legBody("S-DOING");
+  ok(/const beforeForged = new Set\(\(await read\(\{ sinceIso: forgedAt, actions: pauseActions[^\n]*\.map\(auditRowKey\)\);\n\s*const forged = await synthetic\.homeSubmit/u.test(doing), "🔴 S-DOING takes the snapshot BEFORE it sends the forged submission");
+  ok(doing.includes("rowsNotIn(await read({ sinceIso: forgedAt, actions: pauseActions, limit: 50 }), beforeForged).filter(ownRow)"), "…and the gate counts only the rows the snapshot did not hold");
+
+  const headline = "*Start a watch in <#C0EXCHAN003> that watches GitHub for when A new issue is opened in example-owner/e2e-scratch.*";
+  const detail = "If you approve, it wakes on only events where “.event == \"issues\" and .action == \"opened\" and .scope.container == \"example-owner/e2e-scratch\"”.";
+  const card = { text: headline + detail, blockTexts: [headline, detail] };
+  ok((card.text.split("\n")[0] ?? "").includes(".scope"), "control: the OLD read takes the first line of `text` and finds the raw filter of the detail block, which is the defect");
+  const readRl = watchCardHeadline(card);
+  ok(readRl.head === headline && readRl.namesInWords && !readRl.rawFilter, "🔴 A live run S-ASK-WATCH: the headline block names the app and the condition in words and carries no raw filter");
+  const rawHead = watchCardHeadline({ blockTexts: ["*Start a watch in <#C1> on github event where .scope.container == \"o/r\"*", detail] });
+  ok(rawHead.rawFilter, "🔴 NEGATIVE CONTROL: a headline block that quotes the raw filter still fails");
+  ok(!watchCardHeadline({ blockTexts: ["*Watch GitHub*"] }).namesInWords, "…and a headline block with no condition in words fails the other gate");
+  const noBlocks = watchCardHeadline({});
+  ok(!noBlocks.namesInWords && noBlocks.rawFilter, "…and a card with no readable block fails both gates");
+  const askWatch = legBody("S-ASK-WATCH");
+  ok(askWatch.includes("watchCardHeadline(card)") && !askWatch.includes('card.text.split("\\n")[0]'), "🔴 S-ASK-WATCH reads the headline through the block reader, not the fallback text");
+
+  const clipTs = "1700160020.100000";
+  const clipMs = Math.round(Number(clipTs) * 1000);
+  const dmKey = "slack/T0EXAMPLE/D0EXDMCH001";
+  const ingress = row("wake.ingress", "2026-02-19T23:03:33.771Z", { wakeId: "00000000-0000-4000-8000-000000000001", surfaceKey: dmKey, vendorTs: new Date(clipMs).toISOString() }, 910);
+  ok(ingressOfDriverPost([ingress], { vendorMs: clipMs, surfaceKey: dmKey }) === ingress, "🔴 A live run S-VOICE-CLIP: the clip message's own wake.ingress row proves the real DM door woke on it");
+  ok(ingressOfDriverPost([ingress], { vendorMs: clipMs, surfaceKey: "slack/T0EXAMPLE/D0OTHER" }) === undefined, "🔴 NEGATIVE CONTROL: an ingress row on another surface does not count");
+  ok(ingressOfDriverPost([ingress], { vendorMs: clipMs + 1, surfaceKey: dmKey }) === undefined, "…and neither does a row for another message on the DM");
+  const voice = legBody("S-VOICE-CLIP");
+  ok(!voice.includes("assertDmDoorAdmitted("), "🔴 S-VOICE-CLIP does not demand the driver-bot admission row for a user-token upload");
+  ok(voice.includes("ingressOfDriverPost(") && voice.includes('actions: ["voice.transcribed"]'), "…and gates on the clip's wake.ingress row and the voice.transcribed row instead");
+
+  const floorMs = Date.parse("2026-02-19T23:01:30.000Z");
+  const promise = { ts: "1700159820.100000", text: "The report will return this month's org-wide surface breakdown …" };
+  const report = { ts: "1700159920.100000", text: "slack/T0EXAMPLE/(dms) 41102184" };
+  const rowsRl = [
+    row("reply.post", "2026-02-19T23:01:38.808Z", { id: promise.ts }, 920),
+    row("delegation.task_started", "2026-02-19T23:01:38.000Z", { task: "task_Rl", session: "seat" }, 919, "ingest"),
+    row("delegation.task_settled", "2026-02-19T23:02:28.000Z", { task: "task_Rl", session: "seat", status: "completed" }, 930, "ingest"),
+    row("reply.post", "2026-02-19T23:02:30.596Z", { id: report.ts }, 931),
+  ];
+  let clock = floorMs;
+  const settled = await awaitDelegatedAnswer(
+    { sleep: async (ms) => { clock += ms; }, now: () => clock, fetchRows: async () => rowsRl, nextReply: async (after) => (after === promise.ts ? report : undefined), log: () => {} },
+    promise,
+    { floorMs, timeoutMs: 420_000, pollMs: 2_000, maxSteps: 3 },
+  );
+  ok(settled.message === report && settled.kind === "answer", "🔴 A live run S-SPEND-DM-MASK: the wait steps over the promise and holds until the report that follows the settlement");
+  const mask = legBody("S-SPEND-DM-MASK");
+  ok(mask.match(/await awaitSettledAnswer\(askTs, /gu)?.length === 2, "🔴 S-SPEND-DM-MASK holds BOTH asks open until their delegated tasks settle");
+  ok(!/await room\.awaitThreadReply\(askTs, \{ (afterTs: againTs, )?timeoutMs: FILE_REPLY_WAIT/u.test(mask), "…and no ask ends at its first reply any more");
 }
 console.log(`✓ ${n} gate-joins assertions passed`);

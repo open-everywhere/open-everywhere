@@ -1725,3 +1725,26 @@ export function judgeLiftDecision(rows: readonly AuditWireEntry[]): JudgeLiftDec
   if (chainJudgeConsult(chain) !== undefined && !verdictLanded) return undefined;
   return { noLift: judgeNoLiftReason(rows) };
 }
+
+export function auditRowKey(r: AuditWireEntry): string {
+  return typeof r.seq === "number" ? `seq:${r.seq}` : `${r.action}@${r.ts}`;
+}
+
+export function rowsNotIn(rows: readonly AuditWireEntry[], before: ReadonlySet<string>): readonly AuditWireEntry[] {
+  return rows.filter((r) => !before.has(auditRowKey(r)));
+}
+
+export interface WatchCardHeadline {
+  readonly head: string;
+  readonly namesInWords: boolean;
+  readonly rawFilter: boolean;
+}
+
+export function watchCardHeadline(card: { readonly blockTexts?: readonly string[] }): WatchCardHeadline {
+  const head = card.blockTexts?.[0] ?? "";
+  return {
+    head,
+    namesInWords: /Start a watch in .* that watches GitHub for when /u.test(head),
+    rawFilter: head.length === 0 || head.includes(".scope") || head.includes("on github event"),
+  };
+}
