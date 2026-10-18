@@ -1,5 +1,6 @@
 import { adminControlRoles } from "../../agent/access/roles.js";
 import { dmBucketKey } from "../../agent/spend/dm-mask.js";
+import { renderFriendlyText } from "../../agent/channels/friendly-ids.js";
 import type { Domain } from "../../agent/memory/domain.js";
 import { loadAppDomains } from "./app-config.js";
 
@@ -64,13 +65,29 @@ export interface SpendMaskVerdict {
   readonly bareBucketOnly: boolean;
 }
 
-export function spendMaskVerdict(reply: string, input: { readonly dmChannelId: string; readonly dmSurfaceKey: string }): SpendMaskVerdict {
-  const leaks = [input.dmChannelId, input.dmSurfaceKey].filter((needle) => needle.length > 0 && reply.includes(needle));
-  const bucket = reply.includes(dmBucketKey(input.dmSurfaceKey));
-  return { leaks: [...new Set(leaks)], bucket, bareBucketOnly: !bucket && reply.includes("(dms)") };
+export interface SpendMaskKeys {
+  readonly dmChannelId: string;
+  readonly dmSurfaceKey: string;
+  readonly workspaceNames?: readonly string[];
 }
 
-export function spendMaskVerdictOver(replies: readonly string[], input: { readonly dmChannelId: string; readonly dmSurfaceKey: string }): SpendMaskVerdict {
+export function spendMaskVerdict(reply: string, input: SpendMaskKeys): SpendMaskVerdict {
+  const literal = [input.dmChannelId, input.dmSurfaceKey].filter((needle) => needle.length > 0 && reply.includes(needle));
+  const [platform = "", workspace = ""] = input.dmSurfaceKey.split("/");
+  const friendlyDm = input.dmSurfaceKey.length > 0 ? renderFriendlyText(input.dmSurfaceKey, { platform }) : "";
+  const friendlyLines =
+    friendlyDm.length > 0 && friendlyDm !== input.dmSurfaceKey ? reply.split("\n").filter((line) => line.includes(friendlyDm)).map((line) => line.trim()) : [];
+  const rawBucket = dmBucketKey(input.dmSurfaceKey);
+  const named = (input.workspaceNames ?? []).filter((name) => name.trim().length > 0 && workspace.length > 0);
+  const renderings = [
+    renderFriendlyText(rawBucket, { platform }),
+    ...named.map((name) => renderFriendlyText(rawBucket, { platform, names: new Map([[workspace, { label: name.trim(), kind: "server" as const }]]) })),
+  ];
+  const bucket = reply.includes(rawBucket) || renderings.some((rendered) => rendered !== rawBucket && reply.includes(rendered));
+  return { leaks: [...new Set([...literal, ...friendlyLines])], bucket, bareBucketOnly: !bucket && reply.includes("(dms)") };
+}
+
+export function spendMaskVerdictOver(replies: readonly string[], input: SpendMaskKeys): SpendMaskVerdict {
   const each = replies.map((reply) => spendMaskVerdict(reply, input));
   const bucket = each.some((v) => v.bucket);
   return {

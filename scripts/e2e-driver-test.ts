@@ -408,6 +408,87 @@ const { parseAppMentionEvent } = await import(
   );
   ok(disjoint.leaks.length === 2 && disjoint.bucket, "NEGATIVE CONTROL: the fixture above really does carry both disclosures and the bucket, so the equality is not comparing two empty verdicts");
 
+  const { renderFriendlyText } = await import("../packages/core/agent/channels/friendly-ids.js");
+  const LIVE_DM = "slack/T0EXAMPLE/D0DRIVER01";
+  const liveKeys = { dmChannelId: "D0DRIVER01", dmSurfaceKey: LIVE_DM };
+  const posted = (raw: string, label?: string): string =>
+    renderFriendlyText(raw, { platform: "slack", ...(label ? { names: new Map([["T0EXAMPLE", { label, kind: "server" as const }]]) } : {}) });
+  const maskedRaw = "surfaces:\nslack/T0EXAMPLE/C0ROOM0001 198\nslack/T0EXAMPLE/(dms) 41,190,921";
+  const maskedPost = posted(maskedRaw);
+  ok(maskedPost.includes("your Slack workspace/(dms) 41,190,921") && !maskedPost.includes("slack/T0EXAMPLE"), "the fixture is the guard's real output: the bucket posts as `your Slack workspace/(dms)`, and no raw key survives");
+  const friendlyMasked = spendMaskVerdict(maskedPost, liveKeys);
+  ok(
+    friendlyMasked.bucket && friendlyMasked.leaks.length === 0 && !friendlyMasked.bareBucketOnly,
+    "🔴 a CORRECT mask, as the guard posts it, passes both gates — the live-run false red",
+  );
+  const labelledPost = posted(maskedRaw, "Acme & Co");
+  ok(labelledPost.includes("Acme &amp; Co/(dms) 41,190,921"), "the fixture is the guard's real output: a workspace the Slack resolver names posts as `<name>/(dms)`");
+  const labelled = spendMaskVerdict(labelledPost, { ...liveKeys, workspaceNames: ["Acme & Co"] });
+  ok(labelled.bucket && labelled.leaks.length === 0, "a workspace the guard renders by its NAME passes when the caller passes that name — the needle is the guard's own rendering of it");
+  const unnamed = spendMaskVerdict(labelledPost, liveKeys);
+  ok(
+    !unnamed.bucket && unnamed.bareBucketOnly,
+    "FAIL-CLOSED, BY CHOICE: a name the caller did not pass reds the positive gate rather than accept any text before `/(dms)`",
+  );
+  const keysOnly = spendMaskVerdict(posted("slack/T0EXAMPLE/C0ROOM0001\nslack/T0EXAMPLE/(dms),"), liveKeys);
+  ok(keysOnly.bucket && !keysOnly.bareBucketOnly, "the second ask's answer (keys only, no totals, a trailing comma) still shows the bucket");
+
+  const leakedPost = posted("surfaces:\nslack/T0EXAMPLE/C0ROOM0001 198\nslack/T0EXAMPLE/D0DRIVER01 20");
+  ok(!leakedPost.includes(LIVE_DM) && !leakedPost.includes("D0DRIVER01"), "the fixture is the guard's real output: an unmasked DM row posts with no literal key or channel id");
+  const friendlyLeak = spendMaskVerdict(leakedPost, liveKeys);
+  ok(
+    friendlyLeak.leaks.length === 1 && friendlyLeak.leaks[0] === "a direct message 20" && !friendlyLeak.bucket,
+    "🔴 a DM's spend that LEAKS into the channel report is still a disclosure after the guard hides its key — the exclusion reads the guard's rendering of the DM row",
+  );
+  const leakInContinuation = spendMaskVerdictOver([posted("Here's the breakdown:"), leakedPost, maskedPost], liveKeys);
+  ok(leakInContinuation.leaks.length === 1 && leakInContinuation.bucket, "…in any message of the answer, even beside a correct bucket row");
+  const shapes = [
+    "slack/T0EXAMPLE/D0OTHER001",
+    "- slack/T0EXAMPLE/D0DRIVER01,",
+    "> **slack/T0EXAMPLE/D0DRIVER01**:",
+    "+ slack/T0EXAMPLE/D0DRIVER01 (DM)",
+    "| `slack/T0EXAMPLE/D0DRIVER01` | 20 |",
+  ];
+  for (const shape of shapes) {
+    const v = spendMaskVerdict(posted(`slack/T0EXAMPLE/C0ROOM0001\n${shape}\nslack/T0EXAMPLE/(dms)`), liveKeys);
+    ok(v.leaks.length === 1 && v.bucket, `🔴 a leaked DM row shaped \`${shape}\` is a disclosure — any Slack DM, this leg's or another`);
+  }
+  const prose = spendMaskVerdict(posted("I can't post the spend of a direct message in <#C0ROOM0001> — it is pooled.\nslack/T0EXAMPLE/(dms) 20"), liveKeys);
+  ok(
+    prose.leaks.length === 1,
+    "FAIL-CLOSED, BY CHOICE: prose that names a direct message reds the exclusion too — a correct report has no reason to say it, and a narrower row test missed real rows",
+  );
+  ok(spendMaskVerdict(posted("DM spend is pooled, so no DM is listed.\nslack/T0EXAMPLE/(dms) 20"), liveKeys).leaks.length === 0, "NEGATIVE CONTROL: prose about DMs that does not use the DM rendering discloses nothing");
+
+  const notTheBucket = [
+    "discord/@me/(dms) 50",
+    "teams/00000000-0000-4000-8000-000000000090/(dms) 50",
+    "discord/123456789012345678/(dms) 9",
+    "Discord/(dms) 41",
+    "your workspace/(dms)",
+    "<workspace>/(dms)",
+    "DM spend is aggregated into a single workspace/(dms) bucket — see <#C0ROOM0001>",
+    "Slack/(dms) 41",
+  ];
+  for (const line of notTheBucket) {
+    const v = spendMaskVerdict(posted(`slack/T0EXAMPLE/C0ROOM0001 198\n${line}`), liveKeys);
+    ok(!v.bucket && v.bareBucketOnly, `🔴 NEGATIVE CONTROL: \`${line}\` is not this Slack platform's bucket`);
+  }
+  ok(
+    spendMaskVerdict(posted("slack/T9OTHER99/(dms) 41"), liveKeys).bucket,
+    "STATED LIMIT: the plain-words bucket names no workspace, so another Slack workspace's bucket reads as this one",
+  );
+  const parenthesised = posted("DM (slack/T0EXAMPLE/D0DRIVER01) 20");
+  ok(
+    parenthesised === "DM 20" && spendMaskVerdict(parenthesised, liveKeys).leaks.length === 0,
+    "KNOWN GAP: the guard DELETES a key in parentheses after a word (a label's own id), so that leaked row is invisible to any reader of the post",
+  );
+  const friendlyNote = spendMaskVerdict(posted('DM spend is aggregated into a single "(dms)" bucket per workspace — the total is 41,190,921 tokens.'), liveKeys);
+  ok(
+    !friendlyNote.bucket && friendlyNote.bareBucketOnly && friendlyNote.leaks.length === 0,
+    "🔴 the note false pass stays closed on the friendly match: the note carries `\"(dms)\"`, never the workspace words before `/(dms)`",
+  );
+
   const scenario = SCENARIOS.find((s) => s.id === "S-SPEND-DM-MASK")!;
   ok(scenario.surface === "slack", "S-SPEND-DM-MASK drives SLACK (OPE-1914) — a launch surface, so a missing fixture scores RED rather than a declared gap");
   ok(scenario.requires.join("+") === "slack+syntheticDm", "…and it needs only the Slack driver plus the real DM channel — the Discord capability went with the old vehicle");
