@@ -59,6 +59,10 @@ const NEWEST_WINS =
   "and do not report the pair as a conflict. If the two carry the SAME date, or either is undated, " +
   "nothing orders them: say the files disagree rather than choosing one.";
 
+const HELD_IN_CONVERSATION =
+  "A fact this conversation already holds is not a lookup: something a person said earlier here, " +
+  "or your own earlier reply. Answer from it directly.";
+
 const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: string; readonly heading: string }>> = {
   "file-tools": {
     lead: "Read the relevant silo with your tools before acting. " + NEWEST_WINS,
@@ -66,8 +70,8 @@ const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: strin
   },
   agent: {
     lead:
-      "This seat has NO file tools, so you cannot open these files yourself. To recall anything from " +
-      "memory, delegate a lookup: `agent` with `mode: \"sync\"` and a brief naming the paths below and " +
+      "This seat has NO file tools, so you cannot open these files yourself. " + HELD_IN_CONVERSATION + " " +
+      "To recall anything else from memory, delegate a lookup: `agent` with `mode: \"sync\"` and a brief naming the paths below and " +
       "what you need out of them (the worker has the file tools, greps the tree, and returns what it " +
       "found this turn). Do that before answering from guesswork — and if the lookup comes back empty, " +
       "say so rather than inventing the answer. " + NEWEST_WINS,
@@ -75,8 +79,8 @@ const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: strin
   },
   none: {
     lead:
-      "This seat has NO file tools and cannot delegate, so it CANNOT read these files. If a question " +
-      "turns on what is in them, say plainly that you can't check memory from here — never answer as " +
+      "This seat has NO file tools and cannot delegate, so it CANNOT read these files. " + HELD_IN_CONVERSATION + " " +
+      "If a question turns on what is in the files and nowhere else, say plainly that you can't check memory from here — never answer as " +
       "if you had read it.",
     heading: "## Silos — on disk, but unreachable from this seat",
   },
@@ -89,19 +93,19 @@ const RECALL_DELTA_TAILS: Readonly<Record<MemoryRecallRoute, { readonly content:
   },
   agent: {
     content:
-      "this seat has no file tools — ONLY if it bears on the current message, delegate a lookup " +
-      "(`agent`, `mode: \"sync\"`) naming the path; otherwise ignore it:",
+      "this seat has no file tools — ONLY if it bears on the current message and this conversation does " +
+      "not already hold the answer, delegate a lookup (`agent`, `mode: \"sync\"`) naming the path; otherwise ignore it:",
     index:
       "this seat has no file tools, so delegate a lookup (`agent`, `mode: \"sync\"`) naming the path " +
-      "before answering from memory, if it bears on the current message.",
+      "before answering from memory, if it bears on the current message and this conversation does not already hold the answer.",
   },
   none: {
     content:
-      "this seat CANNOT open these files — ONLY if it bears on the current message, say you can't " +
-      "check memory from here rather than answering as if you had:",
+      "this seat CANNOT open these files — ONLY if it bears on the current message and this conversation " +
+      "does not already hold the answer, say you can't check memory from here rather than answering as if you had:",
     index:
-      "this seat CANNOT open it — if it bears on the current message, say you can't check memory from " +
-      "here rather than answering as if you had.",
+      "this seat CANNOT open it — if it bears on the current message and this conversation does not already " +
+      "hold the answer, say you can't check memory from here rather than answering as if you had.",
   },
 };
 

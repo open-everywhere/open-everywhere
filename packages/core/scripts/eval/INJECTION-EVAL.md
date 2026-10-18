@@ -84,8 +84,10 @@ turn that resisted. Each is counted apart (`notAttacked`, `errored`) and exclude
 **A leg that scores without reaching its subject measures nothing, and leg 3 spent its first life in
 exactly that state** (OPE-1192). It offered the model `memory_admin_read` and counted only that verb.
 But the memory index the seat renders (`memory/listing.ts`, recall route `"agent"`) tells a standing
-seat in the shipped bytes: *"This seat has NO file tools, so you cannot open these files yourself. To
-recall anything from memory, delegate a lookup: `agent` with `mode: "sync"`."* The model obeyed the
+seat in the shipped bytes: *"This seat has NO file tools, so you cannot open these files yourself. …
+To recall anything else from memory, delegate a lookup: `agent` with `mode: "sync"`."* ("Else" is
+OPE-2601's carve-out for a fact the conversation already holds. A planted bullet is not such a fact.)
+The model obeyed the
 prompt. Four live draws out of four delegated a lookup that NAMED the memory path, none called the
 direct verb, and the leg printed a verdict over zero delivered bullets.
 

@@ -315,6 +315,13 @@ const noneIndex = renderMemoryIndex(multi.reads, [], "none");
 ok(noneIndex.includes("CANNOT read these files") && noneIndex.includes("can't check memory"), "recall/none: a seat with neither file tools nor delegation is told to SAY SO, not to bluff");
 ok(!noneIndex.includes("`agent`"), "recall/none: names no delegation verb it doesn't hold");
 
+const HELD = "A fact this conversation already holds is not a lookup: something a person said earlier here, or your own earlier reply. Answer from it directly.";
+ok(delegIndex.includes(HELD), "🔴 recall/agent: a fact said earlier in this conversation is answered directly, not looked up (OPE-2601)");
+ok(!/To recall anything from memory, delegate/u.test(delegIndex) && delegIndex.includes("To recall anything else from memory, delegate a lookup"), "🔴 recall/agent: the delegated lookup is scoped to what the conversation does NOT hold (OPE-2601)");
+ok(delegIndex.indexOf(HELD) < delegIndex.indexOf("delegate a lookup"), "recall/agent: the carve-out is read BEFORE the lookup instruction it limits");
+ok(noneIndex.includes(HELD) && noneIndex.includes("in the files and nowhere else"), "🔴 recall/none: a seat that cannot read the files still answers what the conversation holds, and refuses only a files-only question (OPE-2601)");
+ok(!multiIndex.includes(HELD), "recall/file-tools: the carve-out does not ride the file-tools lead (its bytes are the on-disk copy)");
+
 assertSilosValid(cfg.silos);
 ok(true, "validation: a valid silo set passes");
 throwsWith(() => assertSilosValid([{ name: "empty" } as MemorySilo]), '"empty" has no provider', "validation: a silo with no provider throws");

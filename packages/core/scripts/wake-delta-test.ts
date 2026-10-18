@@ -87,6 +87,10 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
   const none = content("none");
   ok(none.includes("CANNOT open these files") && none.includes("say you can't check memory"), "delta route none: refuses rather than inviting a bluff");
   ok(!none.includes("delegate a lookup"), "delta route none: does not name a delegation verb the seat lacks");
+  for (const r of ["agent", "none"] as const) {
+    ok(content(r).includes("this conversation does not already hold the answer"), `🔴 delta route ${r}: no lookup or refusal for what the conversation already holds (OPE-2601)`);
+    ok(index(r).includes("this conversation does not already hold the answer"), `🔴 index-delta route ${r}: no lookup or refusal for what the conversation already holds (OPE-2601)`);
+  }
 
   ok(content(undefined) === content(memoryRecallRouteFor("standing")), "delta default: is the STANDING seat's route, not file-tools-by-assumption");
   ok(index(undefined) === index(memoryRecallRouteFor("standing")), "index-delta default: is the STANDING seat's route");
