@@ -3015,7 +3015,7 @@ export const SECTION_DEPLOY: readonly DocEntry[] = [
       "```json",
       "{",
       "  \"contract\": 1,",
-      "  \"version\": { \"app\": \"unversioned\", \"core\": \"0.8.0\", \"eve\": \"0.71.0\" },",
+      "  \"version\": { \"app\": \"unversioned\", \"core\": \"0.8.1\", \"eve\": \"0.71.0\" },",
       "  \"host\": \"vercel\",",
       "  \"requirements\": [",
       "    { \"id\": \"node-24\", \"met\": \"yes\", \"detail\": \"running node 24.21.0, which satisfies 24.x\" }",

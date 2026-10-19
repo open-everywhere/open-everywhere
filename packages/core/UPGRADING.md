@@ -77,8 +77,8 @@ and the installed core ships no `upgrading.json`. Install the target core beside
 gitignored `.open-everywhere/` directory, and run that core's `oe` from the app root:
 
 ```sh
-npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.8.0 tsx@4
-node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.8.0
+npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.8.1 tsx@4
+node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.8.1
 ```
 
 The run renames `create-open-everywhere`, bumps every pin, installs, and then reads the target's
@@ -94,6 +94,14 @@ that release or a later one as the target, this one-liner is the bootstrap too:
 ```sh
 npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 ```
+
+## 0.8.1 — 2026-10-19
+
+0.8.1 is a patch release. It needs no upgrade step. It has two fixes. The first is on Slack. The second is in core and acts on every surface that marks a message as addressed. First, a person in a 1:1 DM with the Slack bot now sees a 👀 and a `Working...` status line in the DM while the turn runs (OPE-2629). Both signs clear when the turn finishes or waits on the person. A turn that fails does not clear its signs. A group DM shows no signs. The 👀 needs the `reactions:write` scope, and the status line needs the `assistant:write` scope and the agent view. The current Slack manifest grants all three. An install that never re-applied the manifest does not show the matching sign, and logs the fix once per process. Second, the seat no longer skips an addressed ask as a duplicate only because carried history holds an earlier answer to the same words (OPE-2623). On a message that the surface marks as addressed, the seat now needs its own earlier answer to the same ask in the current generation of the window. An answer from before the window last rotated does not count. A message without that mark has no such check. A seat that records no session tail, such as a thread seat or a per-surface seat, has no earlier answer to show, so it cannot skip a marked message as a duplicate. One gap stays: the check can run before the surface records the new message, and then it judges only the earlier messages that wait for an answer. A refused skip writes the new audit row `reply.no_reply_duplicate_refused`.
+
+eve peer: `0.71.0`
+
+No breaking change, no config migration, no env change, no manual step and no new default.
 
 ## 0.8.0 — 2026-10-19
 
