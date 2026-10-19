@@ -227,12 +227,16 @@ dies with `ERR_MODULE_NOT_FOUND` on a consumer's first run. That bug shipped onc
 (`oe secret`). It bites `@open-everywhere/create` hardest, because that package ships no compiled
 form at all.
 
-The gate is deliberately outside `npm test`, and the cost is not evenly spread. `attw` checks each
-enumerated subpath against the whole graph behind it, so `@open-everywhere/core`'s 706 subpaths over
-the agent graph dominate. Measured on a 4 vCPU machine: **the whole gate takes about 21 minutes**, and
-core is effectively all of it — every other package's `attw` finishes in two to three seconds. Run the
-gate before a publish, and after any change to a `files` allowlist, an `exports` map or a
-`.gitignore` — `--only <pkgDir>` narrows it to one package while you iterate.
+The gate is deliberately outside `npm test`, and the cost is not evenly spread. `attw` builds a
+TypeScript program for each enumerated subpath under four resolution kinds, so
+`@open-everywhere/core`'s ~950 subpaths dominate. Stock attw spends about 3.5 seconds on each, and the
+gate took about 66 minutes (OPE-2620). `scripts/attw-cache-preload.mjs` removes two costs that grow
+with the package's size, and **the whole gate now takes about 1.5 minutes** on a 4 vCPU machine. The
+preload changes attw's speed, not its answer: `npm run test:attw-cache-preload` runs attw with and
+without it, on a clean tarball and on a planted defect, and requires byte-identical output. publint
+and attw both read the tarball the gate packed, so the gate's own assertions, publint and attw read
+the same bytes. Run the gate before a publish, and after any change to a `files` allowlist, an
+`exports` map or a `.gitignore` — `--only <pkgDir>` narrows it to one package while you iterate.
 
 ### `publish:preview` — the control step
 

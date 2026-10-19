@@ -181,6 +181,7 @@ test:discord-declared-target
 test:routine-test-run-surfaces
 test:publish-license
 test:publish-readme
+test:attw-cache-preload
 test:linear-read-work-grant
 test:notion-work-grant
 test:deploy-proxy-dispatcher

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { localBinCommand, npmCommand } from "./npm-command.js";
 import { EVE_PATCH_PARTS } from "@open-everywhere/core/agent/access/eve-patch-probe.js";
 import {
@@ -21,6 +22,8 @@ import { checkPackageReadme, checkReadmeEvePin, checkTarballReadme } from "./pub
 const FORBIDDEN_LIFECYCLE = ["preinstall", "install", "postinstall", "prepublish", "prepare"];
 
 const BIN_PACKAGES: readonly string[] = PUBLISHABLE_BIN_PACKAGES;
+
+const ATTW_PRELOAD = fileURLToPath(new URL("./attw-cache-preload.mjs", import.meta.url));
 
 const only = process.argv.includes("--only") ? process.argv[process.argv.indexOf("--only") + 1] : undefined;
 const targets = only ? ALL_PUBLISHABLE_PACKAGES.filter((p) => p === only) : [...ALL_PUBLISHABLE_PACKAGES];
@@ -287,9 +290,10 @@ for (const pkgDir of targets) {
       }
     }
 
-    const pl = run(...localBinCommand("publint", "publint", ["--strict", pkgDir]));
+    const pl = run(...localBinCommand("publint", "publint", ["--strict", relative(dest, tgz)]), dest);
     if (pl.code !== 0) fail(`publint:\n${pl.out.trim()}`);
-    const at = isBin ? { code: 0, out: "" } : run(...localBinCommand("@arethetypeswrong/cli", "attw", ["--pack", pkgDir, "--profile", "esm-only"]));
+    const [attwNode, attwArgs] = localBinCommand("@arethetypeswrong/cli", "attw", [relative(dest, tgz), "--profile", "esm-only"]);
+    const at = isBin ? { code: 0, out: "" } : run(attwNode, ["--import", pathToFileURL(ATTW_PRELOAD).href, ...attwArgs], dest);
     if (at.code !== 0) fail(`attw:\n${at.out.trim()}`);
     console.log(`  ${at.code === 0 && pl.code === 0 && reds.length === 0 ? "✓" : "·"} ${name}: ${listing.length} file(s) packed`);
   } finally {
