@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**727 rows: 724 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**728 rows: 725 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 719 rows are live behaviours and the other five are the retired action
+gives a different number: 720 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 365 | 0 |
+| 4. The audit action vocabulary | 366 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -472,11 +472,12 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `reply.edit` | `packages/core/agent/channels/reply-edit.ts:82` | core/channels | An edit rewrites a message this deployment posted; the row never carries the text. | `docs/security/audit-and-provenance.md#whats-logged` | n/a: unannotated — lane F |
 | `reply.edit.refused` | `packages/core/agent/channels/reply-edit.ts:62` | core/channels | An edit is refused, and the row names which of the three reasons held. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | n/a: unannotated — lane F |
 | `reply.forced` | `packages/core/agent/channels/reply-post.ts:110` | core/channels | The model overrides a reply verdict with force, and the row names the verdict. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
-| `reply.no_reply` | `packages/core/agent/tools/no_reply.ts:270` | core/tools | A judged silence is recorded; this row is gated by the test-only silence-audit switch, which no setting, env var or committed production module arms. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
+| `reply.no_reply` | `packages/core/agent/tools/no_reply.ts:173` | core/tools | A judged silence is recorded; this row is gated by the test-only silence-audit switch, which no setting, env var or committed production module arms. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `reply.no_reply_addressed_to_other_refused` | `packages/core/agent/channels/engaged-wake.ts:28` | core/channels | A no_reply is refused because the wake addressed somebody else. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_after_stand_down` | `packages/core/agent/channels/reply-signal.ts:206` | core/channels | A `no_reply` is REFUSED because the turn still owes a stand-down acknowledgement; the call throws and no silence is recorded. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
+| `reply.no_reply_duplicate_refused` | `packages/core/agent/tools/no_reply.ts:45` | core/tools | A `no_reply` with reason `duplicate` is REFUSED on an addressed wake whose window holds no answered earlier copy of the message; the call throws and no silence is recorded. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_observed` | `packages/core/agent/channels/chat-turn-audit.ts:12` | core/channels | The no_reply tool or the bare sentinel always writes this minimal row. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
-| `reply.no_reply_redundant` | `packages/core/agent/tools/no_reply.ts:238` | core/tools | A second no_reply for the same wake is recorded as redundant. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | ? |
+| `reply.no_reply_redundant` | `packages/core/agent/tools/no_reply.ts:153` | core/tools | A second no_reply for the same wake is recorded as redundant. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | ? |
 | `reply.post` | `packages/core/agent/channels/reply-post.ts:67` | core/channels | One reply leaves the choke point; the platform column names the surface it landed on. | `docs/security/audit-and-provenance.md#whats-logged` (+5) | ? |
 | `reply.post.failed` | `packages/core/agent/channels/reply-post.ts:86` | core/channels | A reply reaches the platform and fails; the row carries the status and the failure class. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | ? |
 | `reply.provenance` | `packages/core/agent/channels/reply-provenance.ts:203` | core/channels | A reply records what it read and what it withheld. | `docs/security/audit-and-provenance.md#whats-logged` (+1) | ? |

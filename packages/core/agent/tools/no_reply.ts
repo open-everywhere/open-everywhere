@@ -25,7 +25,9 @@ import { standDownAckRoute } from "./stand_down.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { auditSilencesEnabled } from "../audit/audit.js";
-import { currentTurnId, currentWakeId, type BindableContext } from "../identity/binding.js";
+import { currentTurnAddressed, currentTurnId, currentWakeId, type BindableContext } from "../identity/binding.js";
+import { readWindowRing } from "../channels/session-tail-record.js";
+import { answeredRepeatOnRing } from "../channels/session-tail.js";
 
 export const NO_REPLY_REASONS = [
   "addressed_to_other",
@@ -39,6 +41,14 @@ export const NO_REPLY_REASONS = [
 ] as const;
 
 export const NO_REPLY_REDUNDANT_CLOSEOUT_REASON = "no-reply-redundant";
+
+export const NO_REPLY_DUPLICATE_UNANSWERED_ACTION = "reply.no_reply_duplicate_refused";
+
+export const NO_REPLY_DUPLICATE_UNANSWERED_REFUSAL =
+  "This message addressed you, and you have not answered it in this conversation — " +
+  "`duplicate` is not available on this wake. An older copy of the same words in the history above " +
+  "does not answer a new ask: the person is asking again now, and on a message that addressed you " +
+  "another participant's answer does not discharge yours either. Answer it, or do what it asks.";
 
 export const NO_REPLY_NOTE =
   `Turn reply requirement satisfied — silence recorded as this turn's answer. ` +
@@ -123,6 +133,17 @@ export default defineTool({
           ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
         });
         throw new Error(NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL);
+      }
+    }
+    if (input.reason === "duplicate" && peekNoReplyThisTurn() === null && currentTurnAddressed(ctx as BindableContext)) {
+      const window = await readWindowRing();
+      if (window === undefined || !answeredRepeatOnRing(window.ring, window.container)) {
+        await auditToolAction(ctx, NO_REPLY_DUPLICATE_UNANSWERED_ACTION, {
+          reason: input.reason,
+          window: window === undefined ? "unread" : "no-answered-copy",
+          ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+        });
+        throw new Error(NO_REPLY_DUPLICATE_UNANSWERED_REFUSAL);
       }
     }
     const already = peekNoReplyThisTurn();

@@ -74,6 +74,39 @@ export function buildTail(ring: readonly SessionTailEntry[], capTokens: number =
   return selectTail(orderRing(ring), capTokens).map(tailEntryToWakeMessage);
 }
 
+function askWords(text: string): string {
+  return text
+    .replace(/^\s*(?:<@[^>]+>[\s,:]*)+/, "")
+    .replace(/<[@#!]([^>|]+)(?:\|[^>]*)?>/g, " $1 ")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+export function answeredRepeatOnRing(ring: readonly SessionTailEntry[], container?: string): boolean {
+  const rows = orderRing(ring).filter((e) => container === undefined || e.container === undefined || e.container === container);
+  let lastPost = -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i]!.kind === "post") {
+      lastPost = i;
+      break;
+    }
+  }
+  const waiting = rows.slice(lastPost + 1).filter((e) => e.kind === "wake");
+  if (waiting.length === 0) return false;
+  const answered = new Set<string>();
+  let segment: string[] = [];
+  for (let i = 0; i <= lastPost; i++) {
+    const e = rows[i]!;
+    if (e.kind === "wake") segment.push(askWords(e.text));
+    else {
+      if (segment.length > 0 && segment[0] !== "" && segment.every((w) => w === segment[0])) answered.add(segment[0]!);
+      segment = [];
+    }
+  }
+  return waiting.every((w) => answered.has(askWords(w.text)));
+}
+
 function orderRing(ring: readonly SessionTailEntry[]): SessionTailEntry[] {
   return [...ring].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.kind.localeCompare(b.kind));
 }

@@ -177,3 +177,17 @@ export async function readConversationCarry(org: string, registryKey: string, st
     return [];
   }
 }
+
+export async function readWindowRing(
+  store: OperationalStore = getOperationalStore(),
+): Promise<{ readonly ring: SessionTailEntry[]; readonly container?: string } | undefined> {
+  const w = tailWindow();
+  if (!w) return undefined;
+  try {
+    const ring = await store.readSessionTail(w.org, w.registryKey, w.token);
+    return { ring, ...(w.container ? { container: w.container } : {}) };
+  } catch (err) {
+    console.warn(`[open-everywhere:session-tail] window ring not read (${w.registryKey}): ${String(err)}`);
+    return undefined;
+  }
+}

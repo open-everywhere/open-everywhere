@@ -172,6 +172,87 @@ await inSession(async () => {
   );
 });
 
+{
+  const { answeredRepeatOnRing } = await import("../agent/channels/session-tail.js");
+  const { seedTailWindow } = await import("../agent/channels/session-tail-record.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { NO_REPLY_DUPLICATE_UNANSWERED_ACTION } = await import("../agent/tools/no_reply.js");
+  type Row = Parameters<typeof answeredRepeatOnRing>[0][number];
+  const ROOM = "slack/T1/C1";
+  const ASK = "<@UBOT> tell me here when a new issue is opened in acme/repo.";
+  const wake = (at: string, text: string, container = ROOM): Row => ({ kind: "wake", at, from: "human", trust: "peer", refuted: false, author: "U1", authorId: "U1", container, text });
+  const post = (at: string, text = "On it, I will set up that watch."): Row => ({ kind: "post", at, from: "self", trust: "relay", refuted: false, author: "self", container: ROOM, text });
+  const t = (s: number) => new Date(Date.UTC(2026, 9, 19, 1, 51, s)).toISOString();
+
+  ok(answeredRepeatOnRing([wake(t(1), ASK)]) === false, "OPE-2623 ring: a fresh window holding only the trigger has no answered copy");
+  ok(answeredRepeatOnRing([]) === false, "OPE-2623 ring: an empty ring (trigger not recorded yet) has no answered copy");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), post(t(2)), wake(t(3), "tell me here when a new issue is opened in acme/repo")]) === true, "OPE-2623 ring: an earlier copy the seat answered in this window is a true repeat (mention and punctuation ignored)");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), wake(t(3), ASK)]) === false, "OPE-2623 ring: an earlier copy nobody answered is not a repeat");
+  ok(answeredRepeatOnRing([post(t(0)), wake(t(1), ASK), wake(t(3), ASK)]) === false, "OPE-2623 ring: a seat post BEFORE the earlier copy answers nothing");
+  ok(answeredRepeatOnRing([wake(t(1), "what's our deploy day?"), post(t(2)), wake(t(3), ASK)]) === false, "OPE-2623 ring: an answered DIFFERENT ask does not make this one a repeat");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), post(t(2)), wake(t(3), ASK), post(t(4))]) === false, "OPE-2623 ring: a trigger the seat already posted after is not this turn's trigger");
+  ok(answeredRepeatOnRing([wake(t(1), ASK, "slack/T1/C2"), post(t(2)), wake(t(3), ASK)], ROOM) === false, "OPE-2623 ring: a copy answered in ANOTHER room of a cross-surface window does not count");
+  ok(answeredRepeatOnRing([wake(t(1), "<@UBOT> summarize <#C111|eng>"), post(t(2)), wake(t(3), "<@UBOT> summarize <#C222|sales>")]) === false, "OPE-2623 ring: two asks that differ only by the channel they name are two asks");
+  ok(answeredRepeatOnRing([wake(t(1), "<@UBOT> ping <@U1> about it"), post(t(2)), wake(t(3), "<@UBOT> ping <@U2> about it")]) === false, "OPE-2623 ring: two asks that differ only by the person they name are two asks");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), wake(t(2), "what's our deploy day?"), post(t(3)), wake(t(4), ASK)]) === false, "OPE-2623 ring: a post that answered a DIFFERENT, later wake did not answer the earlier copy");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), post(t(2)), wake(t(3), "<@UBOT> what's our deploy day?"), wake(t(4), ASK)]) === false, "🔴 OPE-2623 ring: a later answered repeat landing mid-turn does not cover an unanswered trigger before it");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), wake(t(2), "<@UBOT> what's our deploy day?"), post(t(3)), wake(t(4), "<@UBOT> what's our deploy day?")]) === false, "🔴 OPE-2623 ring: a message sent while the seat composed another answer is not marked answered by that post");
+  ok(answeredRepeatOnRing([wake(t(1), ASK), wake(t(2), ASK), post(t(3)), wake(t(4), ASK)]) === true, "OPE-2623 ring: a post after two copies of the same ask answers that ask");
+  ok(answeredRepeatOnRing([wake(t(1), "thanks"), post(t(2)), wake(t(3), ASK), post(t(4)), wake(t(5), "thanks"), wake(t(6), ASK)]) === true, "OPE-2623 ring: every waiting message an answered repeat is a true repeat");
+
+  const addressedCtx = () => ({
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", oe_addressed: "1" }, principalId: "U1", principalType: "slack-user" } } },
+  });
+  const refusedRows = async () => (await readAudit({ org: "default", action: NO_REPLY_DUPLICATE_UNANSWERED_ACTION })).length;
+  const store = getOperationalStore();
+  const window = (token: string) => ({ org: "default", registryKey: "oe-dom:e2e-unified", token, platform: "slack", container: ROOM });
+
+  await inSession(async () => {
+    const w = window("oe-dom:e2e-unified:oe-sup:g2-aaaaaa");
+    await store.appendSessionTail(w.org, w.registryKey, w.token, wake(t(1), ASK));
+    seedTailWindow(w);
+    const before = await refusedRows();
+    let threw: unknown;
+    try {
+      await noReply.execute({ reason: "duplicate" }, addressedCtx());
+    } catch (err) {
+      threw = err;
+    }
+    ok(threw instanceof Error && threw.message.includes("`duplicate` is not available on this wake"), "🔴 OPE-2623: `duplicate` on an addressed wake with no answered copy in the window is REFUSED");
+    ok(peekNoReplyThisTurn() === null, "OPE-2623: the refused call records no silence, so the reply stays owed");
+    ok((await refusedRows()) - before === 1, "OPE-2623: the refusal writes ONE reply.no_reply_duplicate_refused row");
+    const r = await noReply.execute({ reason: "nothing_to_add" }, addressedCtx());
+    ok(r.acknowledged === true, "OPE-2623: every other reason stays available after the refusal");
+  });
+
+  await inSession(async () => {
+    const before = (await readAudit({ org: "default", action: NO_REPLY_DUPLICATE_UNANSWERED_ACTION })).filter((r: { detail?: { window?: string } }) => r.detail?.window === "unread").length;
+    let threw: unknown;
+    try {
+      await noReply.execute({ reason: "duplicate" }, addressedCtx());
+    } catch (err) {
+      threw = err;
+    }
+    ok(threw instanceof Error && threw.message.includes("`duplicate` is not available on this wake"), "OPE-2623: an addressed `duplicate` with no window to prove it is refused BY THIS GUARD");
+    const after = (await readAudit({ org: "default", action: NO_REPLY_DUPLICATE_UNANSWERED_ACTION })).filter((r: { detail?: { window?: string } }) => r.detail?.window === "unread").length;
+    ok(after - before === 1, "OPE-2623: the no-window refusal writes ONE row with window \"unread\"");
+  });
+
+  await inSession(async () => {
+    const w = window("oe-dom:e2e-unified:oe-sup:g3-bbbbbb");
+    for (const row of [wake(t(1), ASK), post(t(2)), wake(t(3), ASK)]) await store.appendSessionTail(w.org, w.registryKey, w.token, row);
+    seedTailWindow(w);
+    const r = await noReply.execute({ reason: "duplicate" }, addressedCtx());
+    ok(r.acknowledged === true && peekNoReplyThisTurn() === "duplicate", "OPE-2623 NEGATIVE CONTROL: an addressed ask the seat already answered in this window may still end as `duplicate`");
+  });
+
+  await inSession(async () => {
+    const r = await noReply.execute({ reason: "duplicate" }, ctx());
+    ok(r.acknowledged === true && peekNoReplyThisTurn() === "duplicate", "OPE-2623 NEGATIVE CONTROL: `duplicate` on an unaddressed wake is untouched");
+  });
+}
+
 await inSession(async () => {
   const ordinary = finalMessageActionForTurn("stop", "here's the summary you asked for");
   ok(ordinary.kind === "post" && ordinary.text === "here's the summary you asked for", "finalMessageActionForTurn: an ordinary reply posts unchanged when no_reply wasn't called");

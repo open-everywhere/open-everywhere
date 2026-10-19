@@ -1134,6 +1134,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "reply.no_reply",
   "reply.no_reply_addressed_to_other_refused",
   "reply.no_reply_after_stand_down",
+  "reply.no_reply_duplicate_refused",
   "reply.no_reply_observed",
   "reply.no_reply_redundant",
   "reply.post.failed",
