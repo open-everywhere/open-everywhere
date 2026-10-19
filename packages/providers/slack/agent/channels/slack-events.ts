@@ -85,6 +85,7 @@ import {
   type EngagementRow,
   type ChannelSessionRow,
   type RoomRoster,
+  type RoomShape,
   type ContextLine,
   type WakeAttachment,
   type WakeMessageInput,
@@ -102,7 +103,9 @@ import {
   slackMode,
   buildSlackAuth,
   channelFactsFromInfo,
+  imRosterFactsFromInfo,
   partnerFactsFromInfo,
+  slackUserGuestFlagged,
   appCanReadConversation,
   type ChannelFacts,
   type OpenEverywhereSlackAuth,
@@ -1820,7 +1823,7 @@ export async function slackGovernanceRoster(channelId: string): Promise<RoomRost
     const cursor = (members.response_metadata as { next_cursor?: string } | undefined)?.next_cursor;
     if (cursor && cursor.length > 0) {
       if (facts.trustChecked === true && facts.isExternal === true) {
-        return { humanMemberIds: [], resolved: true, isPrivate: facts.isPrivate === true, hasGuest: true };
+        return { humanMemberIds: [], resolved: true, isPrivate: facts.isPrivate === true, hasGuest: true, ...slackRoomShape(facts) };
       }
       if (facts.trustChecked !== true) {
         return { humanMemberIds: [], resolved: false, unresolvedState: "failed", isPrivate: false, hasGuest: false };
@@ -1832,16 +1835,42 @@ export async function slackGovernanceRoster(channelId: string): Promise<RoomRost
     const humanMemberIds = (members.members as unknown[])
       .filter((m): m is string => typeof m === "string")
       .filter((m) => m !== botId);
+    const im = imRosterFactsFromInfo(info);
+    if (im) return await slackImRoster(im, humanMemberIds, facts.isPrivate === true);
     return {
       humanMemberIds,
       resolved: facts.trustChecked === true,
       ...(facts.trustChecked === true ? {} : { unresolvedState: "failed" as const }),
       isPrivate: facts.isPrivate === true,
       hasGuest: facts.isExternal === true,
+      ...slackRoomShape(facts),
     };
   } catch {
     return { humanMemberIds: [], resolved: false, unresolvedState: "failed", isPrivate: false, hasGuest: false };
   }
+}
+
+async function slackImRoster(
+  im: { readonly partnerId?: string; readonly connectShared: boolean },
+  humanMemberIds: readonly string[],
+  isPrivate: boolean,
+): Promise<RoomRoster> {
+  if (im.connectShared) return { humanMemberIds, resolved: true, isPrivate, hasGuest: true, room: "dm" };
+  const partnerId = im.partnerId ?? (humanMemberIds.length === 1 ? humanMemberIds[0] : undefined);
+  if (partnerId === undefined) return { humanMemberIds, resolved: true, isPrivate, hasGuest: false, room: "dm" };
+  const who = await slackForm("users.info", `user=${encodeURIComponent(partnerId)}`);
+  const user = who?.ok === true ? (who.user as Record<string, unknown> | undefined) : undefined;
+  if (!user || typeof user !== "object") {
+    return { humanMemberIds: [], resolved: false, unresolvedState: who?.ok === true ? "failed" : slackRosterFailureState(who), isPrivate: false, hasGuest: false };
+  }
+  return { humanMemberIds, resolved: true, isPrivate, hasGuest: slackUserGuestFlagged(user), room: "dm" };
+}
+
+function slackRoomShape(facts: ChannelFacts): { readonly room?: RoomShape } {
+  if (facts.channelType === "im") return { room: "dm" };
+  if (facts.channelType === "mpim") return { room: "group-dm" };
+  if (facts.channelType === "channel" || facts.channelType === "group") return { room: "channel" };
+  return {};
 }
 
 export function registerSlackGovernanceMembers(): void {

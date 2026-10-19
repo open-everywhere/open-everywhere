@@ -13,7 +13,10 @@ export interface RoomRoster {
   readonly unresolvedState?: UnresolvedRosterState;
   readonly isPrivate: boolean;
   readonly hasGuest: boolean;
+  readonly room?: RoomShape;
 }
+
+export type RoomShape = "dm" | "group-dm" | "channel";
 
 export type UnresolvedRosterState = "unobservable" | "failed";
 

@@ -452,6 +452,7 @@
     "ResolvedConnectorTransport",
     "RetryPolicy",
     "RoomRoster",
+    "RoomShape",
     "RotationThresholds",
     "RotationTrigger",
     "RoutedCallOptions",

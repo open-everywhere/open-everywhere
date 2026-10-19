@@ -1943,7 +1943,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const { classifyCardDisclosure, cardDisclosureRefusalNotice } = await import("../agent/approvals/card-disclosure.js");
   const store = getOperationalStore();
 
-  const roster = (over: Partial<{ resolved: boolean; hasGuest: boolean; isPrivate: boolean }> = {}) => ({
+  const roster = (over: Partial<{ resolved: boolean; hasGuest: boolean; isPrivate: boolean; room: "dm" | "group-dm" | "channel" }> = {}) => ({
     humanMemberIds: ["U1"],
     resolved: true,
     isPrivate: true,
@@ -1959,6 +1959,13 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const notice = cardDisclosureRefusalNotice();
   ok(notice.length > 0 && !/spend|token|\$|domain|scope|forget|memory\b/i.test(notice), "cardDisclosureRefusalNotice: CONTENT-FREE — it names no action kind, figure, domain or scope");
   ok(/extern|guest/i.test(notice) && /channel/i.test(notice), "cardDisclosureRefusalNotice: names the room property and the concrete fix, not merely the blockage");
+  const dmNotice = cardDisclosureRefusalNotice("dm");
+  ok(/this DM/.test(dmNotice) && !/this channel/.test(dmNotice), "cardDisclosureRefusalNotice(\"dm\"): names the room as a DM, never \"this channel\"");
+  ok(!/spend|token|\$|domain|scope|forget|memory\b/i.test(dmNotice), "cardDisclosureRefusalNotice(\"dm\"): CONTENT-FREE too");
+  ok(/this group DM/.test(cardDisclosureRefusalNotice("group-dm")), "cardDisclosureRefusalNotice(\"group-dm\"): names the room as a group DM");
+  ok(/this channel/.test(cardDisclosureRefusalNotice("channel")), "cardDisclosureRefusalNotice(\"channel\"): says \"this channel\"");
+  const dmRefusal = classifyCardDisclosure({ floor: "guest", roster: roster({ room: "dm" }) });
+  ok(!dmRefusal.ok && dmRefusal.room === "dm", "classifyCardDisclosure: the refusal carries the roster's room, so the propose path can name it");
 
   _resetAudienceFloorCacheForTest();
   const CARD_ROSTERS: Record<string, ReturnType<typeof roster>> = {

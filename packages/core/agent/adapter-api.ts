@@ -278,7 +278,7 @@ export { bootVerifyAuditChainTail } from "./audit/chain.js";
 export { bootBackfillLinkTenants } from "./identity/link-tenant-backfill.js";
 
 export { registerGovernanceMemberSupplier, _resetGovernanceMemberSupplierForTest } from "./access/audience-floor.js";
-export type { RoomRoster, GovernanceMemberSupplier } from "./access/audience-floor.js";
+export type { RoomRoster, RoomShape, GovernanceMemberSupplier } from "./access/audience-floor.js";
 
 export {
   declareProviderSelection,

@@ -715,7 +715,7 @@ export async function requestApproval(
         },
       }).catch(() => undefined);
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "withheld" });
-      throw new Error(cardDisclosureRefusalNotice());
+      throw new Error(cardDisclosureRefusalNotice(disclosure.room));
     }
   }
 

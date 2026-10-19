@@ -96,13 +96,25 @@ function slackWorkspaceVouched(teamId: string | undefined, enterpriseId: string 
 export function partnerFactsFromInfo(info: unknown, expectedTeamId?: string): { dmPartnerTrust: "internal" | "external" } {
   const u = (info as { user?: Record<string, unknown> } | null)?.user;
   if (!u || typeof u !== "object") return { dmPartnerTrust: "external" };
-  const guestOrStranger = Boolean(u["is_restricted"] || u["is_ultra_restricted"] || u["is_stranger"]);
+  const guestOrStranger = slackUserGuestFlagged(u);
   const deleted = Boolean(u["deleted"]);
   const homeTeamId = typeof u["team_id"] === "string" ? (u["team_id"] as string) : undefined;
   const ownWorkspace = expectedTeamId !== undefined && expectedTeamId.length > 0 && homeTeamId === expectedTeamId;
   const admittedWorkspace = ownWorkspace || slackWorkspaceVouched(homeTeamId, enterpriseIdOfUser(u));
   const internal = !guestOrStranger && !deleted && admittedWorkspace;
   return { dmPartnerTrust: internal ? "internal" : "external" };
+}
+
+export function slackUserGuestFlagged(u: Record<string, unknown>): boolean {
+  return Boolean(u["is_restricted"] || u["is_ultra_restricted"] || u["is_stranger"]);
+}
+
+export function imRosterFactsFromInfo(info: unknown): { readonly partnerId?: string; readonly connectShared: boolean } | undefined {
+  const ch = (info as { channel?: Record<string, unknown> } | null)?.channel;
+  if (!ch || typeof ch !== "object" || ch["is_im"] !== true) return undefined;
+  const partnerId = typeof ch["user"] === "string" && ch["user"].length > 0 ? (ch["user"] as string) : undefined;
+  const connectShared = Boolean(ch["is_ext_shared"] || ch["is_pending_ext_shared"]);
+  return { ...(partnerId === undefined ? {} : { partnerId }), connectShared };
 }
 
 export function channelFactsFromRaw(raw: Record<string, unknown>): ChannelFacts {
