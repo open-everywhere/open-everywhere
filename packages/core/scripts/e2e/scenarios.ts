@@ -6231,6 +6231,15 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: AUDIT_ROW_WAIT, what: "a wake.turn_start row for the S-SESSION-STOP ask" },
       );
 
+      const eyesOn = await pollOptional(
+        async () => ((await dm.reactions(sessionTs)).includes("eyes") ? true : undefined),
+        { timeoutMs: AUDIT_ROW_WAIT, what: `a 👀 on the DM message ${sessionTs} while its turn runs` },
+      );
+      ctx.gate(
+        eyesOn === true,
+        `S-SESSION-STOP: the person's DM message carries 👀 while its turn runs (reactions.get on ${sessionTs}). Absent: the code lost the DM sign, or the app lacks reactions:write — the deployment logs the refused reactions.add once, under [open-everywhere:slack-session]`,
+      );
+
       const pressed = await synthetic.sessionStop({ channelId: dm.channelId, threadTs: sessionTs, userId: personId, teamId });
       ctx.gate(pressed.status === 200, `S-SESSION-STOP: the signed Stop press is acknowledged (${pressed.label}, HTTP ${pressed.status})`);
 
@@ -6253,6 +6262,11 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.log(`S-SESSION-STOP: the turn's own process wrote ${partner.action}${partner.action === "turn.stop_ignored" ? " — eve accepted the cancel and never applied it (turn-cancel.ts TURN_STOP_IGNORED_ACTION)" : ""}`);
       ctx.gate(partner.action === "turn.cancelled", `S-SESSION-STOP: the turn really stopped — its own process wrote turn.cancelled (got ${partner.action})`);
+      const eyesOff = await pollOptional(
+        async () => (!(await dm.reactions(sessionTs)).includes("eyes") ? true : undefined),
+        { timeoutMs: AUDIT_ROW_WAIT, what: `the 👀 removed from ${sessionTs} after the turn stopped` },
+      );
+      ctx.gate(eyesOff === true, `S-SESSION-STOP: the 👀 leaves the DM message once the turn has stopped (reactions.get on ${sessionTs})`);
     },
   },
 

@@ -216,7 +216,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     area: "slack-agent-session",
     globs: ["packages/providers/slack/agent/channels/slack-agent-session.ts", "packages/core/agent/channels/surface-session-state.ts"],
     scenarios: ["S-SESSION-STOP"],
-    why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's native Stop button. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn, and `surface-session-state.ts` drives the session state the button appears on.",
+    why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's native Stop button. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn, and `surface-session-state.ts` drives the session state the button appears on. Since OPE-2629 the leg also reads `reactions.get` on the DM message: 👀 while the turn runs, gone after the stop, which `slack-agent-session.ts` sets through the same setter.",
   },
   {
     area: "work-surface-wait",

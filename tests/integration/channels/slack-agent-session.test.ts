@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "vitest";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+import { __setTestValveForTest, testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
 
 import {
   auditCursor,
@@ -35,6 +36,8 @@ const FORWARD_DM = "D0OPE2519FWD";
 
 const HOLD_MS = 90_000;
 
+let posted = 0;
+
 function armSlackStub(): SlackWebApiStub {
   return installSlackWebApiStub((method, params) => {
     switch (method) {
@@ -44,6 +47,12 @@ function armSlackStub(): SlackWebApiStub {
         return { ok: true, user: { id: params.get("user"), team_id: SLACK_TEAM_ID, is_bot: false, is_restricted: false, is_ultra_restricted: false, is_stranger: false, profile: { display_name: "ope2519-person" } } };
       case "agents.sessions.setStatus":
         return { ok: true, status: params.get("status") };
+      case "reactions.add":
+      case "reactions.remove":
+      case "assistant.threads.setStatus":
+        return { ok: true };
+      case "chat.postMessage":
+        return { ok: true, channel: params.get("channel"), ts: slackTs(Date.now(), 251_990 + ++posted) };
       default:
         return undefined;
     }
@@ -54,6 +63,17 @@ function sessionCalls(s: SlackWebApiStub, channelId: string): { readonly status:
   return s.calls
     .filter((c) => c.method === "agents.sessions.setStatus" && c.params.get("channel_id") === channelId)
     .map((c) => ({ status: c.params.get("status"), threadTs: c.params.get("thread_ts"), title: c.params.get("title") }));
+}
+
+type SignCall = readonly [method: string, ts: string | null, status: string | null];
+function signCalls(s: SlackWebApiStub, channelId: string): SignCall[] {
+  const reactions = s.calls
+    .filter((c) => (c.method === "reactions.add" || c.method === "reactions.remove") && c.params.get("channel") === channelId && c.params.get("name") === "eyes")
+    .map((c): SignCall => [c.method, c.params.get("timestamp"), null]);
+  const statuses = s.calls
+    .filter((c) => c.method === "assistant.threads.setStatus" && c.params.get("channel_id") === channelId)
+    .map((c): SignCall => ["assistant.threads.setStatus", c.params.get("thread_ts"), c.params.get("status")]);
+  return [...reactions, ...statuses];
 }
 
 async function postSlackEvent(base: string, body: Record<string, unknown>, signed: boolean): Promise<{ status: number; body: string }> {
@@ -86,21 +106,43 @@ test("a new DM conversation gets a title, shows processing while it works and su
       ],
     }),
   );
-  expect(sessionCalls(stub, TITLE_DM)).toEqual([]);
+  const spoofWas = testValveArmed("egress-spoof");
+  __setTestValveForTest("egress-spoof", false);
+  let rootTs = "";
+  let first: ReturnType<typeof sessionCalls> = [];
+  try {
+    expect(sessionCalls(stub, TITLE_DM)).toEqual([]);
+    expect(signCalls(stub, TITLE_DM)).toEqual([]);
 
-  const rootTs = slackTs(Date.now(), 251_901);
-  const res = await slackDmWake({ channelId: TITLE_DM, userId: DM_USER_ID, text: "<@U0OPE2519BOT> Plan the *launch* review for Friday", ts: rootTs });
-  expect(res.status, `the DM wake POST was not accepted: ${res.body.slice(0, 200)}`).toBe(200);
+    rootTs = slackTs(Date.now(), 251_901);
+    const res = await slackDmWake({ channelId: TITLE_DM, userId: DM_USER_ID, text: "<@U0OPE2519BOT> Plan the *launch* review for Friday", ts: rootTs });
+    expect(res.status, `the DM wake POST was not accepted: ${res.body.slice(0, 200)}`).toBe(200);
 
-  const first = await waitFor(() => {
-    const calls = sessionCalls(stub!, TITLE_DM);
-    return calls.some((c) => c.status === "suspended") ? calls : undefined;
-  }, "the park's suspended call on the new session");
-  expect(asks.requests.filter((r) => r.fault !== undefined)).toEqual([]);
-  expect(first.every((c) => c.threadTs === rootTs), `every call names the session the message opened (${JSON.stringify(first)})`).toBe(true);
-  expect(first[0], "the DM door creates the session, titled, before the turn starts").toEqual({ status: "active", threadTs: rootTs, title: "Plan the launch review for Friday" });
-  expect(first.slice(1).map((c) => c.status), "the turn shows processing, and its park shows suspended").toEqual(["processing", "suspended"]);
-  expect(first.slice(1).every((c) => c.title === null), "only the creating call carries the title, so a person's rename is never overwritten").toBe(true);
+    first = await waitFor(() => {
+      const calls = sessionCalls(stub!, TITLE_DM);
+      return calls.some((c) => c.status === "suspended") ? calls : undefined;
+    }, "the park's suspended call on the new session");
+    expect(asks.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(first.every((c) => c.threadTs === rootTs), `every call names the session the message opened (${JSON.stringify(first)})`).toBe(true);
+    expect(first[0], "the DM door creates the session, titled, before the turn starts").toEqual({ status: "active", threadTs: rootTs, title: "Plan the launch review for Friday" });
+    expect(first.slice(1).map((c) => c.status), "the turn shows processing, and its park shows suspended").toEqual(["processing", "suspended"]);
+    expect(first.slice(1).every((c) => c.title === null), "only the creating call carries the title, so a person's rename is never overwritten").toBe(true);
+    const signs = await waitFor(() => {
+      const calls = signCalls(stub!, TITLE_DM);
+      return calls.some((c) => c[0] === "reactions.remove") && calls.filter((c) => c[0] === "assistant.threads.setStatus").length >= 2 ? calls : undefined;
+    }, "the DM turn's 👀 and status line, set and cleared");
+    expect(signs, "👀 on, status line on, then both cleared — all on the message the person sent").toEqual([
+      ["reactions.add", rootTs, null],
+      ["reactions.remove", rootTs, null],
+      ["assistant.threads.setStatus", rootTs, "Working..."],
+      ["assistant.threads.setStatus", rootTs, ""],
+    ]);
+    const addAt = stub.calls.findIndex((c) => c.method === "reactions.add" && c.params.get("channel") === TITLE_DM);
+    const parkAt = stub.calls.findIndex((c) => c.method === "agents.sessions.setStatus" && c.params.get("channel_id") === TITLE_DM && c.params.get("status") === "suspended");
+    expect(addAt >= 0 && addAt < parkAt, `the 👀 is added before the park (add ${addAt}, park ${parkAt})`).toBe(true);
+  } finally {
+    __setTestValveForTest("egress-spoof", spoofWas);
+  }
   asks.dispose();
   live.delete(asks);
 

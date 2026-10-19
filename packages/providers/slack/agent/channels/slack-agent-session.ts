@@ -1,6 +1,8 @@
 import {
   cancelAnchoredTurn,
   resolvePartition,
+  STATUS_REACTION,
+  swallowRoomOp,
   turnAnchorKey,
   turnChannelKey,
   type AttachSessionForCancel,
@@ -17,6 +19,8 @@ export const SLACK_SESSION_TITLE_MAX = 60;
 export type SlackSessionStatus = "processing" | "active" | "suspended";
 
 const AGENT_SESSION_TS_ATTRIBUTE = "agent_session_ts";
+
+const SESSION_PIN_ATTRIBUTE = "oe_session_pin";
 
 export type SlackFormCall = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -82,15 +86,59 @@ export const slackSurfaceSessionPin: SurfaceSessionPinner = (attributes) => {
   if (!session) return undefined;
   return {
     id: `${session.channelId}:${session.threadTs}`,
-    attributes: { channel_id: session.channelId, channel_type: "im", [AGENT_SESSION_TS_ATTRIBUTE]: session.threadTs },
+    attributes: { channel_id: session.channelId, channel_type: "im", [AGENT_SESSION_TS_ATTRIBUTE]: session.threadTs, [SESSION_PIN_ATTRIBUTE]: "1" },
   };
 };
+
+export const SLACK_DM_WORKING_STATUS = "Working...";
+
+const WORKING_REACTION = STATUS_REACTION.working;
+
+const SIGN_SETUP_FIX: Readonly<Record<string, string>> = {
+  "reactions.add": "the 👀 needs the reactions:write bot scope",
+  "reactions.remove": "the 👀 needs the reactions:write bot scope",
+  "assistant.threads.setStatus": "the DM status line needs the assistant:write bot scope and the agent view (features.agent_view)",
+};
+const SIGN_SETUP_ERRORS = new Set(["missing_scope", "feature_disabled", "not_allowed_token_type", "not_allowed", "access_denied"]);
+const SIGN_NO_OP_ERRORS = new Set(["already_reacted", "no_reaction"]);
+const warnedSignErrors = new Set<string>();
+
+async function sendSign(form: SlackFormCall, method: string, body: URLSearchParams): Promise<void> {
+  let error: string;
+  try {
+    const res = await form(method, body.toString());
+    if (res?.ok === true) return;
+    error = String(res?.error ?? "no answer");
+  } catch (err) {
+    error = String(err);
+  }
+  if (SIGN_NO_OP_ERRORS.has(error)) return;
+  const key = `${method}:${error}`;
+  if (warnedSignErrors.has(key)) return;
+  warnedSignErrors.add(key);
+  const fix = SIGN_SETUP_ERRORS.has(error)
+    ? `${SIGN_SETUP_FIX[method] ?? "this sign needs a manifest scope"}. Fix: paste the app manifest again (App Manifest → Save Changes) and reinstall if Slack asks`
+    : "the sign is best-effort and the turn goes on";
+  console.warn(`[open-everywhere:slack-session] ${method} failed (${error}) — ${fix}. Logged once per process.`);
+}
+
+export function _resetSignWarningsForTest(): void {
+  warnedSignErrors.clear();
+}
+
+async function setSlackDmWorkingSigns(session: { readonly channelId: string; readonly threadTs: string }, working: boolean, form: SlackFormCall = slackForm): Promise<void> {
+  if (swallowRoomOp(`a slack DM working sign ${working ? "add" : "remove"}`)) return;
+  const reaction = new URLSearchParams({ channel: session.channelId, name: WORKING_REACTION, timestamp: session.threadTs });
+  const status = new URLSearchParams({ channel_id: session.channelId, thread_ts: session.threadTs, status: working ? SLACK_DM_WORKING_STATUS : "" });
+  await Promise.all([sendSign(form, working ? "reactions.add" : "reactions.remove", reaction), sendSign(form, "assistant.threads.setStatus", status)]);
+}
 
 export function slackSurfaceSessionSetter(form: SlackFormCall = slackForm): SurfaceSessionSetter {
   return async (attributes, status) => {
     const session = slackAgentSessionOf(attributes);
     if (!session) return undefined;
-    await setSlackSessionStatus({ ...session, status }, form);
+    const fromTurn = attributes[SESSION_PIN_ATTRIBUTE] === undefined;
+    await Promise.all([setSlackSessionStatus({ ...session, status }, form), ...(fromTurn ? [setSlackDmWorkingSigns(session, status === "processing", form)] : [])]);
     return `${session.channelId}:${session.threadTs}`;
   };
 }

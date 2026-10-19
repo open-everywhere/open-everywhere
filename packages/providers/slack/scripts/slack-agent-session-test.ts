@@ -10,7 +10,9 @@ import {
   slackSurfaceSessionSetter,
   slackSessionStatusForm,
   slackSessionTitle,
+  SLACK_DM_WORKING_STATUS,
   SLACK_SESSION_TITLE_MAX,
+  _resetSignWarningsForTest,
   type SlackSessionStatusCall,
 } from "../agent/channels/slack-agent-session.js";
 import { classifyEnvelope } from "../agent/channels/slack-front.js";
@@ -141,7 +143,11 @@ console.log("§5 the state setter");
   };
   const named = await slackSurfaceSessionSetter(recorder)({ channel_id: "D0PARK", channel_type: "im", agent_session_ts: "9.9" }, "suspended");
   eq(named, "D0PARK:9.9", "the setter answers the conversation it named, so core can tell two conversations apart");
-  eq(sent.map((c) => [c.method, c.body.get("channel_id"), c.body.get("thread_ts"), c.body.get("status")]), [["agents.sessions.setStatus", "D0PARK", "9.9", "suspended"]], "the setter sets that session's state");
+  eq(
+    sent.filter((c) => c.method === "agents.sessions.setStatus").map((c) => [c.body.get("channel_id"), c.body.get("thread_ts"), c.body.get("status")]),
+    [["D0PARK", "9.9", "suspended"]],
+    "the setter sets that session's state",
+  );
   sent.length = 0;
   eq(await slackSurfaceSessionSetter(recorder)({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }, "processing"), undefined, "a delivery that names no session answers undefined");
   eq(sent.length, 0, "the setter makes no call for a session it does not name");
@@ -152,10 +158,96 @@ console.log("§5 the state setter");
   ok(/registerSurfaceSessionState\("slack", slackSurfaceSessionSetter\(\), slackSurfaceSessionPin\)/.test(body), "registerSlackProvider registers the Slack session setter AND its pinner with core");
 
   const pin = slackSurfaceSessionPin({ team_id: "T1", channel_id: "D0PARK", channel_type: "im", user_id: "U7", agent_session_ts: "9.9", oe_wake: "w-1" });
-  eq(pin, { id: "D0PARK:9.9", attributes: { channel_id: "D0PARK", channel_type: "im", agent_session_ts: "9.9" } }, "the pin is the setter's id and three ids: no wake stamp, no person id");
+  eq(
+    pin,
+    { id: "D0PARK:9.9", attributes: { channel_id: "D0PARK", channel_type: "im", agent_session_ts: "9.9", oe_session_pin: "1" } },
+    "the pin is the setter's id, three ids and the pin mark: no wake stamp, no person id",
+  );
   eq(await slackSurfaceSessionSetter(recorder)(pin!.attributes, "suspended"), pin!.id, "the pinned bag names the same session to the setter");
   eq(slackSurfaceSessionPin({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }), undefined, "a channel thread pins nothing");
   eq(slackSurfaceSessionPin({ channel_id: "D0PARK", channel_type: "im", oe_work_result: "r-1" }), undefined, "a result wake's bag names no session, so it pins nothing");
+}
+
+console.log("§6 the working signs (OPE-2629): the 👀 and the status line on a DM turn");
+{
+  _resetSignWarningsForTest();
+  const sent: { method: string; body: URLSearchParams }[] = [];
+  const recorder = async (method: string, body: string) => {
+    sent.push({ method, body: new URLSearchParams(body) });
+    return { ok: true };
+  };
+  const setter = slackSurfaceSessionSetter(recorder);
+  const dm = { team_id: "T1", channel_id: "D0EYES", channel_type: "im", user_id: "U7", agent_session_ts: "1700159720.000200" };
+  const signs = () =>
+    sent
+      .filter((c) => c.method !== "agents.sessions.setStatus")
+      .map((c) => [c.method, c.body.get("channel") ?? c.body.get("channel_id"), c.body.get("timestamp") ?? c.body.get("thread_ts"), c.body.get("name") ?? c.body.get("status")]);
+
+  await setter(dm, "processing");
+  eq(
+    signs(),
+    [
+      ["reactions.add", "D0EYES", "1700159720.000200", "eyes"],
+      ["assistant.threads.setStatus", "D0EYES", "1700159720.000200", SLACK_DM_WORKING_STATUS],
+    ],
+    "a DM turn's start adds 👀 on the session root (the message itself when top-level) and shows the status line there",
+  );
+  sent.length = 0;
+  await setter(dm, "active");
+  eq(
+    signs(),
+    [
+      ["reactions.remove", "D0EYES", "1700159720.000200", "eyes"],
+      ["assistant.threads.setStatus", "D0EYES", "1700159720.000200", ""],
+    ],
+    "the park removes the 👀 and clears the status line: absence is the done signal",
+  );
+  sent.length = 0;
+  await setter(dm, "suspended");
+  eq(signs().map((s) => [s[0], s[3]]), [["reactions.remove", "eyes"], ["assistant.threads.setStatus", ""]], "a park that waits on the person clears the signs too: the turn no longer works");
+
+  sent.length = 0;
+  await setter({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }, "processing");
+  await setter({ channel_id: "G0GROUP", channel_type: "mpim", agent_session_ts: "9.9" }, "processing");
+  eq(sent.length, 0, "a channel thread and a group DM get no DM sign and no session call");
+
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args.map(String).join(" "));
+  try {
+    const refusing = async (method: string, _body: string) =>
+      method === "reactions.add" ? { ok: false, error: "missing_scope" } : method === "assistant.threads.setStatus" ? { ok: false, error: "not_allowed_token_type" } : method === "reactions.remove" ? { ok: false, error: "no_reaction" } : { ok: true };
+    const s2 = slackSurfaceSessionSetter(refusing);
+    await s2(dm, "processing");
+    await s2(dm, "processing");
+    await s2(dm, "active");
+  } finally {
+    console.warn = realWarn;
+  }
+  eq(warned.length, 2, "two distinct setup failures log once each, however many turns hit them; a no-op logs nothing");
+  ok(warned.some((w) => w.includes("reactions.add") && w.includes("reactions:write") && w.includes("manifest")), "a refused 👀 names the reactions:write scope and the manifest paste");
+  ok(warned.some((w) => w.includes("assistant.threads.setStatus") && w.includes("assistant:write") && w.includes("agent_view")), "a refused status line names assistant:write, the agent view and the manifest paste");
+
+  sent.length = 0;
+  const pinned = slackSurfaceSessionPin(dm)!;
+  eq(await setter(pinned.attributes, "suspended"), pinned.id, "a pinned bag still names the session");
+  eq(sent.map((c) => c.method), ["agents.sessions.setStatus"], "a job's settlement (a pinned bag) sets the session state and sends no 👀 or status-line call");
+  sent.length = 0;
+  await setter(pinned.attributes, "active");
+  eq(sent.map((c) => c.method), ["agents.sessions.setStatus"], "a job that moves on (a pinned bag) sends no sign call either");
+
+  warned.length = 0;
+  console.warn = (...args: unknown[]) => void warned.push(args.map(String).join(" "));
+  try {
+    eq(await slackSurfaceSessionSetter(async () => { throw new Error("boom"); })(dm, "processing"), "D0EYES:1700000000.000200", "a throwing transport never throws out of the setter");
+  } finally {
+    console.warn = realWarn;
+  }
+  ok(warned.some((w) => w.includes("reactions.add failed")) && !warned.some((w) => w.includes("reactions.add") && w.includes("manifest")), "a transport fault logs without a manifest fix it does not need");
+
+  const scopes = (JSON.parse(slackAppManifestTemplate()) as { oauth_config: { scopes: { bot: string[] } } }).oauth_config.scopes.bot;
+  ok(scopes.includes("reactions:write") && scopes.includes("assistant:write"), "the manifest grants reactions:write and assistant:write");
+  _resetSignWarningsForTest();
 }
 
 console.log(`\n✓ slack-agent-session: ${passed} checks passed`);
