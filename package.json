@@ -178,6 +178,8 @@
     "deploy:cloud-proof-verify": "tsx scripts/deploy/cloud-proof-verify.ts",
     "deploy:cloud-proof-post": "tsx scripts/deploy/cloud-proof-post.ts",
     "release-record:generate": "tsx scripts/release-record-generate.ts",
+    "release:patch": "tsx scripts/release-patch.ts",
+    "test:release-patch": "NODE_NO_WARNINGS=1 tsx scripts/release-patch-test.ts",
     "lint:upgrading-notes": "tsx scripts/upgrading-notes-generate.ts --check",
     "test:upgrading-notes": "NODE_NO_WARNINGS=1 tsx scripts/upgrading-notes-test.ts",
     "test:upgrade-surface": "NODE_NO_WARNINGS=1 tsx scripts/upgrade-surface-test.ts",

@@ -370,7 +370,9 @@ it unseen.
 
 ## Versions track milestones, not merges
 
-**One version per milestone.** Not one per batch merge, and not one per pull request.
+**One minor version per milestone.** Not one per batch of merges, and not one per pull request. A
+green ship that needs no upgrade notes can also take a patch version: see
+[A patch bump is one command](#a-patch-bump-is-one-command) (OPE-2627).
 
 the tarballs and their diffs. A version per merge would publish that reader a stream of increments
 with no story, and every one of them is permanent.
@@ -380,6 +382,21 @@ them together. The sibling dependencies are exact pins (`"@open-everywhere/core"
 `lint:publish` checks each pin against the version that sibling actually publishes. A bump that
 misses one manifest therefore reds before a publish can create the mismatch — npm would otherwise
 resolve it by nesting the older core under that package, so a consumer runs two cores at once.
+
+### A patch bump is one command
+
+`npm run release:patch` bumps all eleven packages from `x.y.z` to `x.y.(z+1)` in one commit
+(OPE-2628). It writes what the 0.8.0 bump wrote by hand: the manifests and their sibling
+pins, the lock's workspace entries, `CORE_PACKAGE_VERSION`, the contract page, the roster lock's
+version lines, and a dated release-record entry with every list empty. Then the generators write the
+deploy embed and `UPGRADING.md`. The same tree and the same date give the same file bytes.
+
+It refuses a release that needs upgrade notes: a draft entry above core's version that carries any
+line, and a red `test:upgrade-surface`. Such a release is a manual bump. It takes over an empty draft
+for the next patch, and refuses an empty draft for any other version. It also refuses packages out of lockstep and a version literal that drifted.
+With a commit, it also refuses a dirty tree and a generator that writes a file outside the bump.
+`--dry-run` prints the plan, `--no-commit` writes without a commit, and `--date` sets the record's
+date. `npm run test:release-patch` drives each refusal.
 
 ## The 72-hour window
 
