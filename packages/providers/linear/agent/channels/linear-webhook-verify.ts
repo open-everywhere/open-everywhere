@@ -1,18 +1,24 @@
 import { signLinearWebhookBody } from "eve/channels/linear";
 import { timingSafeEqual } from "node:crypto";
+import { operatorSecretOrUnset } from "@open-everywhere/core/agent/adapter-api.js";
 import { linearAppForOrg, primaryLinearOrganizationId } from "./linear-credentials.js";
+
+const LINEAR_WEBHOOK_SECRET_NAME = "LINEAR_WEBHOOK_SECRET";
 
 export const LINEAR_SIGNATURE_HEADER = "linear-signature";
 
 export const LINEAR_MAX_SKEW_MS = 60_000;
 
-export function linearWebhookSecretForOrg(organizationId: string | undefined, env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function linearWebhookSecretForOrg(
+  organizationId: string | undefined,
+  primarySecret: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   const app = linearAppForOrg(organizationId, env);
   if (app) return app.webhookSecret;
   const primaryOrg = env.LINEAR_ORGANIZATION_ID && env.LINEAR_ORGANIZATION_ID.length > 0 ? env.LINEAR_ORGANIZATION_ID : undefined;
   if (organizationId && primaryOrg && organizationId !== primaryOrg) return undefined;
-  const secret = env.LINEAR_WEBHOOK_SECRET;
-  return secret && secret.length > 0 ? secret : undefined;
+  return primarySecret && primarySecret.length > 0 ? primarySecret : undefined;
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -27,7 +33,7 @@ function constantTimeEquals(a: string, b: string): boolean {
 export function verifyLinearWebhookDelivery(
   headers: Headers,
   body: string,
-  opts: { readonly env?: NodeJS.ProcessEnv; readonly nowMs?: number; readonly maxSkewMs?: number } = {},
+  opts: { readonly primarySecret?: string; readonly env?: NodeJS.ProcessEnv; readonly nowMs?: number; readonly maxSkewMs?: number } = {},
 ): boolean {
   const env = opts.env ?? process.env;
   const signature = headers.get(LINEAR_SIGNATURE_HEADER) ?? "";
@@ -40,7 +46,7 @@ export function verifyLinearWebhookDelivery(
   }
   if (typeof payload !== "object" || payload === null) return false;
   const organizationId = (payload as { organizationId?: unknown }).organizationId;
-  const secret = linearWebhookSecretForOrg(typeof organizationId === "string" && organizationId.length > 0 ? organizationId : undefined, env);
+  const secret = linearWebhookSecretForOrg(typeof organizationId === "string" && organizationId.length > 0 ? organizationId : undefined, opts.primarySecret, env);
   if (!secret) return false;
   if (!constantTimeEquals(signLinearWebhookBody(body, secret), signature)) return false;
   const timestamp = (payload as { webhookTimestamp?: unknown }).webhookTimestamp;
@@ -50,5 +56,9 @@ export function verifyLinearWebhookDelivery(
 }
 
 export async function linearWebhookVerifier(req: Request, body: string): Promise<boolean> {
-  return verifyLinearWebhookDelivery(req.headers, body);
+  return verifyLinearWebhookDelivery(req.headers, body, { primarySecret: await linearPrimaryWebhookSecret() });
+}
+
+export async function linearPrimaryWebhookSecret(): Promise<string | undefined> {
+  return await operatorSecretOrUnset(LINEAR_WEBHOOK_SECRET_NAME);
 }

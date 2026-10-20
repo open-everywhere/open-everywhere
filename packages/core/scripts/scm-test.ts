@@ -132,7 +132,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(loadGitHubAppConfig({}) === null, "plane is optional: null when unconfigured");
   const cfg = loadGitHubAppConfig({
     OE_GITHUB_APP_ID: "111",
-    OE_GITHUB_APP_PRIVATE_KEY: pkcs1,
+    GITHUB_APP_PRIVATE_KEY: pkcs1,
     OE_GITHUB_APP_SLUG: "open-everywhere",
     OE_GITHUB_BOT_USER_ID: "12345",
     OE_GITHUB_INSTALLATIONS: '{"acme":"4242"}',
@@ -163,6 +163,24 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(calls[0].body.permissions.contents === "write" && calls[0].body.permissions.pull_requests === "write", "tokensForRepos default mint requests the write set (PR flow)");
   await app.tokensForRepos(["acme/web"], READ_PERMISSIONS);
   ok(calls[1].body.permissions.contents === "read" && calls[1].body.permissions.pull_requests === undefined, "tokensForRepos with READ_PERMISSIONS requests read-only (checkout mint)");
+}
+
+{
+  const cfg = loadGitHubAppConfig({ OE_GITHUB_APP_ID: "111", OE_GITHUB_APP_SLUG: "open-everywhere" } as NodeJS.ProcessEnv);
+  ok(cfg !== null && typeof cfg.privateKeyPem === "function", "🔴 OPE-2650 the config carries a key RESOLVER, not a value read at load");
+  const fetchFn: FetchFn = async () => ({ ok: true, status: 201, text: async () => "", json: async () => ({ token: "t", expires_at: "2026-06-25T13:00:00Z", repositories: [] }) });
+  let resolved: string | undefined;
+  const app = new GitHubApp({ appId: "111", privateKeyPem: async () => resolved, appSlug: "open-everywhere", installations: { acme: "4242" } }, { fetchFn, now: () => 1_750_000_000_000 });
+  let refusal = "";
+  try {
+    await app.tokensForRepos(["acme/web"]);
+  } catch (err) {
+    refusal = (err as Error).message;
+  }
+  ok(/private key is not set/.test(refusal) && /oe secret set GITHUB_APP_PRIVATE_KEY/.test(refusal), `🔴 OPE-2650 no stored key ⇒ the mint refuses and names the command (saw: ${refusal})`);
+  resolved = pkcs1;
+  const { tokens } = await app.tokensForRepos(["acme/web"]);
+  ok(tokens.get("acme")?.token === "t", "🔴 OPE-2650 a key that appears later is read at the next mint, with no rebuild of the app");
 }
 
 {
@@ -232,7 +250,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
     const savedFetch = globalThis.fetch;
     const savedEnv = {
       id: process.env.OE_GITHUB_APP_ID,
-      pem: process.env.OE_GITHUB_APP_PRIVATE_KEY,
+      pem: process.env.GITHUB_APP_PRIVATE_KEY,
       slug: process.env.OE_GITHUB_APP_SLUG,
       owner: process.env.OE_GITHUB_OWNER,
       inst: process.env.OE_GITHUB_INSTALLATION_ID,
@@ -242,7 +260,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
     const urls: string[] = [];
     try {
       process.env.OE_GITHUB_APP_ID = "111";
-      process.env.OE_GITHUB_APP_PRIVATE_KEY = pkcs1;
+      process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
       process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
       process.env.OE_GITHUB_OWNER = "acme";
       process.env.OE_GITHUB_INSTALLATION_ID = "4242";
@@ -271,7 +289,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
       globalThis.fetch = savedFetch;
       for (const [key, value] of Object.entries({
         OE_GITHUB_APP_ID: savedEnv.id,
-        OE_GITHUB_APP_PRIVATE_KEY: savedEnv.pem,
+        GITHUB_APP_PRIVATE_KEY: savedEnv.pem,
         OE_GITHUB_APP_SLUG: savedEnv.slug,
         OE_GITHUB_OWNER: savedEnv.owner,
         OE_GITHUB_INSTALLATION_ID: savedEnv.inst,

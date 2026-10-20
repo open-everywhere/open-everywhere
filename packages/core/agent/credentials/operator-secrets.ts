@@ -3,6 +3,9 @@ import { deploymentOrg } from "../identity/binding.js";
 import { credentialKeyArmed, decryptCredential, storeDbSecret, CREDENTIAL_KEY_ENV } from "./db-broker.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { reservedRefNamespace, reservedRefRefusal } from "./reserved-refs.js";
+import { envFallbackValue } from "./operator-secret-env.js";
+
+export { operatorSecretEnvFallbackPresent } from "./operator-secret-env.js";
 
 export const SET_BY_CLI = "operator:cli";
 export const SET_BY_OPS_MCP = "operator:ops-mcp";
@@ -205,13 +208,88 @@ export async function getOperatorSecret(name: string, opts: OperatorSecretOption
   );
 }
 
-function envFallbackValue(name: string, env: NodeJS.ProcessEnv): string | undefined {
-  const value = env[name];
-  return value !== undefined && value !== "" ? value : undefined;
+const OPERATOR_SECRET_TTL_MS = 30_000;
+
+const OPERATOR_SECRET_FAULT_BACKOFF_MS = 5_000;
+
+const storedRowMemo = new Map<string, { readonly row: { ciphertext: string } | null; readonly until: number }>();
+
+export function resetOperatorSecretMemo(): void {
+  storedRowMemo.clear();
+  softFaultReported.clear();
 }
 
-export function operatorSecretEnvFallbackPresent(name: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  return envFallbackValue(name, env) !== undefined;
+export async function operatorSecret(
+  name: string,
+  opts: OperatorSecretOptions & {
+    readonly now?: () => number;
+    readonly store?: { getStoredCredential(org: string, ref: string): Promise<{ ciphertext: string } | null> };
+  } = {},
+): Promise<string | undefined> {
+  const reserved = reservedRefNamespace(name);
+  if (reserved) throw new CredentialError(reservedRefRefusal(name, reserved));
+
+  const org = opts.org ?? deploymentOrg();
+  const now = (opts.now ?? Date.now)();
+  const key = `${org}\u0000${name}`;
+  const cached = storedRowMemo.get(key);
+  let row: { ciphertext: string } | null;
+  if (cached !== undefined && cached.until > now) {
+    row = cached.row;
+  } else {
+    row = null;
+    let ttl = OPERATOR_SECRET_TTL_MS;
+    try {
+      row = await (opts.store ?? getOperationalStore()).getStoredCredential(org, name);
+    } catch (err) {
+      noticeOnce(name, `[open-everywhere:credentials] secret "${name}": the operational store is unreachable (${String(err instanceof Error ? err.message : err)}) — falling back to the env var if set.`);
+      ttl = OPERATOR_SECRET_FAULT_BACKOFF_MS;
+    }
+    storedRowMemo.set(key, { row, until: now + ttl });
+  }
+
+  if (row) {
+    if (!credentialKeyArmed()) {
+      throw new CredentialError(
+        `secret "${name}" is stored in the db credential store but ${CREDENTIAL_KEY_ENV} is not set (or is malformed) — refusing ` +
+          `to fall back to the environment variable of the same name, which may be a retired value (fail closed).`,
+      );
+    }
+    return decryptCredential(row.ciphertext);
+  }
+
+  const fromEnv = envFallbackValue(name, process.env);
+  if (fromEnv !== undefined) {
+    noticeOnce(
+      name,
+      `[open-everywhere:credentials] secret "${name}" resolved from the environment — the db credential store is its default home. ` +
+        `Move it with \`oe secret set ${name}\` (then the env var can be deleted).`,
+    );
+    return fromEnv;
+  }
+  return undefined;
+}
+
+const softFaultReported = new Set<string>();
+
+export async function operatorSecretOrUnset(name: string, opts: OperatorSecretOptions = {}): Promise<string | undefined> {
+  try {
+    return await operatorSecret(name, opts);
+  } catch (err) {
+    if (!softFaultReported.has(name)) {
+      softFaultReported.add(name);
+      console.warn(`[open-everywhere:credentials] secret "${name}" did not resolve, so it reads as unset: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return undefined;
+  }
+}
+
+export async function operatorSecretConfigured(name: string, opts: OperatorSecretOptions = {}): Promise<boolean> {
+  try {
+    return (await operatorSecret(name, opts)) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function noticeOnce(name: string, message: string): void {

@@ -368,8 +368,9 @@ For Slack, the exact action:
    chat: the **Bot User OAuth Token** (`xoxb-…`, under OAuth & Permissions) and the **Signing
    Secret** (under Basic Information → App Credentials).
 
-Both are environment variables, not credential-store secrets — the Slack bundle reads
-`SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` from the environment. Name them:
+Both are **operator secrets** (OPE-2650): the Slack bundle reads `SLACK_BOT_TOKEN` and
+`SLACK_SIGNING_SECRET` from the deployment's credential store first, and an env var of the same name
+only as the on-ramp. Name them:
 
 ```
 scaffold_env { "secretNames": ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] }
@@ -379,7 +380,10 @@ The reply gives one `npx oe env set <NAME>` command per name. The operator runs 
 terminal and pastes the value at its hidden prompt. Call the tool again with the same names: both
 read `present: true`.
 
-Then push both to the deployment with `vercel env add`, exactly as in step 11, and redeploy. Slack verifies the Event Subscriptions URL with a signed challenge, so the verification fails until a deploy that holds `SLACK_SIGNING_SECRET` is up: after that redeploy, ask the operator to choose **Retry** under Event Subscriptions.
+Then store both in the deployment's credential store: `secret_set { "names": ["SLACK_BOT_TOKEN",
+"SLACK_SIGNING_SECRET"] }` reads each value from `.env.local` and writes it encrypted, with the
+`DATABASE_URL` and key step 11 put there. No env push and no redeploy is needed for them: a stored
+value takes effect within thirty seconds. Slack verifies the Event Subscriptions URL with a signed challenge, so the verification fails until a deploy is up and the store holds `SLACK_SIGNING_SECRET`: after that, ask the operator to choose **Retry** under Event Subscriptions.
 
 For GitHub, the App is one click (OPE-2529). GitHub's App manifest flow creates a pre-configured App
 and hands its keys back, so the person copies nothing:
@@ -391,8 +395,9 @@ surface_app_create { "surface": "github", "baseUrl": "https://<the deployment's 
 Give the person the `openUrl` from the reply. It is a page on THIS computer, so they open it in a
 browser here. GitHub opens with the App filled in, and they confirm it. Then call
 `surface_app_create { "surface": "github", "action": "status" }`: `state: "done"` lists the env names
-written and the App's install link. Push each written name to the deployment as in step 11 and
-redeploy. Only then ask the person to install the App on the repositories the agent works in. The
+written and the App's install link. Store the two operator secrets with `secret_set { "names":
+["GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] }` (OPE-2650), push each other written name to the
+deployment as in step 11, and redeploy. Only then ask the person to install the App on the repositories the agent works in. The
 deployment learns the installation from the App's one `installation` delivery, and before the
 redeploy it does not hold the App's webhook secret, so it refuses that delivery. The
 [GitHub guide](./surfaces/github.md#setup) lists the permissions and events, the `owner` and `variant`

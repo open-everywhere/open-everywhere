@@ -289,7 +289,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
     ok(typeof sOne.next === "string" && sOne.next.length > 0, "slackStep: …with a next action");
     ok(!(await slackStep.check({ cwd: dir, env: {}, route: "docker" })).satisfied, "slackStep: the docker route does NOT exempt Slack");
     ok((await slackStep.check({ cwd: dir, env: { SLACK_BOT_TOKEN: "x", SLACK_SIGNING_SECRET: "y" } })).satisfied, "slackStep: satisfied once both are set (negative control)");
-    ok(/npx oe env set SLACK_BOT_TOKEN/.test(sNone.next ?? "") && !/scaffold_env/.test(sNone.next ?? ""), "slackStep: the next action hands the secret write to `oe env set`, not to an ops tool");
+    ok(/npx oe secret set SLACK_BOT_TOKEN/.test(sNone.next ?? "") && !/scaffold_env/.test(sNone.next ?? ""), "slackStep: the next action hands the secret write to `oe secret set` (an operator secret, OPE-2650), not to an ops tool");
     ok(sNone.detail.includes(missNote("vercel")), "slackStep: a miss says the value may be set on the deployment instead");
 
     ok(/missing from \.env\.local and this shell/.test(sNone.detail), "slackStep: a miss names the two homes it READ, never a bare `missing`");
@@ -558,9 +558,12 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   ok(/there is no plan\s+tool/.test(skill), "skill: says so outright, so a reader does not go looking for one");
   ok(/target: "vercel"/.test(skill) && /target: "docker"/.test(skill), "skill: passes the route as the preflight target");
   const envStep = skill.slice(skill.indexOf("9. **Deployment env.**"), skill.indexOf("10. **Deploy.**"));
-  for (const name of ["OE_CREDENTIAL_ENCRYPTION_KEY", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"]) {
+  for (const name of ["OE_CREDENTIAL_ENCRYPTION_KEY", "OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"]) {
     ok(envStep.includes(name), `skill: the Vercel route's deployment-env step names ${name}`);
   }
+  const slackStepText = skill.slice(skill.indexOf("5. **Slack app.**"), skill.indexOf("6. **Vouch the workspace.**"));
+  ok(/secret_set \{ names: \["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"\] \}/.test(slackStepText), "skill: 🔴 OPE-2650 the Slack step stores both Slack secrets with secret_set");
+  ok(!/SLACK_BOT_TOKEN|SLACK_SIGNING_SECRET/.test(envStep.replace("The Slack pair is not on this list", "")), "skill: 🔴 OPE-2650 the deployment-env step pushes no Slack variable");
   ok(/vercel env add/.test(envStep), "skill: …and names the command that sets each one");
   ok(!/vercel env add AI_GATEWAY_API_KEY/.test(skill), "skill: never pushes AI_GATEWAY_API_KEY to a Vercel deployment (OIDC covers it)");
   ok(!/deploy:verify|OE_VERCEL_API_TOKEN|OE_DEPLOY_/.test(skill), "skill: names no repo-only deploy script or variable the scaffolded app does not ship");

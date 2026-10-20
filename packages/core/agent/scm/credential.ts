@@ -1,4 +1,5 @@
 import { getSettings, type GithubAuthMode } from "../settings/settings.js";
+import { operatorSecret } from "../credentials/operator-secrets.js";
 import { getConfig } from "../access/config.js";
 import { getGitHubApp } from "./provider.js";
 import type { GitHubApp } from "./app.js";
@@ -8,17 +9,23 @@ export function githubAuthMode(): GithubAuthMode {
   return getSettings().github.auth;
 }
 
-export function githubTokenSet(): boolean {
-  return personalTokenValue() !== undefined;
+const GITHUB_TOKEN_NAME = "GITHUB_TOKEN";
+
+export async function githubTokenSet(): Promise<boolean> {
+  try {
+    return (await personalTokenValue()) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
-export function personalTokenValue(): string | undefined {
-  const token = process.env.GITHUB_TOKEN;
+export async function personalTokenValue(): Promise<string | undefined> {
+  const token = await operatorSecret(GITHUB_TOKEN_NAME);
   return token ? token : undefined;
 }
 
-export function githubCredentialConfigured(): boolean {
-  return githubAuthMode() === "token" ? githubTokenSet() : getGitHubApp() !== null;
+export async function githubCredentialConfigured(): Promise<boolean> {
+  return githubAuthMode() === "token" ? await githubTokenSet() : getGitHubApp() !== null;
 }
 
 function ownRepo(): string | undefined {
@@ -51,8 +58,8 @@ function forWords(subject: string): string {
   return subject ? ` for ${subject}` : "";
 }
 
-export function personalTokenFor(repo: string, subject = ""): string {
-  const token = personalTokenValue();
+export async function personalTokenFor(repo: string, subject = ""): Promise<string> {
+  const token = await personalTokenValue();
   if (!token) {
     throw new Error(
       `no GitHub credential${forWords(subject)}: this deployment signs in to GitHub with a personal access token (github.auth "token"), and GITHUB_TOKEN is not set.`,
@@ -68,8 +75,8 @@ export function personalTokenFor(repo: string, subject = ""): string {
   return token;
 }
 
-export function appMissingError(subject = ""): Error {
-  const unused = githubTokenSet()
+export async function appMissingError(subject = ""): Promise<Error> {
+  const unused = (await githubTokenSet())
     ? ` GITHUB_TOKEN is set, but this deployment signs in with the GitHub App (github.auth "app"), so the token is not used. To use it instead, set github.auth: "token" in agent/settings/settings.ts.`
     : "";
   return new Error(`no GitHub credential${forWords(subject)}: configure the GitHub App (OE_GITHUB_APP_*).${unused}`);
@@ -87,9 +94,9 @@ export async function resolveRepoToken(
   opts: { readonly app?: GitHubApp | null; readonly subject?: string } = {},
 ): Promise<string> {
   const subject = opts.subject ?? "";
-  if (githubAuthMode() === "token") return personalTokenFor(repo, subject);
+  if (githubAuthMode() === "token") return await personalTokenFor(repo, subject);
   const app = opts.app === undefined ? getGitHubApp() : opts.app;
-  if (!app) throw appMissingError(subject);
+  if (!app) throw await appMissingError(subject);
   const { tokens, ungranted } = await app.tokensForRepos([repo], permissions);
   const token = ungranted.length ? undefined : tokens.get(repo.slice(0, repo.indexOf("/")))?.token;
   if (token === undefined) throw appNotInstalledError(repo, subject);

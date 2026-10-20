@@ -88,7 +88,7 @@ or one invocation and wrong to commit). `settings-lever` stays declared and empt
 schema reads no environment. Everything else is a setting in Git or an operator secret in the db
 store.
 
-`pending-migration` is the honest backlog: **54 names**, and since OPE-2650 it is also the sweep's
+`pending-migration` is the honest backlog: **38 names**, and since OPE-2650 it is also the sweep's
 plan. Every name that is not a survivor sits there with its TARGET, either a setting path or
 "operator secret".
 The list is **shrink-only**: once a name moves, its entry must go, or the lint reds. The suite pins
@@ -98,9 +98,11 @@ org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and th
 operator secret `OKTA_API_TOKEN`. The first sweep pull
 request deleted eight names: the access-request wiring (now the `accessRequests.*` settings and the
 app's own `loadAccessRequests` fields) and the deprecated `OE_AI_GATEWAY_URL` (now
-`models.targets.gateway.url`). The fourth moved the control plane: its four credentials became
-operator secrets, the `OE_ADMIN_OIDC_*` pair became the `control.adminOidc` setting, and the three
-self-minted keys stopped reading env. The [configuration
+`models.targets.gateway.url`). The third moved the sixteen surface credentials (the Slack, Discord,
+GitHub and Linear tokens and signing secrets, the gateway key and the inline AWS token) to operator
+secrets read through `operatorSecret`, with the env var of the same name kept as the on-ramp. The
+fourth moved the control plane: its four credentials became operator secrets, the `OE_ADMIN_OIDC_*`
+pair became the `control.adminOidc` setting, and the three self-minted keys stopped reading env. The [configuration
 reference](../deploy/configuration-reference.md#moved-to-config-ope-2650) maps each deleted variable
 to the line that replaces it.
 

@@ -25,7 +25,7 @@ export interface AgentSetupFacts {
     readonly mode: "app" | "token";
     readonly appConfigured: boolean;
     readonly appSlug?: string;
-    readonly tokenSet: boolean;
+    readonly tokenSet: SetupVerdict;
   };
   readonly configChanges: {
     readonly repo?: string;
@@ -146,7 +146,13 @@ function connectedLines(f: AgentSetupFacts, isAdmin: boolean): string[] {
     lines.push(s.installed === "yes" ? `${name}: installed` : s.installed === "no" ? `${name}: not installed yet` : `${name}: set up, but I can't confirm it is installed`);
   }
   if (f.github.mode === "token") {
-    lines.push(f.github.tokenSet ? "GitHub: connected with a personal access token, not the app" : "GitHub: not connected");
+    lines.push(
+      f.github.tokenSet === "yes"
+        ? "GitHub: connected with a personal access token, not the app"
+        : f.github.tokenSet === "no"
+          ? "GitHub: not connected"
+          : "GitHub: set up for a personal access token, but I can't confirm the token is set",
+    );
   } else if (f.github.appConfigured) {
     const owner = repoOwner(f.configChanges.repo);
     const here = owner !== undefined && f.configChanges.appInstalled === "yes";
@@ -213,13 +219,19 @@ function configGaps(f: AgentSetupFacts, repoWords?: string): { ready: boolean; g
     return { ready: false, gaps, operator };
   }
   if (f.github.mode === "token") {
-    if (!f.github.tokenSet) {
+    if (f.github.tokenSet === "no") {
       gaps.push({
         what: "Changing my setup from chat needs GitHub, and I'm not connected to it.",
         step: `Whoever runs this deployment adds a personal access token that can change ${repo}.`,
       });
-      operator.push("GITHUB_TOKEN: a fine-grained personal access token for this deployment's own repository.");
+      operator.push("GITHUB_TOKEN: a fine-grained personal access token for this deployment's own repository, stored with `oe secret set GITHUB_TOKEN`.");
       return { ready: false, gaps, operator };
+    }
+    if (f.github.tokenSet === "unknown") {
+      gaps.push({
+        what: "I can't confirm a personal access token is set, which changing my setup from chat needs.",
+        step: `Whoever runs this deployment checks that a personal access token that can change ${repo} is stored.`,
+      });
     }
     operator.push('To move to the GitHub app: create it with the ops tool surface_app_create (variant "source-control" keeps what you have now), push the names it wrote to .env.local to the deployment\'s environment, set github.auth to "app" in agent/settings/settings.ts and redeploy, then install the app on your repositories. Nothing else changes.');
     operator.push('The app brings its own GITHUB_WEBHOOK_SECRET. If a repository webhook feeds your routines, then with variant "source-control", give it the new secret. With "full", delete it, or each event reaches your routines twice.');
@@ -230,8 +242,8 @@ function configGaps(f: AgentSetupFacts, repoWords?: string): { ready: boolean; g
       what: `Changing my setup from chat needs GitHub, and I'm not connected to it.`,
       step: `Whoever runs this deployment sets up the GitHub app and installs it on ${repo}.`,
     });
-    operator.push("The GitHub app settings: OE_GITHUB_APP_ID, OE_GITHUB_APP_PRIVATE_KEY and OE_GITHUB_APP_SLUG.");
-    if (f.github.tokenSet) operator.push('GITHUB_TOKEN is set but not used, because this deployment signs in with the GitHub app. To use the token instead, set github.auth to "token" in agent/settings/settings.ts.');
+    operator.push("The GitHub app settings: OE_GITHUB_APP_ID and OE_GITHUB_APP_SLUG, and its private key as the operator secret GITHUB_APP_PRIVATE_KEY (`oe secret set GITHUB_APP_PRIVATE_KEY`).");
+    if (f.github.tokenSet === "yes") operator.push('GITHUB_TOKEN is set but not used, because this deployment signs in with the GitHub app. To use the token instead, set github.auth to "token" in agent/settings/settings.ts.');
     return { ready: false, gaps, operator };
   }
   if (c.appInstalled !== "yes") {
@@ -304,9 +316,11 @@ export function renderSeatSetupSection(f: AgentSetupFacts): string {
   const config = configGaps(f, "my own repository");
   const github =
     f.github.mode === "token"
-      ? f.github.tokenSet
+      ? f.github.tokenSet === "yes"
         ? "connected with a personal access token"
-        : "not connected"
+        : f.github.tokenSet === "no"
+          ? "not connected"
+          : "set up for a personal access token, and a worker's `agent_version` read says whether it is set"
       : f.github.appConfigured
         ? "the GitHub app is set up"
         : "not connected";

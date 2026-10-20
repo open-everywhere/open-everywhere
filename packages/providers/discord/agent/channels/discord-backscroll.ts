@@ -16,6 +16,7 @@ import {
   SUPERVISOR_BACKSCROLL_REACHBACK_HOURS,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordAuthorRoles } from "../approvals/discord-admin.js";
+import { discordBotToken } from "./discord-credentials.js";
 
 export interface DiscordBackscrollInput {
   readonly channelId: string;
@@ -31,7 +32,7 @@ export interface DiscordBackscrollDeps {
 }
 
 const liveRequest: DiscordRequester = async (channelId, query) => {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token || !channelId) return undefined;
   try {
     const qs = new URLSearchParams(query).toString();

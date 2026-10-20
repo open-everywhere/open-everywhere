@@ -161,7 +161,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   });
 
   process.env.OE_GITHUB_APP_ID = "111";
-  process.env.OE_GITHUB_APP_PRIVATE_KEY = pkcs1;
+  process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
   process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
   process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
   resetGitHubApp();
@@ -415,7 +415,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.OE_GITHUB_APP_ID;
-    delete process.env.OE_GITHUB_APP_PRIVATE_KEY;
+    delete process.env.GITHUB_APP_PRIVATE_KEY;
     delete process.env.OE_GITHUB_APP_SLUG;
     delete process.env.OE_GITHUB_INSTALLATIONS;
     resetGitHubApp();

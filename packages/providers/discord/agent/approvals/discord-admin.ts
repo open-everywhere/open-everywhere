@@ -1,4 +1,5 @@
 import { isGuildAdministrator } from "./discord-card.js";
+import { discordBotToken } from "../channels/discord-credentials.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-admin] ${msg}`);
@@ -24,7 +25,7 @@ const VERDICT_TTL_MS = 60_000;
 const memberVerdictCache = new Map<string, { verdict: boolean; at: number }>();
 
 export async function isGuildAdminViaRest(guildId: string, userId: string, deps: DiscordAdminDeps = {}): Promise<boolean> {
-  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  const token = deps.token ?? (await discordBotToken());
   if (!token || !guildId || !userId) return false;
   const cacheKey = `${guildId}:${userId}`;
   const now = deps.nowMs ?? Date.now();
@@ -67,7 +68,7 @@ export async function isGuildAdminViaRest(guildId: string, userId: string, deps:
 }
 
 export async function isGuildMemberViaRest(guildId: string, userId: string, deps: DiscordAdminDeps = {}): Promise<boolean> {
-  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  const token = deps.token ?? (await discordBotToken());
   if (!token || !guildId || !userId) return false;
   const cacheKey = `${guildId}:${userId}`;
   const now = deps.nowMs ?? Date.now();
@@ -99,7 +100,7 @@ export async function isGuildMemberViaRest(guildId: string, userId: string, deps
 const roleEvidenceCache = new Map<string, { roles: readonly string[]; at: number }>();
 
 export async function discordAuthorRoles(guildId: string, userId: string, deps: DiscordAdminDeps = {}): Promise<readonly string[] | undefined> {
-  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  const token = deps.token ?? (await discordBotToken());
   if (!token || !guildId || !userId) return undefined;
   const cacheKey = `${guildId}:${userId}`;
   const now = deps.nowMs ?? Date.now();
@@ -189,7 +190,7 @@ function overwritesOf(channel: Record<string, unknown>): DiscordOverwrite[] {
 }
 
 export async function discordMemberCanViewChannel(guildId: string, channelId: string, userId: string, deps: DiscordAdminDeps = {}): Promise<boolean> {
-  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  const token = deps.token ?? (await discordBotToken());
   if (!token || !guildId || !channelId || !userId) return false;
   const doFetch = deps.fetchFn ?? fetch;
   const headers = { authorization: `Bot ${token}` };

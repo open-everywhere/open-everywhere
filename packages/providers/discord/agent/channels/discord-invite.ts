@@ -1,4 +1,5 @@
 import type { MeetingInviteLookup, MeetingInviteResolver } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordBotToken } from "./discord-credentials.js";
 
 const GUILD_VOICE = 2;
 const GUILD_STAGE_VOICE = 13;
@@ -10,7 +11,7 @@ export interface DiscordInviteDeps {
 }
 
 export async function lookUpDiscordInvite(code: string, deps: DiscordInviteDeps = {}): Promise<MeetingInviteLookup> {
-  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  const token = deps.token ?? (await discordBotToken());
   if (!token) return { found: false, why: "unreachable" };
   try {
     const doFetch = deps.fetchFn ?? fetch;

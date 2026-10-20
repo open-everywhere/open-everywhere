@@ -1,3 +1,5 @@
+import { discordBotToken } from "./discord-credentials.js";
+
 export interface DiscordChannelInfo {
   readonly name?: string;
   readonly parentId?: string;
@@ -28,7 +30,7 @@ export function fetchDiscordInfo(
   if (!p) {
     let transient = false;
     p = (async () => {
-      const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+      const token = deps.token ?? (await discordBotToken());
       if (!token) return undefined;
       try {
         const doFetch = deps.fetchFn ?? fetch;

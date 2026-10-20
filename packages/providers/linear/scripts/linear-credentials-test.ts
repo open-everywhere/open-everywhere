@@ -71,7 +71,7 @@ try {
     process.env.LINEAR_CLIENT_ID = "client-id-should-be-ignored";
     process.env.LINEAR_CLIENT_SECRET = "client-secret-should-be-ignored";
     ok((await resolveLinearAccessTokenSeam()) === "lin_static_token", "precedence: a static LINEAR_ACCESS_TOKEN wins even when a client-credentials pair is ALSO set");
-    ok(staticLinearToken() === "lin_static_token", "staticLinearToken: reads LINEAR_ACCESS_TOKEN");
+    ok((await staticLinearToken()) === "lin_static_token", "staticLinearToken: reads LINEAR_ACCESS_TOKEN");
   }
   {
     clearLinearEnv();
@@ -80,20 +80,20 @@ try {
     process.env.LINEAR_API_KEY = "c";
     process.env.LINEAR_ACCESS_TOKEN = "b";
     process.env.LINEAR_AGENT_ACCESS_TOKEN = "a";
-    ok(staticLinearToken() === "a", "precedence order: LINEAR_AGENT_ACCESS_TOKEN beats every other static var");
+    ok((await staticLinearToken()) === "a", "precedence order: LINEAR_AGENT_ACCESS_TOKEN beats every other static var");
     delete process.env.LINEAR_AGENT_ACCESS_TOKEN;
-    ok(staticLinearToken() === "b", "…LINEAR_ACCESS_TOKEN next");
+    ok((await staticLinearToken()) === "b", "…LINEAR_ACCESS_TOKEN next");
     delete process.env.LINEAR_ACCESS_TOKEN;
-    ok(staticLinearToken() === "c", "…LINEAR_API_KEY next");
+    ok((await staticLinearToken()) === "c", "…LINEAR_API_KEY next");
     delete process.env.LINEAR_API_KEY;
-    ok(staticLinearToken() === "d", "…LINEAR_API_TOKEN last");
+    ok((await staticLinearToken()) === "d", "…LINEAR_API_TOKEN last");
   }
 
   {
     clearLinearEnv();
     _resetLinearMintCache();
     ok((await resolveLinearAccessTokenSeam()) === "", "neither static nor client-credentials configured → resolves \"\" (falsy) so eve's own missing-token error still fires");
-    ok(linearCredentialsConfigured() === false, "linearCredentialsConfigured: false when nothing is set");
+    ok((await linearCredentialsConfigured()) === false, "linearCredentialsConfigured: false when nothing is set");
   }
 
   {
@@ -101,7 +101,7 @@ try {
     _resetLinearMintCache();
     process.env.LINEAR_CLIENT_ID = "client-abc";
     process.env.LINEAR_CLIENT_SECRET = "secret-xyz";
-    ok(linearCredentialsConfigured() === true, "linearCredentialsConfigured: true when the client-credentials pair is set");
+    ok((await linearCredentialsConfigured()) === true, "linearCredentialsConfigured: true when the client-credentials pair is set");
     const { fetch, calls } = mkFetch([{ body: { access_token: "minted-token-1", expires_in: 3600 } }]);
     const minted = await mintLinearAppActorToken("client-abc", "secret-xyz", fetch);
     ok(minted.value === "minted-token-1", "mintLinearAppActorToken: returns the response's access_token as a BrokeredSecret value");
@@ -393,10 +393,10 @@ try {
     process.env.LINEAR_APP_SOAK_ORG_ID = "org-soak";
     process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
     ok(linearAppRegistry().length === 0, "half-configured: an entry with no client secret is DROPPED from the registry");
-    ok(linearCredentialsConfigured() === false, "half-configured: the credential census does not count a half-configured app");
+    ok((await linearCredentialsConfigured()) === false, "half-configured: the credential census does not count a half-configured app");
     process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-secret";
     ok(linearAppRegistry().length === 1, "half-configured: the entry appears once its client secret is set");
-    ok(linearCredentialsConfigured() === true, "half-configured: a registered app alone makes the surface count as credentialed");
+    ok((await linearCredentialsConfigured()) === true, "half-configured: a registered app alone makes the surface count as credentialed");
   }
 
   {
@@ -446,6 +446,42 @@ try {
     ok((caught as RateLimitExhaustedError).surface === "linear", "backoff exhaustion: the surface names linear");
     ok((caught as RateLimitExhaustedError).operation === "oauth.token", "backoff exhaustion: the operation is the vendor route name");
     ok(slept.length === 3 && slept.every((ms) => ms === 1000), "backoff exhaustion: three waits under the shared default");
+  }
+
+  {
+    for (const k of LINEAR_ENV_KEYS) delete process.env[k];
+    process.env.LINEAR_CLIENT_ID = "mint-only-client";
+    process.env.LINEAR_CLIENT_SECRET = "mint-only-secret";
+    _resetLinearMintCache();
+    const { enrichUserGuest, _resetLinearGuestCache } = await import("../agent/channels/linear.js");
+    _resetLinearGuestCache();
+    const urls: string[] = [];
+    const savedFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      urls.push(String(input instanceof Request ? input.url : input));
+      return new Response(JSON.stringify({ access_token: "minted", expires_in: 3600, data: { user: { guest: false } } }), { status: 200 });
+    }) as typeof fetch;
+    let guest: boolean | undefined;
+    try {
+      guest = await enrichUserGuest("user-1");
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+    ok(guest === undefined, "🔴 OPE-2650 guest probe: a mint-only deployment answers undefined (fail closed), as before");
+    ok(!urls.some((u) => u.includes("/oauth/token")), `🔴 OPE-2650 guest probe: the token endpoint is never called (saw: ${urls.join(", ") || "nothing"})`);
+    process.env.LINEAR_ACCESS_TOKEN = "static-for-guest";
+    _resetLinearGuestCache();
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      urls.push(String(input instanceof Request ? input.url : input));
+      return new Response(JSON.stringify({ data: { user: { guest: false } } }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      guest = await enrichUserGuest("user-2");
+    } finally {
+      globalThis.fetch = savedFetch;
+    }
+    ok(guest === false, "guest probe: with a static token the probe answers (positive control)");
+    ok(!urls.some((u) => u.includes("/oauth/token")), "guest probe: …still without a mint");
   }
 
   console.log(`\n✓ linear-credentials: ${passed} assertions passed`);

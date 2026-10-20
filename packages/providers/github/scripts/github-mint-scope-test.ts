@@ -167,7 +167,7 @@ const { privateKey } = generateKeyPairSync("rsa", {
 });
 process.env.OE_GITHUB_APP_ID = "12345";
 process.env.OE_GITHUB_APP_SLUG = "open-everywhere-test";
-process.env.OE_GITHUB_APP_PRIVATE_KEY = privateKey;
+process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
 process.env.OE_GITHUB_OWNER = "acme";
 process.env.OE_GITHUB_INSTALLATION_ID = "777";
 process.env.GITHUB_APP_ID = "12345";

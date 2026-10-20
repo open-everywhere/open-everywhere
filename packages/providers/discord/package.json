@@ -68,6 +68,10 @@
       "types": "./dist/agent/channels/discord-channel-info.d.ts",
       "default": "./dist/agent/channels/discord-channel-info.js"
     },
+    "./agent/channels/discord-credentials.js": {
+      "types": "./dist/agent/channels/discord-credentials.d.ts",
+      "default": "./dist/agent/channels/discord-credentials.js"
+    },
     "./agent/channels/discord-directory.js": {
       "types": "./dist/agent/channels/discord-directory.d.ts",
       "default": "./dist/agent/channels/discord-directory.js"

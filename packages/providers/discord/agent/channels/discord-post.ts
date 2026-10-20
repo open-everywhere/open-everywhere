@@ -1,4 +1,5 @@
 import { markNotApplied } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordBotToken } from "./discord-credentials.js";
 import { discordFetch } from "./discord-rest.js";
 
 const API = "https://discord.com/api/v10";
@@ -9,8 +10,8 @@ function botHeaders(token: string): Record<string, string> {
   return { authorization: `Bot ${token}`, "content-type": "application/json" };
 }
 
-function botToken(): string {
-  const token = process.env.DISCORD_BOT_TOKEN;
+async function botToken(): Promise<string> {
+  const token = await discordBotToken();
   if (!token) {
     throw new Error("DISCORD_BOT_TOKEN is not set — the reply tool needs the bot token to post to Discord.");
   }
@@ -94,7 +95,7 @@ export async function discordPostMessage(channelId: string, content: string, opt
 export async function discordOpenDmChannel(userId: string): Promise<string> {
   const res = await discordFetch("POST /users/@me/channels", `${API}/users/@me/channels`, {
     method: "POST",
-    headers: botHeaders(botToken()),
+    headers: botHeaders(await botToken()),
     body: JSON.stringify({ recipient_id: userId }),
   });
   if (!res.ok) {
@@ -131,7 +132,7 @@ export async function discordPostMessageWithButtons(
   }
   const res = await discordFetch("POST /channels/{id}/messages", `${API}/channels/${channelId}/messages`, {
     method: "POST",
-    headers: botHeaders(botToken()),
+    headers: botHeaders(await botToken()),
     body: JSON.stringify({
       content,
       components: [
@@ -159,7 +160,7 @@ export async function discordPostMessageWithButtons(
 async function discordPostOne(channelId: string, content: string, replyToMessageId?: string): Promise<string> {
   const res = await discordFetch("POST /channels/{id}/messages", `${API}/channels/${channelId}/messages`, {
     method: "POST",
-    headers: botHeaders(botToken()),
+    headers: botHeaders(await botToken()),
     body: JSON.stringify({
       content,
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
@@ -184,7 +185,7 @@ export async function discordEditMessage(channelId: string, messageId: string, c
   }
   const res = await discordFetch("PATCH /channels/{id}/messages/{id}", `${API}/channels/${channelId}/messages/${messageId}`, {
     method: "PATCH",
-    headers: botHeaders(botToken()),
+    headers: botHeaders(await botToken()),
     body: JSON.stringify({ content }),
   });
   if (!res.ok) {
@@ -237,7 +238,7 @@ export async function discordAddReaction(channelId: string, messageId: string, e
   const res = await discordFetch(
     "PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me",
     `${API}/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(unicode)}/@me`,
-    { method: "PUT", headers: botHeaders(botToken()) },
+    { method: "PUT", headers: botHeaders(await botToken()) },
   );
   if (!res.ok) {
     throw Object.assign(new Error(`react couldn't post to Discord — ${res.status} on channel ${channelId}`), { status: res.status });
@@ -247,7 +248,7 @@ export async function discordAddReaction(channelId: string, messageId: string, e
 export async function discordExistingThreadForMessage(channelId: string, messageId: string): Promise<string | null> {
   try {
     const msgRes = await discordFetch("GET /channels/{id}/messages/{id}", `${API}/channels/${channelId}/messages/${messageId}`, {
-      headers: botHeaders(botToken()),
+      headers: botHeaders(await botToken()),
     });
     if (!msgRes.ok) return null;
     const msg = (await msgRes.json()) as { thread?: { id?: unknown } };
@@ -264,7 +265,7 @@ export async function discordThreadForMessage(channelId: string, messageId: stri
       `${API}/channels/${channelId}/messages/${messageId}/threads`,
       {
         method: "POST",
-        headers: botHeaders(botToken()),
+        headers: botHeaders(await botToken()),
         body: JSON.stringify({ name: name.slice(0, 100) || "thread", auto_archive_duration: 1440 }),
       },
     );

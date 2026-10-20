@@ -58,7 +58,7 @@ registerConfig({
   domainsForSurface: () => [],
   loadAccessRequests: () => ({ configRepo: "acme/bot" }) as never,
 });
-for (const k of ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
+for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
 resetSettingsForTest();
 resetGitHubApp();
 
@@ -93,7 +93,7 @@ resetGitHubApp();
 {
   overrideSettingsForTest({ github: { auth: "token" } });
   process.env.OE_GITHUB_APP_ID = "1";
-  process.env.OE_GITHUB_APP_PRIVATE_KEY = pkcs1;
+  process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
   process.env.OE_GITHUB_APP_SLUG = "acme-oe";
   process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
   resetGitHubApp();
@@ -113,9 +113,9 @@ resetGitHubApp();
   ok((await resolveRepoToken("acme/web", READ_PERMISSIONS)) === TOKEN, "§3 a repository named in github.tokenRepos is reached");
   delete process.env.GITHUB_TOKEN;
   await rejects(() => resolveRepoToken("acme/bot", READ_PERMISSIONS, { subject: "the config repo" }), 'no GitHub credential for the config repo: this deployment signs in to GitHub with a personal access token (github.auth "token"), and GITHUB_TOKEN is not set', "§3 token mode with no token refuses, and never falls back to the App");
-  ok(!githubCredentialConfigured(), "§3 token mode with no token holds no credential, App secrets or not");
+  ok(!(await githubCredentialConfigured()), "§3 token mode with no token holds no credential, App secrets or not");
   process.env.GITHUB_TOKEN = TOKEN;
-  ok(githubCredentialConfigured(), "§3 token mode with the token set holds its credential");
+  ok(await githubCredentialConfigured(), "§3 token mode with the token set holds its credential");
 }
 
 {
@@ -190,7 +190,7 @@ resetGitHubApp();
 }
 
 resetSettingsForTest();
-for (const k of ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
+for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
 resetGitHubApp();
 
 console.log(`\n✓ github-credential: ${n} assertions passed (settings, app mode without fallback, token reach, every resolver, firewall rules, list_repos, one-step upgrade)\n`);

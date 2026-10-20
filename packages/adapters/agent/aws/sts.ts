@@ -1,4 +1,4 @@
-import { warmCredential, type AwsCredentials, type AwsIdentityProvider, type AwsIdentityRequest } from "@open-everywhere/core/agent/adapter-api.js";
+import { operatorSecret, warmCredential, type AwsCredentials, type AwsIdentityProvider, type AwsIdentityRequest } from "@open-everywhere/core/agent/adapter-api.js";
 import { readFileSync } from "node:fs";
 
 export type FetchLike = typeof fetch;
@@ -13,7 +13,7 @@ export interface AwsStsProviderOptions {
 }
 
 const AWS_WEB_IDENTITY_TOKEN_FILE_ENV = "AWS_WEB_IDENTITY_TOKEN_FILE";
-const OE_AWS_WEB_IDENTITY_TOKEN_ENV = "OE_AWS_WEB_IDENTITY_TOKEN";
+const OE_AWS_WEB_IDENTITY_TOKEN_NAME = "OE_AWS_WEB_IDENTITY_TOKEN";
 
 function xmlTag(xml: string, tag: string): string | undefined {
   const m = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "u"));
@@ -24,7 +24,7 @@ function regionFor(req: AwsIdentityRequest, defaultRegion: string | undefined): 
   return req.region ?? defaultRegion ?? process.env.AWS_REGION ?? "us-east-1";
 }
 
-function readWebIdentityToken(readTokenFile: TokenFileReader): string {
+async function readWebIdentityToken(readTokenFile: TokenFileReader): Promise<string> {
   const path = process.env[AWS_WEB_IDENTITY_TOKEN_FILE_ENV]?.trim();
   if (path) {
     let raw: string;
@@ -41,11 +41,11 @@ function readWebIdentityToken(readTokenFile: TokenFileReader): string {
     if (!token) throw new Error(`AWS OIDC token file (${path}) is empty. Fail-closed: no AWS access.`);
     return token;
   }
-  const inline = process.env[OE_AWS_WEB_IDENTITY_TOKEN_ENV]?.trim();
+  const inline = (await operatorSecret(OE_AWS_WEB_IDENTITY_TOKEN_NAME))?.trim();
   if (inline) return inline;
   throw new Error(
     `no AWS OIDC token available — set ${AWS_WEB_IDENTITY_TOKEN_FILE_ENV} (the deployment's web-identity ` +
-      `token file) or ${OE_AWS_WEB_IDENTITY_TOKEN_ENV}. Fail-closed: no AWS access.`,
+      `token file) or store the operator secret ${OE_AWS_WEB_IDENTITY_TOKEN_NAME} (\`oe secret set ${OE_AWS_WEB_IDENTITY_TOKEN_NAME}\`). Fail-closed: no AWS access.`,
   );
 }
 
@@ -56,7 +56,7 @@ async function assumeRoleWithWebIdentity(
   durationSeconds: number,
   defaultRegion: string | undefined,
 ): Promise<AwsCredentials> {
-  const token = readWebIdentityToken(readTokenFile);
+  const token = await readWebIdentityToken(readTokenFile);
   const region = regionFor(req, defaultRegion);
   const endpoint = `https://sts.${region}.amazonaws.com/`;
   const body = new URLSearchParams({

@@ -105,7 +105,9 @@ shipping.
 ### 3. Secrets
 
 **The credential store is the default home for a secret; an environment variable is the
-on-ramp.** For each connection's `secretRef`, put the value where that credential's
+on-ramp.** The surface credentials (the Slack, Discord, GitHub and Linear tokens and signing
+secrets, `AI_GATEWAY_API_KEY`) are operator secrets since OPE-2650: store each under its own name
+with `oe secret set <NAME>`, and the deployment reads it from the store first. For each connection's `secretRef`, put the value where that credential's
 [broker](../extending/credential-brokers.md) reads it — `broker: "db"` for the encrypted
 store (recommended), `broker: "env"` for an environment variable. Only `bearer` / `basic` /
 `github-app` egress connection types resolve today.
@@ -123,7 +125,7 @@ token to mint first and no endpoint to expose.
 printf %s "$THE_TOKEN" | npx oe secret set ACME_API_TOKEN
 
 # a multi-line value (a PEM) — bytes preserved
-npx oe secret set OE_GITHUB_APP_PRIVATE_KEY --value-file ./app.pem
+npx oe secret set GITHUB_APP_PRIVATE_KEY --value-file ./app.pem
 
 # the 30-secret case: an existing .env-shaped file, KEY=VALUE per line
 npx oe secret set --from-file ./secrets.env
@@ -204,7 +206,8 @@ the real surface rather than the `OE_*` local stand-ins.
   granted repos and opens PRs under its own bot identity with short-lived,
   repo-scoped installation tokens. See [Source control](../capabilities/source-control.md).
 - **Personal access token, for an org with no App**: set `github: { auth: "token" }` in
-  `agent/settings/settings.ts` and the token in `GITHUB_TOKEN`. It reaches only the
+  `agent/settings/settings.ts` and store the token as the operator secret `GITHUB_TOKEN`
+  (`npx oe secret set GITHUB_TOKEN`, OPE-2650). It reaches only the
   deployment's own repository (and `github.tokenRepos`); checkout, pull requests and the
   config-change pull requests work there. It is a declared mode, never a fallback: with the
   shipped `auth: "app"` the token is not read. The token's own scope is the real boundary,
@@ -213,8 +216,9 @@ the real surface rather than the `OE_*` local stand-ins.
 - **Branch protection is your backstop**: whatever the token can push, what *lands* is
   governed by your repo's protection rules. Require PR + review on sensitive repos so the
   write capability stays a proposal, not a merge.
-- **Event routines**: point a repo / App webhook at `POST /eve/v1/github` and set
-  `GITHUB_WEBHOOK_SECRET` so deliveries are HMAC-verified. The secret is **required**:
+- **Event routines**: point a repo / App webhook at `POST /eve/v1/github` and store
+  `GITHUB_WEBHOOK_SECRET` (an operator secret: `npx oe secret set GITHUB_WEBHOOK_SECRET`) so
+  deliveries are HMAC-verified. The secret is **required**:
   unset means every delivery is rejected 401 (fail closed — this ingress fires routines
   into Slack channels). The `webhooks.allowUnverifiedGithub` setting accepts unverified
   deliveries for local dev only.

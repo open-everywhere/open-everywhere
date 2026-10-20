@@ -4,6 +4,7 @@ import { registerSlackOps } from "@open-everywhere/provider-slack/agent/ops.js";
 import { registerTeamsOps } from "@open-everywhere/provider-teams/agent/ops.js";
 import { registerDiscordOps } from "@open-everywhere/provider-discord/agent/ops.js";
 import { registerGithubOps } from "@open-everywhere/provider-github/agent/ops.js";
+import { registerLinearOps } from "@open-everywhere/provider-linear/agent/ops.js";
 import { registerSurfaceTrustPreflight } from "@open-everywhere/core/agent/identity/trust-preflight.js";
 import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
 import { registerSettings, type AgentSettingsOverrides } from "@open-everywhere/core/agent/settings/settings.js";
@@ -32,6 +33,7 @@ registerSlackOps();
 registerTeamsOps();
 registerDiscordOps();
 registerGithubOps();
+registerLinearOps();
 registerSurfaceTrustPreflight();
 
 const server = buildOpsServer();

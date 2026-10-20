@@ -1774,6 +1774,10 @@
       "types": "./dist/agent/credentials/kv-vault.d.ts",
       "default": "./dist/agent/credentials/kv-vault.js"
     },
+    "./agent/credentials/operator-secret-env.js": {
+      "types": "./dist/agent/credentials/operator-secret-env.d.ts",
+      "default": "./dist/agent/credentials/operator-secret-env.js"
+    },
     "./agent/credentials/operator-secrets.js": {
       "types": "./dist/agent/credentials/operator-secrets.d.ts",
       "default": "./dist/agent/credentials/operator-secrets.js"
@@ -2649,6 +2653,10 @@
     "./agent/ops/eve-scripts.js": {
       "types": "./dist/agent/ops/eve-scripts.d.ts",
       "default": "./dist/agent/ops/eve-scripts.js"
+    },
+    "./agent/ops/operator-secret-roster.js": {
+      "types": "./dist/agent/ops/operator-secret-roster.d.ts",
+      "default": "./dist/agent/ops/operator-secret-roster.js"
     },
     "./agent/ops/package-info.js": {
       "types": "./dist/agent/ops/package-info.d.ts",

@@ -16,6 +16,6 @@ export default defineTool({
   async execute(_input, ctx) {
     const access = resolveAccessFor(ctx);
     const repos = githubAuthMode() === "token" ? access.repos.filter((r) => tokenReaches(r)) : access.repos;
-    return { repos: [...repos], sourceControlConfigured: githubCredentialConfigured() };
+    return { repos: [...repos], sourceControlConfigured: await githubCredentialConfigured() };
   },
 });

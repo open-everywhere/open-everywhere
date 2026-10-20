@@ -12,5 +12,6 @@ export type { SlackSuggestedPrompt } from "./settings/settings.js";
 export { declaredMcpServers } from "./connections/mcp-servers.js";
 export { registerPreflightProbe } from "./ops/probes.js";
 export { registerSurfaceCredentialProbe } from "./observability/telemetry.js";
+export { registerOperatorSecretNames } from "./ops/operator-secret-roster.js";
 export { registerSurfaceStatusReporter } from "./ops/status.js";
 export type { SurfaceStatus, StatusVerdict } from "./ops/status.js";

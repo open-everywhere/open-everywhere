@@ -1,6 +1,7 @@
 import { getSettings } from "@open-everywhere/core/agent/adapter-api.js";
+import { githubWebhookSecret } from "./github-credentials.js";
 
-export function githubEventsReach(env: NodeJS.ProcessEnv = process.env): boolean {
-  const secret = env.GITHUB_WEBHOOK_SECRET;
-  return (secret !== undefined && secret.length > 0) || getSettings().webhooks.allowUnverifiedGithub;
+export async function githubEventsReach(secret: () => Promise<string | undefined> = githubWebhookSecret): Promise<boolean> {
+  const value = await secret();
+  return (value !== undefined && value.length > 0) || getSettings().webhooks.allowUnverifiedGithub;
 }

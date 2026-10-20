@@ -89,7 +89,7 @@ export interface SessionGitBroker {
 
 export async function sessionGitBroker(repos: readonly string[]): Promise<SessionGitBroker | null> {
   if (githubAuthMode() === "token") {
-    const token = personalTokenValue();
+    const token = await personalTokenValue();
     if (token === undefined) return null;
     const reached = repos.filter((r) => tokenReaches(r));
     return { rules: tokenGitReadRules(token, reached), covers: (repo) => reached.includes(repo) };

@@ -14,7 +14,7 @@ export interface MintOutcome {
 }
 
 export class GitHubApp {
-  private readonly key: KeyObject;
+  private parsed: { readonly pem: string; readonly key: KeyObject } | undefined;
 
   constructor(
     private readonly config: GitHubAppConfig,
@@ -24,8 +24,14 @@ export class GitHubApp {
       discovered?: (owner: string) => string | undefined;
       hydrate?: () => Promise<void>;
     } = {},
-  ) {
-    this.key = parsePrivateKey(config.privateKeyPem);
+  ) {}
+
+  private async key(): Promise<KeyObject> {
+    const source = this.config.privateKeyPem;
+    const pem = typeof source === "string" ? source : await source();
+    if (!pem) throw new Error("the GitHub App private key is not set — store it with `oe secret set GITHUB_APP_PRIVATE_KEY`.");
+    if (this.parsed?.pem !== pem) this.parsed = { pem, key: parsePrivateKey(pem) };
+    return this.parsed.key;
   }
 
   private nowSeconds(): number {
@@ -60,7 +66,7 @@ export class GitHubApp {
 
     const tokens = new Map<string, InstallationToken>();
     for (const [owner, names] of byOwner) {
-      const jwt = await signAppJwt(this.key, this.issuer(), this.nowSeconds());
+      const jwt = await signAppJwt(await this.key(), this.issuer(), this.nowSeconds());
       tokens.set(
         owner,
         await mintInstallationToken({
@@ -84,7 +90,7 @@ export class GitHubApp {
       init: { method: string; headers: Record<string, string> },
     ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
     try {
-      const jwt = await signAppJwt(this.key, this.issuer(), this.nowSeconds());
+      const jwt = await signAppJwt(await this.key(), this.issuer(), this.nowSeconds());
       const res = await fetchFn(`https://api.github.com/app/installations/${installationId}`, {
         method: "GET",
         headers: {

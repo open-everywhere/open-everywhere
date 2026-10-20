@@ -217,15 +217,20 @@ same layer the other non-Slack platforms use.
    On the App's settings page, under **Display information**, upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as its logo. The manifest has no logo field. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
 2. **Configure the environment.** The full App writes every name below into `.env.local`, plus
    the `OE_GITHUB_*` source-control set (`OE_GITHUB_APP_ID`, `OE_GITHUB_APP_SLUG`,
-   `OE_GITHUB_APP_PRIVATE_KEY`, `OE_GITHUB_APP_CLIENT_ID`) for the same App. The source-control
-   App writes only the `OE_GITHUB_*` set and `GITHUB_WEBHOOK_SECRET`. `OE_GITHUB_BOT_USER_ID` is
-   written only when GitHub's bot-user lookup answers. Push the names that `status` lists in
-   `written`, piped from the file and never printed, then redeploy. By hand, set them yourself. The conversational surface uses the **bare** names — the
-   `OE_GITHUB_*` set is the separate source-control plane, even when both point at one App:
+   `OE_GITHUB_APP_CLIENT_ID`) for the same App. The source-control App writes only the `OE_GITHUB_*`
+   set, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_WEBHOOK_SECRET`. `OE_GITHUB_BOT_USER_ID` is written only
+   when GitHub's bot-user lookup answers. **The private key and the webhook secret are operator
+   secrets** (OPE-2650): store them with the ops tool `secret_set { names: ["GITHUB_APP_PRIVATE_KEY",
+   "GITHUB_WEBHOOK_SECRET"] }`, or `npx oe secret set <NAME>` by hand. Push the other names that
+   `status` lists in `written`, piped from the file and never printed, then redeploy. One private-key
+   name serves both planes: OPE-2650 folded `OE_GITHUB_APP_PRIVATE_KEY` into `GITHUB_APP_PRIVATE_KEY`. By hand, set them yourself. The conversational surface uses the **bare** names — the
+   `OE_GITHUB_*` set is the separate source-control plane. Since OPE-2650 both MUST point at one App:
+   they sign with the one private key `GITHUB_APP_PRIVATE_KEY`:
 
    ```bash
    GITHUB_APP_ID=…            # the App's numeric id
    GITHUB_APP_SLUG=…          # the App slug — the bot answers to @<slug>
+   # Operator secrets: `npx oe secret set <NAME>`, value on stdin. An env var is only the on-ramp.
    GITHUB_APP_PRIVATE_KEY=…   # PEM private key (mint installation tokens)
    GITHUB_WEBHOOK_SECRET=…    # HMAC-verifies every delivery. REQUIRED — unset rejects all (fail closed)
    # DEV ONLY, and it is a SETTING not a variable: turn on `webhooks.allowUnverifiedGithub`

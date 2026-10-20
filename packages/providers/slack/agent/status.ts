@@ -5,6 +5,7 @@ import {
   unifiedDomainSessionKey,
   type SurfaceStatus,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { slackBotToken, slackSigningSecret, type SlackCredentialDeps } from "./setup/credentials.js";
 
 const set = (v: string | undefined): boolean => v !== undefined && v.trim() !== "";
 
@@ -25,10 +26,10 @@ async function eventsVerified(): Promise<SurfaceStatus["eventsVerified"]> {
   }
 }
 
-export async function slackSurfaceStatus(env: NodeJS.ProcessEnv = process.env): Promise<Partial<SurfaceStatus>> {
-  const token = set(env.SLACK_BOT_TOKEN);
+export async function slackSurfaceStatus(deps: SlackCredentialDeps = {}): Promise<Partial<SurfaceStatus>> {
+  const token = set(await slackBotToken(deps));
   return {
-    credentials: token && set(env.SLACK_SIGNING_SECRET) ? "yes" : "no",
+    credentials: token && set(await slackSigningSecret(deps)) ? "yes" : "no",
     installed: token ? "yes" : "no",
     eventsVerified: await eventsVerified(),
   };

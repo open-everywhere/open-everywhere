@@ -54,9 +54,9 @@ export default windowGated("checkout_repo", defineTool({
     const tokenMode = githubAuthMode() === "token";
     const app = getGitHubApp();
     if (tokenMode) {
-      personalTokenFor(input.repo);
+      await personalTokenFor(input.repo);
     } else if (!app) {
-      throw appMissingError();
+      throw await appMissingError();
     }
     const committer = githubCommitter();
 

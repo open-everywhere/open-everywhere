@@ -23,7 +23,7 @@ const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pkcs1 = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
 
 process.env.OE_GITHUB_APP_ID = "111";
-process.env.OE_GITHUB_APP_PRIVATE_KEY = pkcs1;
+process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
 process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
 process.env.OE_GITHUB_INSTALLATIONS = '{"acme":"4242"}';
 delete process.env.GITHUB_TOKEN;

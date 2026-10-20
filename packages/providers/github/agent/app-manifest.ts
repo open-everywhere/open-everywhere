@@ -73,8 +73,8 @@ export function githubAppManifest(opts: {
 }
 
 export function githubAppEnvNames(variant: GithubAppVariant): string[] {
-  const scm = ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_SLUG", "OE_GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_CLIENT_ID", "OE_GITHUB_BOT_USER_ID", "GITHUB_WEBHOOK_SECRET"];
-  return variant === "full" ? [...scm, "GITHUB_APP_ID", "GITHUB_APP_SLUG", "GITHUB_APP_PRIVATE_KEY"] : scm;
+  const scm = ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_SLUG", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_CLIENT_ID", "OE_GITHUB_BOT_USER_ID", "GITHUB_WEBHOOK_SECRET"];
+  return variant === "full" ? [...scm, "GITHUB_APP_ID", "GITHUB_APP_SLUG"] : scm;
 }
 
 interface Conversion {
@@ -115,14 +115,13 @@ export async function exchangeGithubManifestCode(opts: {
   const env: Record<string, string> = {
     OE_GITHUB_APP_ID: id!,
     OE_GITHUB_APP_SLUG: slug!,
-    OE_GITHUB_APP_PRIVATE_KEY: pem!,
+    GITHUB_APP_PRIVATE_KEY: pem!,
     OE_GITHUB_APP_CLIENT_ID: clientId!,
     GITHUB_WEBHOOK_SECRET: webhookSecret!,
   };
   if (opts.variant === "full") {
     env.GITHUB_APP_ID = id!;
     env.GITHUB_APP_SLUG = slug!;
-    env.GITHUB_APP_PRIVATE_KEY = pem!;
   }
   try {
     const bot = await opts.fetchFn(`${API}/users/${encodeURIComponent(`${slug}[bot]`)}`, { headers: HEADERS });
@@ -152,7 +151,7 @@ export const GITHUB_APP_CREATE_FLOW: SurfaceAppCreateFlow = {
   codeProblem: (code) => (/^[A-Za-z0-9_-]{1,128}$/.test(code) ? undefined : "the redirect carried no usable code"),
   exchange: ({ code, variant, fetchFn }) => exchangeGithubManifestCode({ code, variant: isVariant(variant) ? variant : "full", fetchFn }),
   after: [
-    "Push each written name to the deployment's environment, piped from .env.local and never printed (the setup skill's deployment-env step), then redeploy.",
+    "Store the two secrets in the deployment's credential store: call the ops tool secret_set with names [\"GITHUB_APP_PRIVATE_KEY\", \"GITHUB_WEBHOOK_SECRET\"] (they are operator secrets, OPE-2650). Push each written name except those two to the deployment's environment, piped from .env.local and never printed (the setup skill's deployment-env step), then redeploy.",
     "Only after that redeploy, install the app on the repositories the agent works in: open the install link. Installing first sends the app's installation delivery to a deployment that does not hold the new webhook secret yet, and it refuses that delivery.",
     "Optional: on the app's settings page, under Display information, upload the project mark as its logo. The manifest has no logo field.",
   ],

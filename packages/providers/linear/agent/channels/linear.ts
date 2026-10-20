@@ -21,7 +21,7 @@ import {
   resolveLinearEngagement,
   type LinearSeamFacts,
 } from "./linear-engagement.js";
-import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg } from "./linear-credentials.js";
+import { linearAppActorCredentials, linearAppForOrg, linearCredentialsForOrg, linearStaticTokenCredentials } from "./linear-credentials.js";
 import { postLinearSilenceAck, postLinearHostAck, LINEAR_STOOD_DOWN_ACK_BODY } from "./linear-silence-ack.js";
 import { linearWebhookVerifier } from "./linear-webhook-verify.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
@@ -169,7 +169,7 @@ export async function enrichUserGuest(
   try {
     const d = await callLinear<{ user?: { guest?: boolean } }>({
       api: opts?.api,
-      credentials: opts?.credentials ?? (linearAppForOrg(opts?.organizationId) ? linearCredentialsForOrg(opts?.organizationId) : undefined),
+      credentials: opts?.credentials ?? (linearAppForOrg(opts?.organizationId) ? linearCredentialsForOrg(opts?.organizationId) : linearStaticTokenCredentials),
       query: "query OeUserGuest($id: String!) { user(id: $id) { guest } }",
       queryName: "OeUserGuest",
       variables: { id: userId },

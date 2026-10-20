@@ -18,6 +18,7 @@ import {
 import { withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
 import { withDiscordEventsRoute } from "./discord-events.js";
+import { discordBotTokenForEve } from "./discord-credentials.js";
 
 function auditPartitionForState(state: { channelId: string | null; guildId: string | null }): ChatAuditPartition | null {
   if (!state.channelId) return null;
@@ -54,6 +55,7 @@ function authFromInteraction(interaction: DiscordCommandInteraction): OpenEveryw
 
 const discordInteractionChannel = discordChannel({
   route: INTERNAL_DISCORD_ROUTE,
+  credentials: { botToken: discordBotTokenForEve },
   turnPolicy: "queue",
   onCommand: async (ctx: DiscordContext, interaction: DiscordCommandInteraction) => {
     const auth = authFromInteraction(interaction);

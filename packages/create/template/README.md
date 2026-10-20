@@ -116,8 +116,9 @@ Notion and GitHub are in the roster. Each one needs its own setup before it answ
 - **Notion** — create an internal integration, subscribe its webhook to
   `https://<host>/eve/v1/notion`, and put the pages it may act on in a memory domain's `reach`. See the
   [Notion guide](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/surfaces/notion.md).
-- **GitHub** — create a GitHub App, point its webhook at `https://<host>/eve/v1/github`, and set
-  `GITHUB_WEBHOOK_SECRET`. See the
+- **GitHub** — create a GitHub App, point its webhook at `https://<host>/eve/v1/github`, and store
+  its private key and webhook secret as operator secrets (`npx oe secret set GITHUB_APP_PRIVATE_KEY`,
+  `npx oe secret set GITHUB_WEBHOOK_SECRET`). See the
   [GitHub guide](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/surfaces/github.md).
 
 Discord, Microsoft Teams and Linear are installed too. To add one, add it under `providers` in

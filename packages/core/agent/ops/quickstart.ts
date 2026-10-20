@@ -4,6 +4,7 @@ import { getSettings, type AdminOidcSetting } from "../settings/settings.js";
 import { basename, dirname } from "node:path";
 import { parseEnv } from "node:util";
 import { coreNodeRange, nodeRangeSatisfied } from "./package-info.js";
+import { operatorSecretEnvFallbackPresent } from "../credentials/operator-secret-env.js";
 
 export type CheckStatus = "ok" | "missing" | "info";
 export interface Check {
@@ -30,6 +31,7 @@ export interface PreflightOptions {
   readonly nodeVersion?: string;
   readonly nodeRange?: string;
   readonly githubAdmin?: boolean;
+  readonly storedSecretNames?: ReadonlySet<string>;
   readonly adminOidc?: AdminOidcSetting;
 }
 
@@ -72,8 +74,9 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
     fix: nodeOk === false ? `install a Node version that satisfies ${nodeRange} (for example \`nvm install 24 && nvm use 24\`)` : undefined,
   });
 
-  const keySet = set(env.AI_GATEWAY_API_KEY);
+  const keySet = options.storedSecretNames?.has(GATEWAY_KEY_NAME) === true || operatorSecretEnvFallbackPresent(GATEWAY_KEY_NAME, env);
   const gatewayExempt = target === "vercel";
+  const maybeStored = !keySet && options.storedSecretNames === undefined && set(env.DATABASE_URL) && credentialKeyStatus(env[CREDENTIAL_KEY_ENV_NAME]) === "ok";
   checks.push({
     name: "model: AI_GATEWAY_API_KEY",
     status: keySet ? "ok" : gatewayExempt ? "info" : "missing",
@@ -81,14 +84,16 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
       ? "set"
       : gatewayExempt
         ? "not needed on Vercel: a deployed project authenticates to the AI Gateway with OIDC"
-        : target === "docker"
-          ? "missing — off Vercel there is no OIDC, so the model route needs this key"
-          : "missing",
+        : maybeStored
+          ? "missing from the environment. It is an operator secret, and this check cannot read the credential store: if `secret_list` lists AI_GATEWAY_API_KEY, the deployment holds it and this line is a known false red"
+          : target === "docker"
+            ? "missing — off Vercel there is no OIDC, so the model route needs this key"
+            : "missing",
     fix: keySet || gatewayExempt
       ? undefined
       : target === "docker"
-        ? `the person runs \`${envSetCommand("AI_GATEWAY_API_KEY")}\` in their own terminal (Vercel → AI Gateway → API Keys issues a key for any host). Running a different model backend instead? That is an adapter swap in app code, which this check cannot see — ${docUrl("docs/extending/adapter-model.md")} — so this line stays \`missing\`.`
-        : `Vercel → AI Gateway → API Keys, then the person runs \`${envSetCommand("AI_GATEWAY_API_KEY")}\` in their own terminal`,
+        ? `the person runs \`${secretSetCommand(GATEWAY_KEY_NAME)}\` in their own terminal, value on stdin (Vercel → AI Gateway → API Keys issues a key for any host). Running a different model backend instead? That is an adapter swap in app code, which this check cannot see — ${docUrl("docs/extending/adapter-model.md")} — so this line stays \`missing\`.`
+        : `Vercel → AI Gateway → API Keys, then the person runs \`${secretSetCommand(GATEWAY_KEY_NAME)}\` in their own terminal, value on stdin (for a local run only, \`${envSetCommand(GATEWAY_KEY_NAME)}\` also works: the env var is the operator secret's on-ramp)`,
   });
 
   const memProvider = resolveMemoryProviderId(env);
@@ -204,6 +209,8 @@ export const PREFLIGHT_SECRET_NAMES = [
 ] as const;
 
 export const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+const GATEWAY_KEY_NAME = "AI_GATEWAY_API_KEY";
 
 function secretSetCommand(name: string): string {
   return `npx oe secret set ${name}`;

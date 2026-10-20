@@ -134,4 +134,5 @@ zero silently drops the gateway.
 ## Never commit
 
 `.env`, tokens, `node_modules/` (all in `.gitignore`). `OE_RELAY_SECRET` must match the deploy but
-lives only in each side's secret store, never in git.
+lives only in each side's secret store, never in git. On the deployment side it is an operator secret
+(OPE-2650): `npx oe secret set OE_RELAY_SECRET`, with an env var of the same name only as the on-ramp.

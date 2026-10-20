@@ -23,7 +23,7 @@ function headers(signature: string): Headers {
 }
 
 function verify(raw: string, secretUsedToSign: string, env: NodeJS.ProcessEnv, nowMs = NOW): boolean {
-  return verifyLinearWebhookDelivery(headers(signLinearWebhookBody(raw, secretUsedToSign)), raw, { env, nowMs });
+  return verifyLinearWebhookDelivery(headers(signLinearWebhookBody(raw, secretUsedToSign)), raw, { primarySecret: env.LINEAR_WEBHOOK_SECRET, env, nowMs });
 }
 
 const PRIMARY_ONLY: NodeJS.ProcessEnv = { LINEAR_WEBHOOK_SECRET: "primary-secret" };
@@ -37,16 +37,16 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 };
 
 {
-  ok(linearWebhookSecretForOrg(PRIMARY_ORG, TWO_APPS) === "primary-secret", "selection: the declared primary organization gets LINEAR_WEBHOOK_SECRET");
-  ok(linearWebhookSecretForOrg(SOAK_ORG, TWO_APPS) === "soak-secret", "selection: a registered organization gets ITS OWN app's webhook secret");
-  ok(linearWebhookSecretForOrg("org-stranger", TWO_APPS) === undefined, "selection: an unknown organization gets NO secret once the primary organization is declared (fail closed)");
-  ok(linearWebhookSecretForOrg(undefined, TWO_APPS) === "primary-secret", "selection: a delivery naming no organization falls to the primary secret");
+  ok(linearWebhookSecretForOrg(PRIMARY_ORG, TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === "primary-secret", "selection: the declared primary organization gets LINEAR_WEBHOOK_SECRET");
+  ok(linearWebhookSecretForOrg(SOAK_ORG, TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === "soak-secret", "selection: a registered organization gets ITS OWN app's webhook secret");
+  ok(linearWebhookSecretForOrg("org-stranger", TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === undefined, "selection: an unknown organization gets NO secret once the primary organization is declared (fail closed)");
+  ok(linearWebhookSecretForOrg(undefined, TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === "primary-secret", "selection: a delivery naming no organization falls to the primary secret");
 }
 
 {
   const noSecret: NodeJS.ProcessEnv = { ...TWO_APPS };
   delete noSecret.LINEAR_APP_SOAK_WEBHOOK_SECRET;
-  ok(linearWebhookSecretForOrg(SOAK_ORG, noSecret) === undefined, "selection: a registered app with no webhook secret gets NO secret — never the primary's");
+  ok(linearWebhookSecretForOrg(SOAK_ORG, noSecret.LINEAR_WEBHOOK_SECRET, noSecret) === undefined, "selection: a registered app with no webhook secret gets NO secret — never the primary's");
   ok(verify(body(SOAK_ORG), "primary-secret", noSecret) === false, "selection: and its delivery is REFUSED even when signed with the primary secret");
 }
 
@@ -74,18 +74,18 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 {
   const raw = body(PRIMARY_ORG);
   const sig = signLinearWebhookBody(raw, "primary-secret");
-  ok(verifyLinearWebhookDelivery(new Headers(), raw, { env: PRIMARY_ONLY, nowMs: NOW }) === false, "no Linear-Signature header ⇒ REFUSED");
+  ok(verifyLinearWebhookDelivery(new Headers(), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "no Linear-Signature header ⇒ REFUSED");
   ok(verifyLinearWebhookDelivery(headers(sig), raw, { env: {}, nowMs: NOW }) === false, "no webhook secret configured at all ⇒ REFUSED (never verifies against an empty secret)");
-  ok(verifyLinearWebhookDelivery(headers(sig), "not json at all", { env: PRIMARY_ONLY, nowMs: NOW }) === false, "a non-JSON body ⇒ REFUSED (it carries no organization to key on)");
-  ok(verifyLinearWebhookDelivery(headers(sig), `${raw} `, { env: PRIMARY_ONLY, nowMs: NOW }) === false, "one trailing byte changes the body ⇒ the signature no longer matches ⇒ REFUSED");
-  ok(verifyLinearWebhookDelivery(headers(sig.slice(0, -2)), raw, { env: PRIMARY_ONLY, nowMs: NOW }) === false, "a truncated signature ⇒ REFUSED (unequal lengths never compare equal)");
+  ok(verifyLinearWebhookDelivery(headers(sig), "not json at all", { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "a non-JSON body ⇒ REFUSED (it carries no organization to key on)");
+  ok(verifyLinearWebhookDelivery(headers(sig), `${raw} `, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "one trailing byte changes the body ⇒ the signature no longer matches ⇒ REFUSED");
+  ok(verifyLinearWebhookDelivery(headers(sig.slice(0, -2)), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "a truncated signature ⇒ REFUSED (unequal lengths never compare equal)");
 
-  ok(verifyLinearWebhookDelivery(headers(sig), raw, { env: PRIMARY_ONLY, nowMs: NOW + LINEAR_MAX_SKEW_MS - 1000 }) === true, "replay window: a delivery inside the window verifies");
-  ok(verifyLinearWebhookDelivery(headers(sig), raw, { env: PRIMARY_ONLY, nowMs: NOW + LINEAR_MAX_SKEW_MS + 1000 }) === false, "replay window: a delivery PAST the window is REFUSED even with a valid signature");
-  ok(verifyLinearWebhookDelivery(headers(sig), raw, { env: PRIMARY_ONLY, nowMs: NOW - LINEAR_MAX_SKEW_MS - 1000 }) === false, "replay window: a delivery from the FUTURE is refused too (the window is two-sided)");
+  ok(verifyLinearWebhookDelivery(headers(sig), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW + LINEAR_MAX_SKEW_MS - 1000 }) === true, "replay window: a delivery inside the window verifies");
+  ok(verifyLinearWebhookDelivery(headers(sig), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW + LINEAR_MAX_SKEW_MS + 1000 }) === false, "replay window: a delivery PAST the window is REFUSED even with a valid signature");
+  ok(verifyLinearWebhookDelivery(headers(sig), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW - LINEAR_MAX_SKEW_MS - 1000 }) === false, "replay window: a delivery from the FUTURE is refused too (the window is two-sided)");
 
   const noTs = JSON.stringify({ action: "create", type: "Comment", organizationId: PRIMARY_ORG });
-  ok(verifyLinearWebhookDelivery(headers(signLinearWebhookBody(noTs, "primary-secret")), noTs, { env: PRIMARY_ONLY, nowMs: NOW }) === false, "replay window: a body with NO webhookTimestamp is refused (eve refuses it too)");
+  ok(verifyLinearWebhookDelivery(headers(signLinearWebhookBody(noTs, "primary-secret")), noTs, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "replay window: a body with NO webhookTimestamp is refused (eve refuses it too)");
 }
 
 {

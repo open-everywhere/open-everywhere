@@ -1,5 +1,5 @@
-import { registerSurfaceCredentialProbe } from "@open-everywhere/core/agent/adapter-api-ops.js";
+import { registerOperatorSecretNames } from "@open-everywhere/core/agent/adapter-api-ops.js";
 
 export function registerDiscordOps(): void {
-  registerSurfaceCredentialProbe("discord", () => Boolean(process.env.DISCORD_BOT_TOKEN));
+  registerOperatorSecretNames(["DISCORD_BOT_TOKEN", "OE_RELAY_SECRET"]);
 }

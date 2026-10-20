@@ -41,9 +41,9 @@ export const envChecklistStep: SetupStep = {
         "Both routes need two values: DATABASE_URL and OE_CREDENTIAL_ENCRYPTION_KEY. DATABASE_URL resolves BOTH stores to postgres on its own (OPE-2230), so there is no provider selector to set — a selector pointing away from postgres is the only thing that breaks it.",
         "Mint OE_CREDENTIAL_ENCRYPTION_KEY with the ops tool `scaffold_credential_key`: it writes a base64 32-byte AES-256 key into .env.local and never prints it. The encrypted credential store fails closed on every read and write without it.",
         route === "docker"
-          ? "The Docker route also needs a model route: AI_GATEWAY_API_KEY. There is no OIDC off Vercel. Running a different model backend is an adapter swap in app code, not an env setting — https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md."
+          ? "The Docker route also needs a model route: AI_GATEWAY_API_KEY, an operator secret (OPE-2650) — store it with `npx oe secret set AI_GATEWAY_API_KEY`. There is no OIDC off Vercel. Running a different model backend is an adapter swap in app code, not an env setting — https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md."
           : "The Vercel route needs NO AI_GATEWAY_API_KEY: a deployed project authenticates to the AI Gateway with OIDC.",
-        "Each chat surface adds its own names — Slack reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from the environment.",
+        "Each chat surface adds its own secrets — Slack's SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET are operator secrets (OPE-2650): store them with `npx oe secret set <NAME>`, not in the deployment's environment.",
         "Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store).",
         "Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name. Both read .env.local and the shell only.",
         "Set the values on the deployment instead (the Vercel dashboard, say)? Add `--host https://<host>`: the step then also reads the deployment's own verdicts from its public `/eve/v1/oe/status` route.",

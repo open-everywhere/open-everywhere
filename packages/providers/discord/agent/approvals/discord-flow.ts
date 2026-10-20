@@ -22,6 +22,7 @@ import {
   type DiscordCardMessage,
 } from "./discord-card.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest } from "./discord-admin.js";
+import { discordBotToken } from "../channels/discord-credentials.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-approvals] ${msg}`);
@@ -62,7 +63,7 @@ async function postDiscordCardMessage(
   what: string,
   render: () => DiscordCardMessage,
 ): Promise<string | undefined> {
-  const token = deps.token ?? process.env.DISCORD_BOT_TOKEN;
+  const token = deps.token ?? (await discordBotToken());
   if (!token) {
     log(`DISCORD_BOT_TOKEN is not set — cannot post the ${what} to channel ${row.channelId}`);
     return undefined;

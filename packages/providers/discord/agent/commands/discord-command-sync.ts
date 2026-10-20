@@ -1,6 +1,7 @@
 import type { RetryPolicy, SurfaceCommandOutcome, SurfaceCommandScope } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordFetch, type DiscordFetchLike } from "../channels/discord-rest.js";
 import { buildOeDiscordCommandDefinition } from "./discord-commands.js";
+import { discordBotToken } from "../channels/discord-credentials.js";
 
 const BOOT_RETRY: RetryPolicy = { maxAttempts: 1 };
 
@@ -160,7 +161,7 @@ async function reconcileOneGuild(
 
 export async function reconcileDiscordCommands(scope: SurfaceCommandScope, deps: DiscordCommandSyncDeps = {}): Promise<SurfaceCommandOutcome> {
   const applicationId = deps.applicationId ?? process.env.DISCORD_APPLICATION_ID;
-  const botToken = deps.botToken ?? process.env.DISCORD_BOT_TOKEN;
+  const botToken = deps.botToken ?? (await discordBotToken());
   if (!applicationId || !botToken) {
     return {
       status: "skipped",

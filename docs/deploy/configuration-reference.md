@@ -815,6 +815,34 @@ seam** — plus the ops overrides for the behaviour settings above, which are cr
 their setting path. If you are looking for a behaviour knob, it is in
 [Agent settings](#agent-settings-behaviour-config-as-code).
 
+### Operator secrets (OPE-2650)
+
+These names are **operator secrets**: their default home is the db credential store, not an env store.
+Store each with `oe secret set <NAME>` (value on stdin), or the ops MCP `secret_set` tool, or
+`oe secret set --from-file .env.local` for a batch. The runtime reads each one through core's
+`operatorSecret` (`credentials/operator-secrets.ts`): a stored value wins, and an env var of the same
+name is the **on-ramp**, read only when nothing is stored, with a one-time notice that names the move.
+Each store lookup is remembered for thirty seconds, so a replaced value takes effect within that time
+on a warm instance. A stored value this process cannot decrypt (no armed `OE_CREDENTIAL_ENCRYPTION_KEY`)
+never falls back to the env var: the surface reads it as unset and fails closed.
+
+| Name | Surface | What it is |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | Slack | The bot token. A `/setup` value is the second home, read when this is unset. |
+| `SLACK_SIGNING_SECRET` | Slack | The request signing secret. Same order as the bot token. |
+| `DISCORD_BOT_TOKEN` | Discord | The bot token. The Railway relay keeps its own env var. |
+| `OE_RELAY_SECRET` | Discord | The relay's shared HMAC secret, deployment side. |
+| `GITHUB_APP_PRIVATE_KEY` | GitHub | The App's PEM private key. `OE_GITHUB_APP_PRIVATE_KEY` is folded into this name. |
+| `GITHUB_WEBHOOK_SECRET` | GitHub | The webhook HMAC secret. |
+| `GITHUB_TOKEN` | GitHub | The personal access token, for `github.auth: "token"`. |
+| `LINEAR_AGENT_ACCESS_TOKEN`, `LINEAR_ACCESS_TOKEN`, `LINEAR_API_KEY`, `LINEAR_API_TOKEN` | Linear | A static token, first one set wins. |
+| `LINEAR_CLIENT_SECRET` | Linear | The primary OAuth app's client secret, for mint-on-demand. |
+| `LINEAR_WEBHOOK_SECRET` | Linear | The primary app's webhook HMAC secret. eve's bundled handler never reads it, because OE supplies `credentials.webhookVerifier`. |
+| `AI_GATEWAY_API_KEY` | Models | The Vercel AI Gateway key, off Vercel. |
+| `OE_AWS_WEB_IDENTITY_TOKEN` | AWS | The inline web-identity token, for a host with no token file. |
+
+The `LINEAR_APP_<SLOT>_*` names of a second Linear workspace stay env vars for now.
+
 ### Host-injected (set by the platform, not you)
 
 Standard vendor/runtime env vars this codebase reads as **fallbacks or signals**, never as a
@@ -839,7 +867,7 @@ greps the source for `process.env.X` finds every name accounted for somewhere.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `AI_GATEWAY_API_KEY` | — | Vercel AI Gateway key. Unneeded on a deployed Vercel project (OIDC auto-injected) or after `eve link`. |
+| `AI_GATEWAY_API_KEY` | — | Vercel AI Gateway key. An **operator secret** since OPE-2650: store it with `oe secret set AI_GATEWAY_API_KEY` (see [Operator secrets](#operator-secrets-ope-2650)). Unneeded on a deployed Vercel project (OIDC auto-injected) or after `eve link`. |
 
 **The build itself also talks to the gateway, separately from any deployed traffic.** `npm run
 build` (`eve build`) resolves each configured model id's context window and output limit from the
@@ -980,7 +1008,7 @@ read while the flag is off.
 | `OE_AWS_SSO_REGION` | falls back to `OE_AWS_REGION`, then `AWS_REGION` | The Identity Center region — where the `oidc.<region>.amazonaws.com` and `portal.sso.<region>.amazonaws.com` endpoints live. |
 | `OE_AWS_SSO_CLIENT_ID` | unset | The pre-registered **public** OIDC client id for the Identity Center auth-code + PKCE link flow. Not a secret (it rides the authorize URL). Missing ⇒ the link flow fails closed with an actionable message; arming the master flag never requires SSO to be configured. |
 | `AWS_WEB_IDENTITY_TOKEN_FILE` | unset | The standard AWS spelling for the file holding this deployment's OIDC web-identity token; a federated host (EKS/IRSA) injects it. Tried **first**, and **fails loudly** when set but unreadable or empty — never a silent fallback to no access. |
-| `OE_AWS_WEB_IDENTITY_TOKEN` | unset | The inline web-identity token, for a host that injects no token file. Tried only when `AWS_WEB_IDENTITY_TOKEN_FILE` is unset; neither ⇒ the mint throws, fail-closed. |
+| `OE_AWS_WEB_IDENTITY_TOKEN` | unset | The inline web-identity token, for a host that injects no token file. An **operator secret** since OPE-2650 (`oe secret set OE_AWS_WEB_IDENTITY_TOKEN`). Tried only when `AWS_WEB_IDENTITY_TOKEN_FILE` is unset; neither ⇒ the mint throws, fail-closed. |
 
 ### Own-rolled OAuth layer
 
@@ -1383,13 +1411,13 @@ No environment variable arms a test seam (OPE-2411). The six that did now take o
 |---|---|
 | `OE_GITHUB_APP_ID` | App id (required to enable the plane). |
 | `OE_GITHUB_APP_CLIENT_ID` | Preferred JWT issuer when present. |
-| `OE_GITHUB_APP_PRIVATE_KEY` | PEM private key — server-side secret, never in a sandbox. |
+| `GITHUB_APP_PRIVATE_KEY` | PEM private key — server-side secret, never in a sandbox. An **operator secret** since OPE-2650 (`oe secret set GITHUB_APP_PRIVATE_KEY`). The one name for the source-control plane and the GitHub conversation surface: OPE-2650 folded `OE_GITHUB_APP_PRIVATE_KEY` into it, so a key held only under that name is no longer read, and the two planes must be ONE App (one key cannot sign for two app ids). Resolved at the first mint, so the plane counts as configured on the app id and slug alone. |
 | `OE_GITHUB_APP_SLUG` | App slug → bot user `<slug>[bot]`. |
 | `OE_GITHUB_BOT_USER_ID` | Numeric bot user id, for commit attribution. |
 | `OE_GITHUB_INSTALLATIONS` | JSON map `owner → installation id` (multi-org). **Authoritative but optional**: GitHub delivers the `installation` webhook to every App by default (nothing to subscribe to), so each install registers itself and this map is composed *over* the discovered entries. See [GitHub § Multi-org installs](surfaces/github.md#multi-org-installs-self-registering). |
 | `OE_GITHUB_OWNER` / `OE_GITHUB_INSTALLATION_ID` | Single-owner pair (alternative to the map). |
-| `GITHUB_TOKEN` | The personal access token, read ONLY when `github.auth` is `"token"` (OPE-2530). It then reaches this deployment's own repository and `github.tokenRepos`, nothing else. With the shipped `"app"` it is never read, even when set: there is no fallback. See [Source control § A personal access token instead of the App](../capabilities/source-control.md#a-personal-access-token-instead-of-the-app). |
-| `GITHUB_WEBHOOK_SECRET` | HMAC-verifies inbound `event` routine deliveries. **Required** — unset = every delivery rejected 401 (fail closed). |
+| `GITHUB_TOKEN` | An **operator secret** since OPE-2650 (`oe secret set GITHUB_TOKEN`). The personal access token, read ONLY when `github.auth` is `"token"` (OPE-2530). It then reaches this deployment's own repository and `github.tokenRepos`, nothing else. With the shipped `"app"` it is never read, even when set: there is no fallback. See [Source control § A personal access token instead of the App](../capabilities/source-control.md#a-personal-access-token-instead-of-the-app). |
+| `GITHUB_WEBHOOK_SECRET` | HMAC-verifies inbound `event` routine deliveries. An **operator secret** since OPE-2650 (`oe secret set GITHUB_WEBHOOK_SECRET`); eve's own GitHub channel gets it through `credentials.webhookSecret`. **Required** — unset = every delivery rejected 401 (fail closed). |
 
 ### Access requests ([the widen-slow path](../how-it-works/access-requests.md))
 
@@ -1597,11 +1625,12 @@ to `broker: "env"` with a `secretRef` naming the env var. See
 
 ### Surface credentials
 
-Each surface reads its own credentials from env (or a broker). See the per-surface guides
-([Slack](./surfaces/slack.md), [Teams](./surfaces/teams.md), [Discord](./surfaces/discord.md),
-[Linear](./surfaces/linear.md)) for the full set —
-e.g. `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET`, `MICROSOFT_APP_ID` / `MICROSOFT_APP_PASSWORD`,
-`DISCORD_BOT_TOKEN` / `DISCORD_PUBLIC_KEY`, `LINEAR_ACCESS_TOKEN`.
+The Slack, Discord, GitHub and Linear tokens and signing secrets are **operator secrets** since
+OPE-2650: store each with `oe secret set <NAME>` (see [Operator secrets](#operator-secrets-ope-2650)).
+The per-surface guides ([Slack](./surfaces/slack.md), [Teams](./surfaces/teams.md),
+[Discord](./surfaces/discord.md), [Linear](./surfaces/linear.md)) list the full set —
+e.g. `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET`, `DISCORD_BOT_TOKEN`, `LINEAR_ACCESS_TOKEN`. Teams
+(`MICROSOFT_APP_ID` / `MICROSOFT_APP_PASSWORD`) and `DISCORD_PUBLIC_KEY` are still env vars.
 Connection `secretRef`s resolve through whichever broker their credential is stamped with — the
 shipped Notion connection is `db` (`db:notion:team-key`, OPE-408 step 2); a self-hosted fork's
 own connections default to the `env` broker (a plain env var name) unless re-stamped.
@@ -1611,13 +1640,13 @@ A few more, per surface:
 | Var | Default | Meaning |
 |---|---|---|
 | `TEAMS_APP_ID` | — | Teams: an alternate name for `MICROSOFT_APP_ID` — eve's own `verifyTeamsRequest` accepts either, and this codebase mirrors that fallback in its own presence checks. Set one or the other, not neither; `MICROSOFT_APP_PASSWORD` is required either way. |
-| `OE_RELAY_SECRET` | unset (**fail closed, every delivery rejected**) | Discord: shared HMAC-SHA256 secret verifying `x-oe-relay-signature` on deliveries from the [Discord Gateway relay](../../deploy/discord-relay/README.md) — the small always-on process that holds the persistent Gateway WebSocket Discord requires for ambient messages/reactions (Discord never delivers those to an HTTP endpoint). Generate one value and set it on both the relay's own deployment and this one; unset here means every relay delivery is rejected as unverified — never a dev bypass, this is a real ingress. |
+| `OE_RELAY_SECRET` | unset (**fail closed, every delivery rejected**) | An **operator secret** on the deployment side since OPE-2650 (`oe secret set OE_RELAY_SECRET`); the relay process keeps its own env var. Discord: shared HMAC-SHA256 secret verifying `x-oe-relay-signature` on deliveries from the [Discord Gateway relay](../../deploy/discord-relay/README.md) — the small always-on process that holds the persistent Gateway WebSocket Discord requires for ambient messages/reactions (Discord never delivers those to an HTTP endpoint). Generate one value and set it on both the relay's own deployment and this one; unset here means every relay delivery is rejected as unverified — never a dev bypass, this is a real ingress. |
 
 #### Linear token lifecycle (mint-on-demand)
 
 Linear's client-credentials access token expires every 30 days. A deployment reading only a
 static `LINEAR_ACCESS_TOKEN` (or its `LINEAR_AGENT_ACCESS_TOKEN` / `LINEAR_API_KEY` /
-`LINEAR_API_TOKEN` siblings) goes silent on every renewal unless someone manually re-mints it —
+`LINEAR_API_TOKEN` siblings — each an operator secret since OPE-2650) goes silent on every renewal unless someone manually re-mints it —
 so, for a durable production deploy, set `LINEAR_CLIENT_ID` + `LINEAR_CLIENT_SECRET` (the OAuth
 application's client-credentials pair, from [the Linear setup runbook](./surfaces/linear.md) Step
 1.4) instead, and OE mints + caches an `actor=app` access token itself
@@ -1630,7 +1659,8 @@ application's client-credentials pair, from [the Linear setup runbook](./surface
   same "missing Linear access token" error as before.
 - **One token per workspace, every call site.** Every Linear API call in this codebase (Agent
   Activities, team-privacy/issue reads, `commentCreate` replies) resolves ONE token from the same
-  env fallback chain — the minted token stands in for whichever static token would have served all
+  operator-secret chain (each call that names no `credentials` gets the seam's, so eve's own env
+  fallback never runs) — the minted token stands in for whichever static token would have served all
   of them; it does not introduce a second, differently-scoped credential. A deployment serving a
   second Linear workspace holds one such token per workspace — see below.
 - **Single-flight, in-process.** Concurrent turns share one in-flight mint (no stampede on the

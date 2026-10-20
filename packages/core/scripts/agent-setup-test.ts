@@ -39,7 +39,7 @@ const base: AgentSetupFacts = {
   surfaces: [{ platform: "slack", installed: "yes" }],
   connectors: [],
   repos: [],
-  github: { mode: "app", appConfigured: false, tokenSet: false },
+  github: { mode: "app", appConfigured: false, tokenSet: "no" },
   configChanges: { adminChannel: false, appInstalled: "no" },
 };
 const READY = { repo: "acme/agent-config", adminChannel: true } as const;
@@ -72,7 +72,7 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
 {
   const a = render("app set up, not installed on the repo", {
     ...base,
-    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: false },
+    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" },
     configChanges: { ...READY, appInstalled: "no" },
   });
   ok(a.notYet.length === 1, "§1 🔴 the GitHub app missing from the repository is a gap");
@@ -83,7 +83,7 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
 {
   const a = render("app installation cannot be read", {
     ...base,
-    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: false },
+    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" },
     configChanges: { ...READY, appInstalled: "unknown" },
   });
   ok(a.notYet.length === 1 && /can't confirm/.test(a.notYet[0]!.what), "§1 an unreadable installation is said as unknown, never as installed");
@@ -91,7 +91,7 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
 {
   const a = render("everything ready", {
     ...base,
-    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: false },
+    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" },
     configChanges: { ...READY, appInstalled: "yes" },
     connectors: ["notion"],
     repos: ["acme/web"],
@@ -103,19 +103,24 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
   ok(a.connectedTo.includes("Also connected here: Notion") && a.connectedTo.includes("Repositories I can work on here: acme/web"), "§1 the room's services and repositories are listed");
 }
 {
-  const a = render("personal access token mode", { ...base, github: { mode: "token", appConfigured: false, tokenSet: true }, configChanges: { ...READY, appInstalled: "no" } });
+  const a = render("personal access token mode", { ...base, github: { mode: "token", appConfigured: false, tokenSet: "yes" }, configChanges: { ...READY, appInstalled: "no" } });
   ok(a.notYet.length === 0, "§1 in token mode the token is enough for the pull requests, so it is no gap");
   ok(a.connectedTo.includes("GitHub: connected with a personal access token, not the app"), "§1 the token connection is said plainly");
   ok(a.forOperator.some((l) => /GITHUB_WEBHOOK_SECRET/.test(l) && /"source-control", give it the new secret/.test(l) && /"full", delete it/.test(l)), "§1 OPE-2530 the admin read says the app brings its own webhook secret, and what to do with the old webhook for each variant");
   ok(a.forOperator.some((l) => /move to the GitHub app/.test(l) && /surface_app_create/.test(l) && /source-control/.test(l) && /deployment's environment/.test(l) && /redeploy/.test(l) && l.indexOf("redeploy") < l.indexOf("install the app") && /github\.auth to "app"/.test(l) && /Nothing else changes/.test(l)), `§1 🔴 OPE-2530 the admin read names the one-step move to the app (saw: ${a.forOperator.join(" | ")})`);
 }
 {
-  const a = render("personal access token mode, no token", { ...base, github: { mode: "token", appConfigured: true, appSlug: "acme-oe", tokenSet: false }, configChanges: { ...READY, appInstalled: "yes" } });
+  const a = render("personal access token mode, no token", { ...base, github: { mode: "token", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" }, configChanges: { ...READY, appInstalled: "yes" } });
   ok(a.connectedTo.includes("GitHub: not connected"), "§1 🔴 token mode with no token reads not connected, even with the app's secrets set");
   ok(a.notYet.some((g) => /needs GitHub/.test(g.what) && /personal access token/.test(g.step)), "§1 token mode with no token names the token as the one step");
 }
 {
-  const a = render("app mode, token set, no app", { ...base, github: { mode: "app", appConfigured: false, tokenSet: true }, configChanges: { ...READY, appInstalled: "no" } });
+  const a = render("personal access token mode, token unconfirmed", { ...base, github: { mode: "token", appConfigured: false, tokenSet: "unknown" }, configChanges: { ...READY, appInstalled: "no" } });
+  ok(a.connectedTo.includes("GitHub: set up for a personal access token, but I can't confirm the token is set"), `§1 🔴 OPE-2650 an unconfirmed token is said as unconfirmed (saw: ${a.connectedTo.join(" | ")})`);
+  ok(a.notYet.some((g) => /can't confirm a personal access token/.test(g.what)), "§1 🔴 OPE-2650 an unconfirmed token is a named gap, never silence");
+}
+{
+  const a = render("app mode, token set, no app", { ...base, github: { mode: "app", appConfigured: false, tokenSet: "yes" }, configChanges: { ...READY, appInstalled: "no" } });
   ok(a.connectedTo.includes("GitHub: not connected"), "§1 🔴 app mode never reads a set token as a connection");
   ok(a.notYet.some((g) => /needs GitHub/.test(g.what)), "§1 🔴 app mode with only a token is a gap: the token is not a fallback");
   ok(a.forOperator.some((l) => /GITHUB_TOKEN is set but not used/.test(l)), "§1 the admin read names the unused token and the setting that would use it");
@@ -126,7 +131,7 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
     asker: "U_ME",
     standing: { kind: "member" },
     orgAdmins: ["slack/T1/U_ANA", "slack/T1/U_SAM"],
-    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: false },
+    github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" },
     configChanges: { ...READY, appInstalled: "no" },
   });
   ok(a.you === "You're not an admin. <@U_ANA> and <@U_SAM> are.", `§1 a member reads who the admins are, as mentions (saw: ${a.you})`);
@@ -183,17 +188,17 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
 }
 
 {
-  const a = render("test mode", { ...base, github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: false }, configChanges: { ...READY, appInstalled: "yes", dryRun: true } });
+  const a = render("test mode", { ...base, github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" }, configChanges: { ...READY, appInstalled: "yes", dryRun: true } });
   ok(a.notYet.length === 1 && /in test mode/.test(a.notYet[0]!.what), "§1 🔴 test mode is a gap");
   ok(!a.adminCanDoNow.some((s) => /pull request/.test(s)), "§1 test mode offers no pull request");
 }
 {
-  const a = render("malformed repo", { ...base, github: { mode: "token", appConfigured: false, tokenSet: true }, configChanges: { repo: "agent-config", adminChannel: true, appInstalled: "unknown" } });
+  const a = render("malformed repo", { ...base, github: { mode: "token", appConfigured: false, tokenSet: "yes" }, configChanges: { repo: "agent-config", adminChannel: true, appInstalled: "unknown" } });
   ok(a.notYet.length === 1 && /owner\/name/.test(a.notYet[0]!.step), "§1 🔴 a malformed repository is a gap");
   ok(!a.adminCanDoNow.some((s) => /pull request/.test(s)), "§1 a malformed repository offers no pull request");
 }
 {
-  const a = render("member, app installed", { ...base, standing: { kind: "member" }, orgAdmins: ["slack/T1/U_ANA"], github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: false }, configChanges: { ...READY, appInstalled: "yes" } });
+  const a = render("member, app installed", { ...base, standing: { kind: "member" }, orgAdmins: ["slack/T1/U_ANA"], github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" }, configChanges: { ...READY, appInstalled: "yes" } });
   ok(!personFacing(a).some((s) => /acme/.test(s)), "§1 🔴 a member never reads the repository or its owner, even with the app installed");
 }
 {
@@ -250,7 +255,7 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
   clearProviderSelection();
   _resetStatusRegistriesForTest();
   registerSurfaceStatusReporter("slack", async () => ({ installed: "yes" }));
-  for (const k of ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
+  for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
   resetGitHubApp();
 
   const ctxFor = (principalId: string, channelId: string): BindableContext => ({
@@ -314,7 +319,7 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
 
   accessRequests = { ...NO_BASE, configRepo: "acme/agent-config", adminChannel: "C_ADMIN" };
   process.env.OE_GITHUB_APP_ID = "1";
-  process.env.OE_GITHUB_APP_PRIVATE_KEY = "unused-by-the-gather";
+  process.env.GITHUB_APP_PRIVATE_KEY = "unused-by-the-gather";
   process.env.OE_GITHUB_APP_SLUG = "acme-oe";
   process.env.OE_GITHUB_OWNER = "acme";
   process.env.OE_GITHUB_INSTALLATION_ID = "42";
@@ -350,7 +355,7 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
   ok(prompt1.includes("### Your admins and your setup") && prompt1.includes("`author-id` U_ORG_ADMIN on Slack"), "§5 🔴 the seat prompt carries the admins-and-setup block");
   ok(prompt1 === prompt2, "§5 the block does not depend on who sent the message, so the prompt is byte-stable across askers");
 
-  for (const k of ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID"]) delete process.env[k];
+  for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID"]) delete process.env[k];
   _resetStatusRegistriesForTest();
 }
 

@@ -226,7 +226,7 @@ registerIdentityMapper(PLATFORM, (c) => {
     process.env[name] = value;
   };
   setEnv("OE_GITHUB_APP_ID", "222");
-  setEnv("OE_GITHUB_APP_PRIVATE_KEY", pkcs1);
+  setEnv("GITHUB_APP_PRIVATE_KEY", pkcs1);
   setEnv("OE_GITHUB_APP_SLUG", "open-everywhere");
   setEnv("OE_GITHUB_BOT_USER_ID", "12345");
   setEnv("OE_GITHUB_INSTALLATIONS", JSON.stringify({ acme: "4242" }));

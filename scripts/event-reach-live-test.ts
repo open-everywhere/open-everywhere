@@ -5,7 +5,7 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-event-reach-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 delete process.env.DATABASE_URL;
-const NAMES = ["GITHUB_WEBHOOK_SECRET", "NOTION_WEBHOOK_SECRET"];
+const NAMES = ["GITHUB_WEBHOOK_SECRET", "NOTION_WEBHOOK_SECRET", "LINEAR_WEBHOOK_SECRET"];
 for (const name of NAMES) delete process.env[name];
 
 const { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } = await import("../agent/lib/providers.generated.js");
@@ -60,11 +60,15 @@ console.log("§2 GitHub");
 console.log("§3 Linear");
 {
   ok(registeredEventReachSources().includes("linear"), "fixture: the Linear bundle registered its probe");
-  ok(linearEventsReach({}) === false, "🔴 Linear with no signing secret is deaf");
-  ok(linearEventsReach({ LINEAR_WEBHOOK_SECRET: "placeholder" }) === true, "🔴 Linear with the primary signing secret reaches");
+  const none = async (): Promise<string | undefined> => undefined;
+  ok((await linearEventsReach({}, none)) === false, "🔴 Linear with no signing secret is deaf");
+  ok((await linearEventsReach({}, async () => "placeholder")) === true, "🔴 Linear with the primary signing secret reaches");
   const app = { LINEAR_APP_B_ORG_ID: "org-b", LINEAR_APP_B_CLIENT_ID: "id", LINEAR_APP_B_CLIENT_SECRET: "placeholder" };
-  ok(linearEventsReach(app) === false, "a registered app with no webhook secret is still deaf: its deliveries are refused");
-  ok(linearEventsReach({ ...app, LINEAR_APP_B_WEBHOOK_SECRET: "placeholder" }) === true, "🔴 a registered app's own webhook secret reaches");
+  ok((await linearEventsReach(app, none)) === false, "a registered app with no webhook secret is still deaf: its deliveries are refused");
+  ok((await linearEventsReach({ ...app, LINEAR_APP_B_WEBHOOK_SECRET: "placeholder" }, none)) === true, "🔴 a registered app's own webhook secret reaches");
+  process.env.LINEAR_WEBHOOK_SECRET = "placeholder";
+  ok((await eventReach("linear", noHooks)) === "reaches", "🔴 the registered probe reads the primary operator secret (here through its env on-ramp)");
+  delete process.env.LINEAR_WEBHOOK_SECRET;
 }
 
 console.log("§4 Notion");

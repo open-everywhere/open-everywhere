@@ -666,7 +666,7 @@ console.log("  4. credential precedence");
 
   const both = await resolveSlackSecret("SLACK_BOT_TOKEN", "xoxb-from-the-env", SLACK_BOT_TOKEN_REF, { vault: stored });
   ok(both?.value === "xoxb-from-the-env", "🔴 with BOTH set, the env value wins");
-  ok(both?.source === "env", "the reported source is env");
+  ok(both?.source === "operator", "the reported source is the operator secret");
 
   const storeOnly = await resolveSlackSecret("SLACK_BOT_TOKEN", "", SLACK_BOT_TOKEN_REF, { vault: stored });
   ok(storeOnly?.value === "xoxb-from-the-store" && storeOnly.source === "store", "with only the store set, the stored value is used");

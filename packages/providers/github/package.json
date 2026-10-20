@@ -44,6 +44,10 @@
       "types": "./dist/agent/channels/github-catch-up.d.ts",
       "default": "./dist/agent/channels/github-catch-up.js"
     },
+    "./agent/channels/github-credentials.js": {
+      "types": "./dist/agent/channels/github-credentials.d.ts",
+      "default": "./dist/agent/channels/github-credentials.js"
+    },
     "./agent/channels/github-engagement.js": {
       "types": "./dist/agent/channels/github-engagement.d.ts",
       "default": "./dist/agent/channels/github-engagement.js"

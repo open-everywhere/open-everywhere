@@ -57,7 +57,7 @@ export type { ConfigPrProvider, ConfigPrOutcome, ConfigFileContent, CommitIdenti
 export { registerGitHubConfigPrProvider, makeGitHubConfigPrProvider } from "./credentials/config-pr-github.js";
 
 export { parsePrivateKey, signAppJwt, mintInstallationToken, MEMORY_WRITE_PERMISSIONS } from "./scm/mint.js";
-export { loadGitHubAppConfig } from "./scm/config.js";
+export { loadGitHubAppConfig, githubAppPrivateKey } from "./scm/config.js";
 export {
   composeGitHubInstallations,
   recordGitHubInstallation,
@@ -581,6 +581,8 @@ export type { GrantOwnerSubject } from "./access/credential-grant-owner.js";
 export type { CredentialGrantRow, CredentialGrantMode } from "./operational/credential-grant-rows.js";
 export { workDestinationPlatforms } from "./channels/work-destinations.js";
 export { getOperatorSecret, OperatorSecretNotSetError } from "./credentials/operator-secrets.js";
+export { operatorSecret, operatorSecretConfigured, operatorSecretOrUnset, operatorSecretEnvFallbackPresent } from "./credentials/operator-secrets.js";
+export { registerOperatorSecretNames } from "./ops/operator-secret-roster.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";
 

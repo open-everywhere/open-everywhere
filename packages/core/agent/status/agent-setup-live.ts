@@ -77,7 +77,7 @@ export async function gatherAgentSetupFacts(ctx: BindableContext): Promise<Agent
     surfaces,
     connectors: connectors.filter((c) => !surfaceNames.has(c)),
     repos,
-    github: { mode: githubAuthMode(), appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: githubTokenSet() },
+    github: { mode: githubAuthMode(), appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: (await githubTokenSet()) ? "yes" : "no" },
     configChanges: { ...(repo !== undefined ? { repo } : {}), adminChannel: Boolean(ar?.adminChannel?.trim()), appInstalled, ...(ar?.dryRun === true ? { dryRun: true } : {}) },
   };
 }
@@ -101,7 +101,7 @@ export function seatSetupFacts(domainName: string | undefined): AgentSetupFacts 
     surfaces: [],
     connectors: [],
     repos: [],
-    github: { mode: githubAuthMode(), appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: githubTokenSet() },
+    github: { mode: githubAuthMode(), appConfigured: app !== null, ...(app !== null ? { appSlug: app.appSlug } : {}), tokenSet: "unknown" },
     configChanges: { ...(repo !== undefined ? { repo } : {}), adminChannel: Boolean(ar?.adminChannel?.trim()), appInstalled, ...(ar?.dryRun === true ? { dryRun: true } : {}) },
   };
 }

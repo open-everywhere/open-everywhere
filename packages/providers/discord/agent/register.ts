@@ -22,7 +22,10 @@ import {
   registerSurfaceCommandReconciler,
   registerFriendlyNameResolver,
   registerAccountDisplayName,
+  registerSurfaceCredentialProbe,
+  operatorSecretConfigured,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { DISCORD_BOT_TOKEN_NAME } from "./channels/discord-credentials.js";
 import { fetchDiscordInfo } from "./channels/discord-channel-info.js";
 import { discordFriendlyNameResolver } from "./channels/discord-friendly-names.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
@@ -82,5 +85,6 @@ export function registerDiscordProvider(): void {
   registerAccountDirectory("discord", (query) => fetchGuildDirectory(query));
   registerProviderDocs("discord", PROVIDER_DOCS);
   registerSurfaceCommandReconciler("discord", (scope) => reconcileDiscordCommands(scope));
+  registerSurfaceCredentialProbe("discord", () => operatorSecretConfigured(DISCORD_BOT_TOKEN_NAME));
   registerDiscordOps();
 }

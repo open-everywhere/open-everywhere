@@ -695,6 +695,16 @@ const ok = (label: string, cond: boolean) => {
   ok("docker: …and it never claims the key is not needed", !/not needed on Vercel/.test(dockerModel?.detail ?? "") && /no OIDC/.test(dockerModel?.detail ?? ""));
   ok("docker: …and its fix names the adapter swap this check cannot see, rather than a config that does not exist",
     /adapter-model/.test(dockerModel?.fix ?? "") && !/agent\/model\//.test(dockerModel?.fix ?? ""));
+  {
+    const storeCapable = { DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
+    const maybe = preflight(storeCapable, { target: "docker" }).checks.find((c) => c.name.includes("AI_GATEWAY_API_KEY"));
+    ok("🔴 OPE-2650 docker: a store-capable env with no key in it stays missing, and names secret_list", maybe?.status === "missing" && /secret_list/.test(maybe?.detail ?? ""));
+    const listed = preflight(storeCapable, { target: "docker", storedSecretNames: new Set(["AI_GATEWAY_API_KEY"]) }).checks.find((c) => c.name.includes("AI_GATEWAY_API_KEY"));
+    ok("🔴 OPE-2650 docker: a key the caller listed in the store reads ok", listed?.status === "ok");
+    const notListed = preflight(storeCapable, { target: "docker", storedSecretNames: new Set<string>() }).checks.find((c) => c.name.includes("AI_GATEWAY_API_KEY"));
+    ok("…and a store the caller listed WITHOUT the key reads missing (negative control)", notListed?.status === "missing");
+    ok("…whose fix names `oe secret set`", /npx oe secret set AI_GATEWAY_API_KEY/.test(notListed?.fix ?? ""));
+  }
   for (const store of ["operational", "memory"]) {
     for (const target of ["vercel", "docker"] as const) {
       ok(
@@ -842,6 +852,12 @@ const ok = (label: string, cond: boolean) => {
   ok("…and reports presence once the file holds it", (askPresent.body.secrets as { present: boolean }[])[0]?.present === true);
   ok("🔴 …and no part of the value reaches the reply", !askPresent.text.includes(SENTINEL) && !askPresent.text.includes("sentinel"));
   ok("…and nothing was rewritten", readFileSync(file, "utf-8") === `SLACK_BOT_TOKEN=${SENTINEL}\n`);
+  (await import("../agent/ops/operator-secret-roster.js")).registerOperatorSecretNames(["SLACK_BOT_TOKEN"]);
+  const askMarked = await call("scaffold_env", { secretNames: ["SLACK_BOT_TOKEN"] });
+  ok("🔴 OPE-2650 scaffold_env marks an operator secret", (askMarked.body.secrets as { operatorSecret?: boolean }[])[0]?.operatorSecret === true);
+  ok("…and names secret_set as the step that stores it", String(askMarked.body.store).includes("secret_set") && String(askMarked.body.store).includes("SLACK_BOT_TOKEN"));
+  const plainName = await call("scaffold_env", { secretNames: ["ACME_API_TOKEN"] });
+  ok("…while a name outside the roster is not marked (negative control)", (plainName.body.secrets as { operatorSecret?: boolean }[])[0]?.operatorSecret === undefined && plainName.body.store === undefined);
   const notAName = await call("scaffold_env", { secretNames: [SENTINEL] });
   ok("scaffold_env refuses a secretName that is not an env name", notAName.body.ok === false);
   ok("🔴 …and does not echo it (a pasted value in a name field stays out of the reply)", !notAName.text.includes(SENTINEL));

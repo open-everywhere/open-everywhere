@@ -77,23 +77,31 @@ There is **no separate "Agents" section** in Linear — an agent is just an OAut
 
    > ⚠️ **This token expires in 30 days.** Fine for a build/demo — re-run the same curl to re-mint. For a durable production deploy, skip this manual mint entirely and use **Step 1.5b** below instead: OE mints (and caches) the same token itself, on demand, from the client id + secret alone.
 
-5b. **(Recommended for production) Skip the manual mint — let OE mint its own token.** Instead of running the curl above, just set `LINEAR_CLIENT_ID` / `LINEAR_CLIENT_SECRET` (Step 1.4's values) on your instance. OE mints an `actor=app` client-credentials token itself (the exact same grant the curl above performs), caches it in-process, and re-mints ahead of the 30-day expiry with a safety margin — no manual rotation, ever. See [Configuration reference § Linear token lifecycle](../configuration-reference.md#linear-token-lifecycle-mint-on-demand) for the precedence rule and failure behaviour.
+5b. **(Recommended for production) Skip the manual mint — let OE mint its own token.** Instead of running the curl above, just set `LINEAR_CLIENT_ID` on your instance and store `LINEAR_CLIENT_SECRET` with `npx oe secret set LINEAR_CLIENT_SECRET` (Step 1.4's values). OE mints an `actor=app` client-credentials token itself (the exact same grant the curl above performs), caches it in-process, and re-mints ahead of the 30-day expiry with a safety margin — no manual rotation, ever. See [Configuration reference § Linear token lifecycle](../configuration-reference.md#linear-token-lifecycle-mint-on-demand) for the precedence rule and failure behaviour.
 
 ## Step 2 — Configure the environment
 
-Set these on your instance:
+The Linear secrets are **operator secrets** (OPE-2650): store each in the deployment's encrypted
+credential store from your own terminal, with the same `DATABASE_URL` and
+`OE_CREDENTIAL_ENCRYPTION_KEY` the deployment reads. An env var of the same name still works as the
+on-ramp, read only when nothing is stored:
 
 ```bash
-LINEAR_WEBHOOK_SECRET=…         # webhook signing secret from Step 1.3
-LINEAR_ACCESS_TOKEN=…           # app-actor token from Step 1.5 (posts Agent Activities back; re-mint every 30 days)
+npx oe secret set LINEAR_WEBHOOK_SECRET   # webhook signing secret from Step 1.3 (value on stdin)
+npx oe secret set LINEAR_ACCESS_TOKEN     # app-actor token from Step 1.5 (posts Agent Activities back; re-mint every 30 days)
 ```
 
 **Or, for a durable production deploy (recommended), skip `LINEAR_ACCESS_TOKEN` and set the client-credentials pair instead:**
 
 ```bash
-LINEAR_WEBHOOK_SECRET=…         # webhook signing secret from Step 1.3
-LINEAR_CLIENT_ID=…              # OAuth application client id from Step 1.4
-LINEAR_CLIENT_SECRET=…          # OAuth application client secret from Step 1.4
+npx oe secret set LINEAR_WEBHOOK_SECRET   # webhook signing secret from Step 1.3
+npx oe secret set LINEAR_CLIENT_SECRET    # OAuth application client secret from Step 1.4
+```
+
+and, on your instance's environment:
+
+```bash
+LINEAR_CLIENT_ID=…              # OAuth application client id from Step 1.4 (public)
 ```
 
 OE mints and caches the access token itself (Step 1.5b) — no `LINEAR_ACCESS_TOKEN`, no monthly re-mint. If BOTH are set, `LINEAR_ACCESS_TOKEN` (or any of its static-token siblings) always wins and the client-credentials pair is ignored — see the configuration reference for the full precedence chain.

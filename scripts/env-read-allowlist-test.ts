@@ -78,7 +78,7 @@ function main(): void {
     const unallowed = r.out.split("\n").filter((l) => l.includes("ENV READ NOT ALLOWLISTED"));
     ok(unallowed.length === 0, `an allowlisted read raises no unallowlisted red (got: ${unallowed.join(" | ")})`);
     ok(r.out.includes("STALE ALLOWLIST ENTRY"), "…while the shrink direction DOES fire for the entries this tree stopped reading");
-    ok(r.out.includes("GITHUB_TOKEN"), "…naming one of them");
+    ok(r.out.includes("VERCEL_URL"), "…naming one of them (a survivor, so no later sweep step moves it)");
     ok(r.code !== 0, "…and a stale entry fails the lint, so the list can only shrink");
   }
 
@@ -136,7 +136,7 @@ function main(): void {
       "store-bootstrap": 5,
       platform: 23,
       "per-run-seam": 4,
-      "pending-migration": 54,
+      "pending-migration": 38,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -144,9 +144,17 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 90, `the allowlist holds 90 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 74, `the allowlist holds 74 names (found ${ENV_READ_ALLOWLIST.size})`);
     const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
     ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
+    const OPERATOR_SECRET_NAMES = [
+      "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DISCORD_BOT_TOKEN", "OE_RELAY_SECRET", "GITHUB_APP_PRIVATE_KEY",
+      "GITHUB_WEBHOOK_SECRET", "GITHUB_TOKEN", "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY",
+      "LINEAR_API_TOKEN", "LINEAR_CLIENT_SECRET", "LINEAR_WEBHOOK_SECRET", "AI_GATEWAY_API_KEY", "OE_AWS_WEB_IDENTITY_TOKEN",
+    ];
+    const backOnTheList = OPERATOR_SECRET_NAMES.filter((name) => ENV_READ_ALLOWLIST.has(name));
+    ok(backOnTheList.length === 0, `no operator secret is an allowlisted env read (found: ${backOnTheList.join(", ") || "none"})`);
+    ok(!ENV_READ_ALLOWLIST.has("OE_GITHUB_APP_PRIVATE_KEY"), "the folded OE_GITHUB_APP_PRIVATE_KEY spelling is read nowhere");
   }
 
   {
@@ -339,7 +347,7 @@ function main(): void {
     const envRows = rowsOf("ENV");
     const dynRows = rowsOf("DYN");
 
-    ok(envRows.length > 50 && dynRows.length > 5, `the row parse reached both tables (${envRows.length} ENV, ${dynRows.length} DYN)`);
+    ok(envRows.length > 30 && dynRows.length > 5, `the row parse reached both tables (${envRows.length} ENV, ${dynRows.length} DYN)`);
 
     ok(
       envRows.length === ENV_READ_ALLOWLIST.size,

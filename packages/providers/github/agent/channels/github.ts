@@ -84,6 +84,7 @@ import {
   dispatchNativeWakeWithRetry,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubAuthMode, withEndsTurnFinalChannel } from "@open-everywhere/core/agent/adapter-api.js";
+import { githubEveCredentials, githubWebhookSecret } from "./github-credentials.js";
 
 const ROUTE = "/eve/v1/github";
 const BOT_NAME = process.env.GITHUB_APP_SLUG;
@@ -461,7 +462,7 @@ async function installationDelivery(body: string, eventType: string): Promise<vo
   });
 }
 
-const pristine = githubChannel({ botName: BOT_NAME });
+const pristine = githubChannel({ botName: BOT_NAME, credentials: githubEveCredentials });
 type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
@@ -570,6 +571,7 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
 
 const native: GitHubChannel = githubChannel({
   botName: BOT_NAME,
+  credentials: githubEveCredentials,
   turnPolicy: "queue",
   onComment: githubOnComment,
   events: {
@@ -691,7 +693,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
   return async (req, args) => {
     const body = await req.text();
     const rejection = gateGithubDelivery(
-      process.env.GITHUB_WEBHOOK_SECRET,
+      await githubWebhookSecret(),
       body,
       req.headers.get("x-hub-signature-256"),
       getSettings().webhooks.allowUnverifiedGithub,

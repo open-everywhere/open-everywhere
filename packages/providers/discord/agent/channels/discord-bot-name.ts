@@ -1,11 +1,12 @@
 import type { BotDisplayNameArm } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordBotToken } from "./discord-credentials.js";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 
 export type DiscordSelfRequester = () => Promise<unknown>;
 
 const liveDiscordSelfRequest: DiscordSelfRequester = async () => {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) throw new Error("bot-display-name: DISCORD_BOT_TOKEN is not set.");
   const res = await fetch(`${DISCORD_API_BASE}/users/@me`, {
     headers: { authorization: `Bot ${token}` },

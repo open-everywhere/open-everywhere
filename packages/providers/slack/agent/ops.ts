@@ -3,6 +3,7 @@ import {
   configuredAgentName,
   declaredMcpServers,
   getSettings,
+  registerOperatorSecretNames,
   registerSurfaceAppManifest,
 } from "@open-everywhere/core/agent/adapter-api-ops.js";
 import { SLACK_AS_YOU_NAME } from "./slack-as-you.js";
@@ -27,6 +28,7 @@ export function slackManifestOptionsFromSettings(opts: { readonly appName?: stri
 }
 
 export function registerSlackOps(): void {
+  registerOperatorSecretNames(["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"]);
   registerSurfaceAppManifest("slack", {
     format: "json",
     consoleUrl: SLACK_APP_CONSOLE_URL,

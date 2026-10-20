@@ -1,10 +1,10 @@
-import { encryptedKvVault, type EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
+import { encryptedKvVault, operatorSecret, type EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
 import { SLACK_BOT_TOKEN_REF, SLACK_SIGNING_SECRET_REF } from "./install-state.js";
 
-const SLACK_SIGNING_SECRET_ENV = "SLACK_SIGNING_SECRET";
-const SLACK_BOT_TOKEN_ENV = "SLACK_BOT_TOKEN";
+const SLACK_SIGNING_SECRET_NAME = "SLACK_SIGNING_SECRET";
+const SLACK_BOT_TOKEN_NAME = "SLACK_BOT_TOKEN";
 
-export type SlackSecretSource = "env" | "store";
+export type SlackSecretSource = "operator" | "store";
 
 export interface SlackCredentialDeps {
   readonly vault?: EncryptedKvVault;
@@ -40,17 +40,18 @@ export function resetSlackCredentialNotices(): void {
   shadowChecked.clear();
 }
 
-function slackCredentialSourceNotice(envName: string): string {
+function slackCredentialSourceNotice(name: string): string {
   return (
-    `[open-everywhere:slack-setup] ${envName} is set in the environment, so this deployment uses the environment value and ` +
-    `IGNORES the one in the credential store. That is the documented order (OPE-2231): env wins, so landing this change cannot ` +
-    `alter which Slack app an existing deployment speaks as. To use the stored value instead, unset ${envName} and redeploy.`
+    `[open-everywhere:slack-setup] ${name} is set as an operator secret (or as its env on-ramp), so this deployment uses that ` +
+    `value and IGNORES the one /setup stored. That is the documented order (OPE-2231, OPE-2650): the operator secret wins, so ` +
+    `landing this change cannot alter which Slack app an existing deployment speaks as. To use the /setup value instead, run ` +
+    `\`oe secret rm ${name}\`, unset the env var of the same name, and redeploy.`
   );
 }
 
 export async function resolveSlackSecret(
-  envName: string,
-  fromEnv: string,
+  name: string,
+  fromOperator: string,
   ref: string,
   deps: SlackCredentialDeps = {},
 ): Promise<ResolvedSlackSecret | undefined> {
@@ -61,16 +62,16 @@ export async function resolveSlackSecret(
   const cached = memoApplies ? memo.get(ref) : undefined;
   const memoised = cached !== undefined && cached.until > now ? cached.value : undefined;
 
-  if (fromEnv.length > 0) {
-    if (!shadowChecked.has(envName)) {
-      shadowChecked.add(envName);
+  if (fromOperator.length > 0) {
+    if (!shadowChecked.has(name)) {
+      shadowChecked.add(name);
       const stored = memoised ?? (await readStored(ref, vault));
       if (stored !== undefined) {
-        noticed.add(envName);
-        console.warn(slackCredentialSourceNotice(envName));
+        noticed.add(name);
+        console.warn(slackCredentialSourceNotice(name));
       }
     }
-    return { value: fromEnv, source: "env" };
+    return { value: fromOperator, source: "operator" };
   }
 
   if (memoised !== undefined) return { value: memoised, source: "store" };
@@ -101,28 +102,31 @@ async function readStored(ref: string, injected: EncryptedKvVault | undefined): 
   }
 }
 
+async function fromOperatorSecret(name: string, deps: SlackCredentialDeps): Promise<string> {
+  const value = deps.env !== undefined ? deps.env[name] : await operatorSecret(name);
+  return (value ?? "").trim();
+}
+
 export async function slackSigningSecret(deps: SlackCredentialDeps = {}): Promise<string | undefined> {
-  const env = deps.env ?? process.env;
-  const fromEnv = (env[SLACK_SIGNING_SECRET_ENV] ?? "").trim();
-  return (await resolveSlackSecret(SLACK_SIGNING_SECRET_ENV, fromEnv, SLACK_SIGNING_SECRET_REF, deps))?.value;
+  const fromOperator = await fromOperatorSecret(SLACK_SIGNING_SECRET_NAME, deps);
+  return (await resolveSlackSecret(SLACK_SIGNING_SECRET_NAME, fromOperator, SLACK_SIGNING_SECRET_REF, deps))?.value;
 }
 
 export async function slackBotToken(deps: SlackCredentialDeps = {}): Promise<string | undefined> {
-  const env = deps.env ?? process.env;
-  const fromEnv = (env[SLACK_BOT_TOKEN_ENV] ?? "").trim();
-  return (await resolveSlackSecret(SLACK_BOT_TOKEN_ENV, fromEnv, SLACK_BOT_TOKEN_REF, deps))?.value;
+  const fromOperator = await fromOperatorSecret(SLACK_BOT_TOKEN_NAME, deps);
+  return (await resolveSlackSecret(SLACK_BOT_TOKEN_NAME, fromOperator, SLACK_BOT_TOKEN_REF, deps))?.value;
 }
 
 export async function slackCredentialsConfigured(deps: SlackCredentialDeps = {}): Promise<boolean> {
-  const env = deps.env ?? process.env;
-  if ((env[SLACK_BOT_TOKEN_ENV] ?? "").trim().length > 0) return true;
+  if ((await fromOperatorSecret(SLACK_BOT_TOKEN_NAME, deps)).length > 0) return true;
   return (await slackBotToken(deps)) !== undefined;
 }
 
-export function slackSecretEnvPresent(deps: SlackCredentialDeps = {}): { readonly signingSecret: boolean; readonly botToken: boolean } {
-  const env = deps.env ?? process.env;
+export async function slackOperatorSecretPresent(
+  deps: SlackCredentialDeps = {},
+): Promise<{ readonly signingSecret: boolean; readonly botToken: boolean }> {
   return {
-    signingSecret: (env[SLACK_SIGNING_SECRET_ENV] ?? "").trim().length > 0,
-    botToken: (env[SLACK_BOT_TOKEN_ENV] ?? "").trim().length > 0,
+    signingSecret: (await fromOperatorSecret(SLACK_SIGNING_SECRET_NAME, deps)).length > 0,
+    botToken: (await fromOperatorSecret(SLACK_BOT_TOKEN_NAME, deps)).length > 0,
   };
 }

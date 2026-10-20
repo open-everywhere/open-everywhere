@@ -107,14 +107,14 @@ ok(surfaceAppCreateFlow("github") === GITHUB_APP_CREATE_FLOW, "registerGithubOps
   ok(calls[1]?.url === "https://api.github.com/users/acme-agent%5Bbot%5D", "the bot user is read by its public login");
   ok(JSON.stringify(Object.keys(full.env).sort()) === JSON.stringify([...githubAppEnvNames("full")].sort()), "the full App fills every name it declares");
   ok(full.env.OE_GITHUB_APP_ID === "1234" && full.env.GITHUB_APP_ID === "1234", "the App id fills both planes");
-  ok(full.env.OE_GITHUB_APP_PRIVATE_KEY === PEM && full.env.GITHUB_APP_PRIVATE_KEY === PEM, "the key fills both planes");
+  ok(full.env.GITHUB_APP_PRIVATE_KEY === PEM && full.env.OE_GITHUB_APP_PRIVATE_KEY === undefined, "the key fills both planes under ONE name (OPE-2650 folded OE_GITHUB_APP_PRIVATE_KEY into it)");
   ok(full.env.GITHUB_WEBHOOK_SECRET === "whsec" && full.env.OE_GITHUB_APP_CLIENT_ID === "Iv1.abc", "the webhook secret and the client id");
   ok(full.env.OE_GITHUB_BOT_USER_ID === "99887766", "the bot user id, for the commit e-mail");
   ok(!Object.values(full.env).includes("cs"), "the client secret is not stored: nothing reads it");
   ok(full.appName === "Acme Agent" && full.installUrl === "https://github.com/apps/acme-agent/installations/new", "the app's name and install link");
 
   const sc = await exchangeGithubManifestCode({ code: "abc123", variant: "source-control", fetchFn: fake() });
-  ok(sc.env.GITHUB_APP_ID === undefined && sc.env.GITHUB_APP_PRIVATE_KEY === undefined, "source control only: no conversational names");
+  ok(sc.env.GITHUB_APP_ID === undefined && sc.env.GITHUB_APP_PRIVATE_KEY === PEM, "source control only: no conversational names, and the one private key");
   ok(sc.env.GITHUB_WEBHOOK_SECRET === "whsec", "…but the webhook secret, which install self-registration verifies with");
 
   const noBot = await exchangeGithubManifestCode({ code: "abc123", variant: "full", fetchFn: fake({ bot: "throw" }) });

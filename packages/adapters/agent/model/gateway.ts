@@ -17,6 +17,7 @@ import {
   hostPlanePolicy,
   liveIdentity,
   modelTargetFor,
+  operatorSecretOrUnset,
   resolvePrimaryModel,
   useSelfHostEgress,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -83,16 +84,27 @@ export function sharedHostPlaneFetch(hosts: readonly string[]): typeof fetch | u
   return HOST_PLANE_FETCH;
 }
 
+const AI_GATEWAY_API_KEY_NAME = "AI_GATEWAY_API_KEY";
+
+let gatewayApiKey: string | undefined;
+
+async function refreshGatewayApiKey(): Promise<void> {
+  gatewayApiKey = await operatorSecretOrUnset(AI_GATEWAY_API_KEY_NAME);
+}
+
 const TARGET_PROVIDERS = new Map<string, GatewayProvider>();
 function targetProvider(via: string | undefined): GatewayProvider {
   const name = via ?? DEFAULT_MODEL_VIA;
   let p = TARGET_PROVIDERS.get(name);
   if (p === undefined) {
     const baseURL = resolvedTargetUrl(name);
-    p =
-      baseURL !== undefined || HOST_PLANE_FETCH !== undefined
-        ? createGateway({ ...(baseURL !== undefined ? { baseURL } : {}), ...(HOST_PLANE_FETCH !== undefined ? { fetch: HOST_PLANE_FETCH } : {}) })
-        : gateway;
+    p = createGateway({
+      get apiKey(): string | undefined {
+        return gatewayApiKey;
+      },
+      ...(baseURL !== undefined ? { baseURL } : {}),
+      ...(HOST_PLANE_FETCH !== undefined ? { fetch: HOST_PLANE_FETCH } : {}),
+    });
     TARGET_PROVIDERS.set(name, p);
   }
   return p;
@@ -217,6 +229,7 @@ export function policyModel<M extends object>(model: M, via: string = DEFAULT_MO
         const isOptions = options !== null && typeof options === "object" && !Array.isArray(options);
         if ((!isOptions || ROWLESS_METHODS.has(prop)) && demandsAnything(t, p)) throw rowlessRefusal(p, prop, t, via);
         const sent = isOptions ? withRowsFor(prop, options as ProviderOptionsCarrier, t, p, via) : options;
+        await refreshGatewayApiKey();
         try {
           return await (value as (...a: unknown[]) => Promise<unknown>).call(receiver, sent, ...rest);
         } catch (err) {

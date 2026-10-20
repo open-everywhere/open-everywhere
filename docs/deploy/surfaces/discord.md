@@ -229,8 +229,19 @@ Set these on your instance, then deploy:
 ```bash
 DISCORD_APPLICATION_ID=…        # Application ID from Step 1.2
 DISCORD_PUBLIC_KEY=…            # Public Key from Step 1.3 (verifies signed interaction POSTs)
-DISCORD_BOT_TOKEN=…             # Bot token from Step 1.4
 ```
+
+The bot token is an **operator secret** (OPE-2650). Store it in the deployment's encrypted credential
+store from your own terminal, with the same `DATABASE_URL` and `OE_CREDENTIAL_ENCRYPTION_KEY` the
+deployment reads. If you run the Gateway relay, store its shared secret the same way:
+
+```bash
+npx oe secret set DISCORD_BOT_TOKEN   # Bot token from Step 1.4 (value on stdin)
+npx oe secret set OE_RELAY_SECRET     # only with the relay: the same value the relay holds
+```
+
+A `DISCORD_BOT_TOKEN` env var on the deployment still works as the on-ramp: the deployment reads it only
+when nothing is stored under that name.
 
 Optional, but relevant to the silo model:
 
@@ -253,12 +264,12 @@ OE_MEMORY_DIR=/abs/path/to/store
 ## Rotating the bot token
 
 **Reset Token** in the Developer Portal (Step 1.4) invalidates the old token immediately. Two
-**deployed** stores hold that token. Each one needs its own update, and neither picks the new value
-up on its own.
+**deployed** stores hold that token. Each one needs its own update: the relay picks the new value up
+only at a redeploy, and the deployment only once you store it.
 
 | Store | What holds the token | How the new value takes effect |
 | --- | --- | --- |
-| Vercel production | `DISCORD_BOT_TOKEN` on the deployment | an explicit redeploy |
+| The deployment's credential store | the `DISCORD_BOT_TOKEN` operator secret | `oe secret set DISCORD_BOT_TOKEN`, then up to thirty seconds — no redeploy |
 | Railway | `DISCORD_BOT_TOKEN` on the always-on relay ([`deploy/discord-relay/`](../../../deploy/discord-relay/README.md)) | a relay redeploy |
 
 A rotation that reaches only the deployment leaves the relay dead. That failure is quiet: the slash
@@ -267,24 +278,25 @@ command still works, and every HTTPS route still answers.
 A local checkout keeps its own copy — `deploy/discord-relay/.env`, and the repo-root `.env`. Those
 are operator copies, not deployed stores. Update one the next time you run it locally.
 
-### The Vercel half
+### The deployment half
 
-`git push` does not deploy, and a running deployment keeps the value it booted with:
+The deployment reads the token as an operator secret (OPE-2650), so the rotation is one command, run in
+your own terminal with the deployment's `DATABASE_URL` and `OE_CREDENTIAL_ENCRYPTION_KEY`:
 
 ```bash
-vercel env rm DISCORD_BOT_TOKEN production -y   # the name exists already — remove, then re-add
-vercel env add DISCORD_BOT_TOKEN production
-vercel deploy --prod
+npx oe secret set DISCORD_BOT_TOKEN   # the new token, on stdin
 ```
 
-`deploy:census` does **not** see this half. It reads credential rows out of the store, and this
-token is an environment variable. Prove it by hand instead: run `/ask …` in a guild channel
-(Step 5). A dead token fails every Discord API call the deployment makes.
+A warm instance picks the new value up within thirty seconds. If the deployment still holds the token
+only as its env var on-ramp, store it as above and then delete the env var: a stored value wins.
+
+`deploy:census` does **not** prove this half works. Prove it by hand instead: run `/ask …` in a guild
+channel (Step 5). A dead token fails every Discord API call the deployment makes.
 
 ### The Railway half
 
-**The relay reads the token ONCE, at boot.** `deploy/discord-relay/index.js` reads
-`process.env.DISCORD_BOT_TOKEN` at module load, then logs in with that value. A variable change alone
+**The relay reads the token ONCE, at boot.** `deploy/discord-relay/index.js` reads its own
+`DISCORD_BOT_TOKEN` env var at module load, then logs in with that value. A variable change alone
 changes nothing on a running relay. The process holds the dead token until it restarts.
 
 ```bash

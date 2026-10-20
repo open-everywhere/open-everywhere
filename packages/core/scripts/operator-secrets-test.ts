@@ -182,6 +182,54 @@ function cli(stdin = "") {
 }
 
 {
+  secrets.resetOperatorSecretWarnings();
+  secrets.resetOperatorSecretMemo();
+  let clock = 1_000_000;
+  const now = (): number => clock;
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try {
+    ok((await secrets.operatorSecret("OE_HOT_PROBE", { now })) === undefined, "hot read: set nowhere ⇒ undefined");
+    process.env.OE_HOT_PROBE = "hot-env-value";
+    ok((await secrets.operatorSecret("OE_HOT_PROBE", { now })) === "hot-env-value", "hot read: the env on-ramp answers at once, inside the miss TTL");
+    await secrets.setOperatorSecret({ name: "OE_HOT_PROBE", value: SENTINEL, setBy: secrets.SET_BY_CLI });
+    ok((await secrets.operatorSecret("OE_HOT_PROBE", { now })) === "hot-env-value", "🔴 hot read: a store miss is remembered inside the TTL (no query per request)");
+    clock += 30_001;
+    ok((await secrets.operatorSecret("OE_HOT_PROBE", { now })) === SENTINEL, "hot read: after the TTL the stored row is read, and it WINS over env");
+    ok(await secrets.operatorSecretConfigured("OE_HOT_PROBE"), "hot read: operatorSecretConfigured answers true for a stored secret");
+    secrets.resetOperatorSecretMemo();
+    const broken = { getStoredCredential: async (): Promise<null> => { throw new Error("store down"); } };
+    const faulted = await secrets.operatorSecret("OE_HOT_PROBE", { now, store: broken });
+    ok(faulted === "hot-env-value", "hot read: an unreachable store degrades to the env on-ramp");
+    let calls = 0;
+    const counting = { getStoredCredential: async (): Promise<null> => { calls++; throw new Error("store down"); } };
+    clock += 4_000;
+    ok((await secrets.operatorSecret("OE_HOT_PROBE", { now, store: counting })) === "hot-env-value" && calls === 0, "🔴 hot read: inside the backoff a remembered fault asks the store nothing (no query per unauthenticated request)");
+    clock += 1_001;
+    ok((await secrets.operatorSecret("OE_HOT_PROBE", { now })) === SENTINEL, "🔴 hot read: a store fault is remembered for the short backoff only — the stored value wins again after it, inside the 30 s TTL");
+    const saved = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+    delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+    await assert.rejects(
+      () => secrets.operatorSecret("OE_HOT_PROBE", { now }),
+      (e) => e instanceof CredentialError && /refusing to fall back/.test((e as Error).message),
+      "🔴 hot read: a stored row with no armed key throws — it never falls back to env",
+    );
+    ok(!(await secrets.operatorSecretConfigured("OE_HOT_PROBE")), "hot read: operatorSecretConfigured answers false for a row it cannot read");
+    process.env.OE_CREDENTIAL_ENCRYPTION_KEY = saved;
+    await assert.rejects(
+      () => secrets.operatorSecret("hook:internal"),
+      (e) => e instanceof CredentialError,
+      "hot read: a reserved host-minted ref is refused",
+    );
+  } finally {
+    console.warn = realWarn;
+    delete process.env.OE_HOT_PROBE;
+    await secrets.removeOperatorSecret("OE_HOT_PROBE");
+    secrets.resetOperatorSecretMemo();
+  }
+}
+
+{
   const envFile = join(dir, "cli.env");
   writeFileSync(envFile, "# nothing the store needs\n", "utf8");
   const base = ["--root-env", envFile];

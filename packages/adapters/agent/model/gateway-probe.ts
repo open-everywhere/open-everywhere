@@ -1,5 +1,7 @@
 import {
   DEFAULT_MODEL_VIA,
+  operatorSecretConfigured,
+  operatorSecretEnvFallbackPresent,
   getSettings,
   modelTargetFor,
   registerStatusProbe,
@@ -28,6 +30,8 @@ export function gatewayCatalogUrl(): string {
     return GATEWAY_CATALOG_URL;
   }
 }
+
+const GATEWAY_KEY_NAME = "AI_GATEWAY_API_KEY";
 
 export interface GatewayProbeDeps {
   readonly env?: NodeJS.ProcessEnv;
@@ -83,9 +87,8 @@ async function cachedConfigCheck(deps: GatewayProbeDeps, models: () => readonly 
 }
 
 export async function probeGatewayRoute(deps: GatewayProbeDeps = {}): Promise<ProbeAnswer> {
-  const env = deps.env ?? process.env;
   const vercel = deps.vercel ?? onVercel();
-  const keySet = (env.AI_GATEWAY_API_KEY ?? "").trim().length > 0;
+  const keySet = deps.env !== undefined ? operatorSecretEnvFallbackPresent(GATEWAY_KEY_NAME, deps.env) : await operatorSecretConfigured(GATEWAY_KEY_NAME);
   const retargeted = gatewayBaseUrl() !== undefined;
   if (!vercel && !keySet) {
     if (retargeted) {

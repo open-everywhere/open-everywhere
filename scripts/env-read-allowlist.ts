@@ -81,31 +81,9 @@ allow("per-run-seam", [
 ]);
 
 allow("pending-migration", [
-  ["DISCORD_BOT_TOKEN", "OPE-2650: → operator secret. The Discord bot token — every Discord API call authenticates with it."],
-  ["GITHUB_APP_PRIVATE_KEY", "OPE-2650: → operator secret. The GitHub App's PEM private key, which mints installation tokens."],
-  ["OE_GITHUB_APP_PRIVATE_KEY", "OPE-2650: → operator secret, folded into GITHUB_APP_PRIVATE_KEY. The OE-prefixed spelling `scm/config.ts` reads."],
-  ["GITHUB_TOKEN", "OPE-2650: → operator secret. The personal access token a deployment signs in to GitHub with when `github.auth` is \"token\" (scm/credential.ts, OPE-2530)."],
-  ["GITHUB_WEBHOOK_SECRET", "OPE-2650: → operator secret. The GitHub webhook HMAC secret."],
-  ["LINEAR_AGENT_ACCESS_TOKEN", "OPE-2650: → operator secret. The Linear agent token — the credential resolver's first choice."],
-  ["LINEAR_ACCESS_TOKEN", "OPE-2650: → operator secret. The second Linear token spelling the resolver accepts."],
-  ["LINEAR_API_KEY", "OPE-2650: → operator secret. The third Linear token spelling the resolver accepts."],
-  ["LINEAR_API_TOKEN", "OPE-2650: → operator secret. The fourth Linear token spelling the resolver accepts."],
-  ["LINEAR_CLIENT_SECRET", "OPE-2650: → operator secret. The Linear OAuth client secret."],
-  [
-    "LINEAR_WEBHOOK_SECRET",
-    "OPE-2650: → operator secret. The Linear webhook HMAC secret, verified by this repo's `linear-webhook-verify.ts`. eve's bundled handler reads the same name from env, so the move also needs eve to accept the value from the store.",
-  ],
-  ["SLACK_BOT_TOKEN", "OPE-2650: → operator secret. The Slack bot token."],
-  ["SLACK_SIGNING_SECRET", "OPE-2650: → operator secret. The Slack request signing secret."],
   ["OE_EGRESS_PROXY_TOKEN", "OPE-2650: → operator secret (the app side; the proxy container keeps its own env). The bearer token for the self-host egress proxy."],
   ["OE_LOG_SHIP_TOKEN", "OPE-2650: → operator secret. The bearer token for the log endpoint."],
   ["OE_TELEMETRY_OTLP_HEADERS", "OPE-2650: → operator secret. OTLP request headers — the value carries the collector's auth token."],
-  ["OE_RELAY_SECRET", "OPE-2650: → operator secret (the app side; the relay process keeps its own env). The shared secret between the Discord gateway relay and this agent."],
-  ["OE_AWS_WEB_IDENTITY_TOKEN", "OPE-2650: → operator secret. The inline AWS OIDC web-identity token, used where no token file exists."],
-  [
-    "AI_GATEWAY_API_KEY",
-    "OPE-2650: → operator secret. The model gateway key. The AI SDK reads the same name from env itself, so the move hands the stored key to `createGateway({ apiKey })` in the adapter.",
-  ],
 
   ["DISCORD_APPLICATION_ID", "OPE-2650: → setting `discord.applicationId`. Which Discord application this deployment is; public."],
   ["DISCORD_PUBLIC_KEY", "OPE-2650: → setting `discord.publicKey`. Discord's interaction PUBLIC key, which the webhook signature check verifies against — public by design, so Git can hold it."],
@@ -153,8 +131,8 @@ const DYNAMIC_SITES = new Map<string, string>([
     "an operator-authored credential ref resolved through the env broker — the name is config data, not a name this repo can carry.",
   ],
   [
-    "packages/core/agent/credentials/operator-secrets.ts::name",
-    "an operator secret looked up by the name the operator gave it.",
+    "packages/core/agent/credentials/operator-secret-env.ts::name",
+    "an operator secret's env on-ramp, looked up by the secret's own name (OPE-2650 moved the read here from operator-secrets.ts). The surface credentials and the four control-plane credentials (OE_CONTROL_READ_TOKENS, OE_CONTROL_INJECT_TOKENS, OE_CONTROL_OAUTH_SIGNING_SECRET, OE_ADMIN_STATIC_TOKEN) read through it until each deployment stores them.",
   ],
   [
     "packages/providers/linear/agent/channels/linear-credentials.ts::name",

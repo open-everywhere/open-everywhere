@@ -19,7 +19,7 @@ import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 process.env.OE_GITHUB_APP_ID = "1";
 process.env.OE_GITHUB_APP_SLUG = "oe-test";
-process.env.OE_GITHUB_APP_PRIVATE_KEY = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
+process.env.GITHUB_APP_PRIVATE_KEY = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
 process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
 delete process.env.GITHUB_TOKEN;
 const realFetch = globalThis.fetch;

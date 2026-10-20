@@ -108,10 +108,10 @@ const REACTION = JSON.stringify({
   const env = { SLACK_BOT_TOKEN: "xoxb-placeholder", SLACK_SIGNING_SECRET: "placeholder" } as NodeJS.ProcessEnv;
   const store = getOperationalStore();
   ok((await store.listChannelSessions(deploymentOrg())).length === 0, "§3 precondition: NO channel_session row exists — the legacy evidence cannot answer");
-  ok((await slackSurfaceStatus(env)).eventsVerified === "yes", "§3 🔴 eventsVerified reads yes from the stamp alone, whatever the domain topology");
+  ok((await slackSurfaceStatus({ env })).eventsVerified === "yes", "§3 🔴 eventsVerified reads yes from the stamp alone, whatever the domain topology");
 
   await store.setMeta("surface_event_verified:slack", "cleared-by-test");
-  ok((await slackSurfaceStatus(env)).eventsVerified === "unknown", "§3 with no evidence it reads unknown — never no");
+  ok((await slackSurfaceStatus({ env })).eventsVerified === "unknown", "§3 with no evidence it reads unknown — never no");
 }
 
 _resetSurfaceEventStampMemoForTest();

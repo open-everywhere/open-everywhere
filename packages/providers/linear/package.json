@@ -139,6 +139,10 @@
       "types": "./dist/agent/docs-generated.d.ts",
       "default": "./dist/agent/docs-generated.js"
     },
+    "./agent/ops.js": {
+      "types": "./dist/agent/ops.d.ts",
+      "default": "./dist/agent/ops.js"
+    },
     "./agent/provider-events.js": {
       "types": "./dist/agent/provider-events.d.ts",
       "default": "./dist/agent/provider-events.js"

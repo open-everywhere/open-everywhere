@@ -32,14 +32,16 @@ that repository ships no `env:pipe` script. Everything else is the same.
 - **Never propose a local run as a setup step.** `npm run dev` is the development loop AFTER the
   deploy. A local run has no public HTTPS URL for Slack to reach and keeps its state in a different
   store, so it proves little about the deployment. See "Develop locally" below.
-- **Where each secret lives.** The deployment reads `DATABASE_URL`,
-  `OE_CREDENTIAL_ENCRYPTION_KEY`, `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` and
-  `GITHUB_WEBHOOK_SECRET` from its **environment**: the Slack bundle and the GitHub webhook check
-  never read the credential store. So these go in `.env.local`, and then into the deployment's own
-  environment. `secret_set { names: [...] }` is for a credential whose `broker` is `"db"` (and
-  `NOTION_WEBHOOK_SECRET`): it moves each named value from `.env.local` into the store, so the user
-  runs `npx oe env set <NAME>` first. It needs `DATABASE_URL` and the key in `.env.local` too.
-  Nothing reads a stored secret back out (`secret_list` returns names only).
+- **Where each secret lives.** The deployment reads `DATABASE_URL` and
+  `OE_CREDENTIAL_ENCRYPTION_KEY` from its **environment**: they open the credential store. Every
+  other secret lives IN the store. The surface credentials (`SLACK_BOT_TOKEN`,
+  `SLACK_SIGNING_SECRET`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_PRIVATE_KEY`, `DISCORD_BOT_TOKEN`, the
+  Linear tokens and secrets, `AI_GATEWAY_API_KEY`) are **operator secrets** since OPE-2650: a stored
+  value wins, and an env var of the same name is only the on-ramp. `secret_set { names: [...] }`
+  moves each named value from `.env.local` into the store, so the user runs `npx oe env set <NAME>`
+  first. It needs `DATABASE_URL` and the key in `.env.local` too. `scaffold_env` marks an operator
+  secret with `operatorSecret: true`. Nothing reads a stored secret back out (`secret_list` returns
+  names only).
 - **If an ops tool answers "the app now runs @open-everywhere/core X; this ops server runs Y"**, the
   server predates an upgrade. Ask the user to restart it (`/mcp`, then reconnect
   `open-everywhere-ops`) and call again. Never work around it: a stale server serves old code. A
@@ -170,6 +172,8 @@ settings or the store.
    creates and installs the app, then runs `npx oe env set SLACK_BOT_TOKEN` and
    `npx oe env set SLACK_SIGNING_SECRET` in their own terminal. Confirm with
    `scaffold_env { secretNames: ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] }`: both read `present: true`.
+   Both are operator secrets, so then call `secret_set { names: ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] }`:
+   it moves them into the deployment's credential store, and they need no env push.
    **App icon.** With no `identity.name` set, the agent presents as the project, so its default
    avatar is the project mark. Unless the user set `identity.name` and chose their own icon, tell
    them to upload
@@ -189,8 +193,8 @@ settings or the store.
 8. **Build.** `npm run build`. It must pass. Then `npm run check:model-config`, and read it as
    "Check the model config" above says. A `✗` line stops the route here.
 9. **Deployment env.** `.env.local` never ships, so the deployment reads only what you set ON it.
-   The names are `OE_CREDENTIAL_ENCRYPTION_KEY`, `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`. The
-   Neon integration already set `DATABASE_URL` there, and that one value resolves both stores — so
+   The name is `OE_CREDENTIAL_ENCRYPTION_KEY`. The Slack pair is not on this list: step 5 stored it
+   in the credential store with `secret_set`. The Neon integration already set `DATABASE_URL` there, and that one value resolves both stores — so
    there is no `OE_OPERATIONAL_PROVIDER` or `OE_MEMORY_PROVIDER` to push. Add `OE_TELEMETRY` (value
    `off`) only when the user chose to turn telemetry off (see the telemetry section above).
    Confirm each command first, and **never let a value reach your own output.**
@@ -228,7 +232,9 @@ Then:
    set no provider selector. The compose stack of step 6 also carries a Postgres of its own.
 3. **Key.** `scaffold_credential_key`.
 4. **Model route.** There is no OIDC off Vercel, so the user supplies `AI_GATEWAY_API_KEY` (Vercel
-   → AI Gateway → API Keys issues one for any host) with `npx oe env set AI_GATEWAY_API_KEY`. Running a different model backend instead is
+   → AI Gateway → API Keys issues one for any host) with `npx oe env set AI_GATEWAY_API_KEY`. It is
+   an operator secret: once Postgres is reachable from this machine, `secret_set { names: ["AI_GATEWAY_API_KEY"] }`
+   stores it, and the container's `.env` line is only the on-ramp. Running a different model backend instead is
    an **adapter swap in app code**
    (`https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md`),
    which `--check` cannot see: that step stays `missing` on the Docker route either way, so read it

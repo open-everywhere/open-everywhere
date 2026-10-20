@@ -1,4 +1,5 @@
 import { admittedTenantsFromConfig, type DirectoryCandidate } from "@open-everywhere/core/agent/adapter-api.js";
+import { discordBotToken } from "./discord-credentials.js";
 
 const API = "https://discord.com/api/v10";
 
@@ -18,7 +19,7 @@ interface DiscordGuildMember {
 }
 
 export async function fetchGuildDirectory(query: string): Promise<readonly DirectoryCandidate[]> {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) return [];
   const q = query.trim().replace(/^@/u, "");
   if (q.length === 0) return [];

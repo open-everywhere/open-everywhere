@@ -1,5 +1,6 @@
 import { callLinearGraphQL, createLinearAgentActivity, type LinearApiOptions, type LinearFetch } from "eve/channels/linear";
 import { friendlyOutboundText, withRetryAfter, type RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
+import { linearAppActorCredentials } from "./linear-credentials.js";
 
 const LINEAR_SURFACE = "linear";
 
@@ -50,11 +51,11 @@ function retryingApi(api: LinearApi | undefined, operation: string): LinearApiOp
 }
 
 export function callLinear<T>(input: LinearCallInput): Promise<T> {
-  return callLinearGraphQL<T>({ ...input, api: retryingApi(input.api, input.queryName) });
+  return callLinearGraphQL<T>({ ...input, api: retryingApi(input.api, input.queryName), credentials: input.credentials ?? linearAppActorCredentials });
 }
 
 export function createLinearActivity(input: LinearActivityInput): Promise<{ readonly id: string; readonly success: boolean }> {
-  return createLinearAgentActivity({ ...input, api: retryingApi(input.api, LINEAR_ACTIVITY_OPERATION) });
+  return createLinearAgentActivity({ ...input, api: retryingApi(input.api, LINEAR_ACTIVITY_OPERATION), credentials: input.credentials ?? linearAppActorCredentials });
 }
 
 export const LINEAR_CHANNEL_OPERATION = "linearChannel";

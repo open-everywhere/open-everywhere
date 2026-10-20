@@ -13,14 +13,14 @@ const ok = (cond: boolean, label: string) => {
 
 const savedEnv = {
   appId: process.env.OE_GITHUB_APP_ID,
-  pem: process.env.OE_GITHUB_APP_PRIVATE_KEY,
+  pem: process.env.GITHUB_APP_PRIVATE_KEY,
   slug: process.env.OE_GITHUB_APP_SLUG,
   installs: process.env.OE_GITHUB_INSTALLATIONS,
 };
 const savedFetch = globalThis.fetch;
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
 process.env.OE_GITHUB_APP_ID = "app-899";
-process.env.OE_GITHUB_APP_PRIVATE_KEY = privateKey as string;
+process.env.GITHUB_APP_PRIVATE_KEY = privateKey as string;
 process.env.OE_GITHUB_APP_SLUG = "oe-test-app";
 process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
 
@@ -130,7 +130,7 @@ try {
 } finally {
   globalThis.fetch = savedFetch;
   if (savedEnv.appId === undefined) delete process.env.OE_GITHUB_APP_ID; else process.env.OE_GITHUB_APP_ID = savedEnv.appId;
-  if (savedEnv.pem === undefined) delete process.env.OE_GITHUB_APP_PRIVATE_KEY; else process.env.OE_GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
+  if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
   if (savedEnv.slug === undefined) delete process.env.OE_GITHUB_APP_SLUG; else process.env.OE_GITHUB_APP_SLUG = savedEnv.slug;
   if (savedEnv.installs === undefined) delete process.env.OE_GITHUB_INSTALLATIONS; else process.env.OE_GITHUB_INSTALLATIONS = savedEnv.installs;
   _resetGitHubInstallationTokenCache();

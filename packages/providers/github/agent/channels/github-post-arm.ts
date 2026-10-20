@@ -4,6 +4,7 @@ import {
   mintInstallationToken,
   CONVERSATION_WRITE_PERMISSIONS,
   loadGitHubAppConfig,
+  githubAppPrivateKey,
   githubAuthMode,
   resolveGitHubInstallationId,
   warmCredential,
@@ -57,22 +58,22 @@ export function _resetGitHubInstallationTokenCache(): void {
   installationToken.reset();
 }
 
-function githubAppCreds(): { appId: string; privateKeyPem: string; installations: Record<string, string> } | null {
+async function githubAppCreds(): Promise<{ appId: string; privateKeyPem: string; installations: Record<string, string> } | null> {
   const scm = loadGitHubAppConfig();
-  if (scm) return { appId: scm.clientId ?? scm.appId, privateKeyPem: scm.privateKeyPem, installations: scm.installations };
-  const appId = process.env.GITHUB_APP_ID;
-  const privateKeyPem = process.env.GITHUB_APP_PRIVATE_KEY;
-  if (!appId || !privateKeyPem) return null;
-  return { appId, privateKeyPem, installations: {} };
+  const appId = scm ? (scm.clientId ?? scm.appId) : process.env.GITHUB_APP_ID;
+  if (!appId) return null;
+  const privateKeyPem = await githubAppPrivateKey();
+  if (!privateKeyPem) return null;
+  return { appId, privateKeyPem, installations: scm?.installations ?? {} };
 }
 
 export async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   if (githubAuthMode() === "token") {
     throw markNotApplied(new Error("reply couldn't post to GitHub — this deployment signs in with a personal access token, and the GitHub conversation surface needs the GitHub App."));
   }
-  const creds = githubAppCreds();
+  const creds = await githubAppCreds();
   if (!creds) {
-    throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY)."));
+    throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_ID or GITHUB_APP_ID, and store the operator secret GITHUB_APP_PRIVATE_KEY)."));
   }
   const installationId = origin.installationId !== undefined ? String(origin.installationId) : await resolveGitHubInstallationId(origin.owner, creds.installations);
   if (!installationId) {

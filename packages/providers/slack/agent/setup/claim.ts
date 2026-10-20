@@ -5,7 +5,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { SLACK_COOKIE_KEY_REF, SLACK_SETUP_CODE_REF, readInstallRecord, type SlackInstallStateDeps } from "./install-state.js";
-import { slackSecretEnvPresent } from "./credentials.js";
+import { slackOperatorSecretPresent } from "./credentials.js";
 
 export const SETUP_COOKIE_NAME = "__Host-oe-setup";
 
@@ -63,8 +63,8 @@ export async function slackSetupOpen(deps: SlackClaimDeps = {}): Promise<boolean
   const cacheApplies = deps.vault === undefined || deps.lockCache === true;
   if (cacheApplies && lockCache !== null && lockCache.until > (deps.now ?? Date.now)()) return lockCache.open;
 
-  const env = slackSecretEnvPresent({ ...(deps.env ? { env: deps.env } : {}) });
-  if (env.botToken || env.signingSecret) return false;
+  const present = await slackOperatorSecretPresent({ ...(deps.env ? { env: deps.env } : {}) });
+  if (present.botToken || present.signingSecret) return false;
 
   const read = await readInstallRecord(deps);
   const open = read.kind === "absent";

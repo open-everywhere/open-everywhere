@@ -26,6 +26,7 @@ import { linearWakeOriginCodec } from "./channels/linear-origin-codec.js";
 import { linearEntityAdapter } from "./channels/linear-actions.js";
 import { linearTicketCreateAdapter } from "./channels/linear-create.js";
 import { linearCredentialsConfigured } from "./channels/linear-credentials.js";
+import { registerLinearOps } from "./ops.js";
 import { linearEventNormalizer, linearEventScopeGrant } from "./channels/linear-event-normalizer.js";
 import { linearEventsReach } from "./channels/linear-event-reach.js";
 import { linearMessageOps } from "./channels/linear-message-ops.js";
@@ -34,6 +35,7 @@ import { linearSeatCatchUpFetch, LINEAR_TIMESTAMP_PRECISION_MS } from "./channel
 import { registerLinearWorkSearch } from "./channels/linear-work-search.js";
 
 export function registerLinearProvider(): void {
+  registerLinearOps();
   registerIdentityMapper("linear", bindLinear);
   registerCapabilityManifest("linear", { midTurnPost: true, reactions: true, supervisorProseDropped: true });
   registerSurfaceParity("linear", LINEAR_SURFACE_PARITY);

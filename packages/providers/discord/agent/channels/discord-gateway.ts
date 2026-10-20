@@ -127,6 +127,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordMemberCanViewChannel } from "../approvals/discord-admin.js";
 import { fetchDiscordBackscrollLines, gradeDiscordContextLines, DISCORD_RAW_FETCH_REACHBACK_HOURS } from "./discord-backscroll.js";
+import { discordBotToken, discordRelaySecret } from "./discord-credentials.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -339,7 +340,7 @@ export interface RelayRejection {
 export function relayGate(
   signatureHeader: string | null,
   rawBody: string,
-  secret: string | undefined = process.env.OE_RELAY_SECRET,
+  secret: string | undefined,
 ): RelayRejection | null {
   if (!secret) {
     return { status: 401, reason: "OE_RELAY_SECRET is not set — rejecting unverified relay delivery" };
@@ -474,7 +475,7 @@ function botAuthHeaders(token: string): Record<string, string> {
 const AFFORDANCE_RETRY: RetryPolicy = { maxAttempts: 2, capMs: 2_000, totalBudgetMs: 2_000 };
 
 export async function discordCreateMessage(channelId: string, content: string, deps: DiscordFetchDeps = {}): Promise<string | null> {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) {
     log(`DISCORD_BOT_TOKEN is not set — cannot post to channel ${channelId}`);
     return null;
@@ -511,7 +512,7 @@ export async function discordCreateMessage(channelId: string, content: string, d
 }
 
 export async function openDiscordDm(userId: string, deps: DiscordFetchDeps = {}): Promise<string | null> {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) return null;
   try {
     const res = await discordFetch(
@@ -606,7 +607,7 @@ export function typingGateFeed(
 }
 
 export async function triggerDiscordTyping(channelId: string, deps: DiscordFetchDeps = {}): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token || !channelId) return;
   try {
     const res = await discordFetch(
@@ -636,7 +637,7 @@ export async function setDiscordReaction(
   action: "PUT" | "DELETE",
   deps: DiscordFetchDeps = {},
 ): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) return;
   if (!channelId || !messageId) return;
   const encoded = encodeURIComponent(emoji);
@@ -692,7 +693,7 @@ export async function createDiscordThread(
   name: string,
   deps: DiscordFetchDeps = {},
 ): Promise<string | null> {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) {
     log(`DISCORD_BOT_TOKEN is not set — cannot create thread on channel ${channelId}`);
     return null;
@@ -1615,7 +1616,7 @@ export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, Disco
       };
       const rawBody = await req.text();
 
-      const rejection = relayGate(req.headers.get("x-oe-relay-signature"), rawBody);
+      const rejection = relayGate(req.headers.get("x-oe-relay-signature"), rawBody, await discordRelaySecret());
       if (rejection) {
         log(`rejected (${rejection.status}): ${rejection.reason}`);
         return new Response(rejection.reason, { status: rejection.status });

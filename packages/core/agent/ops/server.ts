@@ -17,6 +17,7 @@ import {
   ENV_NAME_PATTERN,
 } from "./quickstart.js";
 import { preflightAsync } from "./probes.js";
+import { isOperatorSecretName } from "./operator-secret-roster.js";
 import { corePackageVersion } from "./package-info.js";
 import { registeredDeploymentIdentity, deploymentOrg } from "../identity/deployment-identity.js";
 import {
@@ -450,7 +451,9 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         `Write non-secret configuration into the project's .env.local (updating in place, appending new keys, preserving comments). ` +
         `\`values\` takes ONLY these names: ${ENV_CONFIG_NAMES.join(", ")}. A secret never passes through this tool: name it in ` +
         "`secretNames`, and the reply gives the command the person runs in their OWN terminal (`npx oe env set <NAME>`, a hidden " +
-        "prompt) plus whether the file already holds a value — presence only, never any part of one. Never ask the person to paste a " +
+        "prompt) plus whether the file already holds a value — presence only, never any part of one. A name that is an OPERATOR SECRET " +
+        "(the surface tokens and signing secrets, AI_GATEWAY_API_KEY — OPE-2650) comes back with `operatorSecret: true`: its home is the " +
+        "deployment's credential store, so once the file holds it, `secret_set` moves it there. Never ask the person to paste a " +
         "secret into the chat. The target must sit at the project root and be named .env, .env.local or .env.<name>.local.",
       inputSchema: {
         values: z
@@ -491,7 +494,9 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
         name,
         present: (held[name] ?? "") !== "",
         command: envSetCommand(name) + (a.path === undefined ? "" : ` --file ${file}`),
+        ...(isOperatorSecretName(name) ? { operatorSecret: true } : {}),
       }));
+      const toStore = secrets.filter((s) => s.operatorSecret === true).map((s) => s.name);
       const missing = secrets.filter((s) => !s.present);
       return json({
         ok: true,
@@ -504,6 +509,14 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
                 "Ask the person to run each command below in their own terminal, from the project root. The command reads the value " +
                 "from a hidden prompt and writes it to the file, so it never enters this conversation. Then call scaffold_env with the " +
                 `same secretNames again to confirm: ${missing.map((s) => s.command).join(" ; ")}`,
+            }
+          : {}),
+        ...(toStore.length > 0
+          ? {
+              store:
+                `${toStore.join(", ")} ${toStore.length === 1 ? "is an operator secret" : "are operator secrets"} (OPE-2650): the deployment reads ` +
+                `the credential store first. Once the file holds ${toStore.length === 1 ? "it" : "them"}, call secret_set with names ${JSON.stringify(toStore)} ` +
+                "to store them there; the env var is only the on-ramp.",
             }
           : {}),
       });
@@ -585,7 +598,7 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
     {
       title: "Store secrets from .env.local in the deployment's credential store",
       description:
-        "Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. Takes NAMES, never values: each value is read from the project's .env.local (or envPath), where the person put it with `npx oe env set <NAME>` in their own terminal. A name the file does not hold is refused before the store opens, and the reply names the command. Write-only: no tool reads a value back, and the confirmation reports only the byte count. Needs DATABASE_URL + OE_CREDENTIAL_ENCRYPTION_KEY (from the environment or the project's .env.local).",
+        "Encrypt one or more secrets into this deployment's own credential store (AES-256-GCM, keyed by OE_CREDENTIAL_ENCRYPTION_KEY) so channels and connectors resolve them WITHOUT env vars. The surface credentials (each chat surface's tokens and signing secrets) and the model gateway key are operator secrets since OPE-2650: this tool is how they reach the store, and `scaffold_env` marks each one. Takes NAMES, never values: each value is read from the project's .env.local (or envPath), where the person put it with `npx oe env set <NAME>` in their own terminal. A name the file does not hold is refused before the store opens, and the reply names the command. Write-only: no tool reads a value back, and the confirmation reports only the byte count. Needs DATABASE_URL + OE_CREDENTIAL_ENCRYPTION_KEY (from the environment or the project's .env.local).",
       inputSchema: {
         names: z
           .array(z.string())

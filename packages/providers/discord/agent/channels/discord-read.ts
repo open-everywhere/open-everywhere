@@ -9,6 +9,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { linesFromDiscordMessages, type DiscordRoleProbe } from "./discord-backscroll.js";
 import { discordAuthorRoles } from "../approvals/discord-admin.js";
+import { discordBotToken } from "./discord-credentials.js";
 
 const DISCORD_CHANNEL_DEFAULT_LIMIT = 50;
 const DISCORD_THREAD_DEFAULT_LIMIT = 100;
@@ -17,7 +18,7 @@ const DISCORD_MAX_PAGE = 100;
 export type DiscordReadRequester = (channelId: string, limit: number) => Promise<unknown>;
 
 const liveDiscordRead: DiscordReadRequester = async (channelId, limit) => {
-  const token = process.env.DISCORD_BOT_TOKEN;
+  const token = await discordBotToken();
   if (!token) throw new Error("read: DISCORD_BOT_TOKEN is not set — the Discord read tools need the bot token.");
   const qs = new URLSearchParams({ limit: String(Math.min(limit, DISCORD_MAX_PAGE)) }).toString();
   const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages?${qs}`, {

@@ -229,5 +229,6 @@ test:slack-credential-probe
 lint:seat-vocabulary
 test:seat-vocabulary-lint
 test:event-reach-live
+test:surface-operator-secrets
 lint:eve-telemetry
 test:fork-host-keepalive

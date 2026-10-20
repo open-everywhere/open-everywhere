@@ -17,21 +17,21 @@ export const slackStep: SetupStep = {
       return {
         satisfied: true,
         detail:
-          "SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET set in the environment. 🔴 Setting these two makes the deployment IGNORE anything " +
-          "/setup stored, and CLOSES /setup: the resolver is env-first, so landing that page cannot change which Slack app a working " +
-          "deployment speaks as",
+          "SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET set in the environment — the operator-secret on-ramp. For the deployment, store both with " +
+          "`npx oe secret set`. 🔴 Either home makes the deployment IGNORE anything /setup stored, and CLOSES /setup: the operator " +
+          "secret comes first, so landing that page cannot change which Slack app a working deployment speaks as",
       };
     }
     return {
       satisfied: false,
       detail:
         `missing from .env.local and this shell: ${missing.join(", ")}. This check reads those two homes only — a deployment ` +
-        "configured by /setup keeps both secrets in its own encrypted credential store, and reports unsatisfied here while working " +
-        `correctly. The status endpoint and /setup itself are what can see the store. ${missNote(routeOf(ctx))}`,
+        "that stored both with `npx oe secret set`, or configured by /setup, keeps them in its own encrypted credential store, and " +
+        `reports unsatisfied here while working correctly. The status endpoint, \`npx oe secret list\` and /setup itself are what can see the store. ${missNote(routeOf(ctx))}`,
       next:
         'open https://<host>/setup once the deployment is up (it creates and installs the Slack app from one pasted configuration ' +
         'token, with no env var to set), or create the app from the manifest the ops tool `surface_manifest { surface: "slack" }` ' +
-        "returns, then have the person run `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET` in their own terminal",
+        "returns, then have the person run `npx oe secret set SLACK_BOT_TOKEN` and `npx oe secret set SLACK_SIGNING_SECRET` in their own terminal (value on stdin)",
     };
   },
   guide(ctx: StepContext) {
@@ -59,7 +59,7 @@ export const slackStep: SetupStep = {
             : "upload your own icon, or the project mark"
         }, ${PROJECT_MARK_URL}. Slack's manifest has no icon field, so this step stays by hand.`,
         "Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.",
-        "Write both with `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from a hidden prompt. Never paste a secret into the chat, and never pass one to an ops tool.",
+        "Store both as operator secrets with `npx oe secret set SLACK_BOT_TOKEN` and `npx oe secret set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from stdin and writes the deployment's encrypted credential store. For a local run only, `npx oe env set <NAME>` puts the value in .env.local instead. Never paste a secret into the chat, and never pass one to an ops tool.",
         "THE SHORT WAY, once the deployment is up: open https://<host>/setup. It creates the Slack app from this same manifest with one pasted Slack app configuration token, installs it, and keeps every credential in the deployment's own encrypted store — no env var to set. This check cannot see that store, so it still reports this step unsatisfied afterwards; the status endpoint can.",
         "The manifest's URLs say YOUR-DEPLOY-URL until you deploy. Slack cannot verify Event Subscriptions before a deploy that holds SLACK_SIGNING_SECRET is up. After the deploy, paste the manifest again with your host (App Manifest → Save Changes), then retry the verification under Event Subscriptions.",
         "Note two ids for the trust edits: the workspace (team) id T… (the segment after /client/ in the workspace URL at https://app.slack.com), and your own member id U… (your Slack profile → ⋮ More → Copy member ID).",

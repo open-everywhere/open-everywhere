@@ -198,7 +198,7 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
 - Install to Workspace, then OAuth & Permissions → copy the Bot User OAuth Token (xoxb-…) = SLACK_BOT_TOKEN.
 - Basic Information → Display Information → App icon: upload the project mark, https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/brand/png/mark-square-1024.png. Slack's manifest has no icon field, so this step stays by hand.
 - Basic Information → App Credentials → copy the Signing Secret = SLACK_SIGNING_SECRET.
-- Write both with `npx oe env set SLACK_BOT_TOKEN` and `npx oe env set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from a hidden prompt. Never paste a secret into the chat, and never pass one to an ops tool.
+- Store both as operator secrets with `npx oe secret set SLACK_BOT_TOKEN` and `npx oe secret set SLACK_SIGNING_SECRET`, run in your own terminal: each reads the value from stdin and writes the deployment's encrypted credential store. For a local run only, `npx oe env set <NAME>` puts the value in .env.local instead. Never paste a secret into the chat, and never pass one to an ops tool.
 - THE SHORT WAY, once the deployment is up: open https://<host>/setup. It creates the Slack app from this same manifest with one pasted Slack app configuration token, installs it, and keeps every credential in the deployment's own encrypted store — no env var to set. This check cannot see that store, so it still reports this step unsatisfied afterwards; the status endpoint can.
 - The manifest's URLs say YOUR-DEPLOY-URL until you deploy. Slack cannot verify Event Subscriptions before a deploy that holds SLACK_SIGNING_SECRET is up. After the deploy, paste the manifest again with your host (App Manifest → Save Changes), then retry the verification under Event Subscriptions.
 - Note two ids for the trust edits: the workspace (team) id T… (the segment after /client/ in the workspace URL at https://app.slack.com), and your own member id U… (your Slack profile → ⋮ More → Copy member ID).
@@ -211,14 +211,14 @@ A presence-only checklist (it never prints a value). The full surface is in the 
 - Both routes need two values: DATABASE_URL and OE_CREDENTIAL_ENCRYPTION_KEY. DATABASE_URL resolves BOTH stores to postgres on its own (OPE-2230), so there is no provider selector to set — a selector pointing away from postgres is the only thing that breaks it.
 - Mint OE_CREDENTIAL_ENCRYPTION_KEY with the ops tool `scaffold_credential_key`: it writes a base64 32-byte AES-256 key into .env.local and never prints it. The encrypted credential store fails closed on every read and write without it.
 - The Vercel route needs NO AI_GATEWAY_API_KEY: a deployed project authenticates to the AI Gateway with OIDC.
-- Each chat surface adds its own names — Slack reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from the environment.
+- Each chat surface adds its own secrets — Slack's SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET are operator secrets (OPE-2650): store them with `npx oe secret set <NAME>`, not in the deployment's environment.
 - Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store).
 - Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name. Both read .env.local and the shell only.
 - Set the values on the deployment instead (the Vercel dashboard, say)? Add `--host https://<host>`: the step then also reads the deployment's own verdicts from its public `/eve/v1/oe/status` route.
 
 **Docker route.**
 
-- The Docker route also needs a model route: AI_GATEWAY_API_KEY. There is no OIDC off Vercel. Running a different model backend is an adapter swap in app code, not an env setting — https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md.
+- The Docker route also needs a model route: AI_GATEWAY_API_KEY, an operator secret (OPE-2650) — store it with `npx oe secret set AI_GATEWAY_API_KEY`. There is no OIDC off Vercel. Running a different model backend is an adapter swap in app code, not an env setting — https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md.
 
 ### 8. Build + deploy
 
@@ -237,10 +237,11 @@ Build before you deploy — a broken build must never be promoted.
 
 Before going live, run a real task in a pilot channel and walk the setup runbook's safety checklist (access bundles, egress enforcement, spend caps).
 
-- 🔴 THIS CHECK NEVER READS THE DEPLOYMENT'S OWN ENVIRONMENT. Every step above reads .env.local and your shell. `.env.local` is gitignored and never ships, so the deployment reads only what you set ON it: DATABASE_URL, OE_CREDENTIAL_ENCRYPTION_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET. A full house here says nothing about any of them.
+- 🔴 THIS CHECK NEVER READS THE DEPLOYMENT'S OWN ENVIRONMENT. Every step above reads .env.local and your shell. `.env.local` is gitignored and never ships, so the deployment reads only what you set ON it: DATABASE_URL, OE_CREDENTIAL_ENCRYPTION_KEY. A full house here says nothing about any of them.
+- The Slack bot token and signing secret are operator secrets (OPE-2650): store them in the deployment's credential store with `npx oe secret set SLACK_BOT_TOKEN` and `npx oe secret set SLACK_SIGNING_SECRET`, run in your own terminal with the same DATABASE_URL and OE_CREDENTIAL_ENCRYPTION_KEY in .env.local. No env push is needed for them.
 - Set each one for Production without printing it: `npm run -s env:pipe -- <NAME> | npx vercel env add <NAME> production`. Always pipe it straight into `vercel env add`; never run `env:pipe` bare, because a shell that is not a terminal prints the value. The Neon integration already set DATABASE_URL there, and it selects postgres for both stores on its own — no provider selector to push. A variable added after a deploy reaches the functions only on the NEXT deploy.
 - Mint OE_CREDENTIAL_ENCRYPTION_KEY with the ops tool `scaffold_credential_key`, which writes it to .env.local and never prints it. Without it the encrypted credential store fails closed on every read and write.
-- Not needed on a deployment: the two store selectors (DATABASE_URL resolves both), OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store). On the Vercel route, AI_GATEWAY_API_KEY is not needed either — OIDC covers it.
+- Not needed on a deployment: the two store selectors (DATABASE_URL resolves both), OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store). On the Vercel route, AI_GATEWAY_API_KEY is not needed either — OIDC covers it. On the Docker route it is an operator secret: `npx oe secret set AI_GATEWAY_API_KEY`.
 - Send the app a direct message in Slack, then @mention it in a channel you invited it to.
 - Safety checklist: https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-runbook.md#safety-checklist-the-anti-footgun-list
 

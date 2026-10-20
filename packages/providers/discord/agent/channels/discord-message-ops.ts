@@ -1,11 +1,12 @@
 import type { SurfaceMessageOps, OutboundFile } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordPostMessage } from "./discord-post.js";
+import { discordBotToken } from "./discord-credentials.js";
 import { discordFetch } from "./discord-rest.js";
 
 const API = "https://discord.com/api/v10";
 
-function botToken(): string {
-  const token = process.env.DISCORD_BOT_TOKEN;
+async function botToken(): Promise<string> {
+  const token = await discordBotToken();
   if (!token) throw new Error("DISCORD_BOT_TOKEN is not set — the bot token is required to post to Discord.");
   return token;
 }
@@ -18,7 +19,7 @@ export const discordMessageOps: SurfaceMessageOps = {
   async editMessage(channelId, messageId, text) {
     const res = await discordFetch("PATCH /channels/{id}/messages/{id}", `${API}/channels/${channelId}/messages/${messageId}`, {
       method: "PATCH",
-      headers: { authorization: `Bot ${botToken()}`, "content-type": "application/json" },
+      headers: { authorization: `Bot ${await botToken()}`, "content-type": "application/json" },
       body: JSON.stringify({ components: [], content: text }),
     });
     if (!res.ok) throw new Error(`Discord edit-message failed (${res.status}) for channel ${channelId}`);
@@ -33,7 +34,7 @@ export const discordMessageOps: SurfaceMessageOps = {
       const res = await discordFetch(
         on ? "PUT /channels/{id}/messages/{id}/reactions/{emoji}/@me" : "DELETE /channels/{id}/messages/{id}/reactions/{emoji}/@me",
         `${API}/channels/${channelId}/messages/${messageId}/reactions/${encoded}/@me`,
-        { method: on ? "PUT" : "DELETE", headers: { authorization: `Bot ${botToken()}` } },
+        { method: on ? "PUT" : "DELETE", headers: { authorization: `Bot ${await botToken()}` } },
       );
       if (!res.ok && !(!on && res.status === 404)) {
         console.warn(`[open-everywhere:discord] reaction ${on ? "add" : "remove"} failed (${res.status}) for message ${messageId}`);
@@ -52,7 +53,7 @@ export const discordMessageOps: SurfaceMessageOps = {
     });
     const res = await discordFetch("POST /channels/{id}/messages", `${API}/channels/${channelId}/messages`, {
       method: "POST",
-      headers: { authorization: `Bot ${botToken()}` },
+      headers: { authorization: `Bot ${await botToken()}` },
       body: form,
     });
     if (!res.ok) throw new Error(`Discord create-message (files) failed (HTTP ${res.status}) for channel ${channelId}`);

@@ -17,7 +17,7 @@ export interface InstallationToken {
 export interface GitHubAppConfig {
   readonly appId: string;
   readonly clientId?: string;
-  readonly privateKeyPem: string;
+  readonly privateKeyPem: string | (() => Promise<string | undefined>);
   readonly appSlug: string;
   readonly botUserId?: string;
   readonly installations: Readonly<Record<string, string>>;

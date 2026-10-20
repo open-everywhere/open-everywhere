@@ -72,20 +72,29 @@ four authored ones not at all, which is where a new behaviour would slip in unre
 | The settings mechanism | 10 |
 | Settings keys (the schema) | 93 |
 | This deployment's overrides | 6 |
-| Environment variables the runtime reads | 90 |
+| Environment variables the runtime reads | 74 |
 | Dynamic env read sites (key not statically resolvable) | 10 |
 | The configuration reference, its generators and its ratchets | 10 |
 | The model registry | 28 |
-| **Total** | **247** |
+| **Total** | **231** |
 
 OPE-2650's fourth pull request moved nine environment variables off env: the four control-plane
-credentials (`OE_CONTROL_READ_TOKENS`, `OE_CONTROL_INJECT_TOKENS`, `OE_CONTROL_OAUTH_SIGNING_SECRET`,
-`OE_ADMIN_STATIC_TOKEN`) became operator secrets in the db store, the `OE_ADMIN_OIDC_*` pair became the
-`control.adminOidc` setting, and the three self-minted keys lost their env on-ramp. That also removed
-the `self-secrets.ts` dynamic read site. Their ENV rows and the DYN row are gone, the new key has a SET
-row, and the counts above are that tree's. That tree also carries OPE-2649, which moved the four
-`OE_DIRECTORY_*` variables (two new `directory.*` keys, SET-093 and SET-094; they first landed under
-the duplicate ids SET-089 and SET-090, and the table counts had not followed).
+credentials (`OE_CONTROL_READ_TOKENS`, `OE_CONTROL_INJECT_TOKENS`,
+`OE_CONTROL_OAUTH_SIGNING_SECRET`, `OE_ADMIN_STATIC_TOKEN`) became operator secrets in the db store,
+the `OE_ADMIN_OIDC_*` pair became the `control.adminOidc` setting, and the three self-minted keys
+lost their env on-ramp. That also removed the `self-secrets.ts` dynamic read site. Their ENV rows
+and the DYN row are gone, the new key has a SET row. The four control-plane operator secrets keep
+the env on-ramp every operator secret has (DYN-05, `operator-secret-env.ts`): an env var of the same
+name still answers while no row is stored, after a row is deleted, and while the store is
+unreachable. That tree also carries OPE-2649, which moved the four `OE_DIRECTORY_*` variables (two
+new `directory.*` keys, SET-093 and SET-094; they first landed under the duplicate ids SET-089 and
+SET-090, and the table counts had not followed).
+
+OPE-2650's third pull request moved sixteen surface credentials to the db credential store: the
+Slack, Discord, GitHub and Linear tokens and signing secrets, the Discord relay secret, the gateway
+key, the inline AWS token, and the folded `OE_GITHUB_APP_PRIVATE_KEY` spelling. Each is an operator
+secret read through core's `operatorSecret`, so no ENV row names it; their env on-ramp is the DYN
+row for `operator-secret-env.ts`. The counts above are the tree with the third, fourth and OPE-2649 changes.
 
 OPE-2650's first pull request deleted eight environment variables: the seven access-request
 names (three became the `accessRequests.*` settings, four became plain code defaults in the app's
@@ -310,31 +319,20 @@ means total over two-level specs, not over any nesting.
 
 | ID | Symbol | Code | Behaviour | Documented by | Tested by |
 |---|---|---|---|---|---|
-| ENV-001 | `AI_GATEWAY_API_KEY` | `packages/core/agent/ops/quickstart.ts:64` | the model gateway key — the quickstart preflight checks its presence, and every inference call authenticates with it. | `docs/deploy/configuration-reference.md#model-gateway` *(8 pages)* | ? |
 | ENV-002 | `AWS_REGION` | `packages/adapters/agent/aws/cli.ts:91` | the standard AWS SDK region var, injected by the host or the AWS toolchain. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 | ENV-003 | `AWS_WEB_IDENTITY_TOKEN_FILE` | `packages/adapters/agent/aws/sts.ts:30` | secrets bootstrap: the file holding this deployment's AWS OIDC web-identity token, the standard AWS spelling a federated host injects. | `docs/deploy/configuration-reference.md#aws-access-plane-optional-off-by-default` | ? |
 | ENV-005 | `CLAUDE_PROJECT_DIR` | `packages/core/agent/ops/server.ts:42` | injected by the Claude Code harness the ops server runs inside. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 | ENV-006 | `DATABASE_URL` | `agent/lib/register-adapters.ts:172` | the Postgres DSN, which carries its credentials inline. | `docs/capabilities/memory.md#backings-where-memory-physically-lives` *(15 pages)* | ? |
 | ENV-007 | `DISCORD_APPLICATION_ID` | `packages/providers/discord/agent/commands/discord-command-sync.ts:264` | which Discord application this deployment is — the id every application-command route is addressed to, and the public half of the DISCORD_BOT_TOKEN pair. The GUILDS it registers into are NOT here: they are tracked literals in agent/commands/discord-commands.ts (OPE-1687). | `docs/deploy/surfaces/discord.md#step-1-create-the-discord-application-bot` | ? |
-| ENV-008 | `DISCORD_BOT_TOKEN` | `packages/providers/discord/agent/approvals/discord-admin.ts:74` | the Discord bot token — every Discord API call authenticates with it. | `docs/deploy/configuration-reference.md#surface-credentials` *(3 pages)* | ? |
 | ENV-009 | `DISCORD_PUBLIC_KEY` | `packages/providers/discord/agent/channels/discord-events.ts:138` | Discord's interaction public key, which the webhook signature check verifies against. | `docs/deploy/configuration-reference.md#surface-credentials` *(2 pages)* | ? |
 | ENV-010 | `DO_NOT_TRACK` | `packages/core/agent/observability/telemetry.ts:317` | the cross-vendor ambient telemetry opt-out convention. | `docs/deploy/configuration-reference.md#telemetry` *(2 pages)* | ? |
 | ENV-011 | `EVE_DOCKER_PATH` | `packages/adapters/agent/sandbox/backend-stop.ts:148` | where the docker binary sits on this host. | `docs/deploy/configuration-reference.md#access-egress` | ? |
 | ENV-012 | `GITHUB_APP_ID` | `packages/providers/github/agent/channels/github-post-arm.ts:114` | which GitHub App this deployment is. | `docs/deploy/configuration-reference.md#source-control-github-app` *(2 pages)* | ? |
-| ENV-013 | `GITHUB_APP_PRIVATE_KEY` | `packages/providers/github/agent/channels/github-post-arm.ts:115` | the GitHub App's PEM private key, which mints installation tokens. | `docs/deploy/configuration-reference.md#source-control-github-app` *(3 pages)* | ? |
 | ENV-014 | `GITHUB_APP_SLUG` | `packages/providers/github/agent/channels/github-catch-up.ts:93` | that App's slug, which the agent's own posts are recognised by. | `docs/deploy/configuration-reference.md#source-control-github-app` *(2 pages)* | ? |
-| ENV-015 | `GITHUB_TOKEN` | `packages/core/agent/approvals/access-request.ts:60` | the personal access token the approval and PR paths act with. | `docs/deploy/configuration-reference.md#source-control-github-app` *(5 pages)* | ? |
-| ENV-016 | `GITHUB_WEBHOOK_SECRET` | `packages/providers/github/agent/channels/github.ts:1343` | the GitHub webhook HMAC secret. | `docs/deploy/configuration-reference.md#source-control-github-app` *(4 pages)* | ? |
-| ENV-017 | `LINEAR_ACCESS_TOKEN` | `packages/providers/linear/agent/channels/linear-credentials.ts:104` | the second Linear token spelling the resolver accepts. | `docs/deploy/configuration-reference.md#surface-credentials` *(2 pages)* | ? |
-| ENV-018 | `LINEAR_AGENT_ACCESS_TOKEN` | `packages/providers/linear/agent/channels/linear-credentials.ts:103` | the Linear agent token — the credential resolver's first choice. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` | ? |
-| ENV-019 | `LINEAR_API_KEY` | `packages/providers/linear/agent/channels/linear-credentials.ts:105` | the third Linear token spelling the resolver accepts. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` *(2 pages)* | ? |
-| ENV-020 | `LINEAR_API_TOKEN` | `packages/providers/linear/agent/channels/linear-credentials.ts:106` | the fourth Linear token spelling the resolver accepts. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` | ? |
 | ENV-021 | `LINEAR_APP_NAME` | `packages/providers/linear/agent/channels/linear.ts:351` | which Linear app this deployment is, when no registration supplies the name. | `docs/deploy/surfaces/linear.md#ambient-mode--the-teams-standing-seat-on-by-default` | ? |
 | ENV-022 | `LINEAR_APP_USER_ID` | `packages/providers/linear/agent/channels/linear.ts:350` | that app's Linear user id. | `docs/deploy/surfaces/linear.md#ambient-mode--the-teams-standing-seat-on-by-default` | ? |
 | ENV-023 | `LINEAR_CLIENT_ID` | `packages/providers/linear/agent/channels/linear-credentials.ts:283` | the Linear OAuth client id — the public half of the client credential pair. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` *(2 pages)* | ? |
-| ENV-024 | `LINEAR_CLIENT_SECRET` | `packages/providers/linear/agent/channels/linear-credentials.ts:284` | the Linear OAuth client secret. | `docs/deploy/configuration-reference.md#linear-token-lifecycle-mint-on-demand` *(2 pages)* | ? |
 | ENV-025 | `LINEAR_ORGANIZATION_ID` | `packages/providers/linear/agent/channels/linear-credentials.ts:232` | which Linear organization this deployment is bound to. | `docs/deploy/configuration-reference.md#a-second-linear-workspace` *(2 pages)* | ? |
-| ENV-026 | `LINEAR_WEBHOOK_SECRET` | `packages/providers/linear/agent/channels/linear-webhook-verify.ts:62` | the Linear webhook HMAC secret, verified by this repo's own `linear-webhook-verify.ts` as well as by eve's bundled handler. | `docs/deploy/rollback.md#store-identity` *(2 pages)* | ? |
 | ENV-027 | `MICROSOFT_APP_ID` | `packages/providers/teams/agent/channels/teams-post-arm.ts:62` | which Microsoft app this deployment is. | `docs/deploy/configuration-reference.md#surface-credentials` *(2 pages)* | ? |
 | ENV-028 | `NO_PROXY` | `packages/core/agent/access/host-egress.ts:150` | the standard no-proxy exemption list — which network destinations bypass the proxy. `host-egress.ts` mirrors undici's own `EnvHttpProxyAgent` reading of it, so this names destinations, not behaviour. | `docs/deploy/platforms/self-host-egress.md#host-side-fetches-route-through-the-proxy-too-with-one-exception` | ? |
 | ENV-029 | `NODE_ENV` | `packages/core/agent/observability/ship.ts:176` | Node's own ambient mode. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` *(3 pages)* | ? |
@@ -343,7 +341,6 @@ means total over two-level specs, not over any nesting.
 | ENV-052 | `OE_AWS_REGION` | `packages/adapters/agent/aws/config.ts:7` | the operator's default AWS region — which regional endpoints a mint and a CLI call reach. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 | ENV-053 | `OE_AWS_SSO_CLIENT_ID` | `packages/adapters/agent/aws/config.ts:16` | the pre-registered PUBLIC OIDC client id this deployment presents at the Identity Center link — the same class as LINEAR_CLIENT_ID, the public half of a client pair. | `docs/deploy/configuration-reference.md#aws-access-plane-optional-off-by-default` | ? |
 | ENV-054 | `OE_AWS_SSO_REGION` | `packages/adapters/agent/aws/config.ts:14` | the Identity Center region, where the SSO OIDC and portal endpoints live. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
-| ENV-056 | `OE_AWS_WEB_IDENTITY_TOKEN` | `packages/adapters/agent/aws/sts.ts:32` | the inline AWS OIDC web-identity token, used where no token file exists. | `docs/deploy/configuration-reference.md#aws-access-plane-optional-off-by-default` | ? |
 | ENV-062 | `OE_CREDENTIAL_ENCRYPTION_KEY` | `packages/core/agent/credentials/db-broker.ts:40` | the AES-256-GCM key the db credential broker encrypts every stored credential with. | `docs/deploy/configuration-reference.md#credential-broker` *(10 pages)* | ? |
 | ENV-063 | `OE_DB_OWNER_URL` | `packages/core/agent/ops/quickstart.ts:89` | the OWNER-role Postgres DSN, the second connection string of the two-role database setup — present ⇒ the app connects as a non-owner runtime role. | `docs/extending/database.md#hardening-the-two-role-split-recommended-closes-the-owner-ddl-escape` | ? |
 | ENV-075 | `OE_EGRESS_DENIAL_LOG` | `packages/core/agent/access/egress-denial-poller.ts:54` | where the self-host egress proxy writes its denial log — a filesystem path on a shared volume, per install. | `docs/deploy/platforms/self-host-egress.md#denials-are-visible-here-and-only-here` | ? |
@@ -352,7 +349,6 @@ means total over two-level specs, not over any nesting.
 | ENV-079 | `OE_EGRESS_SOURCE_IP` | `packages/core/agent/access/self-host-egress.ts:101` | the fixed source IP this deployment egresses from — a host fact, not a policy. | `docs/deploy/configuration-reference.md#access-egress` | ? |
 | ENV-082 | `OE_GITHUB_APP_CLIENT_ID` | `packages/core/agent/scm/config.ts:31` | the GitHub App's PUBLIC OAuth client id — the same class as LINEAR_CLIENT_ID, the public half of a client pair. | `docs/deploy/configuration-reference.md#source-control-github-app` | ? |
 | ENV-083 | `OE_GITHUB_APP_ID` | `packages/core/agent/scm/config.ts:9` | the GitHub App id the surface credential probe checks for presence. | `docs/deploy/configuration-reference.md#source-control-github-app` | ? |
-| ENV-084 | `OE_GITHUB_APP_PRIVATE_KEY` | `packages/core/agent/scm/config.ts:10` | the GitHub App PEM this deployment mints installation tokens with — the OE-prefixed spelling `scm/config.ts` reads. | `docs/deploy/configuration-reference.md#source-control-github-app` *(2 pages)* | ? |
 | ENV-085 | `OE_GITHUB_APP_SLUG` | `packages/core/agent/scm/config.ts:11` | that App's slug, which the agent recognises its own posts by. | `docs/deploy/configuration-reference.md#source-control-github-app` | ? |
 | ENV-086 | `OE_GITHUB_BOT_USER_ID` | `packages/core/agent/scm/config.ts:34` | the GitHub user id this deployment posts as. | `docs/deploy/configuration-reference.md#source-control-github-app` | ? |
 | ENV-087 | `OE_GITHUB_INSTALLATION_ID` | `packages/core/agent/scm/config.ts:25` | which GitHub App INSTALLATION this deployment acts through — a wiring target, per install. | `docs/deploy/configuration-reference.md#source-control-github-app` *(2 pages)* | ? |
@@ -373,7 +369,6 @@ means total over two-level specs, not over any nesting.
 | ENV-113 | `OE_PGLITE_DIR` | `packages/core/agent/operational/pglite-client.ts:23` | the PGlite data directory. | `docs/extending/database.md#floor-embedded-postgres-vs-server-vs-hosted` *(3 pages)* | ? |
 | ENV-116 | `OE_PRINCIPAL` | `packages/core/agent/identity/binding.ts:404` | OPE-2411: the bindLocal principal stand-in, left in env deliberately — a committed value would ship to every environment, production included. An ambient posture, not a name. | `docs/deploy/configuration-reference.md#identity-partitioning` *(2 pages)* | ? |
 | ENV-117 | `OE_PUBLIC_BASE_URL` | `packages/adapters/agent/aws/sso.ts:163` | this deployment's own public origin, which callback URLs are built from. | `docs/deploy/configuration-reference.md#credential-broker` *(4 pages)* | ? |
-| ENV-118 | `OE_RELAY_SECRET` | `packages/providers/discord/agent/channels/discord-gateway.ts:533` | the shared secret between the Discord gateway relay and this agent. | `docs/deploy/configuration-reference.md#surface-credentials` *(2 pages)* | ? |
 | ENV-122 | `OE_SQLITE_PATH` | `packages/core/agent/memory/sqlite.ts:15` | the sqlite file path for the memory and operational stores. | `docs/deploy/configuration-reference.md#memory-backing` *(5 pages)* | ? |
 | ENV-125 | `OE_TELEMETRY` | `packages/core/agent/observability/telemetry.ts:317` | OPE-1153: turns telemetry on or off. | `docs/deploy/configuration-reference.md#telemetry` *(2 pages)* | ? |
 | ENV-126 | `OE_TELEMETRY_DEBUG` | `packages/core/agent/observability/telemetry.ts:318` | OPE-1153: turns telemetry debug output on or off. | `docs/deploy/configuration-reference.md#telemetry` *(2 pages)* | ? |
@@ -382,8 +377,6 @@ means total over two-level specs, not over any nesting.
 | ENV-134 | `OE_VISIBILITY` | `packages/core/agent/identity/binding.ts:394` | the binding visibility stand-in, read ONLY by bindLocal, clamped to private/public. | `docs/deploy/configuration-reference.md#identity-partitioning` | ? |
 | ENV-138 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:82` | the standard OTel endpoint var. The adapters OTLP destination (packages/adapters/agent/instrumentation.ts) reads it with the OTel SDK's own conventions. | `docs/deploy/configuration-reference.md#observability` *(2 pages)* | ? |
 | ENV-139 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:81` | the standard OTel traces endpoint var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
-| ENV-140 | `SLACK_BOT_TOKEN` | `packages/providers/slack/agent/setup/credentials.ts` | the Slack bot token. Since OPE-2231 the env var is the FIRST of two homes — the resolver falls back to this deployment's encrypted credential store, where `/setup` puts it. | `docs/deploy/configuration-reference.md#surface-credentials` *(7 pages)* | ? |
-| ENV-141 | `SLACK_SIGNING_SECRET` | `packages/providers/slack/agent/setup/credentials.ts` | the Slack request signing secret. Same two homes as ENV-140, env first (OPE-2231). Setting it also CLOSES `/setup`. | `docs/deploy/configuration-reference.md#surface-credentials` *(5 pages)* | ? |
 | ENV-142 | `TEAMS_APP_ID` | `packages/providers/teams/agent/channels/teams-post-arm.ts:62` | the Teams spelling of that same app identity. | `docs/deploy/configuration-reference.md#surface-credentials` | ? |
 | ENV-143 | `VERCEL` | `packages/core/agent/access/platform.ts:9` | Vercel's own marker that this process runs on Vercel. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` *(7 pages)* | ? |
 | ENV-144 | `VERCEL_DEPLOYMENT_ID` | `packages/core/agent/control/read-route.ts:344` | Vercel's id for this deployment. | `docs/deploy/rollback.md#the-deployed-state-census` *(2 pages)* | ? |
@@ -409,7 +402,7 @@ means total over two-level specs, not over any nesting.
 | DYN-02 | `ref` | `packages/core/agent/access/credentials.ts` | an operator-authored credential ref resolved through the env broker — the name is config data, not a name this repo can carry. | `n/a — a read SITE, not a name` | ? |
 | DYN-03 | `key` | `packages/core/agent/access/host-egress.ts` | the winner of that same lowercase-beats-uppercase choice, read one line later, with the same two spellings behind it. | `n/a — a read SITE, not a name` | ? |
 | DYN-04 | `names[0]` | `packages/core/agent/access/host-egress.ts` | the proxy-variable pair chosen by protocol. The pair holds BOTH spellings — the lowercase `https_proxy`/`http_proxy`, outside the `[A-Z][A-Z0-9_]*` shape either arm covers, and the uppercase HTTPS_PROXY/HTTP_PROXY, which are name-shaped and reached only through this index. So this excuse covers a… | `n/a — a read SITE, not a name` | ? |
-| DYN-05 | `name` | `packages/core/agent/credentials/operator-secrets.ts` | an operator secret looked up by the name the operator gave it. | `n/a — a read SITE, not a name` | ? |
+| DYN-05 | `name` | `packages/core/agent/credentials/operator-secret-env.ts` | an operator secret's env on-ramp, looked up by the secret's own name (OPE-2650 moved the read here from operator-secrets.ts). The surface credentials and the four control-plane credentials (OE_CONTROL_READ_TOKENS, OE_CONTROL_INJECT_TOKENS, OE_CONTROL_OAUTH_SIGNING_SECRET, OE_ADMIN_STATIC_TOKEN) read through it until each deployment stores them. | `n/a — a read SITE, not a name` | ? |
 | DYN-08 | ``${APP_SLOT_PREFIX}${slot}_CLIENT_ID`` | `packages/providers/linear/agent/channels/linear-credentials.ts` | a multi-app SLOT key — the slot id is deployment data, so the full variable name only exists at runtime. | `n/a — a read SITE, not a name` | ? |
 | DYN-09 | ``${APP_SLOT_PREFIX}${slot}_CLIENT_SECRET`` | `packages/providers/linear/agent/channels/linear-credentials.ts` | the client-secret half of that same runtime slot key. | `n/a — a read SITE, not a name` | ? |
 | DYN-10 | ``${APP_SLOT_PREFIX}${slot}_WEBHOOK_SECRET`` | `packages/providers/linear/agent/channels/linear-credentials.ts` | the webhook-secret half of that same runtime slot key. | `n/a — a read SITE, not a name` | ? |
