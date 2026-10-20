@@ -81,6 +81,12 @@ Setup is yours to drive, with the user's consent at every command. Use the
 - Never commit a secret, a token, an `.env` value or a credential. Secrets go in `.env.local`
   (gitignored), and the deployment reads them from its own environment. A credential whose
   `broker` is `"db"` goes in the encrypted credential store instead (`npx oe secret set <NAME>`).
+  The secret values of the Slack, Discord, GitHub and Linear surfaces are operator secrets: the
+  Slack bot token and signing secret, the GitHub App private key and `LINEAR_CLIENT_SECRET`, for
+  example. Store each with `npx oe secret set <NAME>`. An id or a public value (`LINEAR_CLIENT_ID`,
+  `DISCORD_PUBLIC_KEY`) is not an operator secret, so do not move it to the store. The Teams app
+  password and a Linear app slot's `LINEAR_APP_<SLOT>_*` values stay in the environment. Where `agent/access/connector-credentials.ts`
+  names one (the Slack `work-token` and `chat-token` ids), it stamps it `broker: "db"`.
 - Upgrade every `@open-everywhere/*` package together, to one version. Keep `eve` at the exact
   version `@open-everywhere/core` declares as its peer. A `devDependencies` key that still reads
   `create-open-everywhere` is replaced by `@open-everywhere/create`, not bumped: the unscoped name is

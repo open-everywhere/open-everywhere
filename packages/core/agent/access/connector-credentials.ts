@@ -205,7 +205,7 @@ export function assertConnectorCredentialsValid(catalogues: readonly ConnectorCr
       }
 
       if (c.intake === false && c.type !== "api-key") {
-        throw new Error(`${where}: intake:false is only valid on an api-key credential (it marks operator-env plumbing that is never offered for intake)`);
+        throw new Error(`${where}: intake:false is only valid on an api-key credential (it marks operator-provisioned plumbing that is never offered for intake)`);
       }
 
       if (isHumanActing(c)) {

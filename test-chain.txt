@@ -69,6 +69,7 @@ test:win32-exit-abort
 test:deploy-smoke
 test:deploy-smoke-fixture
 test:deploy-census
+test:catalogue-broker-home
 test:deploy-ci-gate
 test:deploy-cloud-proof-verify
 test:deploy-cloud-proof-post

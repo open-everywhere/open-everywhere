@@ -158,6 +158,7 @@
     "test:deploy-smoke": "NODE_NO_WARNINGS=1 tsx scripts/deploy-smoke-test.ts",
     "test:deploy-smoke-fixture": "NODE_NO_WARNINGS=1 tsx scripts/deploy-smoke-fixture-test.ts",
     "test:deploy-census": "NODE_NO_WARNINGS=1 tsx scripts/deploy-census-test.ts",
+    "test:catalogue-broker-home": "NODE_NO_WARNINGS=1 tsx scripts/catalogue-broker-home-test.ts",
     "test:deploy-proxy-dispatcher": "NODE_NO_WARNINGS=1 tsx scripts/deploy-proxy-dispatcher-test.ts",
     "test:discord-relay-proof": "NODE_NO_WARNINGS=1 tsx scripts/discord-relay-proof-test.ts",
     "test:discord-relay-voice": "NODE_NO_WARNINGS=1 tsx scripts/discord-relay-voice-test.ts",

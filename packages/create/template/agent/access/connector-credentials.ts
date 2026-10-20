@@ -41,8 +41,8 @@ const catalogues: ConnectorCredentials[] = [
     connector: "slack",
     allows: ["api-key"],
     credentials: [
-      { id: "work-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
-      { id: "chat-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
+      { id: "work-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "db", intake: false },
+      { id: "chat-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "db", intake: false },
     ],
   }),
 ];

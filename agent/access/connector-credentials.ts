@@ -62,8 +62,8 @@ const catalogues: ConnectorCredentials[] = [
     connector: "linear",
     allows: ["api-key"],
     credentials: [
-      { id: "workspace", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "env", intake: false },
-      { id: "1a000000-0000-4000-8000-000000000001", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "env", intake: false },
+      { id: "workspace", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "db", intake: false },
+      { id: "1a000000-0000-4000-8000-000000000001", type: "api-key", secretRef: "LINEAR_ACCESS_TOKEN", broker: "db", intake: false },
       {
         id: "1a000000-0000-4000-8000-000000000002",
         type: "api-key",
@@ -79,8 +79,8 @@ const catalogues: ConnectorCredentials[] = [
     connector: "slack",
     allows: ["api-key"],
     credentials: [
-      { id: "work-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
-      { id: "chat-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "env", intake: false },
+      { id: "work-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "db", intake: false },
+      { id: "chat-token", type: "api-key", secretRef: "SLACK_BOT_TOKEN", broker: "db", intake: false },
     ],
   }),
   defineConnectorCredentials({
@@ -88,8 +88,8 @@ const catalogues: ConnectorCredentials[] = [
     connector: "discord",
     allows: ["api-key"],
     credentials: [
-      { id: "work-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "env", intake: false },
-      { id: "chat-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "env", intake: false },
+      { id: "work-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "db", intake: false },
+      { id: "chat-token", type: "api-key", secretRef: "DISCORD_BOT_TOKEN", broker: "db", intake: false },
     ],
   }),
   defineConnectorCredentials({
