@@ -351,9 +351,9 @@ function getDb(): DatabaseSync {
     );
     -- github_installation (scm/installations.ts): owner → installation id, learned from the App's own
     -- signature-verified "installation" webhook so a new org installing the App self-registers instead
-    -- of needing an OE_GITHUB_INSTALLATIONS env edit + redeploy. NOT a secret (an installation id is a
-    -- public routing number; the App private key stays in env). The env map is composed OVER these
-    -- rows — env stays authoritative, this only augments.
+    -- of needing a "github.installations" settings edit + redeploy. NOT a secret (an installation id is a
+    -- public routing number; the App private key stays in env). The settings map is composed OVER
+    -- these rows — the settings stay authoritative, this only augments.
     CREATE TABLE IF NOT EXISTS github_installation (
       org_id               TEXT NOT NULL,
       owner                TEXT NOT NULL,     -- installation.account.login (the SCM map's key)

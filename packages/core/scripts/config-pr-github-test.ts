@@ -91,9 +91,8 @@ function prFetch(state: PrState): PrFetchFn {
 }
 
 {
-  const savedApp = process.env.OE_GITHUB_APP_ID;
   const savedTok = process.env.GITHUB_TOKEN;
-  delete process.env.OE_GITHUB_APP_ID;
+  overrideSettingsForTest({ github: { appId: "" } });
   resetGitHubApp();
   const provider = makeGitHubConfigPrProvider();
 
@@ -111,7 +110,6 @@ function prFetch(state: PrState): PrFetchFn {
   resetGitHubApp();
   await rejectsWith(() => provider.resolveWriteToken("acme/config"), "no GitHub credential for the config repo", "resolveWriteToken: app mode fails loud when neither App nor token is present");
 
-  if (savedApp !== undefined) process.env.OE_GITHUB_APP_ID = savedApp;
   if (savedTok !== undefined) process.env.GITHUB_TOKEN = savedTok;
   else delete process.env.GITHUB_TOKEN;
   resetGitHubApp();

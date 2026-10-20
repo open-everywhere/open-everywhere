@@ -10,6 +10,7 @@ import {
   githubAppEvents,
   githubAppManifest,
   githubAppPermissions,
+  githubAppSettings,
 } from "../agent/app-manifest.js";
 import { GITHUB_PROVIDER_EVENTS } from "../agent/provider-events.js";
 import { registerGithubOps } from "../agent/ops.js";
@@ -106,21 +107,35 @@ ok(surfaceAppCreateFlow("github") === GITHUB_APP_CREATE_FLOW, "registerGithubOps
   ok(calls[0]?.url === "https://api.github.com/app-manifests/abc123/conversions" && calls[0]?.method === "POST", "the code goes to GitHub's conversion endpoint");
   ok(calls[1]?.url === "https://api.github.com/users/acme-agent%5Bbot%5D", "the bot user is read by its public login");
   ok(JSON.stringify(Object.keys(full.env).sort()) === JSON.stringify([...githubAppEnvNames("full")].sort()), "the full App fills every name it declares");
-  ok(full.env.OE_GITHUB_APP_ID === "1234" && full.env.GITHUB_APP_ID === "1234", "the App id fills both planes");
   ok(full.env.GITHUB_APP_PRIVATE_KEY === PEM && full.env.OE_GITHUB_APP_PRIVATE_KEY === undefined, "the key fills both planes under ONE name (OPE-2650 folded OE_GITHUB_APP_PRIVATE_KEY into it)");
-  ok(full.env.GITHUB_WEBHOOK_SECRET === "whsec" && full.env.OE_GITHUB_APP_CLIENT_ID === "Iv1.abc", "the webhook secret and the client id");
-  ok(full.env.OE_GITHUB_BOT_USER_ID === "99887766", "the bot user id, for the commit e-mail");
-  ok(!Object.values(full.env).includes("cs"), "the client secret is not stored: nothing reads it");
+  ok(full.env.GITHUB_WEBHOOK_SECRET === "whsec", "the webhook secret");
+  for (const name of ["OE_GITHUB_APP_ID", "GITHUB_APP_ID", "OE_GITHUB_APP_SLUG", "GITHUB_APP_SLUG", "OE_GITHUB_APP_CLIENT_ID", "OE_GITHUB_BOT_USER_ID"]) {
+    ok(!(name in full.env), `🔴 the exchange writes no ${name} to env: the App's ids are settings (OPE-2650)`);
+  }
+  ok(
+    JSON.stringify(full.settings) ===
+      JSON.stringify({ "github.appId": "1234", "github.appSlug": "acme-agent", "github.appClientId": "Iv1.abc", "github.botUserId": "99887766", "github.conversation": true }),
+    "the exchange returns the App id, slug, client id and bot user id as github.* settings, and arms the conversation surface for the full App",
+  );
+  ok(
+    JSON.stringify(full.settings) === JSON.stringify(githubAppSettings({ variant: "full", id: "1234", slug: "acme-agent", clientId: "Iv1.abc", botUserId: "99887766" })),
+    "the exchange's settings are githubAppSettings of the converted App",
+  );
+  ok(!Object.values(full.env).includes("cs") && !Object.values(full.settings ?? {}).includes("cs"), "the client secret is not stored: nothing reads it");
   ok(full.appName === "Acme Agent" && full.installUrl === "https://github.com/apps/acme-agent/installations/new", "the app's name and install link");
 
   const sc = await exchangeGithubManifestCode({ code: "abc123", variant: "source-control", fetchFn: fake() });
-  ok(sc.env.GITHUB_APP_ID === undefined && sc.env.GITHUB_APP_PRIVATE_KEY === PEM, "source control only: no conversational names, and the one private key");
+  ok(sc.env.GITHUB_APP_PRIVATE_KEY === PEM, "source control only: the one private key");
+  ok(sc.settings?.["github.conversation"] === false, "🔴 OPE-2650: a source-control App does not arm the conversation surface (github.conversation: false)");
   ok(sc.env.GITHUB_WEBHOOK_SECRET === "whsec", "…but the webhook secret, which install self-registration verifies with");
+  const { ["github.conversation"]: _scArm, ...scIds } = sc.settings ?? {};
+  const { ["github.conversation"]: _fullArm, ...fullIds } = full.settings ?? {};
+  ok(JSON.stringify(scIds) === JSON.stringify(fullIds), "both shapes return the same github.* ids: one App id and one slug serve both planes; only github.conversation differs");
 
   const noBot = await exchangeGithubManifestCode({ code: "abc123", variant: "full", fetchFn: fake({ bot: "throw" }) });
-  ok(noBot.env.OE_GITHUB_BOT_USER_ID === undefined && noBot.env.OE_GITHUB_APP_ID === "1234", "a failed bot lookup is fail-soft");
+  ok(noBot.settings !== undefined && !("github.botUserId" in noBot.settings) && noBot.settings["github.appId"] === "1234", "a failed bot lookup is fail-soft");
   const bot404 = await exchangeGithubManifestCode({ code: "abc123", variant: "full", fetchFn: fake({ bot: "404" }) });
-  ok(bot404.env.OE_GITHUB_BOT_USER_ID === undefined, "a missing bot user writes no id");
+  ok(bot404.settings !== undefined && !("github.botUserId" in bot404.settings), "a missing bot user writes no id");
 
   const refused = await exchangeGithubManifestCode({ code: "abc123", variant: "full", fetchFn: fake({ conversionStatus: 404, body: { message: "secret-echo" } }) }).then(
     () => undefined,
@@ -141,8 +156,24 @@ ok(surfaceAppCreateFlow("github") === GITHUB_APP_CREATE_FLOW, "registerGithubOps
 }
 
 {
+  for (const variant of ["source-control", "full"] as const) {
+    ok(
+      JSON.stringify(githubAppEnvNames(variant)) === JSON.stringify(["GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"]),
+      `🔴 the ${variant} App's env names are its two secrets only`,
+    );
+  }
+  ok(
+    JSON.stringify(githubAppSettings({ variant: "source-control", id: "7", slug: "s", clientId: "Iv1.x" })) ===
+      JSON.stringify({ "github.appId": "7", "github.appSlug": "s", "github.appClientId": "Iv1.x", "github.conversation": false }),
+    "githubAppSettings maps the id, slug and client id, writes no bot user id it was not given, and leaves a source-control App's conversation surface off",
+  );
+  ok(githubAppSettings({ variant: "full", id: "7", slug: "s", clientId: "Iv1.x", botUserId: "42" })["github.botUserId"] === "42", "githubAppSettings maps a given bot user id");
+  ok(githubAppSettings({ variant: "full", id: "7", slug: "s", clientId: "Iv1.x" })["github.conversation"] === true, "🔴 OPE-2650: only the full App arms the conversation surface");
+}
+
+{
   const after = GITHUB_APP_CREATE_FLOW.after;
-  const pushAt = after.findIndex((l) => /push each written name/i.test(l) && /redeploy/i.test(l));
+  const pushAt = after.findIndex((l) => /(push|store) each written name/i.test(l) && /redeploy/i.test(l));
   const installAt = after.findIndex((l) => /install the app on the repositories/i.test(l));
   ok(pushAt >= 0 && installAt >= 0, "the manifest flow's next steps name both the env push and the install");
   ok(pushAt < installAt, "🔴 the manifest flow's next steps push the env and redeploy BEFORE the install");
@@ -176,8 +207,8 @@ ok(surfaceAppCreateFlow("github") === GITHUB_APP_CREATE_FLOW, "registerGithubOps
   for (const skill of [".claude/skills/quickstart-open-everywhere/SKILL.md", "packages/create/template/claude/skills/quickstart-open-everywhere/SKILL.md"]) {
     order(
       `${skill} (the GitHub App steps)`,
-      section(read(skill), "Offer this step after the first deploy, when the user wants the agent to work in GitHub", "The tool never returns a value"),
-      /then redeploy/,
+      section(read(skill), "Offer this step after the first deploy, when the user wants the agent to work in GitHub", "The tool never returns a secret"),
+      /and redeploy/,
       /install the App/,
     );
   }

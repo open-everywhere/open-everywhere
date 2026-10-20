@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { surfaceMessageOps, friendlyGuardSource, isFriendlyGuarded } from "@open-everywhere/core/agent/adapter-api.js";
+import { surfaceMessageOps, friendlyGuardSource, getSettings, isFriendlyGuarded, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
 import { githubMessageOps } from "../agent/channels/github-message-ops.js";
 import { _resetGitHubInstallationTokenCache } from "../agent/channels/github-post-arm.js";
@@ -12,17 +12,15 @@ const ok = (cond: boolean, label: string) => {
 };
 
 const savedEnv = {
-  appId: process.env.OE_GITHUB_APP_ID,
+  appId: getSettings().github.appId,
   pem: process.env.GITHUB_APP_PRIVATE_KEY,
-  slug: process.env.OE_GITHUB_APP_SLUG,
-  installs: process.env.OE_GITHUB_INSTALLATIONS,
+  slug: getSettings().github.appSlug,
+  installs: getSettings().github.installations,
 };
 const savedFetch = globalThis.fetch;
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-process.env.OE_GITHUB_APP_ID = "app-899";
+overrideSettingsForTest({ github: { appId: "app-899", appSlug: "oe-test-app", installations: { acme: "4242" } } });
 process.env.GITHUB_APP_PRIVATE_KEY = privateKey as string;
-process.env.OE_GITHUB_APP_SLUG = "oe-test-app";
-process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
 
 const MINTED_TOKEN = "ghs_899";
 
@@ -129,10 +127,8 @@ try {
   }
 } finally {
   globalThis.fetch = savedFetch;
-  if (savedEnv.appId === undefined) delete process.env.OE_GITHUB_APP_ID; else process.env.OE_GITHUB_APP_ID = savedEnv.appId;
+  overrideSettingsForTest({ github: { appId: savedEnv.appId, appSlug: savedEnv.slug, installations: savedEnv.installs } });
   if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
-  if (savedEnv.slug === undefined) delete process.env.OE_GITHUB_APP_SLUG; else process.env.OE_GITHUB_APP_SLUG = savedEnv.slug;
-  if (savedEnv.installs === undefined) delete process.env.OE_GITHUB_INSTALLATIONS; else process.env.OE_GITHUB_INSTALLATIONS = savedEnv.installs;
   _resetGitHubInstallationTokenCache();
 }
 

@@ -1,5 +1,19 @@
 import { resolveTeamsAccessToken } from "eve/channels/teams";
-import { friendlyTeamsActivity, withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
+import { friendlyTeamsActivity, getSettings, withRetryAfter, type RateLimitRetryOptions } from "@open-everywhere/core/agent/adapter-api.js";
+
+export function teamsAppId(): string | undefined {
+  return getSettings().teams.appId || undefined;
+}
+
+export function teamsAppCredentials(): { readonly appId: () => string } {
+  return {
+    appId: () => {
+      const id = teamsAppId();
+      if (id === undefined) throw new Error("teams.appId is required: set it in agent/settings/settings.ts.");
+      return id;
+    },
+  };
+}
 
 export type TeamsFetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -38,7 +52,7 @@ export async function teamsConnectorWrite(
   },
   deps: TeamsConnectorDeps = {},
 ): Promise<TeamsConnectorResult> {
-  const token = await resolveTeamsAccessToken();
+  const token = await resolveTeamsAccessToken({ credentials: teamsAppCredentials() });
   const body = input.body === undefined || input.method === "GET" || input.method === "DELETE" ? input.body : await friendlyTeamsActivity(input.body);
   const send = (): Promise<Response> =>
     (deps.fetch ?? (globalThis.fetch as TeamsFetchLike))(`${trimTrailingSlash(input.serviceUrl)}${input.path}`, {

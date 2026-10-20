@@ -24,9 +24,7 @@ import { installHostFetchStub } from "../fetch-stub";
 
 const STARTER_ROUTINE_RULE = "routine-reports-here";
 
-process.env.GITHUB_APP_SLUG = GITHUB_BOT_SLUG;
-
-for (const k of ["GITHUB_TOKEN", "OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_INSTALLATIONS", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID"]) {
+for (const k of ["GITHUB_TOKEN", "GITHUB_APP_PRIVATE_KEY"]) {
   delete process.env[k];
 }
 
@@ -81,7 +79,7 @@ function consultsSoFar(): number {
 let armed = false;
 
 async function armSeams(): Promise<void> {
-  await bootAgent({ sharedSqlite: true, selfBaseUrl: true, stubbedProviderTransport: true });
+  await bootAgent({ sharedSqlite: true, selfBaseUrl: true, stubbedProviderTransport: true, settings: { github: { appSlug: GITHUB_BOT_SLUG, conversation: true } } });
   if (armed) return;
   armed = true;
   await seedNotionChannelKey();

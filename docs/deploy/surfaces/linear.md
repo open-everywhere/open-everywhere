@@ -77,7 +77,7 @@ There is **no separate "Agents" section** in Linear — an agent is just an OAut
 
    > ⚠️ **This token expires in 30 days.** Fine for a build/demo — re-run the same curl to re-mint. For a durable production deploy, skip this manual mint entirely and use **Step 1.5b** below instead: OE mints (and caches) the same token itself, on demand, from the client id + secret alone.
 
-5b. **(Recommended for production) Skip the manual mint — let OE mint its own token.** Instead of running the curl above, just set `LINEAR_CLIENT_ID` on your instance and store `LINEAR_CLIENT_SECRET` with `npx oe secret set LINEAR_CLIENT_SECRET` (Step 1.4's values). OE mints an `actor=app` client-credentials token itself (the exact same grant the curl above performs), caches it in-process, and re-mints ahead of the 30-day expiry with a safety margin — no manual rotation, ever. See [Configuration reference § Linear token lifecycle](../configuration-reference.md#linear-token-lifecycle-mint-on-demand) for the precedence rule and failure behaviour.
+5b. **(Recommended for production) Skip the manual mint — let OE mint its own token.** Instead of running the curl above, set the `linear.clientId` setting and store `LINEAR_CLIENT_SECRET` with `npx oe secret set LINEAR_CLIENT_SECRET` (Step 1.4's values). OE mints an `actor=app` client-credentials token itself (the exact same grant the curl above performs), caches it in-process, and re-mints ahead of the 30-day expiry with a safety margin — no manual rotation, ever. See [Configuration reference § Linear token lifecycle](../configuration-reference.md#linear-token-lifecycle-mint-on-demand) for the precedence rule and failure behaviour.
 
 ## Step 2 — Configure the environment
 
@@ -91,17 +91,20 @@ npx oe secret set LINEAR_WEBHOOK_SECRET   # webhook signing secret from Step 1.3
 npx oe secret set LINEAR_ACCESS_TOKEN     # app-actor token from Step 1.5 (posts Agent Activities back; re-mint every 30 days)
 ```
 
-**Or, for a durable production deploy (recommended), skip `LINEAR_ACCESS_TOKEN` and set the client-credentials pair instead:**
+**Or, for a durable production deploy (recommended), skip `LINEAR_ACCESS_TOKEN` and set the client-credentials pair instead.** The client id is public, so it is a setting in your app's `agent/settings/settings.ts` (it was `LINEAR_CLIENT_ID` until OPE-2650):
+
+```ts
+// agent/settings/settings.ts
+export const SETTINGS_OVERRIDES = defineSettings({
+  linear: { clientId: "…" }, // OAuth application client id from Step 1.4
+});
+```
+
+Store the secrets in the operator secret store (OPE-2650):
 
 ```bash
 npx oe secret set LINEAR_WEBHOOK_SECRET   # webhook signing secret from Step 1.3
 npx oe secret set LINEAR_CLIENT_SECRET    # OAuth application client secret from Step 1.4
-```
-
-and, on your instance's environment:
-
-```bash
-LINEAR_CLIENT_ID=…              # OAuth application client id from Step 1.4 (public)
 ```
 
 OE mints and caches the access token itself (Step 1.5b) — no `LINEAR_ACCESS_TOKEN`, no monthly re-mint. If BOTH are set, `LINEAR_ACCESS_TOKEN` (or any of its static-token siblings) always wins and the client-credentials pair is ignored — see the configuration reference for the full precedence chain.
@@ -143,7 +146,8 @@ OAuth application is private to the workspace that created it unless you make it
    OE mints and caches an `actor=app` token per workspace from these pairs, exactly as it does for
    the primary application. An entry missing its client id or client secret is dropped, so a
    half-configured workspace never looks configured.
-4. **Optionally** set `LINEAR_ORGANIZATION_ID` to the PRIMARY application's own organization id.
+4. **Optionally** set the `linear.organizationId` setting, in `agent/settings/settings.ts`, to the
+   PRIMARY application's own organization id.
    It changes one thing: a delivery from an organization you never registered. Unset, the primary
    credentials serve it (the single-workspace behaviour). Set, that stranger gets no token and no
    webhook secret — its calls fail closed and its deliveries are refused.
@@ -275,8 +279,8 @@ clearly adds something.
   them), and a reply inside the app's *own* comment thread fires a `prompted` agent-session
   event — so the ambient classifier **drops** both. Because that partition is name-based, an
   **unresolved app identity drops everything** (fail closed): the app's own user id + display
-  name are resolved once via `viewer` under the app-actor token (or set `LINEAR_APP_USER_ID` /
-  `LINEAR_APP_NAME` to skip the call).
+  name are resolved once via `viewer` under the app-actor token (or set both the
+  `linear.appUserId` and `linear.appName` settings to skip the call).
 - **Calibration**: Linear's platform default tier is `neutral`; tune per domain with
   `engagementTier` (see the [configuration reference](../configuration-reference.md#memory-domain--silo)).
 
@@ -515,5 +519,5 @@ config is refused at boot.
 - **A turn that judges silence leaves ONE fixed line, and the session ends.** The agent can decide a wake does not warrant an answer. On every other surface that decision posts nothing at all. On Linear's **native @mention route** it posts the fixed host line **"Noted — no response needed."** as a `response` Agent Activity. The reason is Linear's own model: a Linear Agent Session is a UI state, not an event, and the API offers no activity that terminates one invisibly. `signal: "stop"` is a human-to-agent signal the app may never send; a bare `thought` never terminates; an `error` terminates but reads as a failure. So the honest choice is one short host-authored line rather than a spinner that hangs until Linear ages the session out. The line is **fixed host copy** — the agent's own words never reach the issue on a silent turn. The silence is recorded as a `linear.no_reply` audit row with `route: "native"`, `rendering: "ack"` and the reason. If the turn ALREADY answered through the reply tool, no ack is posted: that reply spent the session itself, and the row carries no `rendering` field.
 - **A session whose ISSUE was already answered closes with a different line.** Two comments on one issue open two Agent Sessions, and the agent answers through one of them. The other session still has to close, or its spinner hangs. It closes with the fixed host line **"Answered in the comments."**, never with "Noted — no response needed.", because the answer is already on that issue. The host proves this itself — the agent never asserts it — and it holds whether the two comments run in ONE turn or in two consecutive turns. An answer on a DIFFERENT issue, or on another surface, does not count: that session gets the ordinary silence line. Nor does an OLD answer: the host only counts an answer posted at or after the member's own comment arrived, so a new ask is never told it was answered by a comment that predates it. The window is 30 minutes. The unified audit row (`unified.no_reply`) carries `answeredContainer` next to `linearClosed`, plus `answeredVia` (`turn` or `container`) naming which evidence decided it, so an operator can tell which line the member read and why.
 - **An externally-suppressed mention leaves ONE fixed line, and the session ends.** When `externalPolicy` silences the room or withholds the author, the wake is dropped before any model turn runs — no model, no ingestion, no spend. The member who @mentioned or delegated still gets an answer: the fixed host line **"I can't help with this request here."**, posted as a `response` Agent Activity, which is the only activity type that terminates the session. The reason (OPE-885): a member who addressed the app and gets nothing reads the agent as broken, and before this the requester watched a spinner until Linear aged the session out. The line is the SAME string for both grains and on every surface, so it announces neither the room's configuration nor the person's classification — the private sender notice, which does name the organisation, is never posted here. The AMBIENT comment leg has no session and stays fully dark. The `linear.external_policy_suppressed` audit row records the verdict and carries `rendering: "ack"` when the line landed.
-- **Progress UX is native.** Open Everywhere reports via Linear's built-in **Agent Activities**, not a custom status reaction/message. If you don't see updates, check that a Linear token is configured and valid — either `LINEAR_ACCESS_TOKEN` (static) or `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET` (mint-on-demand) — without one the agent can't post activities back, even though it received the webhook. A mint FAILURE (bad client id/secret, network error) is logged AND appended to the audit log as `linear.token_mint_failed` — check `GET /control/v1/audit?since=<iso>&platform=linear&actions=linear.token_mint_failed` if activities silently stop.
+- **Progress UX is native.** Open Everywhere reports via Linear's built-in **Agent Activities**, not a custom status reaction/message. If you don't see updates, check that a Linear token is configured and valid — either `LINEAR_ACCESS_TOKEN` (static) or the `linear.clientId` setting with `LINEAR_CLIENT_SECRET` (mint-on-demand) — without one the agent can't post activities back, even though it received the webhook. A mint FAILURE (bad client id/secret, network error) is logged AND appended to the audit log as `linear.token_mint_failed` — check `GET /control/v1/audit?since=<iso>&platform=linear&actions=linear.token_mint_failed` if activities silently stop.
 - **Signing-secret verification.** Every inbound webhook is verified against `LINEAR_WEBHOOK_SECRET`. If it's wrong or unset, Linear requests are rejected and the agent stays silent — check this first if assigning/mentioning does nothing. Running locally? Expose your instance with a tunnel (e.g. `ngrok`) and use that HTTPS URL as the webhook URL.

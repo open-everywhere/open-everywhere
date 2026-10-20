@@ -394,10 +394,12 @@ surface_app_create { "surface": "github", "baseUrl": "https://<the deployment's 
 
 Give the person the `openUrl` from the reply. It is a page on THIS computer, so they open it in a
 browser here. GitHub opens with the App filled in, and they confirm it. Then call
-`surface_app_create { "surface": "github", "action": "status" }`: `state: "done"` lists the env names
-written and the App's install link. Store the two operator secrets with `secret_set { "names":
-["GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] }` (OPE-2650), push each other written name to the
-deployment as in step 11, and redeploy. Only then ask the person to install the App on the repositories the agent works in. The
+`surface_app_create { "surface": "github", "action": "status" }`: `state: "done"` lists the secret
+names written, the App's public values as `settings`, and the App's install link. Commit `settings` to
+`agent/settings/settings.ts` as `github: { appId, appSlug, appClientId, botUserId, conversation }`
+(`conversation` is `true` only for the full App). Store the two operator secrets with `secret_set
+{ "names": ["GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"] }` (OPE-2650), and redeploy with the
+settings change. Only then ask the person to install the App on the repositories the agent works in. The
 deployment learns the installation from the App's one `installation` delivery, and before the
 redeploy it does not hold the App's webhook secret, so it refuses that delivery. The
 [GitHub guide](./surfaces/github.md#setup) lists the permissions and events, the `owner` and `variant`

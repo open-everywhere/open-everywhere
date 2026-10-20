@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { linearPostArm } from "../agent/channels/linear-post-arm.js";
 import { _resetLinearMintCache } from "../agent/channels/linear-credentials.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { ReplyTarget, ReactTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
@@ -31,7 +32,7 @@ setEnv("LINEAR_AGENT_ACCESS_TOKEN", PRIMARY_TOKEN);
 setEnv("LINEAR_ACCESS_TOKEN", undefined);
 setEnv("LINEAR_API_KEY", undefined);
 setEnv("LINEAR_API_TOKEN", undefined);
-setEnv("LINEAR_ORGANIZATION_ID", undefined);
+overrideSettingsForTest({ linear: { organizationId: "" } });
 setEnv("LINEAR_APP_SOAK_ORG_ID", SOAK_ORG);
 setEnv("LINEAR_APP_SOAK_CLIENT_ID", "soak-client-id");
 setEnv("LINEAR_APP_SOAK_CLIENT_SECRET", "soak-client-secret");

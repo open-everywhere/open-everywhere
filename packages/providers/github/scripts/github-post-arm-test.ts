@@ -1,6 +1,9 @@
+// proves: github.token_mint_failed
+// proves: REPLY-10
+
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { readAudit, deploymentOrg, platformFailureClass, type UnifiedWakeOrigin } from "@open-everywhere/core/agent/adapter-api.js";
+import { readAudit, deploymentOrg, getSettings, overrideSettingsForTest, platformFailureClass, type UnifiedWakeOrigin } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubPostArm, _resetGitHubInstallationTokenCache } from "../agent/channels/github-post-arm.js";
 
 import { rmSync as __rmSuiteStore } from "node:fs";
@@ -35,14 +38,14 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
 }
 
 {
-  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const savedFetch = globalThis.fetch;
   const org = deploymentOrg();
   const before = (await readAudit({ org, platform: "github", action: "github.token_mint_failed" })).length;
   _resetGitHubInstallationTokenCache();
   try {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-    process.env.GITHUB_APP_ID = "12345";
+    overrideSettingsForTest({ github: { appId: "12345" } });
     process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
     globalThis.fetch = (async () => new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 })) as unknown as typeof fetch;
 
@@ -60,21 +63,21 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     ok(!JSON.stringify(after[0]).includes("PRIVATE KEY"), "…and never the App private key");
   } finally {
     globalThis.fetch = savedFetch;
-    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    overrideSettingsForTest({ github: { appId: savedEnv.id } });
     if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
     _resetGitHubInstallationTokenCache();
   }
 }
 
 {
-  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const savedFetch = globalThis.fetch;
   const org = deploymentOrg();
   const before = (await readAudit({ org, platform: "github", action: "github.token_mint_failed" })).length;
   _resetGitHubInstallationTokenCache();
   try {
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-    process.env.GITHUB_APP_ID = "12345";
+    overrideSettingsForTest({ github: { appId: "12345" } });
     process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
     globalThis.fetch = (async (url: string) => {
       if (String(url).includes("access_tokens")) {
@@ -116,17 +119,17 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     ok(afterMatch.length === beforeMatch, "negative control: a matching grant appends NO mint-failure row");
   } finally {
     globalThis.fetch = savedFetch;
-    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    overrideSettingsForTest({ github: { appId: savedEnv.id } });
     if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
     _resetGitHubInstallationTokenCache();
   }
 }
 
 {
-  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const savedFetch = globalThis.fetch;
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  process.env.GITHUB_APP_ID = "12345";
+  overrideSettingsForTest({ github: { appId: "12345" } });
   process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
 
   const stubFetch = (commentStatus: number, commentBody: unknown) =>
@@ -167,15 +170,15 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     ok(platformFailureClass(ambiguousErr) === "ambiguous", "OPE-825: a 503 on the comment POST classifies AMBIGUOUS (fail-closed default — it may have landed)");
   } finally {
     globalThis.fetch = savedFetch;
-    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    overrideSettingsForTest({ github: { appId: savedEnv.id } });
     if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
     _resetGitHubInstallationTokenCache();
   }
 }
 
 {
-  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
-  delete process.env.GITHUB_APP_ID;
+  const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  overrideSettingsForTest({ github: { appId: "" } });
   delete process.env.GITHUB_APP_PRIVATE_KEY;
   try {
     let err: unknown;
@@ -186,8 +189,20 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     }
     ok(err instanceof Error, "no App credentials configured ⇒ the arm throws");
     ok(platformFailureClass(err) === "definitive", "OPE-825: a pre-flight 'no App credentials' refusal classifies DEFINITIVE — the call never left this host");
+
+    process.env.GITHUB_APP_ID = "12345";
+    process.env.GITHUB_APP_PRIVATE_KEY = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n";
+    let envOnlyErr: unknown;
+    try {
+      await githubPostArm.dispatchUnified!(GH_ORIGIN, "text", {} as Parameters<NonNullable<typeof githubPostArm.dispatchUnified>>[2]);
+    } catch (e) {
+      envOnlyErr = e;
+    }
+    ok(envOnlyErr instanceof Error && envOnlyErr.message.includes("no App credentials"), "🔴 OPE-2650: env GITHUB_APP_ID with the setting unset ⇒ 'no App credentials' (env ignored)");
+    ok(platformFailureClass(envOnlyErr) === "definitive", "OPE-2650: that refusal is the same DEFINITIVE pre-flight");
   } finally {
-    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    delete process.env.GITHUB_APP_ID;
+    overrideSettingsForTest({ github: { appId: savedEnv.id } });
     if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
   }
 }
@@ -215,10 +230,10 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   ok(githubPostArm.resolveTarget!(bag({ owner: "acme", repo: "payments-api" })) === null, "negative control: no issue/PR anchor ⇒ NO target");
   ok(githubPostArm.resolveTarget!(bag({ owner: "acme", repo: "payments-api", issueNumber: 0 })) === null, "negative control: a zero anchor is not an issue number ⇒ NO target");
 
-  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const savedFetch = globalThis.fetch;
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  process.env.GITHUB_APP_ID = "app-811";
+  overrideSettingsForTest({ github: { appId: "app-811" } });
   process.env.GITHUB_APP_PRIVATE_KEY = privateKey as string;
   _resetGitHubInstallationTokenCache();
   const seen: string[] = [];
@@ -235,7 +250,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
     ok(seen.some((u) => u === "https://api.github.com/repos/acme/payments-api/issues/55/comments"), "OPE-811: it posts to the resolved issue's comments endpoint, never a guessed one");
   } finally {
     globalThis.fetch = savedFetch;
-    if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+    overrideSettingsForTest({ github: { appId: savedEnv.id } });
     if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
     _resetGitHubInstallationTokenCache();
   }
@@ -243,16 +258,14 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
 
 {
   const savedEnv = {
-    appId: process.env.OE_GITHUB_APP_ID,
+    appId: getSettings().github.appId,
     pem: process.env.GITHUB_APP_PRIVATE_KEY,
-    slug: process.env.OE_GITHUB_APP_SLUG,
-    installs: process.env.OE_GITHUB_INSTALLATIONS,
+    slug: getSettings().github.appSlug,
+    installs: getSettings().github.installations,
   };
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  process.env.OE_GITHUB_APP_ID = "app-862";
+  overrideSettingsForTest({ github: { appId: "app-862", appSlug: "oe-test-app", installations: { acme: "4242" } } });
   process.env.GITHUB_APP_PRIVATE_KEY = privateKey as string;
-  process.env.OE_GITHUB_APP_SLUG = "oe-test-app";
-  process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
   const savedFetch = globalThis.fetch;
 
   ok(typeof githubPostArm.editMessage === "function", "🔴 OPE-862: the github arm implements editMessage");
@@ -315,10 +328,8 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   }
 
   globalThis.fetch = savedFetch;
-  if (savedEnv.appId === undefined) delete process.env.OE_GITHUB_APP_ID; else process.env.OE_GITHUB_APP_ID = savedEnv.appId;
+  overrideSettingsForTest({ github: { appId: savedEnv.appId, appSlug: savedEnv.slug, installations: savedEnv.installs } });
   if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
-  if (savedEnv.slug === undefined) delete process.env.OE_GITHUB_APP_SLUG; else process.env.OE_GITHUB_APP_SLUG = savedEnv.slug;
-  if (savedEnv.installs === undefined) delete process.env.OE_GITHUB_INSTALLATIONS; else process.env.OE_GITHUB_INSTALLATIONS = savedEnv.installs;
   _resetGitHubInstallationTokenCache();
 }
 
@@ -338,9 +349,9 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   ok(githubPostArm.resolveReactTarget!(bag({ repo: "payments-api", issueNumber: 55 })) === null, "negative control: no owner ⇒ NO react target");
   ok(githubPostArm.resolveReactTarget!(bag({ owner: "acme", repo: "payments-api" })) === null, "negative control: no issue anchor ⇒ NO react target");
 
-  const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-  process.env.GITHUB_APP_ID = "app-862-react";
+  overrideSettingsForTest({ github: { appId: "app-862-react" } });
   process.env.GITHUB_APP_PRIVATE_KEY = privateKey as string;
   const savedFetch = globalThis.fetch;
 
@@ -408,7 +419,7 @@ ok(githubPostArm.redriveContainerId!(GH_ORIGIN) === "acme/payments-api", "redriv
   }
 
   globalThis.fetch = savedFetch;
-  if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+  overrideSettingsForTest({ github: { appId: savedEnv.id } });
   if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
   _resetGitHubInstallationTokenCache();
 }

@@ -8,7 +8,7 @@ import {
   linearIssueScope,
   linearScopeRefusal,
 } from "../agent/channels/linear-scope.js";
-import { ChannelScopeError, connectorReadsThisTurn, defineDomain, registerConfig, registerIdentityMapper, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { ChannelScopeError, connectorReadsThisTurn, defineDomain, overrideSettingsForTest, registerConfig, registerIdentityMapper, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerLinearProvider } from "../agent/register.js";
 import { commentAgeAtRead, readLinearIssueEntry } from "../agent/tools/read_linear_issue.js";
 
@@ -188,9 +188,10 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
     loadSilos: () => [],
     domainsForSurface: () => [],
   });
-  for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"]) {
+  for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_CLIENT_SECRET"]) {
     delete process.env[k];
   }
+  overrideSettingsForTest({ linear: { clientId: "" } });
   const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
   let err: unknown;
   try {

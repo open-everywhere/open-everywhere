@@ -1,3 +1,5 @@
+// proves: meeting.recap_requested, meeting.recap_refused
+
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 
@@ -27,7 +29,7 @@ const TRUSTED = generateKeyPairSync("ed25519");
 function publicKeyHex(pair: { publicKey: KeyObject }): string {
   return Buffer.from((pair.publicKey.export({ format: "jwk" }) as { x: string }).x, "base64url").toString("hex");
 }
-process.env.DISCORD_PUBLIC_KEY = publicKeyHex(TRUSTED);
+const TRUSTED_PUBLIC_KEY_HEX = publicKeyHex(TRUSTED);
 const DISCORD_INTERACTIONS_ROUTE = "/eve/v1/discord";
 const CLICKER_ID = "9000000000000000077";
 const TENANT = "11111111-2222-3333-4444-555555555555";
@@ -128,7 +130,7 @@ const POLICY_MODULE = "@open-everywhere/core/agent/meetings/policy.js";
 const NATIVE_MODULE = "@open-everywhere/core/agent/meetings/native.js";
 
 test("⓪ with the shipped policy (native recaps off) the tool refuses before any card", async () => {
-  ({ base } = await bootAgent({ sharedSqlite: true }));
+  ({ base } = await bootAgent({ sharedSqlite: true, settings: { discord: { publicKey: TRUSTED_PUBLIC_KEY_HEX } } }));
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ taint: { mode: "on" }, approvals: { judgeMode: "off" } });
   const binding = await import("@open-everywhere/core/agent/identity/binding.js");

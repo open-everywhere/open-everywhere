@@ -16,7 +16,8 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
-process.env.MICROSOFT_APP_ID = "teams-app-id";
+const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+overrideSettingsForTest({ teams: { appId: "teams-app-id" } });
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 process.env.LINEAR_API_KEY = "linear-test-key";
 

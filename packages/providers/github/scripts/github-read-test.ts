@@ -12,15 +12,13 @@ import {
   type RenderedLine,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerGithubProvider } from "../agent/register.js";
-import { GITHUB_OWN_ACCOUNT_VENDOR } from "@open-everywhere/core/agent/adapter-api.js";
+import { GITHUB_OWN_ACCOUNT_VENDOR, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { githubReadAdapter, parseGithubContainer, reviewThreadLines, getJson, walkRetry, READ_WALK_BUDGET_MS } from "../agent/channels/github-read.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-process.env.OE_GITHUB_APP_ID = "1";
-process.env.OE_GITHUB_APP_SLUG = "oe-test";
+overrideSettingsForTest({ github: { appId: "1", appSlug: "oe-test", installations: { acme: "4242" } } });
 process.env.GITHUB_APP_PRIVATE_KEY = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
-process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
 delete process.env.GITHUB_TOKEN;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string | URL, init?: RequestInit) =>

@@ -4,6 +4,7 @@ import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -16,10 +17,8 @@ registerSlackFixtureMapper();
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pkcs1 = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
 
-process.env.OE_GITHUB_APP_ID = "111";
+overrideSettingsForTest({ github: { appId: "111", appSlug: "open-everywhere", installations: { acme: "4242" } } });
 process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
-process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
-process.env.OE_GITHUB_INSTALLATIONS = '{"acme":"4242"}';
 delete process.env.GITHUB_TOKEN;
 
 const BUNDLES = [{ name: "coding", repos: [{ repo: "acme/web", capabilities: ["workflows" as const] }, "acme/plain"] }];

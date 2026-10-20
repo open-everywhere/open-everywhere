@@ -159,12 +159,12 @@ export function buildTeamsAppPackage(input: TeamsAppPackageInput): TeamsAppPacka
 
   const filled = JSON.stringify(m, null, 2);
   if (filled.includes("{{MICROSOFT_APP_ID}}")) {
-    block("app-id", "the Azure Bot's application id is not set, so the package still carries {{MICROSOFT_APP_ID}}.", "set MICROSOFT_APP_ID in .env.local (npx oe env set MICROSOFT_APP_ID)");
+    block("app-id", "the Azure Bot's application id is not set, so the package still carries {{MICROSOFT_APP_ID}}.", "set the teams.appId setting in agent/settings/settings.ts");
   }
   if (filled.includes("{{DEVELOPER_NAME}}")) block("developer-name", "the developer name is empty.", "pass developerName: your organisation's name");
   if (filled.includes(TEAMS_DEPLOY_HOST_PLACEHOLDER)) block("host", "the package still carries the deploy-host placeholder.", "pass baseUrl: this deployment's public origin");
 
-  if (appId !== "" && !GUID.test(appId)) block("app-id", "MICROSOFT_APP_ID is not a GUID (manifest schema: id).");
+  if (appId !== "" && !GUID.test(appId)) block("app-id", "the teams.appId setting is not a GUID (manifest schema: id).");
   const bot = m.bots?.[0];
   if (bot && bot.botId !== m.id) block("bot-id", "bots[0].botId differs from id.");
   if (m.webApplicationInfo && m.webApplicationInfo.id !== m.id) block("web-application-info", "webApplicationInfo.id differs from id.");

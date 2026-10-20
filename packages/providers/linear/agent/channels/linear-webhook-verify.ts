@@ -16,7 +16,7 @@ export function linearWebhookSecretForOrg(
 ): string | undefined {
   const app = linearAppForOrg(organizationId, env);
   if (app) return app.webhookSecret;
-  const primaryOrg = env.LINEAR_ORGANIZATION_ID && env.LINEAR_ORGANIZATION_ID.length > 0 ? env.LINEAR_ORGANIZATION_ID : undefined;
+  const primaryOrg = primaryLinearOrganizationId();
   if (organizationId && primaryOrg && organizationId !== primaryOrg) return undefined;
   return primarySecret && primarySecret.length > 0 ? primarySecret : undefined;
 }

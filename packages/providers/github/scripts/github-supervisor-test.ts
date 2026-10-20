@@ -13,11 +13,11 @@ import {
   type GitHubSupervisorSession,
   type GitHubAmbientComment,
 } from "../agent/channels/github-supervisor.js";
-import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, admissionFunction, defineSurface, registerSurfaces, _resetSurfacesForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderWake, normalizeFenceNonce, UNTRUSTED_OPEN, OE_CHAT_NONMEMBER_ATTR, admissionFunction, defineSurface, registerSurfaces, _resetSurfacesForTest, getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { OpenEverywhereGitHubAuth } from "../agent/channels/github-identity.js";
-import { githubAmbientLegKeeps, shouldSuppressNativeMention } from "../agent/channels/github.js";
+import { GITHUB_CHANNEL_APP, githubAmbientLegKeeps, githubConversationBotName, shouldSuppressNativeMention } from "../agent/channels/github.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -321,7 +321,7 @@ for (const [label, err] of [
   const dir = join(tmpdir(), `open-everywhere-github-supervisor-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-  process.env.GITHUB_APP_SLUG = SLUG;
+  overrideSettingsForTest({ github: { appSlug: SLUG } });
 
   (await import("../agent/register.js")).registerGithubProvider();
 
@@ -551,14 +551,14 @@ for (const [label, err] of [
       const before = (await nativeSilenceRows()).length;
       const beforePosts = (await replyPostRows()).length;
       const beforeDrops = (await readPosts({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github").length;
-      const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+      const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
       const savedFetch = globalThis.fetch;
       const wrote: string[] = [];
       let threw: unknown = null;
       _resetGitHubInstallationTokenCache();
       try {
         const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-        process.env.GITHUB_APP_ID = "12345";
+        overrideSettingsForTest({ github: { appId: "12345" } });
         process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
         globalThis.fetch = (async (url: string) => {
           const u = String(url);
@@ -580,7 +580,7 @@ for (const [label, err] of [
         }, { owner: OWNER, repo: REPO, issue_number: "42" });
       } finally {
         globalThis.fetch = savedFetch;
-        if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+        overrideSettingsForTest({ github: { appId: savedEnv.id } });
         if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
         _resetGitHubInstallationTokenCache();
       }
@@ -614,13 +614,13 @@ for (const [label, err] of [
       const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
       const beforePosts2 = (await replyPostRows2()).length;
       const beforeDrops2 = (await readPosts2({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "github").length;
-      const savedEnv = { id: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+      const savedEnv = { id: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
       const savedFetch = globalThis.fetch;
       const wrote: string[] = [];
       _resetGitHubInstallationTokenCache();
       try {
         const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048, privateKeyEncoding: { type: "pkcs8", format: "pem" }, publicKeyEncoding: { type: "spki", format: "pem" } });
-        process.env.GITHUB_APP_ID = "12345";
+        overrideSettingsForTest({ github: { appId: "12345" } });
         process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
         globalThis.fetch = (async (url: string) => {
           const u = String(url);
@@ -638,7 +638,7 @@ for (const [label, err] of [
         }, { owner: OWNER, repo: REPO, pull_request_number: "7" });
       } finally {
         globalThis.fetch = savedFetch;
-        if (savedEnv.id === undefined) delete process.env.GITHUB_APP_ID; else process.env.GITHUB_APP_ID = savedEnv.id;
+        overrideSettingsForTest({ github: { appId: savedEnv.id } });
         if (savedEnv.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY; else process.env.GITHUB_APP_PRIVATE_KEY = savedEnv.pem;
         _resetGitHubInstallationTokenCache();
       }
@@ -726,6 +726,34 @@ for (const [label, err] of [
   await handleGitHubSupervisorDispatch(dispatch({ ingested: [{}] }), deps);
   ok(auths[5] === AUTH, "taint carriage: a repo declared `internal` marks nothing (negative control)");
   _resetSurfacesForTest();
+}
+
+{
+  const saved = { id: process.env.GITHUB_APP_ID, slugEnv: process.env.GITHUB_APP_SLUG, github: getSettings().github };
+  process.env.GITHUB_APP_ID = "999";
+  process.env.GITHUB_APP_SLUG = "env-slug";
+  overrideSettingsForTest({ github: { appId: "", appSlug: "", conversation: true } });
+  let threw = false;
+  try {
+    GITHUB_CHANNEL_APP.credentials.appId();
+  } catch {
+    threw = true;
+  }
+  ok(threw, "🔴 OPE-2650: env GITHUB_APP_ID with the setting unset ⇒ the channel's App id resolver refuses (env is not read)");
+  ok(GITHUB_CHANNEL_APP.botName() === "" && githubConversationBotName() === undefined, "🔴 OPE-2650: env GITHUB_APP_SLUG with the setting unset ⇒ no name (env is not read)");
+  overrideSettingsForTest({ github: { appId: "123456", appSlug: "acme-agent", conversation: true } });
+  ok(GITHUB_CHANNEL_APP.credentials.appId() === "123456", "the channel's App id resolver returns the github.appId setting");
+  ok(githubConversationBotName() === "acme-agent" && GITHUB_CHANNEL_APP.botName() === "acme-agent", "armed, the surface answers to the github.appSlug setting");
+  overrideSettingsForTest({ github: { conversation: false } });
+  ok(
+    githubConversationBotName() === undefined && GITHUB_CHANNEL_APP.botName() === "",
+    "🔴 OPE-2650: with github.conversation off (a source-control App) the surface answers to no name, so a comment starts no conversation",
+  );
+  for (const [k, v] of [["GITHUB_APP_ID", saved.id], ["GITHUB_APP_SLUG", saved.slugEnv]] as const) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  overrideSettingsForTest({ github: { appId: saved.github.appId, appSlug: saved.github.appSlug, conversation: saved.github.conversation } });
 }
 
 console.log(`\n✓ github-supervisor: ${passed} assertions passed`);

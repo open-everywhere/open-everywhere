@@ -4,6 +4,7 @@ import {
   registerConfig,
   CONVERSATION_WRITE_PERMISSIONS,
   entityActionFn,
+  overrideSettingsForTest,
   type BindableContext,
   type PrFetchFn,
   type RepoCapability,
@@ -165,12 +166,7 @@ const { privateKey } = generateKeyPairSync("rsa", {
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
-process.env.OE_GITHUB_APP_ID = "12345";
-process.env.OE_GITHUB_APP_SLUG = "open-everywhere-test";
-process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
-process.env.OE_GITHUB_OWNER = "acme";
-process.env.OE_GITHUB_INSTALLATION_ID = "777";
-process.env.GITHUB_APP_ID = "12345";
+overrideSettingsForTest({ github: { appId: "12345", appSlug: "open-everywhere-test", installations: { acme: "777" } } });
 process.env.GITHUB_APP_PRIVATE_KEY = privateKey;
 delete process.env.GITHUB_TOKEN;
 

@@ -5,12 +5,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-discord-grant-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: "acme" });
 delete process.env.OE_PLATFORM;
 __setTestValveForTest("egress-spoof", false);
-delete process.env.DISCORD_PUBLIC_KEY;
+overrideSettingsForTest({ discord: { publicKey: "" } });
 process.env.DISCORD_BOT_TOKEN = "fixture-bot-token-not-a-secret";
 
 let n = 0;

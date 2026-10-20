@@ -29,7 +29,7 @@ import {
   type TeamsFrontPlan,
 } from "../agent/channels/teams-front.js";
 import type { TeamsEngagementVerdict } from "../agent/channels/teams-engagement.js";
-import { overrideSettingsForTest, resetSettingsForTest, EXTERNAL_MENTION_ACK, EXTERNAL_SENDER_NOTICE } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings, overrideSettingsForTest, resetSettingsForTest, EXTERNAL_MENTION_ACK, EXTERNAL_SENDER_NOTICE } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   bindFrom,
   resolvePartition,
@@ -315,10 +315,10 @@ const memCfg: MemoryResolveConfig = {
 
 {
   {
-    const prevAppId = process.env.MICROSOFT_APP_ID;
-    const prevTeamsId = process.env.TEAMS_APP_ID;
-    delete process.env.MICROSOFT_APP_ID;
-    delete process.env.TEAMS_APP_ID;
+    const prevAppId = getSettings().teams.appId;
+    const prevEnvAppId = process.env.MICROSOFT_APP_ID;
+    overrideSettingsForTest({ teams: { appId: "" } });
+    process.env.MICROSOFT_APP_ID = "env-app-id";
     try {
       let cls: string | undefined;
       let msg = "";
@@ -329,17 +329,17 @@ const memCfg: MemoryResolveConfig = {
         cls = platformFailureClass(e);
         msg = String((e as Error).message);
       }
-      ok(msg.includes("MICROSOFT_APP_ID"), "G/T4: the credential pre-flight refuses with its own honest error");
+      ok(msg.includes("the teams.appId setting is not set"), "🔴 OPE-2650 G/T4: with only env MICROSOFT_APP_ID set, the credential pre-flight refuses: the teams.appId setting is not set");
       ok(cls === "definitive", "🔴 G/T4: and it is DEFINITIVE — no credentials means no call, so nothing reached the room");
     } finally {
-      if (prevAppId === undefined) delete process.env.MICROSOFT_APP_ID;
-      else process.env.MICROSOFT_APP_ID = prevAppId;
-      if (prevTeamsId !== undefined) process.env.TEAMS_APP_ID = prevTeamsId;
+      overrideSettingsForTest({ teams: { appId: prevAppId } });
+      if (prevEnvAppId === undefined) delete process.env.MICROSOFT_APP_ID;
+      else process.env.MICROSOFT_APP_ID = prevEnvAppId;
     }
   }
 
-  const prevAppId = process.env.MICROSOFT_APP_ID;
-  process.env.MICROSOFT_APP_ID = "app-id-for-the-test";
+  const prevAppId = getSettings().teams.appId;
+  overrideSettingsForTest({ teams: { appId: "app-id-for-the-test" } });
   try {
     const EVIL = "https://evil.example/api";
     const dispatchReply = teamsPostArm.dispatchReply;
@@ -359,8 +359,7 @@ const memCfg: MemoryResolveConfig = {
     ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/uk/"), "G/T4: the same predicate ADMITS a real Bot Connector host (the refusal is host-specific)");
     ok(failure === "definitive", "🔴 G/T4: the host-allowlist refusal is DEFINITIVE — the call never left this host");
   } finally {
-    if (prevAppId === undefined) delete process.env.MICROSOFT_APP_ID;
-    else process.env.MICROSOFT_APP_ID = prevAppId;
+    overrideSettingsForTest({ teams: { appId: prevAppId } });
   }
 }
 
@@ -386,7 +385,9 @@ const memCfg: MemoryResolveConfig = {
   });
   ok(wOverride.trigger.kind === "message" && wOverride.trigger.message.trust === "relay", "H1: a fail-closed tier rides in unchanged — being in a DM is not standing (OPE-596: there is no `principal` default to override)");
   function __ope596TeamsPins(): void {
+    // @ts-expect-error OPE-596: `trust` is REQUIRED on the DM trigger — a caller cannot omit the tier.
     void buildTeamsDmWake({ conversationId: "19:1on1@thread.v2", wakeId: "wk-x", trigger: { id: "act-x", author: "Frank", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi" } });
+    // @ts-expect-error OPE-596: `trust` is REQUIRED on the channel trigger too.
     void buildTeamsSupervisorWake({ channelId: "19:chan@thread.v2", directMention: true, wakeId: "wk-y", trigger: { id: "act-y", authorId: "29:frank", sentAt: "2026-08-10T00:00:00Z", text: "hi" } });
   }
   void __ope596TeamsPins;
@@ -827,11 +828,9 @@ const memCfg: MemoryResolveConfig = {
       return new Response(JSON.stringify({ id: "sent", members: [] }), { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
 
-    const priorAppId = process.env.MICROSOFT_APP_ID;
     const priorAppPassword = process.env.MICROSOFT_APP_PASSWORD;
-    process.env.MICROSOFT_APP_ID = "j4-app-id";
     process.env.MICROSOFT_APP_PASSWORD = "j4-app-password";
-    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
+    overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" }, teams: { appId: "j4-app-id" } });
     registerAuthorTrust([defineAuthorTrust({ tenant: TENANT_KEY, internal: [`teams/${INSIDER_J}`] })]);
     try {
       const realFetch = globalThis.fetch;
@@ -857,8 +856,6 @@ const memCfg: MemoryResolveConfig = {
     } finally {
       _resetAuthorTrustForTest();
       resetSettingsForTest();
-      if (priorAppId === undefined) delete process.env.MICROSOFT_APP_ID;
-      else process.env.MICROSOFT_APP_ID = priorAppId;
       if (priorAppPassword === undefined) delete process.env.MICROSOFT_APP_PASSWORD;
       else process.env.MICROSOFT_APP_PASSWORD = priorAppPassword;
     }

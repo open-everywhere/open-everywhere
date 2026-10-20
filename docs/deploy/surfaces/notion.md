@@ -196,20 +196,28 @@ redelivery can be reconsidered after configuration or credentials are repaired.
 
 ## Step 3 — Configure the environment
 
-Both secrets are already handled: the integration secret lives in the credential store (Step 1.2: `oe secret set db:notion:channel-key`), and the handshake secret is captured and stored automatically (Step 2.2). Nothing here is a secret — everything below is optional:
+Both secrets are already handled: the integration secret lives in the credential store (Step 1.2: `oe secret set db:notion:channel-key`), and the handshake secret is captured and stored automatically (Step 2.2). Nothing here is a secret, and no environment variable is needed. Everything below is optional,
+and each value is a setting in your app's `agent/settings/settings.ts`. The two bot settings were
+`NOTION_BOT_USER_ID` and `NOTION_BOT_NAME` until OPE-2650:
 
-```bash
-NOTION_BOT_USER_ID=…            # the ORG-DEFAULT integration's own user id — self-reply loop guard.
-                                #   Auto-resolved via GET /v1/users/me; set it to skip that call (or in
-                                #   tests). It pins the `channel-key` integration ONLY: a domain that binds
-                                #   its own integration always resolves that one live, because two Notion
-                                #   integrations never share a bot user.
-NOTION_BOT_NAME=…               # the integration's display name — the name-drop judge input. Auto-resolved too.
-# VOUCH the workspace so the shared page-memory silo lights up (see above): also a SETTING, not a variable.
-# Set `identity.blanketTrust: "internal"` in agent/settings/settings.ts (was OE_TRUST until OPE-2411),
-# or vouch the one workspace in agent/identity/surfaces.ts.
-# DEV ONLY, and it is a SETTING not a variable: turn on `webhooks.allowUnverifiedNotion`
-# in agent/settings/settings.ts to accept unsigned deliveries for local smoke tests.
+```ts
+// agent/settings/settings.ts
+export const SETTINGS_OVERRIDES = defineSettings({
+  notion: {
+    // The ORG-DEFAULT integration's own user id — self-reply loop guard.
+    // Auto-resolved via GET /v1/users/me; set it to skip that call (or in tests). It pins the
+    // `channel-key` integration ONLY: a domain that binds its own integration always resolves
+    // that one live, because two Notion integrations never share a bot user.
+    botUserId: "…",
+    // The integration's display name — the name-drop judge input. Auto-resolved too.
+    botName: "…",
+  },
+  // VOUCH the workspace so the shared page-memory silo lights up (see above):
+  // `identity: { blanketTrust: "internal" }` (was OE_TRUST until OPE-2411),
+  // or vouch the one workspace in agent/identity/surfaces.ts.
+  // DEV ONLY: `webhooks: { allowUnverifiedNotion: true }` accepts unsigned deliveries for local
+  // smoke tests.
+});
 ```
 
 **Ambient is on by default** for the doc. To keep it addressed-only, set `ambientSupervisor: false` on its memory domain — see [config-as-code](../../how-it-works/config-as-code.md) / [Memory](../../capabilities/memory.md).
@@ -356,9 +364,9 @@ under its own integration, which is what keeps both working.
 - **`omit inboundSecret`** when several domains sit behind ONE subscription — they then share the
   deployment's default signing secret. Name your own the moment you create a second subscription.
 - **Each integration has its own bot user**, so the self-reply loop guard resolves and caches one
-  identity per integration. 🔴 **`NOTION_BOT_USER_ID` pins the ORG-DEFAULT integration only, and that
-  is deliberate.** Two Notion integrations never share a bot user, so one pinned id cannot stand for
-  both; OE resolves every other integration live and the variable has no effect on them. The guard
+  identity per integration. 🔴 **The `notion.botUserId` setting pins the ORG-DEFAULT integration only,
+  and that is deliberate.** Two Notion integrations never share a bot user, so one pinned id cannot
+  stand for both; OE resolves every other integration live and the setting has no effect on them. The guard
   compares a comment against **every**
   configured integration's bot id, so two integrations that can both see one page do not answer each
   other: a reply one posts is recognised as the deployment's own words on the other's subscription.
@@ -392,7 +400,7 @@ under its own integration, which is what keeps both working.
 - **The audit trail says whether a page is engaged.** Each dispatched comment writes a **`notion.dispatched`** row whose `detail.addressing` reads `direct` (somebody named the agent), `thread-follow` (a plain comment on a page an earlier name-drop engaged), or `channel-watch` (a plain comment on a page nobody has named the agent on). Query it with `GET /control/v1/audit?since=<iso>&actions=notion.dispatched`. 🔴 **`thread-follow` reports the engagement registry's state, not which door admitted the delivery.** The registry is read for every plain comment, before and independently of the ambient opt-in — so on a domain with `ambientSupervisor: true`, plain chatter on an engaged page reads `thread-follow` too, while the ambient flag alone would have admitted it. The row separates the engaged path from the ambient one only where the domain has ambient **off**. The same row carries **`detail.via`** — how your config holds the page: `roster` (a domain lists the page id under `reach`), `container` (a domain's container `reach` entry reaches it, so the page needed no entry of its own), or `none` (no domain holds it). Read it beside `addressing`: a `direct` wake with `via: container` means a claim admitted the name-drop on a page nobody enumerated, which is a wider door than a page you listed. 🔴 **It names the KIND of claim, never its breadth.** A container `reach` entry is either a whole workspace (`notion/<ws>`) or a same-level page glob (`notion/<ws>/<prefix>*`), and both read `container` — check the domain's own entry to see how far the claim reaches.
 - **Shared page memory needs a workspace vouch.** Unvouched (the default), the agent judges + replies but has no shared page-memory silo — see [the page-memory section](#shared-page-memory-needs-a-workspace-vouch). Set `identity.blanketTrust: "internal"` (or vouch the workspace) to unlock it.
 - **Self-reply loop guard (hardened), in two halves.** The agent reads its *own* replies (each reply fires a fresh `comment.created`), so both halves have to hold.
-  - *Whose words.* It drops **its own** replies by comparing `created_by.id` against the bot user id of **every configured integration**, not only the one that verified the delivery — so two integrations that can both see one page do not answer each other. It **fails closed on every unreadable identity**: the verifying integration's own id unresolved, a comment with no `created_by.id`, and — on an author Notion does not mark `person` — a *sibling* integration's id unresolved. An unreadable identity drops the comment rather than risk looping on its own replies. If nothing ever dispatches, confirm the value stored under `db:notion:channel-key` is valid (so `GET /v1/users/me` can resolve the bot id) or set `NOTION_BOT_USER_ID` — **and check every other integration's stored key too**, because a sibling whose key works but whose `GET /v1/users/me` fails silences the whole deployment until it resolves. A sibling **this deployment holds no usable key for** cannot post from here, so it is skipped rather than fenced against — the residual being a token you deleted here that another environment still holds, whose replies then read as a person's. 🔴 **A FOREIGN bot — one that is not ours — is still dropped only when Notion supplies `created_by.type`, which it usually omits on a comment.** That limit is unchanged.
+  - *Whose words.* It drops **its own** replies by comparing `created_by.id` against the bot user id of **every configured integration**, not only the one that verified the delivery — so two integrations that can both see one page do not answer each other. It **fails closed on every unreadable identity**: the verifying integration's own id unresolved, a comment with no `created_by.id`, and — on an author Notion does not mark `person` — a *sibling* integration's id unresolved. An unreadable identity drops the comment rather than risk looping on its own replies. If nothing ever dispatches, confirm the value stored under `db:notion:channel-key` is valid (so `GET /v1/users/me` can resolve the bot id) or set the `notion.botUserId` setting — **and check every other integration's stored key too**, because a sibling whose key works but whose `GET /v1/users/me` fails silences the whole deployment until it resolves. A sibling **this deployment holds no usable key for** cannot post from here, so it is skipped rather than fenced against — the residual being a token you deleted here that another environment still holds, whose replies then read as a person's. 🔴 **A FOREIGN bot — one that is not ours — is still dropped only when Notion supplies `created_by.type`, which it usually omits on a comment.** That limit is unchanged.
   - *How many times.* **One comment id normally wakes one turn**, with a durable ten-minute dispatch guard shared across instances. The webhook is acknowledged only after durable acceptance, and pending work is retried by the minute recovery schedule. The contract is at least once: a crash after Eve accepts the turn but before the guard and inbox completion are recorded may cause a duplicate after the five-minute lease expires. This prefers a possible duplicate over silently stranding an accepted comment.
 - **Identity-linking a Notion account needs the workspace vouched.** Notion has no @mention for an integration, so you claim a link code by **name-dropping** the agent — a comment whose content is `<your agent's name> link ABC12345` (`oe link ABC12345` on a deployment that configures no name). That is recognised only on an **addressed** (name-drop) comment, and — like shared page memory — only completes when the commenting account resolves **internal**: vouch the workspace (or set `identity.blanketTrust: "internal"`). Unvouched, the claim is refused (the author reads `external`), the same fail-closed posture that gates shared memory. The names come from the `identity.name` setting (the canonical name the agent introduces itself by), the `identity.shortName` setting, and the integration's own resolved display name. The brand tokens `oe` / `open everywhere` apply only on a deployment that configures no name.
 - **Silence is a first-class outcome.** Most comments correctly get no reply. Every silent turn is a `notion.no_reply` audit row — the surface is working, not broken. The engagement bar ships deliberately silence-biased; tune it by watching the live `no_reply` rate (no code change). A **different** quiet outcome is a `turn.supervisor_prose_dropped` row on the notion partition: the agent wrote an answer as its turn's closing text and never called `reply`, so nothing was posted. The `reply` tool is the only way words reach a discussion — closing text is never a delivery channel. That row is a defect signal, not a tuning signal — read the session transcript it names.

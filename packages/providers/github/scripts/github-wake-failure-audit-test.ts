@@ -1,3 +1,5 @@
+// proves: surface.wake_failed
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -7,10 +9,11 @@ const dir = join(tmpdir(), `open-everywhere-github-wake-failure-audit-${process.
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.GITHUB_APP_SLUG = "eve-bot";
 
 const { registerGithubProvider } = await import("../agent/register.js");
 registerGithubProvider();
+const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+overrideSettingsForTest({ github: { appSlug: "eve-bot" } });
 const { liveGitHubSupervisorDeps } = await import("../agent/channels/github.js");
 const { getOperationalStore, deploymentOrg, RUN_KEY_FETCH_MARKER, HTTP_404_MARKER, PRUNED_DEPLOYMENT_AUDIT_ACTION } = await import(
   "@open-everywhere/core/agent/adapter-api.js"

@@ -1,7 +1,7 @@
 import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, isTeamsInputResponseActivity, type TeamsMessageActivity } from "eve/channels/teams";
-import { sendTeamsActivityBackedOff } from "./teams-connector.js";
+import { sendTeamsActivityBackedOff, teamsAppCredentials } from "./teams-connector.js";
 import { isTeamsChannelActivity } from "./teams-origin-codec.js";
 import {
   buildTeamsAuth,
@@ -641,7 +641,7 @@ export async function liveTeamsDmDivert(
 }
 
 export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFrontOptions = {}): RouteHandler {
-  const verify = opts.verify ?? ((req: Request) => verifyTeamsRequest(req, {}));
+  const verify = opts.verify ?? ((req: Request) => verifyTeamsRequest(req, { appId: teamsAppCredentials().appId }));
   const dedupe = opts.dedupe ?? new EventDedupe();
   const fifo = opts.fifo ?? new ThreadFifo(recordTeamsWakeFailure);
   const now = opts.now ?? (() => Date.now());

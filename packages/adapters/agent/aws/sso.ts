@@ -175,7 +175,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   function requireRegion(): string {
     if (!region) {
       throw new Error(
-        "AWS SSO is not configured — no Identity Center region (set OE_AWS_SSO_REGION or OE_AWS_REGION). " +
+        "AWS SSO is not configured — no Identity Center region (set the aws.ssoRegion or aws.region setting). " +
           "Fail-closed: no per-user AWS access.",
       );
     }
@@ -184,7 +184,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   function requireClientId(): string {
     if (!clientId) {
       throw new Error(
-        "AWS SSO link is not configured — no OIDC client id (set OE_AWS_SSO_CLIENT_ID). Register a public " +
+        "AWS SSO link is not configured — no OIDC client id (set the aws.ssoClientId setting). Register a public " +
           "PKCE client in Identity Center. Fail-closed: no per-user AWS link.",
       );
     }

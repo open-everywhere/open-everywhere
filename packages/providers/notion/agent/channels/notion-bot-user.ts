@@ -1,5 +1,6 @@
 import { retrieveBotUser, NOTION_INGRESS_RETRY, type ResolvedNotionCredential } from "./notion-api.js";
 import { NOTION_CHANNEL_CREDENTIAL } from "./notion-credentials.js";
+import { getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionOwnBotIds {
   readonly primary: string | undefined;
@@ -57,8 +58,9 @@ export function resolveNotionBotUser(
   return () => {
     const cached = botUserCache.get(credentialId);
     if (cached) return cached;
-    const overrideId = credentialId === NOTION_CHANNEL_CREDENTIAL ? process.env.NOTION_BOT_USER_ID : undefined;
-    const overrideName = process.env.NOTION_BOT_NAME;
+    const notion = getSettings().notion;
+    const overrideId = credentialId === NOTION_CHANNEL_CREDENTIAL ? notion.botUserId : undefined;
+    const overrideName = notion.botName;
     const named = (u: { id?: string; name?: string }) => ({ id: u.id, name: overrideName && overrideName.length > 0 ? overrideName : u.name });
     const resolved =
       overrideId && overrideId.length > 0

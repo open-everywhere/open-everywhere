@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings, overrideSettingsForTest, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import {
+  teamsAppCredentials,
+  teamsAppId,
   teamsConnectorWrite,
   sendTeamsActivityBackedOff,
   replyToTeamsActivityBackedOff,
@@ -19,7 +21,8 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 console.log("teams connector rate limit (OPE-1237):");
 
-const priorAppId = process.env.MICROSOFT_APP_ID;
+const priorAppId = getSettings().teams.appId;
+const priorEnvAppId = process.env.MICROSOFT_APP_ID;
 const priorAppPassword = process.env.MICROSOFT_APP_PASSWORD;
 const realFetch = globalThis.fetch;
 
@@ -60,7 +63,34 @@ try {
   process.env.MICROSOFT_APP_PASSWORD = "test-secret";
 
   {
-    process.env.MICROSOFT_APP_ID = "acceptance-app";
+    process.env.MICROSOFT_APP_ID = "env-app";
+    overrideSettingsForTest({ teams: { appId: "" } });
+    ok(teamsAppId() === undefined, "🔴 OPE-2650: env MICROSOFT_APP_ID with the setting unset ⇒ teamsAppId() is undefined");
+    let thrown: unknown;
+    try {
+      teamsAppCredentials().appId();
+    } catch (err) {
+      thrown = err;
+    }
+    ok(thrown instanceof Error && thrown.message.includes("teams.appId is required"), "🔴 OPE-2650: teamsAppCredentials().appId() throws when the setting is unset, even with env MICROSOFT_APP_ID set");
+    const stub = stubGlobalFetch([posted()]);
+    let writeErr: unknown;
+    try {
+      await teamsConnectorWrite({ operation: "conversations.activities.send", serviceUrl: "https://smba.trafficmanager.net/amer", path: "/v3/conversations/c1/activities" });
+    } catch (err) {
+      writeErr = err;
+    }
+    ok(writeErr instanceof Error, "OPE-2650: a Connector write with only the env id refuses");
+    eq(stub.requests.length, 0, "OPE-2650: …and no Connector request leaves this host");
+
+    overrideSettingsForTest({ teams: { appId: "settings-app" } });
+    eq(teamsAppId(), "settings-app", "OPE-2650: teamsAppId() returns the setting");
+    eq(teamsAppCredentials().appId(), "settings-app", "OPE-2650: teamsAppCredentials().appId() returns the setting, not the env value");
+    delete process.env.MICROSOFT_APP_ID;
+  }
+
+  {
+    overrideSettingsForTest({ teams: { appId: "acceptance-app" } });
     const stub = stubGlobalFetch([rateLimited("3"), rateLimited("1"), posted("act-42")]);
     const clock = recorder();
     const res = await teamsConnectorWrite(
@@ -73,7 +103,7 @@ try {
   }
 
   {
-    process.env.MICROSOFT_APP_ID = "negative-app";
+    overrideSettingsForTest({ teams: { appId: "negative-app" } });
     const stub = stubGlobalFetch([posted()]);
     const clock = recorder();
     const res = await teamsConnectorWrite(
@@ -86,7 +116,7 @@ try {
   }
 
   {
-    process.env.MICROSOFT_APP_ID = "exhaustion-app";
+    overrideSettingsForTest({ teams: { appId: "exhaustion-app" } });
     const stub = stubGlobalFetch([rateLimited("1"), rateLimited("1"), rateLimited("1"), rateLimited("1")]);
     const clock = recorder();
     let caught: unknown;
@@ -108,7 +138,7 @@ try {
   }
 
   {
-    process.env.MICROSOFT_APP_ID = "shape-app";
+    overrideSettingsForTest({ teams: { appId: "shape-app" } });
     const stub = stubGlobalFetch([posted("send-1"), posted("reply-1"), posted("update-1")]);
     const send = await sendTeamsActivityBackedOff({ serviceUrl: "https://smba.trafficmanager.net/amer", conversationId: "conv-1", body: { type: "message", text: "hi" } });
     const reply = await replyToTeamsActivityBackedOff({
@@ -135,8 +165,9 @@ try {
   console.log(`  ${n} assertions passed`);
 } finally {
   globalThis.fetch = realFetch;
-  if (priorAppId === undefined) delete process.env.MICROSOFT_APP_ID;
-  else process.env.MICROSOFT_APP_ID = priorAppId;
+  overrideSettingsForTest({ teams: { appId: priorAppId } });
+  if (priorEnvAppId === undefined) delete process.env.MICROSOFT_APP_ID;
+  else process.env.MICROSOFT_APP_ID = priorEnvAppId;
   if (priorAppPassword === undefined) delete process.env.MICROSOFT_APP_PASSWORD;
   else process.env.MICROSOFT_APP_PASSWORD = priorAppPassword;
 }

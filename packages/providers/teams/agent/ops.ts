@@ -82,7 +82,7 @@ export function boundaryCheck(boundary: TeamsReadBoundary): Check {
 }
 
 export async function teamsBoundaryProbe(env: NodeJS.ProcessEnv): Promise<readonly Check[]> {
-  const appId = pick(env, "MICROSOFT_APP_ID", "TEAMS_APP_ID");
+  const appId = getSettings().teams.appId || undefined;
   const appPassword = pick(env, "MICROSOFT_APP_PASSWORD", "TEAMS_APP_PASSWORD");
   const tenantId = pick(env, "MICROSOFT_TENANT_ID", "TEAMS_TENANT_ID");
   if (!appId || !appPassword) return [];
@@ -105,7 +105,7 @@ export async function teamsBoundaryProbe(env: NodeJS.ProcessEnv): Promise<readon
         name: CHECK_NAME,
         status: "info",
         detail: `not determined — the Graph token mint failed: ${err instanceof Error ? err.message : String(err)}`,
-        fix: "check MICROSOFT_APP_ID / MICROSOFT_APP_PASSWORD / MICROSOFT_TENANT_ID and network reachability of login.microsoftonline.com",
+        fix: "check the teams.appId setting, MICROSOFT_APP_PASSWORD and MICROSOFT_TENANT_ID, and network reachability of login.microsoftonline.com",
       },
     ];
   }
@@ -114,7 +114,7 @@ export async function teamsBoundaryProbe(env: NodeJS.ProcessEnv): Promise<readon
 
 export function registerTeamsOps(): void {
   registerPreflightProbe("teams", teamsBoundaryProbe);
-  registerSurfaceCredentialProbe("teams", () => Boolean(process.env.MICROSOFT_APP_ID));
+  registerSurfaceCredentialProbe("teams", () => getSettings().teams.appId !== "");
   registerSurfaceAppManifest("teams", {
     format: "json",
     consoleUrl: TEAMS_APP_CONSOLE_URL,
@@ -135,7 +135,7 @@ function teamsAppPackageFromInput(input: SurfaceAppPackageInput): SurfaceAppPack
     .split(DEPLOY_HOST_PLACEHOLDER)
     .join(input.host);
   const policy = getSettings().policyPages;
-  const appId = pick(input.env, "MICROSOFT_APP_ID", "TEAMS_APP_ID");
+  const appId = getSettings().teams.appId || undefined;
   const built = buildTeamsAppPackage({
     manifest,
     route: input.route,

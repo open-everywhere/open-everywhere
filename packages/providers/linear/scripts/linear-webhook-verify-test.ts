@@ -1,4 +1,5 @@
 import { signLinearWebhookBody } from "eve/channels/linear";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { LINEAR_MAX_SKEW_MS, linearWebhookSecretForOrg, verifyLinearWebhookDelivery } from "../agent/channels/linear-webhook-verify.js";
 
 let passed = 0;
@@ -26,10 +27,13 @@ function verify(raw: string, secretUsedToSign: string, env: NodeJS.ProcessEnv, n
   return verifyLinearWebhookDelivery(headers(signLinearWebhookBody(raw, secretUsedToSign)), raw, { primarySecret: env.LINEAR_WEBHOOK_SECRET, env, nowMs });
 }
 
+function declarePrimaryOrg(organizationId: string): void {
+  overrideSettingsForTest({ linear: { organizationId } });
+}
+
 const PRIMARY_ONLY: NodeJS.ProcessEnv = { LINEAR_WEBHOOK_SECRET: "primary-secret" };
 const TWO_APPS: NodeJS.ProcessEnv = {
   LINEAR_WEBHOOK_SECRET: "primary-secret",
-  LINEAR_ORGANIZATION_ID: PRIMARY_ORG,
   LINEAR_APP_SOAK_ORG_ID: SOAK_ORG,
   LINEAR_APP_SOAK_CLIENT_ID: "soak-client",
   LINEAR_APP_SOAK_CLIENT_SECRET: "soak-client-secret",
@@ -37,6 +41,7 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 };
 
 {
+  declarePrimaryOrg(PRIMARY_ORG);
   ok(linearWebhookSecretForOrg(PRIMARY_ORG, TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === "primary-secret", "selection: the declared primary organization gets LINEAR_WEBHOOK_SECRET");
   ok(linearWebhookSecretForOrg(SOAK_ORG, TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === "soak-secret", "selection: a registered organization gets ITS OWN app's webhook secret");
   ok(linearWebhookSecretForOrg("org-stranger", TWO_APPS.LINEAR_WEBHOOK_SECRET, TWO_APPS) === undefined, "selection: an unknown organization gets NO secret once the primary organization is declared (fail closed)");
@@ -44,6 +49,15 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 }
 
 {
+  declarePrimaryOrg("");
+  const envOnly: NodeJS.ProcessEnv = { ...TWO_APPS, LINEAR_ORGANIZATION_ID: PRIMARY_ORG };
+  ok(linearWebhookSecretForOrg("org-stranger", envOnly.LINEAR_WEBHOOK_SECRET, envOnly) === "primary-secret", "🔴 OPE-2650: env LINEAR_ORGANIZATION_ID with the setting unset ⇒ an unknown organization still gets the primary secret (env ignored)");
+  declarePrimaryOrg(PRIMARY_ORG);
+  ok(linearWebhookSecretForOrg("org-stranger", PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, PRIMARY_ONLY) === undefined, "OPE-2650: the linear.organizationId setting alone engages the strict arm");
+}
+
+{
+  declarePrimaryOrg(PRIMARY_ORG);
   const noSecret: NodeJS.ProcessEnv = { ...TWO_APPS };
   delete noSecret.LINEAR_APP_SOAK_WEBHOOK_SECRET;
   ok(linearWebhookSecretForOrg(SOAK_ORG, noSecret.LINEAR_WEBHOOK_SECRET, noSecret) === undefined, "selection: a registered app with no webhook secret gets NO secret — never the primary's");
@@ -51,6 +65,7 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 }
 
 {
+  declarePrimaryOrg("");
   const raw = body(PRIMARY_ORG);
   ok(verify(raw, "primary-secret", PRIMARY_ONLY) === true, "primary-only: the right secret VERIFIES");
   ok(verify(raw, "wrong-secret", PRIMARY_ONLY) === false, "primary-only: a wrong secret is REFUSED");
@@ -59,6 +74,7 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 }
 
 {
+  declarePrimaryOrg(PRIMARY_ORG);
   const primaryBody = body(PRIMARY_ORG);
   const soakBody = body(SOAK_ORG);
   ok(verify(primaryBody, "primary-secret", TWO_APPS) === true, "two apps: a PRIMARY delivery signed with the primary secret verifies");
@@ -72,6 +88,7 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 }
 
 {
+  declarePrimaryOrg("");
   const raw = body(PRIMARY_ORG);
   const sig = signLinearWebhookBody(raw, "primary-secret");
   ok(verifyLinearWebhookDelivery(new Headers(), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "no Linear-Signature header ⇒ REFUSED");
@@ -89,12 +106,14 @@ const TWO_APPS: NodeJS.ProcessEnv = {
 }
 
 {
+  declarePrimaryOrg(PRIMARY_ORG);
   const reaction = JSON.stringify({ action: "create", type: "Reaction", organizationId: SOAK_ORG, webhookTimestamp: NOW, data: { emoji: "eyes" } });
   ok(verify(reaction, "soak-secret", TWO_APPS) === true, "event kinds: a Reaction delivery from a registered workspace verifies like any other");
   ok(verify(reaction, "primary-secret", TWO_APPS) === false, "event kinds: …and is still refused under the wrong workspace's secret");
 }
 
 {
+  declarePrimaryOrg("");
   process.env.LINEAR_APP_SOAK_ORG_ID = SOAK_ORG;
   process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
   process.env.LINEAR_APP_SOAK_CLIENT_SECRET = "soak-client-secret";

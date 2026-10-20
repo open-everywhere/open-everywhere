@@ -1,5 +1,7 @@
 import { resolveTeamsAppId, splitTeamsMessageText, TEAMS_MESSAGE_TEXT_MAX_LENGTH } from "eve/channels/teams";
 import {
+  teamsAppCredentials,
+  teamsAppId,
   teamsConnectorWrite,
   sendTeamsActivityBackedOff,
   replyToTeamsActivityBackedOff,
@@ -32,8 +34,8 @@ export type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
 export async function dispatchTeamsReply(target: TeamsTarget, text: string, intent?: PostIntent): Promise<string> {
-  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw markNotApplied(new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set."));
+  if (teamsAppId() === undefined) {
+    throw markNotApplied(new Error("reply couldn't post to Teams — the teams.appId setting is not set."));
   }
   if (!isTrustedTeamsServiceUrl(target.serviceUrl)) {
     throw markNotApplied(new Error(`reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${target.conversationId})`));
@@ -54,8 +56,8 @@ export async function dispatchTeamsReply(target: TeamsTarget, text: string, inte
 }
 
 async function liveTeamsPost(origin: TeamsOrigin, text: string, intent?: PostIntent): Promise<string> {
-  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw markNotApplied(new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`));
+  if (teamsAppId() === undefined) {
+    throw markNotApplied(new Error(`unified reply couldn't post to Teams — the teams.appId setting is not set (conversation ${origin.conversationId})`));
   }
   if (!isTrustedTeamsServiceUrl(origin.serviceUrl)) {
     throw markNotApplied(new Error(`unified reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${origin.conversationId})`));
@@ -82,8 +84,8 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string, intent?: PostInt
 }
 
 export async function editTeamsMessage(locus: EditLocus, messageId: string, text: string, intent?: PostIntent): Promise<void> {
-  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw markNotApplied(new Error("edit_reply couldn't update the Teams message — MICROSOFT_APP_ID is not set."));
+  if (teamsAppId() === undefined) {
+    throw markNotApplied(new Error("edit_reply couldn't update the Teams message — the teams.appId setting is not set."));
   }
   if (!locus.serviceUrl || !isTrustedTeamsServiceUrl(locus.serviceUrl)) {
     throw markNotApplied(
@@ -110,13 +112,13 @@ export async function editTeamsMessage(locus: EditLocus, messageId: string, text
 }
 
 function requireTeamsAppCredential(what: string): void {
-  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
-    throw markNotApplied(new Error(`${what} couldn't reach Teams — MICROSOFT_APP_ID is not set.`));
+  if (teamsAppId() === undefined) {
+    throw markNotApplied(new Error(`${what} couldn't reach Teams — the teams.appId setting is not set.`));
   }
 }
 
 async function openTeamsPersonalConversation(region: { readonly serviceUrl: string; readonly tenantId: string }, principalId: string): Promise<string> {
-  const appId = await resolveTeamsAppId();
+  const appId = await resolveTeamsAppId(teamsAppCredentials().appId);
   const res = await teamsConnectorWrite({
     operation: "conversations.create",
     serviceUrl: region.serviceUrl,

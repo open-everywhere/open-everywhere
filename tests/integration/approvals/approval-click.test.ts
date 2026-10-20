@@ -24,12 +24,7 @@ import {
 
 for (const k of [
   "GITHUB_TOKEN",
-  "OE_GITHUB_APP_ID",
   "GITHUB_APP_PRIVATE_KEY",
-  "OE_GITHUB_APP_SLUG",
-  "OE_GITHUB_INSTALLATIONS",
-  "OE_GITHUB_OWNER",
-  "OE_GITHUB_INSTALLATION_ID",
   "DISCORD_BOT_TOKEN",
 ]) {
   delete process.env[k];
@@ -41,7 +36,7 @@ const FOREIGN = generateKeyPairSync("ed25519");
 function publicKeyHex(pair: { publicKey: KeyObject }): string {
   return Buffer.from((pair.publicKey.export({ format: "jwk" }) as { x: string }).x, "base64url").toString("hex");
 }
-process.env.DISCORD_PUBLIC_KEY = publicKeyHex(TRUSTED);
+const TRUSTED_PUBLIC_KEY_HEX = publicKeyHex(TRUSTED);
 
 const DISCORD_INTERACTIONS_ROUTE = "/eve/v1/discord";
 
@@ -57,7 +52,7 @@ let base = "";
 let org = "";
 
 async function armAgent(): Promise<void> {
-  ({ base } = await bootAgent({ sharedSqlite: true }));
+  ({ base } = await bootAgent({ sharedSqlite: true, settings: { discord: { publicKey: TRUSTED_PUBLIC_KEY_HEX } } }));
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ taint: { mode: "on" }, approvals: { judgeMode: "off" } });
   expect(settings.getSettings().approvals.judgeMode).toBe("off");

@@ -6,6 +6,7 @@ import {
   loadGitHubAppConfig,
   githubAppPrivateKey,
   githubAuthMode,
+  getSettings,
   resolveGitHubInstallationId,
   warmCredential,
   markNotApplied,
@@ -60,7 +61,7 @@ export function _resetGitHubInstallationTokenCache(): void {
 
 async function githubAppCreds(): Promise<{ appId: string; privateKeyPem: string; installations: Record<string, string> } | null> {
   const scm = loadGitHubAppConfig();
-  const appId = scm ? (scm.clientId ?? scm.appId) : process.env.GITHUB_APP_ID;
+  const appId = scm ? (scm.clientId ?? scm.appId) : getSettings().github.appId;
   if (!appId) return null;
   const privateKeyPem = await githubAppPrivateKey();
   if (!privateKeyPem) return null;
@@ -73,12 +74,12 @@ export async function installationTokenFor(origin: GitHubOrigin): Promise<string
   }
   const creds = await githubAppCreds();
   if (!creds) {
-    throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_ID or GITHUB_APP_ID, and store the operator secret GITHUB_APP_PRIVATE_KEY)."));
+    throw markNotApplied(new Error("reply couldn't post to GitHub — no App credentials (set the github.appId setting, and store the operator secret GITHUB_APP_PRIVATE_KEY)."));
   }
   const installationId = origin.installationId !== undefined ? String(origin.installationId) : await resolveGitHubInstallationId(origin.owner, creds.installations);
   if (!installationId) {
     throw markNotApplied(new Error(
-      `reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
+      `reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, the github.installations setting has no entry, and no installation webhook has registered one).`,
     ));
   }
   return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, owner: origin.owner, repo: origin.repo });

@@ -25,7 +25,7 @@ import { installDiscordWebApiStub, type DiscordCreateMessageCall } from "../disc
 const STARTER_ROUTINE_RULE = "routine-reports-here";
 
 const TRUSTED = generateKeyPairSync("ed25519");
-process.env.DISCORD_PUBLIC_KEY = Buffer.from((TRUSTED.publicKey.export({ format: "jwk" }) as { x: string }).x, "base64url").toString("hex");
+const TRUSTED_PUBLIC_KEY_HEX = Buffer.from((TRUSTED.publicKey.export({ format: "jwk" }) as { x: string }).x, "base64url").toString("hex");
 
 const DISCORD_INTERACTIONS_ROUTE = "/eve/v1/discord";
 
@@ -48,7 +48,7 @@ let armed = false;
 let base = "";
 
 async function armSeams(): Promise<void> {
-  ({ base } = await bootAgent());
+  ({ base } = await bootAgent({ settings: { discord: { publicKey: TRUSTED_PUBLIC_KEY_HEX } } }));
   if (armed) return;
   armed = true;
   const judge = await import("@open-everywhere/core/agent/access/approval-judge.js");

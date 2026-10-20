@@ -6,7 +6,6 @@ import { join } from "node:path";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-routine-test-run-surfaces-")), "ops.sqlite3");
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.DISCORD_BOT_TOKEN = "fixture-discord-token-not-a-secret";
-process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
 process.env.MICROSOFT_APP_PASSWORD = "fixture-app-secret-not-a-secret";
 delete process.env.OE_PLATFORM;
 
@@ -22,6 +21,7 @@ _setDeploymentIdentityForTest({ org: "acme" });
 registerSettings({});
 overrideSettingsForTest({ delegation: { oneshotAgent: false } });
 overrideSettingsForTest({ window: { topology: false } });
+overrideSettingsForTest({ teams: { appId: "fixture-app-id-not-a-secret" } });
 
 await import("@open-everywhere/core/agent/hooks/routine-test-run.js");
 const testRun = await import("@open-everywhere/core/agent/routines/test-run.js");

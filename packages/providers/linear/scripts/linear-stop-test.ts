@@ -6,6 +6,7 @@ import {
   type LinearStopDeps,
 } from "../agent/channels/linear-stop.js";
 import { bindLinear, buildLinearAuth } from "../agent/channels/linear-identity.js";
+import { getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { CancelAnchoredTurnInput, CancelResult } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
@@ -170,12 +171,11 @@ function recordingDeps(over: Partial<LinearStopDeps> = {}): { deps: LinearStopDe
 {
   const saved = {
     secret: process.env.LINEAR_WEBHOOK_SECRET,
-    appUser: process.env.LINEAR_APP_USER_ID,
-    appName: process.env.LINEAR_APP_NAME,
+    appUserId: getSettings().linear.appUserId,
+    appName: getSettings().linear.appName,
   };
   process.env.LINEAR_WEBHOOK_SECRET = "test-linear-secret";
-  process.env.LINEAR_APP_USER_ID = APP_USER;
-  process.env.LINEAR_APP_NAME = "Test App";
+  overrideSettingsForTest({ linear: { appUserId: APP_USER, appName: "Test App" } });
 
   const { LINEAR_SIGNATURE_HEADER } = await import("../agent/channels/linear-webhook-verify.js");
   const { signLinearWebhookBody } = await import("eve/channels/linear");
@@ -221,10 +221,9 @@ function recordingDeps(over: Partial<LinearStopDeps> = {}): { deps: LinearStopDe
   } finally {
     console.log = realLog;
     console.error = realError;
-    for (const [k, v] of [["LINEAR_WEBHOOK_SECRET", saved.secret], ["LINEAR_APP_USER_ID", saved.appUser], ["LINEAR_APP_NAME", saved.appName]] as const) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
+    if (saved.secret === undefined) delete process.env.LINEAR_WEBHOOK_SECRET;
+    else process.env.LINEAR_WEBHOOK_SECRET = saved.secret;
+    overrideSettingsForTest({ linear: { appUserId: saved.appUserId, appName: saved.appName } });
   }
   ok(stopRun === 1, "🔴 REACHABILITY: the real webhook route runs the stop leg on a signed ✋ reaction delivery");
   ok(commentRun === 0, "negative control: a Comment delivery runs NO stop leg");

@@ -3,6 +3,8 @@ import { createHmac } from "node:crypto";
 import {
   assertDomainsValid,
   defineDomain,
+  getSettings,
+  overrideSettingsForTest,
   partitionTenantProblems,
   OperatorSecretNotSetError,
   registerBroker,
@@ -918,13 +920,13 @@ async function deliverFor(
   }
 
   {
-    const saved = process.env.NOTION_BOT_USER_ID;
+    const saved = getSettings().notion.botUserId;
     try {
-      process.env.NOTION_BOT_USER_ID = "U_PINNED";
+      overrideSettingsForTest({ notion: { botUserId: "U_PINNED" } });
       _resetNotionBotUserCache();
       const orgDefault = await resolveNotionBotUser(NOTION_CHANNEL_CREDENTIAL, async () => undefined)();
       const sibling = await resolveNotionBotUser(PAY_CRED, async () => undefined)();
-      ok(orgDefault.id === "U_PINNED", "NOTION_BOT_USER_ID answers for the ORG-DEFAULT integration, resolving no credential at all");
+      ok(orgDefault.id === "U_PINNED", "the notion.botUserId setting answers for the ORG-DEFAULT integration, resolving no credential at all");
       ok(sibling.id === undefined, "🔴 OPE-1921: …and does NOT answer for a SECOND integration — one pinned id cannot stand for a bot user it is not");
       const own = await collectNotionOwnBotIds(
         "U_PINNED",
@@ -935,7 +937,38 @@ async function deliverFor(
       ok(own.complete === false, "🔴 OPE-1921: an override that cannot cover the sibling leaves the own-id set INCOMPLETE, so the fail-closed arm still fires — the loop does not reopen behind a pinned id");
       ok(own.all.size === 1 && own.all.has("U_PINNED"), "…and the set holds exactly the one id the override really does account for, never the sibling's");
     } finally {
-      if (saved === undefined) delete process.env.NOTION_BOT_USER_ID; else process.env.NOTION_BOT_USER_ID = saved;
+      overrideSettingsForTest({ notion: { botUserId: saved } });
+      _resetNotionBotUserCache();
+    }
+  }
+
+  {
+    const savedSettings = { botUserId: getSettings().notion.botUserId, botName: getSettings().notion.botName };
+    const savedEnv = { id: process.env.NOTION_BOT_USER_ID, name: process.env.NOTION_BOT_NAME };
+    try {
+      process.env.NOTION_BOT_USER_ID = "U_ENV";
+      process.env.NOTION_BOT_NAME = "Env Bot";
+      overrideSettingsForTest({ notion: { botUserId: "", botName: "" } });
+      _resetNotionBotUserCache();
+      const envOnly = await resolveNotionBotUser(NOTION_CHANNEL_CREDENTIAL, async () => undefined)();
+      ok(envOnly.id === undefined, "🔴 OPE-2650: env NOTION_BOT_USER_ID with the setting unset pins NO bot user id (env ignored)");
+
+      overrideSettingsForTest({ notion: { botUserId: "U_SETTING" } });
+      _resetNotionBotUserCache();
+      const idOnly = await resolveNotionBotUser(NOTION_CHANNEL_CREDENTIAL, async () => undefined)();
+      ok(idOnly.id === "U_SETTING", "OPE-2650: the notion.botUserId setting pins the org-default bot user id");
+      ok(idOnly.name === undefined, "🔴 OPE-2650: env NOTION_BOT_NAME with the setting unset names NO bot (env ignored)");
+
+      overrideSettingsForTest({ notion: { botName: "Settings Bot" } });
+      _resetNotionBotUserCache();
+      const orgDefault = await resolveNotionBotUser(NOTION_CHANNEL_CREDENTIAL, async () => undefined)();
+      const sibling = await resolveNotionBotUser(PAY_CRED, async () => undefined)();
+      ok(orgDefault.id === "U_SETTING" && orgDefault.name === "Settings Bot", "OPE-2650: the notion.botName setting names the org-default bot user");
+      ok(sibling.id === undefined, "OPE-2650: a sibling integration never gets the pinned id");
+    } finally {
+      if (savedEnv.id === undefined) delete process.env.NOTION_BOT_USER_ID; else process.env.NOTION_BOT_USER_ID = savedEnv.id;
+      if (savedEnv.name === undefined) delete process.env.NOTION_BOT_NAME; else process.env.NOTION_BOT_NAME = savedEnv.name;
+      overrideSettingsForTest({ notion: savedSettings });
       _resetNotionBotUserCache();
     }
   }

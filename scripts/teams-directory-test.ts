@@ -2,6 +2,7 @@ import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
 let passed = 0;
@@ -18,7 +19,7 @@ const dir = join(tmpdir(), `open-everywhere-teams-directory-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
+overrideSettingsForTest({ teams: { appId: "fixture-app-id-not-a-secret" } });
 process.env.MICROSOFT_APP_PASSWORD = "fixture-app-secret-not-a-secret";
 
 const SERVICE_URL = "https://smba.trafficmanager.net/uk/";

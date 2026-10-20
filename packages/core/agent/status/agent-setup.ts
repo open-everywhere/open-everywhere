@@ -242,7 +242,7 @@ function configGaps(f: AgentSetupFacts, repoWords?: string): { ready: boolean; g
       what: `Changing my setup from chat needs GitHub, and I'm not connected to it.`,
       step: `Whoever runs this deployment sets up the GitHub app and installs it on ${repo}.`,
     });
-    operator.push("The GitHub app settings: OE_GITHUB_APP_ID and OE_GITHUB_APP_SLUG, and its private key as the operator secret GITHUB_APP_PRIVATE_KEY (`oe secret set GITHUB_APP_PRIVATE_KEY`).");
+    operator.push("The GitHub app: the github.appId and github.appSlug settings in agent/settings/settings.ts, and its private key as the operator secret GITHUB_APP_PRIVATE_KEY (`oe secret set GITHUB_APP_PRIVATE_KEY`).");
     if (f.github.tokenSet === "yes") operator.push('GITHUB_TOKEN is set but not used, because this deployment signs in with the GitHub app. To use the token instead, set github.auth to "token" in agent/settings/settings.ts.');
     return { ready: false, gaps, operator };
   }

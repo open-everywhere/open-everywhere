@@ -209,7 +209,7 @@ await inSession(async () => {
   const routeHandler = notionChannel.routes[0]!.handler;
 
   const BOT = "bot-user-id-999", AUTHOR = "author-user-id-111";
-  process.env.NOTION_BOT_USER_ID = BOT;
+  overrideSettingsForTest({ notion: { botUserId: BOT } });
   const partOf = (ws: string, page: string) => resolvePartition({ channel: { kind: "notion" as const }, session: { auth: { current: { attributes: { workspace_id: ws, page_id: page }, principalId: AUTHOR } } } } as never);
   const overPart = partOf("WSCAP", "PAGECAP");
   const okPart = partOf("WSOK", "PAGEOK");
@@ -306,7 +306,7 @@ await inSession(async () => {
   const WS = "WSENG";
   const ENGAGED_PAGE = "PAGEENGAGED";
   const AMBIENT_PAGE = "PAGEAMBIENT";
-  process.env.NOTION_BOT_USER_ID = BOT;
+  overrideSettingsForTest({ notion: { botUserId: BOT } });
 
   registerConfig({
     loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},

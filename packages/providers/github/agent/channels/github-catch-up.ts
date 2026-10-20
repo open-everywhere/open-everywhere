@@ -1,5 +1,6 @@
 import {
   catchUpSender,
+  getSettings,
   resolveSurfaceReadToken,
   type NormalizedMessage,
   type PrFetchFn,
@@ -45,7 +46,10 @@ export interface GitHubCatchUpDeps {
 
 const liveDeps: GitHubCatchUpDeps = {
   fetchFn: liveGithubReadFetch,
-  selfLogin: process.env.GITHUB_APP_SLUG ? `${process.env.GITHUB_APP_SLUG}[bot]` : undefined,
+  get selfLogin(): string | undefined {
+    const slug = getSettings().github.appSlug;
+    return slug ? `${slug}[bot]` : undefined;
+  },
 };
 
 export async function fetchGitHubCatchUpWindow(

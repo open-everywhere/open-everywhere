@@ -108,14 +108,14 @@ export const TEAMS_APP_CONSOLE_URL = "https://admin.teams.microsoft.com";
 export const TEAMS_APP_MANIFEST_STEPS: readonly string[] = [
   "Save the manifest below as manifest.json in the teams-app/ directory, beside color.png and outline.png.",
   "Keep color.png and outline.png unless you set identity.name and chose your own icon: they are the project mark, the default avatar. A checkout without teams-app/ gets both from https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/color.png and https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/outline.png. To use your own icon, replace both (color 192x192; outline 32x32, white on transparent).",
-  "Replace {{MICROSOFT_APP_ID}} with the Azure Bot's Application (client) ID (MICROSOFT_APP_ID) — it appears three times and must match everywhere.",
+  "Replace {{MICROSOFT_APP_ID}} with the Azure Bot's Application (client) ID (the teams.appId setting) — it appears three times and must match everywhere.",
   "Replace {{DEVELOPER_NAME}} with your org's name.",
   "Zip it flat: zip -j app.zip manifest.json color.png outline.png (Teams requires the manifest at the zip root).",
   "Upload it: Teams → Apps → Manage your apps → Upload a custom app for one team, or the Teams Admin Center → Manage apps → Upload new app for the org.",
 ];
 
 export const TEAMS_APP_MANIFEST_COLLECT: readonly string[] = [
-  "Azure Bot → Configuration → Microsoft App ID = MICROSOFT_APP_ID",
+  "Azure Bot → Configuration → Microsoft App ID = the teams.appId setting (agent/settings/settings.ts)",
   "The app registration's client secret = MICROSOFT_APP_PASSWORD",
   "The Entra tenant id = MICROSOFT_TENANT_ID",
 ];

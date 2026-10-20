@@ -79,7 +79,7 @@ export async function appMissingError(subject = ""): Promise<Error> {
   const unused = (await githubTokenSet())
     ? ` GITHUB_TOKEN is set, but this deployment signs in with the GitHub App (github.auth "app"), so the token is not used. To use it instead, set github.auth: "token" in agent/settings/settings.ts.`
     : "";
-  return new Error(`no GitHub credential${forWords(subject)}: configure the GitHub App (OE_GITHUB_APP_*).${unused}`);
+  return new Error(`no GitHub credential${forWords(subject)}: configure the GitHub App (the github.appId and github.appSlug settings, and the operator secret GITHUB_APP_PRIVATE_KEY: oe secret set GITHUB_APP_PRIVATE_KEY).${unused}`);
 }
 
 function appNotInstalledError(repo: string, subject = ""): Error {

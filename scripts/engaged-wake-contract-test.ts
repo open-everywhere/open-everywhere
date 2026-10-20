@@ -1,3 +1,5 @@
+// proves: SEAT-09, SEAT-10
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
@@ -10,7 +12,8 @@ const dir = join(tmpdir(), `open-everywhere-engaged-wake-contract-${process.pid}
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.GITHUB_APP_SLUG = "eve-bot";
+const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+overrideSettingsForTest({ github: { appSlug: "eve-bot", conversation: true } });
 
 const { renderWake, resolvePartition, getOperationalStore, ENGAGED_FOLLOW_UP_CONTEXT } = await import(
   "@open-everywhere/core/agent/adapter-api.js"

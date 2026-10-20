@@ -11,7 +11,7 @@ import {
 } from "../agent/aws/sso.js";
 import type { AwsIdentityRequest, AwsSsoLinkStore, EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
-import { awsAccessEnabled, loadAwsSsoConfig } from "../agent/aws/config.js";
+import { awsAccessEnabled, loadAwsAccessConfig, loadAwsSsoConfig } from "../agent/aws/config.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -555,4 +555,30 @@ function linkMinter(idTokenClaims: Record<string, unknown> | undefined) {
   ok(awsAccessEnabled() === false && loadAwsSsoConfig().scopes === undefined, "…and a reset returns both to the shipped values (read per call, not latched)");
 }
 
+{
+  const saved = { a: process.env.AWS_REGION, r: process.env.OE_AWS_REGION, s: process.env.OE_AWS_SSO_REGION, c: process.env.OE_AWS_SSO_CLIENT_ID };
+  delete process.env.AWS_REGION;
+  process.env.OE_AWS_REGION = "eu-west-9";
+  process.env.OE_AWS_SSO_REGION = "eu-west-8";
+  process.env.OE_AWS_SSO_CLIENT_ID = "env-client";
+  resetSettingsForTest();
+  ok(loadAwsSsoConfig().region === undefined && loadAwsSsoConfig().clientId === undefined, "🔴 OE_AWS_SSO_REGION / OE_AWS_REGION / OE_AWS_SSO_CLIENT_ID are not read: shipped settings ⇒ no region and no client id");
+  ok(loadAwsAccessConfig().defaultRegion === undefined, "🔴 OE_AWS_REGION is not read: shipped settings ⇒ no default region");
+  overrideSettingsForTest({ aws: { region: "us-west-2", ssoClientId: "pub-client" } });
+  ok(loadAwsAccessConfig().defaultRegion === "us-west-2", "aws.region: the registered region is the default region");
+  ok(loadAwsSsoConfig().region === "us-west-2", "aws.ssoRegion empty ⇒ the link falls back to aws.region");
+  ok(loadAwsSsoConfig().clientId === "pub-client", "aws.ssoClientId: the registered id is what the link presents");
+  overrideSettingsForTest({ aws: { ssoRegion: "eu-central-1" } });
+  ok(loadAwsSsoConfig().region === "eu-central-1", "aws.ssoRegion wins over aws.region for the link");
+  resetSettingsForTest();
+  process.env.AWS_REGION = "ap-south-1";
+  ok(loadAwsAccessConfig().defaultRegion === "ap-south-1" && loadAwsSsoConfig().region === "ap-south-1", "the host's AWS_REGION stays the last fallback (platform, not a setting)");
+  for (const [k, v] of [["AWS_REGION", saved.a], ["OE_AWS_REGION", saved.r], ["OE_AWS_SSO_REGION", saved.s], ["OE_AWS_SSO_CLIENT_ID", saved.c]] as const) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
+
 console.log(`✓ aws-sso: ${passed} assertions passed (mint happy path + parse + refresh + unlinked/not-entitled/re-link + warm cache + link roundtrip + OPE-286 qualified-subject keying + OPE-300 purge hook + OPE-1955 signer binding)`);
+
+// proves: SET-069, SET-070

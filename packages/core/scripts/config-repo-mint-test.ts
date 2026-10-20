@@ -8,6 +8,7 @@ import type { AccessRequestsConfig } from "../agent/access/config.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { fileURLToPath } from "node:url";
 import { removeTempDir } from "./_temp-dir.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 const dir = join(tmpdir(), `open-everywhere-config-repo-mint-${process.pid}`);
 await removeTempDir(dir);
@@ -22,10 +23,8 @@ const ok = (cond: boolean, label: string): void => {
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pkcs1 = privateKey.export({ type: "pkcs1", format: "pem" }) as string;
 
-process.env.OE_GITHUB_APP_ID = "111";
+overrideSettingsForTest({ github: { appId: "111", appSlug: "open-everywhere", installations: { acme: "4242" } } });
 process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
-process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
-process.env.OE_GITHUB_INSTALLATIONS = '{"acme":"4242"}';
 delete process.env.GITHUB_TOKEN;
 
 const CONFIG_REPO = "acme/agent-config";
@@ -270,7 +269,7 @@ await withPatchedFetch(fakeFetch, async () => {
 
   console.log("\n3. an owner outside the installation — every flow fails closed:");
   {
-    process.env.OE_GITHUB_INSTALLATIONS = '{"someone-else":"9999"}';
+    overrideSettingsForTest({ github: { installations: { "someone-else": "9999" } } });
     resetGitHubApp();
     for (const flow of FLOWS) {
       const before = mintCalls.length;
@@ -286,7 +285,7 @@ await withPatchedFetch(fakeFetch, async () => {
       );
       ok(mintCalls.length === before, `${flow.name}: …and no token was minted at all — the refusal precedes the exchange`);
     }
-    process.env.OE_GITHUB_INSTALLATIONS = '{"acme":"4242"}';
+    overrideSettingsForTest({ github: { installations: { acme: "4242" } } });
     resetGitHubApp();
   }
 });

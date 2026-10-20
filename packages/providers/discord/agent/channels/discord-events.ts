@@ -1,5 +1,5 @@
 import { POST, type Channel, type RouteHandlerArgs } from "eve/channels";
-import { verifyDiscordInteraction } from "./discord-front.js";
+import { discordPublicKey, verifyDiscordInteraction } from "./discord-front.js";
 import { appendAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
 import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -74,7 +74,7 @@ const ACK = () => new Response(null, { status: 204 });
 
 export function buildDiscordEventsHandler(opts: DiscordEventsOptions = {}): (req: Request, args: RouteHandlerArgs) => Promise<Response> {
   const now = opts.now ?? (() => Date.now());
-  const publicKey = () => opts.publicKey ?? process.env.DISCORD_PUBLIC_KEY;
+  const publicKey = () => opts.publicKey ?? discordPublicKey();
   const audit =
     opts.audit ??
     (async (row) => {

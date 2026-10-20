@@ -1,3 +1,5 @@
+// proves: write.refused
+
 import assert from "node:assert/strict";
 import {
   assertLinearIssueAllowed,
@@ -10,6 +12,7 @@ import {
 import {
   ChannelScopeError,
   defineDomain,
+  overrideSettingsForTest,
   registerConfig,
   registerIdentityMapper,
   workGrantCredential,
@@ -166,9 +169,10 @@ const ctxFor = (surface: string, issueId?: string): BindableContext =>
   ok(copy.includes("`reach`") && !copy.includes("`containers`"), "…in the CURRENT vocabulary");
 }
 
-for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"]) {
+for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_CLIENT_SECRET"]) {
   delete process.env[k];
 }
+overrideSettingsForTest({ linear: { clientId: "" } });
 
 {
   const turn = ctxFor(TEAM_PAY, ISSUE_OWN);

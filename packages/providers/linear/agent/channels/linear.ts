@@ -192,8 +192,9 @@ export function resolveViewer(organizationId?: string): Promise<{ id?: string; n
   const cached = viewerCache.get(key);
   if (cached) return cached;
   const registered = linearAppForOrg(organizationId) !== undefined;
-  const overrideId = registered ? undefined : process.env.LINEAR_APP_USER_ID;
-  const overrideName = registered ? undefined : process.env.LINEAR_APP_NAME;
+  const linear = getSettings().linear;
+  const overrideId = registered ? undefined : linear.appUserId || undefined;
+  const overrideName = registered ? undefined : linear.appName || undefined;
   const resolved =
     overrideId && overrideName
       ? Promise.resolve({ id: overrideId, name: overrideName })

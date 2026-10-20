@@ -35,6 +35,8 @@ import {
   defineAuthorTrust,
   registerAuthorTrust,
   _resetAuthorTrustForTest,
+  getSettings,
+  overrideSettingsForTest,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth, type TeamsIdentityInput } from "../agent/channels/teams-identity.js";
@@ -245,9 +247,8 @@ const engCtx = teamsCtx({
 }
 
 {
-  const saved = { id: process.env.MICROSOFT_APP_ID, teamsId: process.env.TEAMS_APP_ID, pw: process.env.MICROSOFT_APP_PASSWORD, teamsPw: process.env.TEAMS_APP_PASSWORD };
-  delete process.env.MICROSOFT_APP_ID;
-  delete process.env.TEAMS_APP_ID;
+  const saved = { appId: getSettings().teams.appId, pw: process.env.MICROSOFT_APP_PASSWORD, teamsPw: process.env.TEAMS_APP_PASSWORD };
+  overrideSettingsForTest({ teams: { appId: "" } });
   delete process.env.MICROSOFT_APP_PASSWORD;
   delete process.env.TEAMS_APP_PASSWORD;
   const org = deploymentOrg();
@@ -255,7 +256,7 @@ const engCtx = teamsCtx({
   _resetTeamsGraphTokenCache();
   await assert.rejects(
     () => teamsReadAdapter.readChannel(engCtx, RAW_ENG, 50),
-    /MICROSOFT_APP_ID or TEAMS_APP_ID is required/u,
+    /teams\.appId is required/u,
     "readChannel: the DEFAULT (live) requester fails loud on missing app credentials before any network call",
   );
   n++;
@@ -266,8 +267,7 @@ const engCtx = teamsCtx({
   n++;
   assert.ok(typeof after[0]!.detail?.error === "string" && (after[0]!.detail!.error as string).length > 0, "…with a non-empty error detail");
   n++;
-  if (saved.id !== undefined) process.env.MICROSOFT_APP_ID = saved.id;
-  if (saved.teamsId !== undefined) process.env.TEAMS_APP_ID = saved.teamsId;
+  overrideSettingsForTest({ teams: { appId: saved.appId } });
   if (saved.pw !== undefined) process.env.MICROSOFT_APP_PASSWORD = saved.pw;
   if (saved.teamsPw !== undefined) process.env.TEAMS_APP_PASSWORD = saved.teamsPw;
   _resetTeamsGraphTokenCache();
@@ -393,13 +393,21 @@ const engCtx = teamsCtx({
   ok(typeof wideCheck.fix === "string" && wideCheck.fix.includes("ChannelMessage.Read.Group"), "…and how to get the boundary back");
   ok(boundaryCheck("unknown").status === "info", "preflight: an undetermined boundary reports as info, never as a claim either way");
 
+  const savedProbeAppId = getSettings().teams.appId;
+  overrideSettingsForTest({ teams: { appId: "" } });
   ok((await teamsBoundaryProbe({})).length === 0, "preflight probe: no Teams app credentials ⇒ no checks at all");
   ok(
-    (await teamsBoundaryProbe({ MICROSOFT_APP_ID: "id", MICROSOFT_APP_PASSWORD: "pw" })).length === 1,
+    (await teamsBoundaryProbe({ MICROSOFT_APP_ID: "id", MICROSOFT_APP_PASSWORD: "pw" })).length === 0,
+    "🔴 OPE-2650: preflight probe: env MICROSOFT_APP_ID with the teams.appId setting unset ⇒ no checks (env ignored)",
+  );
+  overrideSettingsForTest({ teams: { appId: "id" } });
+  ok(
+    (await teamsBoundaryProbe({ MICROSOFT_APP_PASSWORD: "pw" })).length === 1,
     "preflight probe: credentials without a tenant id ⇒ one check, no network call",
   );
-  const noTenant = (await teamsBoundaryProbe({ MICROSOFT_APP_ID: "id", MICROSOFT_APP_PASSWORD: "pw" }))[0]!;
+  const noTenant = (await teamsBoundaryProbe({ MICROSOFT_APP_PASSWORD: "pw" }))[0]!;
   ok(noTenant.status === "info" && noTenant.detail.includes("tenant-scoped"), "…explaining that Graph's client-credential token is tenant-scoped");
+  overrideSettingsForTest({ teams: { appId: savedProbeAppId } });
 }
 
 {

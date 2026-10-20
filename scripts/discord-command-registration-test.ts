@@ -13,6 +13,7 @@ import {
   reconcileDiscordCommands,
 } from "@open-everywhere/provider-discord/agent/commands/discord-command-sync.js";
 import { buildOeDiscordCommandDefinition } from "@open-everywhere/provider-discord/agent/commands/discord-commands.js";
+import { getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -178,6 +179,32 @@ const CREDS = { applicationId: "1410000000000000002", botToken: "not-a-real-toke
     const outcome = await reconcileDiscordCommands({ scopes: [GUILD] }, { applicationId: "", botToken: "", fetch: t.fetchLike });
     eq(outcome.status, "skipped", "🔴 §4 no credential ⇒ `skipped`, which is what a deployment carrying the bundle but no Discord app looks like");
     eq(t.calls.length, 0, "…and no vendor call is attempted at all — this is what keeps the offline test tiers network-free");
+  }
+
+  {
+    const savedAppId = getSettings().discord.applicationId;
+    const savedToken = process.env.DISCORD_BOT_TOKEN;
+    try {
+      overrideSettingsForTest({ discord: { applicationId: "" } });
+      process.env.DISCORD_APPLICATION_ID = CREDS.applicationId;
+      process.env.DISCORD_BOT_TOKEN = CREDS.botToken;
+      const viaEnv = transport([{ status: 200, body: [asVendorHeld(declared)] }]);
+      const skipped = await reconcileDiscordCommands({ scopes: [GUILD] }, { fetch: viaEnv.fetchLike });
+      eq(skipped.status, "skipped", "🔴 §4a the DISCORD_APPLICATION_ID env variable alone ⇒ `skipped` — env is not read");
+      eq(viaEnv.calls.length, 0, "§4a …and no vendor call is attempted");
+
+      delete process.env.DISCORD_APPLICATION_ID;
+      overrideSettingsForTest({ discord: { applicationId: CREDS.applicationId } });
+      const viaSetting = transport([{ status: 200, body: [asVendorHeld(declared)] }]);
+      const proceeded = await reconcileDiscordCommands({ scopes: [GUILD] }, { fetch: viaSetting.fetchLike });
+      eq(proceeded.status, "unchanged", "🔴 §4a the discord.applicationId setting and DISCORD_BOT_TOKEN ⇒ the reconcile proceeds");
+      ok(viaSetting.calls[0]?.url.includes(`/applications/${CREDS.applicationId}/`) === true, "§4a …and addresses the app that the setting names");
+    } finally {
+      delete process.env.DISCORD_APPLICATION_ID;
+      overrideSettingsForTest({ discord: { applicationId: savedAppId } });
+      if (savedToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+      else process.env.DISCORD_BOT_TOKEN = savedToken;
+    }
   }
 
   {

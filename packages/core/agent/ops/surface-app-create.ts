@@ -8,6 +8,7 @@ export interface SurfaceAppCreateVariant {
 
 export interface SurfaceAppCreateResult {
   readonly env: Readonly<Record<string, string>>;
+  readonly settings?: Readonly<Record<string, string | boolean>>;
   readonly appName: string;
   readonly installUrl?: string;
 }
@@ -60,6 +61,7 @@ export interface SurfaceAppCreateStatus {
   readonly openUrl: string;
   readonly expiresAt: string;
   readonly written?: readonly string[];
+  readonly settings?: Readonly<Record<string, string | boolean>>;
   readonly appName?: string;
   readonly installUrl?: string;
   readonly problem?: string;
@@ -243,6 +245,7 @@ export async function startSurfaceAppCreate(opts: StartSurfaceAppCreateOptions):
         ...session.status,
         state: "done",
         written: Object.keys(result.env).sort(),
+        ...(result.settings === undefined || Object.keys(result.settings).length === 0 ? {} : { settings: result.settings }),
         appName: result.appName,
         ...(result.installUrl === undefined ? {} : { installUrl: result.installUrl }),
       });

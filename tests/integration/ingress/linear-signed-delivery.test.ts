@@ -19,10 +19,10 @@ afterAll(async () => {
   settings.resetSettingsForTest();
 });
 
+const LINEAR_APP_IDENTITY = { settings: { linear: { appUserId: "it-linear-app-actor", appName: "OE Bot" } } } as const;
+
 async function armSeams(authorId: string): Promise<{ readonly calls: readonly LinearApiCall[] }> {
-  await bootAgent();
-  process.env.LINEAR_APP_USER_ID = "it-linear-app-actor";
-  process.env.LINEAR_APP_NAME = "OE Bot";
+  await bootAgent(LINEAR_APP_IDENTITY);
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ externalPolicy: { authorGrain: "withhold" } });
@@ -107,9 +107,7 @@ test("an unsigned Linear agent-session delivery is refused (401) and writes NO l
 });
 
 test("a signed delivery on the deploy:smoke SCRATCH surface is suppressed by the ROOM grain — the row deploy:smoke joins on, written by the real host with no model turn", async () => {
-  await bootAgent();
-  process.env.LINEAR_APP_USER_ID = "it-linear-app-actor";
-  process.env.LINEAR_APP_NAME = "OE Bot";
+  await bootAgent(LINEAR_APP_IDENTITY);
 
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.resetSettingsForTest();

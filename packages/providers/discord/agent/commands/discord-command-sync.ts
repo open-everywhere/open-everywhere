@@ -1,6 +1,7 @@
 import type { RetryPolicy, SurfaceCommandOutcome, SurfaceCommandScope } from "@open-everywhere/core/agent/adapter-api.js";
 import { discordFetch, type DiscordFetchLike } from "../channels/discord-rest.js";
 import { buildOeDiscordCommandDefinition } from "./discord-commands.js";
+import { discordApplicationId } from "../channels/discord-front.js";
 import { discordBotToken } from "../channels/discord-credentials.js";
 
 const BOOT_RETRY: RetryPolicy = { maxAttempts: 1 };
@@ -160,12 +161,12 @@ async function reconcileOneGuild(
 }
 
 export async function reconcileDiscordCommands(scope: SurfaceCommandScope, deps: DiscordCommandSyncDeps = {}): Promise<SurfaceCommandOutcome> {
-  const applicationId = deps.applicationId ?? process.env.DISCORD_APPLICATION_ID;
+  const applicationId = deps.applicationId ?? discordApplicationId();
   const botToken = deps.botToken ?? (await discordBotToken());
   if (!applicationId || !botToken) {
     return {
       status: "skipped",
-      detail: "DISCORD_APPLICATION_ID and DISCORD_BOT_TOKEN must both be set for this deployment to register its own commands.",
+      detail: "the discord.applicationId setting and DISCORD_BOT_TOKEN must both be set for this deployment to register its own commands.",
     };
   }
 

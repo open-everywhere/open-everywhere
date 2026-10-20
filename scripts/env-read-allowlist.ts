@@ -81,30 +81,6 @@ allow("per-run-seam", [
 ]);
 
 allow("pending-migration", [
-
-  ["DISCORD_APPLICATION_ID", "OPE-2650: → setting `discord.applicationId`. Which Discord application this deployment is; public."],
-  ["DISCORD_PUBLIC_KEY", "OPE-2650: → setting `discord.publicKey`. Discord's interaction PUBLIC key, which the webhook signature check verifies against — public by design, so Git can hold it."],
-  ["GITHUB_APP_ID", "OPE-2650: → setting `github.app.id`. Which GitHub App this deployment is."],
-  ["OE_GITHUB_APP_ID", "OPE-2650: → setting `github.app.id`, folded into one name with GITHUB_APP_ID."],
-  ["GITHUB_APP_SLUG", "OPE-2650: → setting `github.app.slug`. That App's slug, which the agent's own posts are recognised by."],
-  ["OE_GITHUB_APP_SLUG", "OPE-2650: → setting `github.app.slug`, folded into one name with GITHUB_APP_SLUG."],
-  ["OE_GITHUB_APP_CLIENT_ID", "OPE-2650: → setting `github.app.clientId`. The GitHub App's PUBLIC OAuth client id."],
-  ["OE_GITHUB_BOT_USER_ID", "OPE-2650: → setting `github.app.botUserId`. The GitHub user id this deployment posts as."],
-  ["OE_GITHUB_INSTALLATION_ID", "OPE-2650: → setting `github.installations`. Which GitHub App installation this deployment acts through."],
-  ["OE_GITHUB_OWNER", "OPE-2650: → setting `github.installations`. Which owner that installation id belongs to."],
-  ["OE_GITHUB_INSTALLATIONS", "OPE-2650: → setting `github.installations`. The owner-to-installation-id table, the multi-entry form of the pair above."],
-  ["LINEAR_APP_NAME", "OPE-2650: → setting `linear.appName`. Which Linear app this deployment is, when no registration supplies the name."],
-  ["LINEAR_APP_USER_ID", "OPE-2650: → setting `linear.appUserId`. That app's Linear user id."],
-  ["LINEAR_CLIENT_ID", "OPE-2650: → setting `linear.clientId`. The Linear OAuth client id — the public half of the client credential pair."],
-  ["LINEAR_ORGANIZATION_ID", "OPE-2650: → setting `linear.organizationId`. Which Linear organization this deployment is bound to."],
-  ["MICROSOFT_APP_ID", "OPE-2650: → setting `teams.appId`. Which Microsoft app this deployment is."],
-  ["TEAMS_APP_ID", "OPE-2650: → setting `teams.appId`, folded into one name with MICROSOFT_APP_ID."],
-  ["NOTION_BOT_NAME", "OPE-2650: → setting `notion.botName`. Which Notion bot this deployment posts as."],
-  ["NOTION_BOT_USER_ID", "OPE-2650: → setting `notion.botUserId`. That bot's Notion user id."],
-  ["OE_AWS_SSO_CLIENT_ID", "OPE-2650: → setting `aws.ssoClientId`. The pre-registered PUBLIC OIDC client id this deployment presents at the Identity Center link."],
-
-  ["OE_AWS_REGION", "OPE-2650: → setting `aws.region`. The operator's default AWS region."],
-  ["OE_AWS_SSO_REGION", "OPE-2650: → setting `aws.ssoRegion`. The Identity Center region."],
 ]);
 
 export const ENV_READ_ALLOWLIST: EnvAllowlist = ALLOWLIST;

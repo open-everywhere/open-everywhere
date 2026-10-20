@@ -1,8 +1,6 @@
 import { constructForkAppRoot, removeForkAppRoot } from "./fork-app-root";
 
-for (const k of ["DISCORD_APPLICATION_ID", "DISCORD_BOT_TOKEN"]) {
-  delete process.env[k];
-}
+delete process.env.DISCORD_BOT_TOKEN;
 
 const ENTERED = Symbol.for("open-everywhere.integration.forkAppRoot");
 type Marked = typeof globalThis & { [ENTERED]?: string };

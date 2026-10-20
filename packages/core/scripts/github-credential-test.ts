@@ -58,7 +58,7 @@ registerConfig({
   domainsForSurface: () => [],
   loadAccessRequests: () => ({ configRepo: "acme/bot" }) as never,
 });
-for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
+for (const k of ["GITHUB_APP_PRIVATE_KEY", "GITHUB_TOKEN"]) delete process.env[k];
 resetSettingsForTest();
 resetGitHubApp();
 
@@ -92,12 +92,10 @@ resetGitHubApp();
 
 {
   overrideSettingsForTest({ github: { auth: "token" } });
-  process.env.OE_GITHUB_APP_ID = "1";
+  overrideSettingsForTest({ github: { appId: "1", appSlug: "acme-oe", installations: { acme: "4242" } } });
   process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
-  process.env.OE_GITHUB_APP_SLUG = "acme-oe";
-  process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
   resetGitHubApp();
-  ok(getGitHubApp() === null, "§3 🔴 token mode: getGitHubApp() is null even with every App secret set — one credential per host");
+  ok(getGitHubApp() === null, "§3 🔴 token mode: getGitHubApp() is null even with the App fully configured — one credential per host");
   ok(tokenRepos().join() === "acme/bot", "§3 token mode: with no github.tokenRepos the token reaches the deployment's own repository only");
   ok(tokenReaches("Acme/Bot"), "§3 the reach compares names case-insensitively, as GitHub does");
   const { app, mints } = fakeApp();
@@ -190,7 +188,9 @@ resetGitHubApp();
 }
 
 resetSettingsForTest();
-for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
+for (const k of ["GITHUB_APP_PRIVATE_KEY", "GITHUB_TOKEN"]) delete process.env[k];
 resetGitHubApp();
 
 console.log(`\n✓ github-credential: ${n} assertions passed (settings, app mode without fallback, token reach, every resolver, firewall rules, list_repos, one-step upgrade)\n`);
+
+// proves: TOOL-list_repos

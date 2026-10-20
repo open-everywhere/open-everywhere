@@ -261,6 +261,39 @@ console.log("5 — a bad override fails the boot, not a turn:");
     ok(getSettings(accepted).accessRequests.configRepo === "acme/config", "[5] OPE-2650 — a well-formed accessRequests override is accepted and resolves (the negative control)");
     ok(getSettings({}).accessRequests.configRepo === "" && getSettings({}).accessRequests.configBase === "main", "[5] OPE-2650 — unset ships: no config repo, base main");
   }
+  refuses(() => defineSettings({ discord: { applicationId: "app-1" } }), "numeric id", "[5] OPE-2650 — discord.applicationId refuses a non-numeric id");
+  refuses(() => defineSettings({ discord: { publicKey: "not-hex" } }), "hex public key", "[5] OPE-2650 — discord.publicKey refuses a value that is not a 64-character hex key");
+  refuses(() => defineSettings({ github: { appId: "12a" } }), "numeric id", "[5] OPE-2650 — github.appId refuses a non-numeric id");
+  refuses(() => defineSettings({ github: { appSlug: "Acme Agent" } }), "slug", "[5] OPE-2650 — github.appSlug refuses a value that is not a slug");
+  refuses(() => defineSettings({ github: { installations: { acme: "x42" } } }), "numeric string", "[5] OPE-2650 — github.installations refuses a non-numeric installation id");
+  refuses(() => defineSettings({ github: { installations: { "-bad-": "42" } } }), "owner login", "[5] OPE-2650 — github.installations refuses a key that is not a GitHub login");
+  refuses(() => defineSettings({ github: { installations: ["acme"] } } as never), "owner → installation id", "[5] OPE-2650 — github.installations refuses an array");
+  refuses(() => defineSettings({ teams: { appId: "not-a-guid" } }), "GUID", "[5] OPE-2650 — teams.appId refuses a value that is not a GUID");
+  refuses(() => defineSettings({ linear: { organizationId: "org 1" } }), "no whitespace", "[5] OPE-2650 — linear.organizationId refuses whitespace");
+  refuses(() => defineSettings({ notion: { botName: "two\nlines" } }), "one line", "[5] OPE-2650 — notion.botName refuses a line break");
+  refuses(() => defineSettings({ aws: { region: "Europe" } }), "AWS region", "[5] OPE-2650 — aws.region refuses a value that is not a region");
+  ok(getSettings(defineSettings({ aws: { region: "eusc-de-east-1" } })).aws.region === "eusc-de-east-1", "[5] OPE-2650 — aws.region accepts a sovereign-cloud region with a four-letter partition prefix");
+  ok(getSettings(defineSettings({ github: { installations: { "legacy--login-": "7" } } })).github.installations["legacy--login-"] === "7", "[5] OPE-2650 — github.installations accepts a legacy login with a double or trailing hyphen");
+  {
+    const accepted = defineSettings({
+      aws: { region: "eu-west-2", ssoRegion: "us-east-1", ssoClientId: "pub-client-1" },
+      discord: { applicationId: "1410000000000000002", publicKey: "a".repeat(64) },
+      github: { appId: "123456", appSlug: "acme-agent", appClientId: "Iv1.abc", botUserId: "987", installations: { acme: "4242", "acme-labs": "77" } },
+      linear: { appName: "Acme Agent", appUserId: "2f1c0c1e-0000-4000-8000-000000000001", clientId: "client-1", organizationId: "org-1" },
+      notion: { botName: "Acme Agent", botUserId: "u-1" },
+      teams: { appId: "00000000-0000-4000-8000-000000000001" },
+    });
+    const g = getSettings(accepted);
+    ok(
+      g.github.appId === "123456" && g.github.installations["acme-labs"] === "77" && g.teams.appId.startsWith("00000000") && g.discord.publicKey.length === 64 && g.aws.ssoRegion === "us-east-1",
+      "[5] OPE-2650 — well-formed surface-identity overrides are accepted and resolve (the negative control)",
+    );
+    const shipped = getSettings({});
+    ok(
+      shipped.github.appId === "" && Object.keys(shipped.github.installations).length === 0 && shipped.teams.appId === "" && shipped.discord.applicationId === "" && shipped.linear.clientId === "" && shipped.notion.botUserId === "" && shipped.aws.region === "",
+      "[5] OPE-2650 — every surface identity ships unset",
+    );
+  }
   refuses(() => defineSettings({ window: { topolgy: true } } as never), "unknown setting", "[5] a typo'd KEY is refused by name");
   refuses(() => defineSettings({ window: { unifiedRedrive: false } } as never), "unknown setting", "[5] 🔴 OPE-1145 — `window.unifiedRedrive` is DELETED: a deployment that still registers the old off switch FAILS the boot, rather than booting with an ignored key and an operator who believes the correction is off");
   refuses(() => defineSettings({ bash: { timeoutMs: "600000" } } as never), "expected number", "[5] a wrong-typed value is refused");

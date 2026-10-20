@@ -6,13 +6,13 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { generateKeyPairSync, sign } from "node:crypto";
 import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/types.js";
-import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
+import { getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 
 const dir = join(tmpdir(), `open-everywhere-discord-approvals-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.DISCORD_BOT_TOKEN;
-delete process.env.DISCORD_PUBLIC_KEY;
+overrideSettingsForTest({ discord: { publicKey: "" } });
 
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
@@ -952,6 +952,34 @@ const store = getOperationalStore();
     "frontDiscordChannel refuses an inner channel not mounted on the internal route",
   );
   n++;
+}
+
+{
+  const savedKey = getSettings().discord.publicKey;
+  let innerCalls = 0;
+  const front = buildDiscordFrontHandler((async () => {
+    innerCalls++;
+    return new Response("inner-ok", { status: 200 });
+  }) as never);
+  const ping = JSON.stringify({ type: 1 });
+  const post = () =>
+    front(
+      new Request(`https://x.example${PUBLIC_DISCORD_ROUTE}`, { method: "POST", headers: signedHeaders(ping, String(Math.floor(Date.now() / 1000))), body: ping }),
+      {} as never,
+    );
+  try {
+    overrideSettingsForTest({ discord: { publicKey: pubHex } });
+    const viaSetting = await post();
+    ok(viaSetting.status === 200 && innerCalls === 1, "🔴 OPE-2650: with no publicKey option, a request signed by the key that discord.publicKey names verifies and forwards");
+
+    overrideSettingsForTest({ discord: { publicKey: "" } });
+    process.env.DISCORD_PUBLIC_KEY = pubHex;
+    const viaEnv = await post();
+    ok(viaEnv.status === 401 && innerCalls === 1, "🔴 OPE-2650: the same request is refused 401 when only the DISCORD_PUBLIC_KEY env variable holds the key — env is not read");
+  } finally {
+    delete process.env.DISCORD_PUBLIC_KEY;
+    overrideSettingsForTest({ discord: { publicKey: savedKey } });
+  }
 }
 
 {

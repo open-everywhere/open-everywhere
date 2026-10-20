@@ -87,7 +87,25 @@ import { githubAuthMode, withEndsTurnFinalChannel } from "@open-everywhere/core/
 import { githubEveCredentials, githubWebhookSecret } from "./github-credentials.js";
 
 const ROUTE = "/eve/v1/github";
-const BOT_NAME = process.env.GITHUB_APP_SLUG;
+
+export function githubConversationBotName(): string | undefined {
+  const github = getSettings().github;
+  if (!github.conversation) return undefined;
+  return github.appSlug || undefined;
+}
+const botName = githubConversationBotName;
+
+export const GITHUB_CHANNEL_APP = {
+  botName: (): string => botName() ?? "",
+  credentials: {
+    ...githubEveCredentials,
+    appId: (): string => {
+      const id = getSettings().github.appId;
+      if (id === "") throw new Error("githubChannel: the github.appId setting is required.");
+      return id;
+    },
+  },
+} as const;
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
@@ -336,7 +354,7 @@ async function ambientDelivery(body: string, eventType: string, send: GitHubSend
   }
   const singleWindow = grainUsesUnifiedWindow(githubGrainFor(surfaceKey));
   const vouched = githubRepoVouched(ev.owner, ev.repo);
-  const cls = classifyGitHubAmbientComment(ev.comment, BOT_NAME, { treatMentionAsDirect: singleWindow, vouched });
+  const cls = classifyGitHubAmbientComment(ev.comment, botName(), { treatMentionAsDirect: singleWindow, vouched });
   if (cls.addressing === "drop") {
     slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: ${cls.reason} (private=${ev.repoPrivate === true}, vouched=${vouched})`);
     return;
@@ -462,7 +480,7 @@ async function installationDelivery(body: string, eventType: string): Promise<vo
   });
 }
 
-const pristine = githubChannel({ botName: BOT_NAME, credentials: githubEveCredentials });
+const pristine = githubChannel({ ...GITHUB_CHANNEL_APP });
 type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
@@ -502,7 +520,7 @@ function nativeGitHubAuditPartition(state: GitHubChannelState): ChatAuditPartiti
 }
 
 export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHubComment): Promise<GitHubInboundResult> => {
-    const isMention = githubBotMentioned(comment.body, BOT_NAME, comment.author);
+    const isMention = githubBotMentioned(comment.body, botName(), comment.author);
     const seamFacts: GitHubSeamFacts = {
       owner: ctx.repository.owner,
       repo: ctx.repository.name,
@@ -510,7 +528,7 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
       isPrivate: ctx.repository.private,
       actorLogin: comment.author?.login ?? ctx.sender.login,
       isMention,
-      authorIsBot: githubMachineAuthored(comment.author?.login ?? ctx.sender.login, comment.author?.type ?? ctx.sender.type, BOT_NAME),
+      authorIsBot: githubMachineAuthored(comment.author?.login ?? ctx.sender.login, comment.author?.type ?? ctx.sender.type, botName()),
       conversationKind: ctx.conversation.kind,
     };
     if (!isMention && !(await githubEngagedAdmits(seamFacts))) return null;
@@ -570,8 +588,7 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
 };
 
 const native: GitHubChannel = githubChannel({
-  botName: BOT_NAME,
-  credentials: githubEveCredentials,
+  ...GITHUB_CHANNEL_APP,
   turnPolicy: "queue",
   onComment: githubOnComment,
   events: {
@@ -723,7 +740,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     const pollTarget = parseGitHubReactionPollTarget(body, eventType);
     if (pollTarget) {
       args.waitUntil(
-        routeGitHubReactionFeedback(pollTarget, liveGitHubReactionFeedbackDeps(BOT_NAME)).then(
+        routeGitHubReactionFeedback(pollTarget, liveGitHubReactionFeedbackDeps(botName())).then(
           (outcomes) => {
             if (outcomes.length > 0) slog(`reaction feedback on ${pollTarget.owner}/${pollTarget.repo}#${pollTarget.number}: ${outcomes.length} recorded`);
           },

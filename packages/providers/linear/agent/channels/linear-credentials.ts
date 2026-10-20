@@ -1,4 +1,4 @@
-import { operatorSecretOrUnset, warmCredential, withRetryAfterLoose, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings, operatorSecretOrUnset, warmCredential, withRetryAfterLoose, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 import type { BrokeredSecret, RetryPolicy } from "@open-everywhere/core/agent/adapter-api.js";
 
 const TOKEN_ENDPOINT = "https://api.linear.app/oauth/token";
@@ -99,8 +99,11 @@ export interface LinearAppEntry {
 }
 
 export function primaryLinearOrganizationId(): string | undefined {
-  const v = process.env.LINEAR_ORGANIZATION_ID;
-  return typeof v === "string" && v.length > 0 ? v : undefined;
+  return getSettings().linear.organizationId || undefined;
+}
+
+function primaryLinearClientId(): string | undefined {
+  return getSettings().linear.clientId || undefined;
 }
 
 export function linearAppRegistry(env: NodeJS.ProcessEnv = process.env): readonly LinearAppEntry[] {
@@ -131,7 +134,7 @@ export async function resolveLinearAccessTokenForOrg(organizationId?: string): P
   if (organizationId && primaryOrg && organizationId !== primaryOrg) return "";
   const staticToken = await staticLinearToken();
   if (staticToken) return staticToken;
-  const clientId = process.env.LINEAR_CLIENT_ID;
+  const clientId = primaryLinearClientId();
   const clientSecret = clientId ? await primaryLinearClientSecret() : undefined;
   if (clientId && clientSecret) return linearAppActorToken.get({ clientId, clientSecret, cacheKey: "" });
   return "";
@@ -153,5 +156,5 @@ export function linearCredentialsForOrg(organizationId: string | undefined): { r
 export async function linearCredentialsConfigured(): Promise<boolean> {
   if (linearAppRegistry().length > 0) return true;
   if ((await staticLinearToken()) !== undefined) return true;
-  return !!process.env.LINEAR_CLIENT_ID && !!(await primaryLinearClientSecret());
+  return !!primaryLinearClientId() && !!(await primaryLinearClientSecret());
 }

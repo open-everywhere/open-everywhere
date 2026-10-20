@@ -6,7 +6,6 @@ import type { RouteHandlerArgs } from "eve/channels";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-owned-thread-ingress-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.GITHUB_APP_SLUG = "eve-bot";
 process.env.LINEAR_API_KEY = "linear-test-key";
 
 const { getOperationalStore, deploymentOrg, registerSettings, resolvePartition, OE_GRAIN_ATTR } = await import(
@@ -37,7 +36,7 @@ const { liveGitHubSupervisorDeps } = await import("@open-everywhere/provider-git
 const { liveLinearSupervisorDeps } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
 const { liveNotionSupervisorDeps } = await import("@open-everywhere/provider-notion/agent/channels/notion.js");
 
-registerSettings({ delegation: { oneshotAgent: true } });
+registerSettings({ delegation: { oneshotAgent: true }, github: { appSlug: "eve-bot" } });
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {

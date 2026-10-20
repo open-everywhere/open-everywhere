@@ -4,6 +4,7 @@ pinSuiteStore("agent-setup");
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 registerSlackFixtureMapper();
 import { registerConfig, type AccessRequestsConfig } from "../agent/access/config.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { renderAgentSetup, SETUP_JARGON, type AgentSetupAnswer, type AgentSetupFacts } from "../agent/status/agent-setup.js";
@@ -255,7 +256,8 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
   clearProviderSelection();
   _resetStatusRegistriesForTest();
   registerSurfaceStatusReporter("slack", async () => ({ installed: "yes" }));
-  for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID", "OE_GITHUB_INSTALLATIONS", "GITHUB_TOKEN"]) delete process.env[k];
+  for (const k of ["GITHUB_APP_PRIVATE_KEY", "GITHUB_TOKEN"]) delete process.env[k];
+  overrideSettingsForTest({ github: { appId: "", appSlug: "", installations: {} } });
   resetGitHubApp();
 
   const ctxFor = (principalId: string, channelId: string): BindableContext => ({
@@ -318,17 +320,14 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
   ok(out.notYet.some((g) => /Changing my setup from chat is off/.test(g.what)), "§4 the tool names the config-change gap on a deployment with no config repo");
 
   accessRequests = { ...NO_BASE, configRepo: "acme/agent-config", adminChannel: "C_ADMIN" };
-  process.env.OE_GITHUB_APP_ID = "1";
+  overrideSettingsForTest({ github: { appId: "1", appSlug: "acme-oe", installations: { acme: "42" } } });
   process.env.GITHUB_APP_PRIVATE_KEY = "unused-by-the-gather";
-  process.env.OE_GITHUB_APP_SLUG = "acme-oe";
-  process.env.OE_GITHUB_OWNER = "acme";
-  process.env.OE_GITHUB_INSTALLATION_ID = "42";
   const ready = await gatherAgentSetupFacts(ctxFor("U_ORG_ADMIN", "C_TXN"));
   ok(ready.github.appConfigured && ready.github.appSlug === "acme-oe", "§4 the GitHub app's identity is read");
   ok(ready.configChanges.repo === "acme/agent-config" && ready.configChanges.adminChannel && ready.configChanges.appInstalled === "yes", "§4 🔴 an installation for the repository's owner reads installed");
   ok(renderAgentSetup(ready).notYet.length === 0, "§4 a ready deployment reads no gap");
 
-  process.env.OE_GITHUB_OWNER = "someone-else";
+  overrideSettingsForTest({ github: { installations: { "someone-else": "42" } } });
   const missing = await gatherAgentSetupFacts(ctxFor("U_ORG_ADMIN", "C_TXN"));
   ok(missing.configChanges.appInstalled === "no", `§4 🔴 no installation for the repository's owner reads not installed (saw ${missing.configChanges.appInstalled})`);
   ok(/I can't find it installed for acme/.test(renderAgentSetup(missing).notYet[0]?.what ?? ""), "§4 …and the answer names the missing install");
@@ -345,9 +344,9 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
   ok(seatMissing.includes("I can't confirm from here whether the GitHub app is installed on my own repository. A worker checks it with `agent_version`.") && !/Not ready yet/.test(seatMissing), `§5 an unconfirmed install is a neutral line, not a gap (saw: ${seatMissing})`);
   await recordGitHubInstallation({ owner: "acme", installationId: "777", updatedAt: new Date().toISOString() });
   ok(renderSeatSetupSection(seatSetupFacts("txn")) === seatMissing, "§5 🔴 a webhook-recorded installation does not move the seat block's bytes");
-  process.env.OE_GITHUB_OWNER = "acme";
+  overrideSettingsForTest({ github: { installations: { acme: "42" } } });
   const seatReady = renderSeatSetupSection(seatSetupFacts("txn"));
-  ok(/Changing your setup from chat is ready\./.test(seatReady) && seatReady.includes("pull request on your own repository") && !/acme/.test(seatReady), `§5 🔴 an env-installed app reads ready in the seat block, with no repository name (saw: ${seatReady})`);
+  ok(/Changing your setup from chat is ready\./.test(seatReady) && seatReady.includes("pull request on your own repository") && !/acme/.test(seatReady), `§5 🔴 a settings-installed app reads ready in the seat block, with no repository name (saw: ${seatReady})`);
   ok(!/Not ready yet/.test(seatReady), "§5 a ready deployment shows no gap to the seat");
 
   const prompt1 = await renderScopeMarkdown(ctxFor("U_RANDOM", "C_TXN"));
@@ -355,7 +354,8 @@ ok(personTextFaults("Noted in slack/T0EXAMPLE/C0123ABCD.").length > 0, "§3 the 
   ok(prompt1.includes("### Your admins and your setup") && prompt1.includes("`author-id` U_ORG_ADMIN on Slack"), "§5 🔴 the seat prompt carries the admins-and-setup block");
   ok(prompt1 === prompt2, "§5 the block does not depend on who sent the message, so the prompt is byte-stable across askers");
 
-  for (const k of ["OE_GITHUB_APP_ID", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_SLUG", "OE_GITHUB_OWNER", "OE_GITHUB_INSTALLATION_ID"]) delete process.env[k];
+  delete process.env.GITHUB_APP_PRIVATE_KEY;
+  overrideSettingsForTest({ github: { appId: "", appSlug: "", installations: {} } });
   _resetStatusRegistriesForTest();
 }
 

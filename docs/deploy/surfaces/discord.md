@@ -137,8 +137,8 @@ DMs are capped like any other surface. The escape hatch is the **admin bypass**:
 ## Step 1 — Create the Discord application + bot
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) → **New Application**. Name it (e.g. `Open Everywhere`). Upload [`brand/png/mark-square-1024.png`](../../../brand/png/mark-square-1024.png), the project mark, as the **App Icon** on **General Information** and as the bot's **Icon** on the **Bot** tab. Skip this when you set [`identity.name`](../configuration-reference.md) and chose your own icon: with no name configured the agent presents as the project, so the project mark is its default avatar.
-2. On **General Information**, copy the **Application ID** — this is `DISCORD_APPLICATION_ID`.
-3. Still on **General Information**, copy the **Public Key** — this is `DISCORD_PUBLIC_KEY`. It verifies the Ed25519 signature on every inbound interaction POST.
+2. On **General Information**, copy the **Application ID** — this is the `discord.applicationId` setting.
+3. Still on **General Information**, copy the **Public Key** — this is the `discord.publicKey` setting. It verifies the Ed25519 signature on every inbound interaction POST.
 4. Go to the **Bot** tab → **Reset Token** → copy the token — this is `DISCORD_BOT_TOKEN`. (Treat it like a password; it's shown once.)
 5. Set the **Interactions Endpoint URL** (on **General Information**) to:
 
@@ -146,7 +146,7 @@ DMs are capped like any other surface. The escape hatch is the **admin bypass**:
    https://<your-deploy-url>/eve/v1/discord
    ```
 
-   When you save this, Discord immediately POSTs a `PING` (interaction type `1`) and expects a signed `PONG` back. **Your instance must already be deployed, running, and reachable with `DISCORD_PUBLIC_KEY` configured** (Step 4) or Discord rejects the URL. Set the env first, deploy, *then* save this field.
+   When you save this, Discord immediately POSTs a `PING` (interaction type `1`) and expects a signed `PONG` back. **Your instance must already be deployed, running, and reachable with `discord.publicKey` configured** (Step 4) or Discord rejects the URL. Set it first, deploy, *then* save this field.
 
    > ⚠️ **Use your STABLE production domain here** (e.g. `your-app.vercel.app`), never a
    > deployment-specific URL (`your-app-<hash>-team.vercel.app`). Deployment URLs stay alive
@@ -162,7 +162,7 @@ DMs are capped like any other surface. The escape hatch is the **admin bypass**:
 
    and subscribe to **`APPLICATION_AUTHORIZED`** and **`APPLICATION_DEAUTHORIZED`**. This is a
    **different URL** from the Interactions Endpoint above — Discord configures the two separately —
-   but it is verified with the **same** `DISCORD_PUBLIC_KEY`, so there is nothing new to set.
+   but it is verified with the **same** `discord.publicKey`, so there is nothing new to set.
 
    It gives OE an install/uninstall audit trail: each event writes a `surface.app_installed` /
    `surface.app_uninstalled` row (guild as the workspace, the authorizing user as the principal),
@@ -180,11 +180,13 @@ The channel handler does **not** filter on a specific command name — its `onCo
 
 Register with the Discord API (no helper script ships today). **Guild** commands appear **instantly** in that one server; **global** commands can take **up to an hour** to propagate — use a guild command while testing.
 
-Guild-scoped (instant, recommended for setup):
+Guild-scoped (instant, recommended for setup). `APPLICATION_ID` is a plain shell variable that holds
+the Application ID from Step 1.2:
 
 ```bash
+APPLICATION_ID=…   # the Application ID from Step 1.2
 curl -X POST \
-  "https://discord.com/api/v10/applications/$DISCORD_APPLICATION_ID/guilds/$GUILD_ID/commands" \
+  "https://discord.com/api/v10/applications/$APPLICATION_ID/guilds/$GUILD_ID/commands" \
   -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -201,7 +203,7 @@ Global (drop `/guilds/$GUILD_ID`, propagation up to ~1h):
 
 ```bash
 curl -X POST \
-  "https://discord.com/api/v10/applications/$DISCORD_APPLICATION_ID/commands" \
+  "https://discord.com/api/v10/applications/$APPLICATION_ID/commands" \
   -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "name": "ask", "type": 1, "description": "Ask Open Everywhere to do something",
@@ -224,11 +226,18 @@ curl -X POST \
 
 ## Step 4 — Configure the environment
 
-Set these on your instance, then deploy:
+The Application ID and the Public Key are public, so they are settings in Git. Put them in your
+app's `agent/settings/settings.ts` (they were `DISCORD_APPLICATION_ID` and `DISCORD_PUBLIC_KEY` until
+OPE-2650):
 
-```bash
-DISCORD_APPLICATION_ID=…        # Application ID from Step 1.2
-DISCORD_PUBLIC_KEY=…            # Public Key from Step 1.3 (verifies signed interaction POSTs)
+```ts
+// agent/settings/settings.ts
+export const SETTINGS_OVERRIDES = defineSettings({
+  discord: {
+    applicationId: "…", // Application ID from Step 1.2
+    publicKey: "…",     // Public Key from Step 1.3 (verifies signed interaction POSTs)
+  },
+});
 ```
 
 The bot token is an **operator secret** (OPE-2650). Store it in the deployment's encrypted credential
@@ -456,9 +465,9 @@ export const DISCORD_COMMAND_GUILDS: readonly string[] = [
 ```
 
 A guild id is **tracked config**, not an environment variable — it lives in Git and changes by pull
-request, like every other room key ([Config-as-code](../../how-it-works/config-as-code.md)). The two
-credentials stay environment: `DISCORD_APPLICATION_ID` (Step 1.2) says which application this
-deployment speaks as, and `DISCORD_BOT_TOKEN` (Step 1.4) authenticates the call. Either one absent and
+request, like every other room key ([Config-as-code](../../how-it-works/config-as-code.md)). The
+reconcile needs two values. The `discord.applicationId` setting (Step 1.2) says which application this
+deployment speaks as. The `DISCORD_BOT_TOKEN` env var (Step 1.4) authenticates the call. Either one absent and
 the reconcile reports `skipped` in the boot log and registers nothing — it never fails the boot, and
 neither does a Discord outage: the worst outcome is the command list you already had.
 
@@ -474,7 +483,7 @@ name), so a command you registered yourself at the same scope — the `/ask`-sty
 
 Declare no guild and the deployment registers nothing and makes no Discord call at all.
 
-⚠️ **Every process holding both credentials reconciles — a local `eve dev`/`eve start` included, and
+⚠️ **Every process holding both values reconciles — a local `eve dev`/`eve start` included, and
 it writes the command shape of the checkout that is running.** Do not run a branch that changes the
 `/oe` command set against the deployment's own `DISCORD_BOT_TOKEN`: your server will show that
 branch's `/oe` until the deployment's next cold start writes it back. Develop such a branch against a
@@ -485,10 +494,9 @@ Discord application of your own, or with the bot token unset.
 `npm run register:discord-commands` still ships, for the one thing the deployment does not do:
 registering `/oe` **globally** (every server the app is in). A global command takes up to an hour to
 propagate, which no boot-time check can prove landed, so it stays a deliberate operator step. It
-reads:
+reads the `discord.applicationId` setting (Step 1.2) from the app's settings, and these env vars:
 
 ```bash
-DISCORD_APPLICATION_ID=…   # from Step 1.2
 DISCORD_BOT_TOKEN=…        # from Step 1.4
 DISCORD_GUILD_ID=…         # optional: guild-scoped (instant) instead of global (~1h propagation)
 ```
@@ -506,10 +514,10 @@ There is no model turn to decline, so `/oe` isn't a "new spend" origin — it wo
 ## Gotchas
 
 - **Slash command vs. mention.** The **interaction** channel documented here is slash-command-only — a plain `@mention` does nothing on that path. Ambient `@mention` messages (and the [auto-thread](#auto-thread-mention-conversations) behaviour) are served by the separate **Gateway** ingestion surface, which needs the always-on relay configured. If `/ask` doesn't appear, the command isn't registered for that scope, or a global command hasn't propagated yet.
-- **Public Key verification.** Every inbound interaction POST is Ed25519-verified against `DISCORD_PUBLIC_KEY`. If it's wrong or unset, Discord requests are rejected (including the initial PING), the **Interactions Endpoint URL** won't save, and the bot stays silent — check this first.
-- **PING handshake needs the endpoint live first.** Saving the Interactions Endpoint URL triggers an immediate `PING` (type `1`); your instance must already be running with the public key set so it can return the signed `PONG`. Set env → deploy → *then* save the URL.
+- **Public Key verification.** Every inbound interaction POST is Ed25519-verified against the `discord.publicKey` setting. If it's wrong or unset, Discord requests are rejected (including the initial PING), the **Interactions Endpoint URL** won't save, and the bot stays silent — check this first.
+- **PING handshake needs the endpoint live first.** Saving the Interactions Endpoint URL triggers an immediate `PING` (type `1`); your instance must already be running with the public key set so it can return the signed `PONG`. Set the key → deploy → *then* save the URL.
 - **3-second ack / deferred response.** Discord requires an interaction acknowledgement within 3 seconds. Open Everywhere handles this for you (deferred ack, then edits the original response), so the agent can take as long as it needs — no extra wiring required.
 - **Global vs guild propagation.** Guild commands are instant; global commands can take up to an hour to appear. Register a guild command for setup and testing.
 - **No domain/org memory until the guild is vouched.** Every guild starts `external` (no membership check exists yet — see [Trust is unverified by default](#how-the-silo-model-maps) above), so a fresh guild channel's memory stays wherever the `public` pseudo-domain reaches at most, regardless of whether Discord could confirm the channel `@everyone`-readable. Vouch the guild (`identity.blanketTrust: "internal"` or `surfaces.ts`) to unlock an explicit domain's or the org's memory.
-- **Webhook Events *do* need a separate URL.** The one exception to "Discord has only one public endpoint per app": install/uninstall events (Step 1.6) are configured on the **Webhooks** tab with their own URL (`/eve/v1/discord/events`), not the Interactions Endpoint. They share `DISCORD_PUBLIC_KEY`, and they carry **no chat messages** — the feature name misleads; ambient content stays Gateway-only.
+- **Webhook Events *do* need a separate URL.** The one exception to "Discord has only one public endpoint per app": install/uninstall events (Step 1.6) are configured on the **Webhooks** tab with their own URL (`/eve/v1/discord/events`), not the Interactions Endpoint. They share `discord.publicKey`, and they carry **no chat messages** — the feature name misleads; ambient content stays Gateway-only.
 - **`/oe` needs no separate URL.** It rides the SAME Interactions Endpoint URL as everything else in Step 1.5 — Discord has only the one public endpoint per app, so there's nothing extra to configure beyond registering the command itself ([above](#register-oe)).

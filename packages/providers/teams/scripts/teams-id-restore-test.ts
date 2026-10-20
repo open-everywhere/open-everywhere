@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { surfaceKeySegment } from "@open-everywhere/core/agent/adapter-api.js";
-import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { _setDeploymentIdentityForTest, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { removeTempDir } from "./_temp-dir.js";
 
 let n = 0;
@@ -16,7 +16,7 @@ await removeTempDir(dir);
 _setDeploymentIdentityForTest({ org: "acme" });
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
+overrideSettingsForTest({ teams: { appId: "fixture-app-id-not-a-secret" } });
 process.env.MICROSOFT_APP_PASSWORD = "fixture-app-secret-not-a-secret";
 
 const SERVICE_URL = "https://smba.trafficmanager.net/uk/";

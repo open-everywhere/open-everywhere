@@ -16,17 +16,7 @@ import {
   type ScriptedHandle,
 } from "../harness";
 
-process.env.GITHUB_APP_SLUG = GITHUB_BOT_SLUG;
-
-for (const k of [
-  "GITHUB_TOKEN",
-  "OE_GITHUB_APP_ID",
-  "GITHUB_APP_PRIVATE_KEY",
-  "OE_GITHUB_APP_SLUG",
-  "OE_GITHUB_INSTALLATIONS",
-  "OE_GITHUB_OWNER",
-  "OE_GITHUB_INSTALLATION_ID",
-]) {
+for (const k of ["GITHUB_TOKEN", "GITHUB_APP_PRIVATE_KEY"]) {
   delete process.env[k];
 }
 
@@ -87,7 +77,7 @@ function assertWorkerHoldsWorkReads(handle: ScriptedHandle): void {
 }
 
 test("GitHub: a delegated worker woken by a real issue_comment holds read_work_channel/read_work_thread", async () => {
-  await bootAgent();
+  await bootAgent({ settings: { github: { appSlug: GITHUB_BOT_SLUG, conversation: true } } });
   await pinShippedFixture();
   const cursor = await auditCursor();
 

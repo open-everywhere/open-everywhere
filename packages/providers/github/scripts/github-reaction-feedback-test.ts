@@ -53,7 +53,7 @@ globalThis.fetch = (async (input: unknown, init?: { method?: string }): Promise<
   return new Response("stub: unrouted", { status: 404 });
 }) as typeof globalThis.fetch;
 
-const { REACTION_FEEDBACK_ACTION, classifyEmoji, deploymentOrg, overrideSettingsForTest, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
+const { REACTION_FEEDBACK_ACTION, classifyEmoji, deploymentOrg, getSettings, overrideSettingsForTest, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
 const {
   GITHUB_REACTION_POLL_COMMENT_BUDGET,
   githubCommentIsOwn,
@@ -322,10 +322,9 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
 }
 
 {
-  const saved = { slug: process.env.GITHUB_APP_SLUG, appId: process.env.GITHUB_APP_ID, pem: process.env.GITHUB_APP_PRIVATE_KEY };
+  const saved = { slug: getSettings().github.appSlug, appId: getSettings().github.appId, pem: process.env.GITHUB_APP_PRIVATE_KEY };
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  process.env.GITHUB_APP_SLUG = SLUG;
-  process.env.GITHUB_APP_ID = "1234";
+  overrideSettingsForTest({ github: { appSlug: SLUG, appId: "1234", conversation: true } });
   process.env.GITHUB_APP_PRIVATE_KEY = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   overrideSettingsForTest({ webhooks: { allowUnverifiedGithub: true } });
 
@@ -384,10 +383,7 @@ function stubDeps(over: Partial<GitHubReactionFeedbackDeps> = {}): {
     console.error = realError;
     console.warn = realWarn;
     overrideSettingsForTest({ webhooks: { allowUnverifiedGithub: false } });
-    if (saved.slug === undefined) delete process.env.GITHUB_APP_SLUG;
-    else process.env.GITHUB_APP_SLUG = saved.slug;
-    if (saved.appId === undefined) delete process.env.GITHUB_APP_ID;
-    else process.env.GITHUB_APP_ID = saved.appId;
+    overrideSettingsForTest({ github: { appSlug: saved.slug, appId: saved.appId, conversation: false } });
     if (saved.pem === undefined) delete process.env.GITHUB_APP_PRIVATE_KEY;
     else process.env.GITHUB_APP_PRIVATE_KEY = saved.pem;
   }

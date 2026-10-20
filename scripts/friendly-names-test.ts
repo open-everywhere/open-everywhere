@@ -12,6 +12,7 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
+const { getSettings, overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
 const { renderFriendlyText, rawIdLeaks } = await import("@open-everywhere/core/agent/channels/friendly-ids.js");
 const { accountLinkLabel, linkMarkup, profileUrl, registerAccountDisplayName } = await import("@open-everywhere/core/agent/identity/account-display-name.js");
 const fo = await import("@open-everywhere/core/agent/channels/friendly-outbound.js");
@@ -206,8 +207,8 @@ for (const platform of PLATFORMS) {
 }
 {
   const realFetch = globalThis.fetch;
-  const prior = { id: process.env.MICROSOFT_APP_ID, pw: process.env.MICROSOFT_APP_PASSWORD };
-  process.env.MICROSOFT_APP_ID = `friendly-names-${process.pid}`;
+  const prior = { id: getSettings().teams.appId, pw: process.env.MICROSOFT_APP_PASSWORD };
+  overrideSettingsForTest({ teams: { appId: `friendly-names-${process.pid}` } });
   process.env.MICROSOFT_APP_PASSWORD = "test";
   let wire = "";
   globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
@@ -229,8 +230,7 @@ for (const platform of PLATFORMS) {
     eq(sent.attachments[0]!.content.actions[0]!.data, { id: "U0EXOWNER" }, "🔴 an action's data payload is a routing value and is never touched");
   } finally {
     globalThis.fetch = realFetch;
-    if (prior.id === undefined) delete process.env.MICROSOFT_APP_ID;
-    else process.env.MICROSOFT_APP_ID = prior.id;
+    overrideSettingsForTest({ teams: { appId: prior.id } });
     if (prior.pw === undefined) delete process.env.MICROSOFT_APP_PASSWORD;
     else process.env.MICROSOFT_APP_PASSWORD = prior.pw;
   }

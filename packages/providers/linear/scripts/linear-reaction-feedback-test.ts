@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import type { IngestedReaction, ReactionSinkDeps } from "@open-everywhere/core/agent/adapter-api.js";
 import { routeLinearReactionFeedback, type LinearReactionFeedbackDeps } from "../agent/channels/linear-reaction-feedback.js";
 import { parseLinearReaction } from "../agent/channels/linear-stop.js";
@@ -138,15 +139,12 @@ function deps(over: Partial<LinearReactionFeedbackDeps> = {}): { deps: LinearRea
   const saved = {
     secret: process.env.LINEAR_WEBHOOK_SECRET,
     token: process.env.LINEAR_AGENT_ACCESS_TOKEN,
-    org: process.env.LINEAR_ORGANIZATION_ID,
-    appUser: process.env.LINEAR_APP_USER_ID,
-    appName: process.env.LINEAR_APP_NAME,
   };
+  const savedLinear = { organizationId: getSettings().linear.organizationId, appUserId: getSettings().linear.appUserId, appName: getSettings().linear.appName };
   process.env.LINEAR_WEBHOOK_SECRET = "test-linear-secret";
   process.env.LINEAR_AGENT_ACCESS_TOKEN = "test-linear-token";
-  process.env.LINEAR_ORGANIZATION_ID = "org-1";
-  process.env.LINEAR_APP_USER_ID = APP_USER;
-  process.env.LINEAR_APP_NAME = "Test App";
+  overrideSettingsForTest({ linear: { organizationId: "org-1" } });
+  overrideSettingsForTest({ linear: { appUserId: APP_USER, appName: "Test App" } });
   const realFetch = globalThis.fetch;
   let dialled = 0;
   globalThis.fetch = (async (): Promise<Response> => {
@@ -204,12 +202,7 @@ function deps(over: Partial<LinearReactionFeedbackDeps> = {}): { deps: LinearRea
     else process.env.LINEAR_WEBHOOK_SECRET = saved.secret;
     if (saved.token === undefined) delete process.env.LINEAR_AGENT_ACCESS_TOKEN;
     else process.env.LINEAR_AGENT_ACCESS_TOKEN = saved.token;
-    if (saved.org === undefined) delete process.env.LINEAR_ORGANIZATION_ID;
-    else process.env.LINEAR_ORGANIZATION_ID = saved.org;
-    if (saved.appUser === undefined) delete process.env.LINEAR_APP_USER_ID;
-    else process.env.LINEAR_APP_USER_ID = saved.appUser;
-    if (saved.appName === undefined) delete process.env.LINEAR_APP_NAME;
-    else process.env.LINEAR_APP_NAME = saved.appName;
+    overrideSettingsForTest({ linear: savedLinear });
   }
   ok(feedbackRun === 1, "🔴 REACHABILITY: the real webhook route runs the reaction-feedback leg for a Reaction delivery");
   ok(commentRun === 0, "negative control: a Comment delivery never reaches it — the leg is narrow, not a swallow-everything");

@@ -12,7 +12,7 @@ import {
   staticLinearToken,
   type LinearMintFetch,
 } from "../agent/channels/linear-credentials.js";
-import { readAudit, deploymentOrg, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
+import { readAudit, deploymentOrg, getSettings, overrideSettingsForTest, RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
 
 import { rmSync as __rmSuiteStore } from "node:fs";
 import { join as __joinSuiteStore } from "node:path";
@@ -38,9 +38,11 @@ const LINEAR_ENV_KEYS = [
 ];
 function clearLinearEnv(): void {
   for (const k of LINEAR_ENV_KEYS) delete process.env[k];
+  overrideSettingsForTest({ linear: { clientId: "", organizationId: "" } });
 }
 const savedEnv: Record<string, string | undefined> = {};
 for (const k of LINEAR_ENV_KEYS) savedEnv[k] = process.env[k];
+const savedSettings = { clientId: getSettings().linear.clientId, organizationId: getSettings().linear.organizationId };
 
 function mkFetch(
   responses: ReadonlyArray<{ status?: number; body?: unknown; networkError?: boolean }>,
@@ -68,7 +70,7 @@ try {
     clearLinearEnv();
     _resetLinearMintCache();
     process.env.LINEAR_ACCESS_TOKEN = "lin_static_token";
-    process.env.LINEAR_CLIENT_ID = "client-id-should-be-ignored";
+    overrideSettingsForTest({ linear: { clientId: "client-id-should-be-ignored" } });
     process.env.LINEAR_CLIENT_SECRET = "client-secret-should-be-ignored";
     ok((await resolveLinearAccessTokenSeam()) === "lin_static_token", "precedence: a static LINEAR_ACCESS_TOKEN wins even when a client-credentials pair is ALSO set");
     ok((await staticLinearToken()) === "lin_static_token", "staticLinearToken: reads LINEAR_ACCESS_TOKEN");
@@ -99,7 +101,7 @@ try {
   {
     clearLinearEnv();
     _resetLinearMintCache();
-    process.env.LINEAR_CLIENT_ID = "client-abc";
+    overrideSettingsForTest({ linear: { clientId: "client-abc" } });
     process.env.LINEAR_CLIENT_SECRET = "secret-xyz";
     ok((await linearCredentialsConfigured()) === true, "linearCredentialsConfigured: true when the client-credentials pair is set");
     const { fetch, calls } = mkFetch([{ body: { access_token: "minted-token-1", expires_in: 3600 } }]);
@@ -125,7 +127,7 @@ try {
   {
     clearLinearEnv();
     _resetLinearMintCache();
-    process.env.LINEAR_CLIENT_ID = "client-abc";
+    overrideSettingsForTest({ linear: { clientId: "client-abc" } });
     process.env.LINEAR_CLIENT_SECRET = "secret-xyz";
 
     const realFetch = globalThis.fetch;
@@ -169,7 +171,7 @@ try {
   {
     clearLinearEnv();
     _resetLinearMintCache();
-    process.env.LINEAR_CLIENT_ID = "client-abc";
+    overrideSettingsForTest({ linear: { clientId: "client-abc" } });
     process.env.LINEAR_CLIENT_SECRET = "secret-xyz";
     const realFetch = globalThis.fetch;
     try {
@@ -244,7 +246,7 @@ try {
       ok(msg.includes("no access_token"), "…with a diagnosable message");
     }
 
-    process.env.LINEAR_CLIENT_ID = "client-abc";
+    overrideSettingsForTest({ linear: { clientId: "client-abc" } });
     process.env.LINEAR_CLIENT_SECRET = "secret-xyz";
     const realFetch = globalThis.fetch;
     try {
@@ -273,7 +275,7 @@ try {
   {
     clearLinearEnv();
     _resetLinearMintCache();
-    process.env.LINEAR_CLIENT_ID = "client-abc";
+    overrideSettingsForTest({ linear: { clientId: "client-abc" } });
     process.env.LINEAR_CLIENT_SECRET = "secret-xyz";
     const realFetch = globalThis.fetch;
     try {
@@ -297,7 +299,7 @@ try {
   {
     clearLinearEnv();
     _resetLinearMintCache();
-    process.env.LINEAR_CLIENT_ID = "primary-client";
+    overrideSettingsForTest({ linear: { clientId: "primary-client" } });
     process.env.LINEAR_CLIENT_SECRET = "primary-secret";
     process.env.LINEAR_APP_SOAK_ORG_ID = "org-soak";
     process.env.LINEAR_APP_SOAK_CLIENT_ID = "soak-client";
@@ -369,8 +371,8 @@ try {
     clearLinearEnv();
     _resetLinearMintCache();
     process.env.LINEAR_API_KEY = "primary-static";
-    process.env.LINEAR_ORGANIZATION_ID = "org-primary";
-    ok(primaryLinearOrganizationId() === "org-primary", "primaryLinearOrganizationId: reads LINEAR_ORGANIZATION_ID");
+    overrideSettingsForTest({ linear: { organizationId: "org-primary" } });
+    ok(primaryLinearOrganizationId() === "org-primary", "primaryLinearOrganizationId: reads the linear.organizationId setting");
     ok((await resolveLinearAccessTokenForOrg("org-primary")) === "primary-static", "fail-closed: the DECLARED primary organization still resolves the primary token");
     ok((await resolveLinearAccessTokenForOrg(undefined)) === "primary-static", "fail-closed: a call site that names no organization still resolves the primary token");
     ok((await resolveLinearAccessTokenForOrg("org-stranger")) === "", "fail-closed: an UNKNOWN organization resolves \"\" so eve throws its stock missing-token error");
@@ -382,6 +384,36 @@ try {
       globalThis.fetch = (async () => new Response(JSON.stringify({ access_token: "soak-minted", expires_in: 3600 }), { status: 200 })) as unknown as typeof fetch;
       ok((await resolveLinearAccessTokenForOrg("org-soak")) === "soak-minted", "fail-closed: a REGISTERED organization is served even with a declared primary");
       ok((await resolveLinearAccessTokenForOrg("org-stranger")) === "", "fail-closed: an unregistered stranger is still refused");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  {
+    clearLinearEnv();
+    _resetLinearMintCache();
+    process.env.LINEAR_ORGANIZATION_ID = "org-primary";
+    process.env.LINEAR_CLIENT_ID = "env-client";
+    process.env.LINEAR_CLIENT_SECRET = "primary-secret";
+    const mintBodies: string[] = [];
+    const realFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        mintBodies.push(String(init.body));
+        return new Response(JSON.stringify({ access_token: "primary-minted", expires_in: 3600 }), { status: 200 });
+      }) as unknown as typeof fetch;
+      ok(primaryLinearOrganizationId() === undefined, "🔴 OPE-2650: env LINEAR_ORGANIZATION_ID with the setting unset ⇒ no declared primary organization");
+      ok((await linearCredentialsConfigured()) === false, "🔴 OPE-2650: env LINEAR_CLIENT_ID with the setting unset ⇒ the client pair does not count as configured");
+      ok((await resolveLinearAccessTokenForOrg("org-stranger")) === "", "🔴 OPE-2650: env ids alone ⇒ no mint (the env client id is ignored)");
+      ok(mintBodies.length === 0, "🔴 OPE-2650: env ids alone ⇒ the token endpoint is never called");
+
+      overrideSettingsForTest({ linear: { organizationId: "org-primary", clientId: "settings-client" } });
+      _resetLinearMintCache();
+      ok(primaryLinearOrganizationId() === "org-primary", "OPE-2650: the linear.organizationId setting declares the primary organization");
+      ok((await resolveLinearAccessTokenForOrg("org-stranger")) === "", "OPE-2650: with the setting, the strict arm refuses an unknown organization");
+      ok(mintBodies.length === 0, "OPE-2650: the strict arm refuses before any mint");
+      ok((await resolveLinearAccessTokenForOrg("org-primary")) === "primary-minted", "OPE-2650: with the linear.clientId setting, the primary organization mints");
+      ok(mintBodies.length === 1 && new URLSearchParams(mintBodies[0]).get("client_id") === "settings-client", "OPE-2650: the mint sends the setting's client id, never the env one");
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -489,5 +521,6 @@ try {
   for (const k of LINEAR_ENV_KEYS) {
     if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k];
   }
+  overrideSettingsForTest({ linear: savedSettings });
   _resetLinearMintCache();
 }

@@ -1,4 +1,5 @@
 import { callTeamsConnectorApi } from "eve/channels/teams";
+import { teamsAppCredentials } from "./teams-connector.js";
 
 const GRAPH_TEAM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -14,7 +15,7 @@ export interface TeamsGraphTeamIdDeps {
 }
 
 const liveDeps: TeamsGraphTeamIdDeps = {
-  request: ({ serviceUrl, path }) => callTeamsConnectorApi({ serviceUrl, path, method: "GET" }),
+  request: ({ serviceUrl, path }) => callTeamsConnectorApi({ serviceUrl, path, method: "GET", credentials: teamsAppCredentials() }),
 };
 
 export async function teamsGraphTeamId(

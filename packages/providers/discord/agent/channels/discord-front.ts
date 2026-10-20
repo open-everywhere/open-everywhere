@@ -2,7 +2,7 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { verifyDiscordSignature } from "eve/channels/discord";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
-import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, friendlyDiscordBody } from "@open-everywhere/core/agent/adapter-api.js";
+import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, friendlyDiscordBody, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
 import { handleDiscordLinkConsentInteraction } from "../identity/discord-link-consent.js";
 import { handleDiscordGrantCardInteraction } from "../access/discord-grant-click.js";
 import { oeCommandName, type AttachSessionForCancel } from "@open-everywhere/core/agent/adapter-api.js";
@@ -73,6 +73,25 @@ export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecisio
   return { kind: "forward", reason: "component click — eve's HITL owns it" };
 }
 
+export function discordPublicKey(): string | undefined {
+  return getSettings().discord.publicKey || undefined;
+}
+
+export function discordApplicationId(): string | undefined {
+  return getSettings().discord.applicationId || undefined;
+}
+
+export function discordAppCredentials(): { readonly applicationId: () => string; readonly publicKey: () => string } {
+  const required = (value: string | undefined, path: string): string => {
+    if (value === undefined) throw new Error(`${path} is required: set it in agent/settings/settings.ts.`);
+    return value;
+  };
+  return {
+    applicationId: () => required(discordApplicationId(), "discord.applicationId"),
+    publicKey: () => required(discordPublicKey(), "discord.publicKey"),
+  };
+}
+
 export interface DiscordFrontOptions {
   readonly publicKey?: string;
   readonly now?: () => number;
@@ -94,7 +113,7 @@ async function interactionJson(body: DiscordInteractionResponse): Promise<Respon
 
 export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: DiscordFrontOptions = {}): RouteHandler {
   const now = opts.now ?? (() => Date.now());
-  const publicKey = () => opts.publicKey ?? process.env.DISCORD_PUBLIC_KEY;
+  const publicKey = () => opts.publicKey ?? discordPublicKey();
   const handleClick = opts.handleApprovalInteraction ?? handleDiscordApprovalInteraction;
   const handleLinkConsent = opts.handleLinkConsentInteraction ?? handleDiscordLinkConsentInteraction;
   const handleGrantCard = opts.handleGrantCardInteraction ?? handleDiscordGrantCardInteraction;

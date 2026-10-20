@@ -1,5 +1,6 @@
 import { teamsChannel, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
+import { teamsAppCredentials } from "./teams-connector.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { teamsNativeAdmits } from "./teams-name-drop.js";
 import { resolveTeamsUserType, teamsHandleRosterProbe, teamsIsHomeTenant } from "./teams-roster.js";
@@ -82,6 +83,7 @@ export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: T
 
 const native = teamsChannel({
   route: INTERNAL_TEAMS_ROUTE,
+  credentials: teamsAppCredentials(),
   turnPolicy: "queue",
   onMessage: teamsOnMessage,
   onInputResponse: (ctx, activity) => admitTeamsInputResponse(ctx, activity),

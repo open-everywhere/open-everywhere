@@ -1,4 +1,5 @@
 import { __setTestValveForTest, testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,7 @@ for (const id of ["slack", "discord", "teams"]) {
 __setTestValveForTest("egress-spoof", false);
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
-process.env.MICROSOFT_APP_ID = "fixture-app-id-not-a-secret";
+overrideSettingsForTest({ teams: { appId: "fixture-app-id-not-a-secret" } });
 process.env.MICROSOFT_APP_PASSWORD = "fixture-app-secret-not-a-secret";
 
 const dir = join(tmpdir(), `open-everywhere-resource-grant-parity-${process.pid}`);

@@ -14,6 +14,7 @@ import {
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { adoptDelegatedAuthority } from "@open-everywhere/core/agent/identity/delegated-binding.js";
+import { getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import readLinearIssueDefault, { readLinearIssueEntry } from "@open-everywhere/provider-linear/agent/tools/read_linear_issue.js";
 
@@ -152,9 +153,11 @@ function setEnv(name: string, value: string | undefined): void {
   else process.env[name] = value;
 }
 setEnv("LINEAR_AGENT_ACCESS_TOKEN", "test-token");
-for (const k of ["LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_ORGANIZATION_ID", "LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"]) {
+for (const k of ["LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN", "LINEAR_CLIENT_SECRET"]) {
   setEnv(k, undefined);
 }
+const savedLinear = getSettings().linear;
+overrideSettingsForTest({ linear: { organizationId: "", clientId: "" } });
 
 const savedFetch = globalThis.fetch;
 function stubIssue(team: string): void {
@@ -234,6 +237,7 @@ try {
   }
 } finally {
   globalThis.fetch = savedFetch;
+  overrideSettingsForTest({ linear: { organizationId: savedLinear.organizationId, clientId: savedLinear.clientId } });
   for (const [name, value] of Object.entries(SAVED)) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;

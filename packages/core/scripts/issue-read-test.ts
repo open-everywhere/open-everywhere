@@ -1,6 +1,7 @@
 import { fetchGithubIssue, renderGithubIssueForModel, MAX_ISSUE_COMMENTS, MAX_COMMENT_CHARS, MAX_OPENING_BODY_CHARS } from "../agent/scm/issue-read.js";
 import { wrapUntrusted, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import type { PrFetchFn } from "../agent/scm/pr.js";
+import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -173,11 +174,9 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
     if (!(name in SAVED)) SAVED[name] = process.env[name];
     process.env[name] = value;
   };
-  setEnv("OE_GITHUB_APP_ID", "222");
+  const savedGithub = getSettings().github;
+  overrideSettingsForTest({ github: { appId: "222", appSlug: "open-everywhere", botUserId: "12345", installations: { acme: "4242" } } });
   setEnv("GITHUB_APP_PRIVATE_KEY", pkcs1);
-  setEnv("OE_GITHUB_APP_SLUG", "open-everywhere");
-  setEnv("OE_GITHUB_BOT_USER_ID", "12345");
-  setEnv("OE_GITHUB_INSTALLATIONS", JSON.stringify({ acme: "4242" }));
   resetGitHubApp();
   const mintBodies: unknown[] = [];
   const seen: string[] = [];
@@ -198,6 +197,7 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
   } finally {
     globalThis.fetch = savedFetch;
     resetGitHubApp();
+    overrideSettingsForTest({ github: savedGithub });
     for (const [k, v] of Object.entries(SAVED)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -316,11 +316,9 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
     if (!(name in SAVED)) SAVED[name] = process.env[name];
     process.env[name] = value;
   };
-  setEnv("OE_GITHUB_APP_ID", "222");
+  const savedGithub = getSettings().github;
+  overrideSettingsForTest({ github: { appId: "222", appSlug: "open-everywhere", botUserId: "12345", installations: { acme: "4242" } } });
   setEnv("GITHUB_APP_PRIVATE_KEY", pkcs1);
-  setEnv("OE_GITHUB_APP_SLUG", "open-everywhere");
-  setEnv("OE_GITHUB_BOT_USER_ID", "12345");
-  setEnv("OE_GITHUB_INSTALLATIONS", JSON.stringify({ acme: "4242" }));
   resetGitHubApp();
   const savedFetch = globalThis.fetch;
   globalThis.fetch = (async (u: string) => {
@@ -396,6 +394,7 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
   } finally {
     globalThis.fetch = savedFetch;
     resetGitHubApp();
+    overrideSettingsForTest({ github: savedGithub });
     for (const [k, v] of Object.entries(SAVED)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;

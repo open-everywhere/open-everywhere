@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
 import { generateKeyPairSync } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -225,11 +226,9 @@ registerIdentityMapper(PLATFORM, (c) => {
     if (!(name in SAVED)) SAVED[name] = process.env[name];
     process.env[name] = value;
   };
-  setEnv("OE_GITHUB_APP_ID", "222");
+  const savedGithub = getSettings().github;
+  overrideSettingsForTest({ github: { appId: "222", appSlug: "open-everywhere", botUserId: "12345", installations: { acme: "4242" } } });
   setEnv("GITHUB_APP_PRIVATE_KEY", pkcs1);
-  setEnv("OE_GITHUB_APP_SLUG", "open-everywhere");
-  setEnv("OE_GITHUB_BOT_USER_ID", "12345");
-  setEnv("OE_GITHUB_INSTALLATIONS", JSON.stringify({ acme: "4242" }));
   resetGitHubApp();
 
   let urls: string[] = [];
@@ -311,6 +310,7 @@ registerIdentityMapper(PLATFORM, (c) => {
   } finally {
     globalThis.fetch = savedFetch;
     resetGitHubApp();
+    overrideSettingsForTest({ github: savedGithub });
     for (const [k, v] of Object.entries(SAVED)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;

@@ -73,8 +73,23 @@ export function githubAppManifest(opts: {
 }
 
 export function githubAppEnvNames(variant: GithubAppVariant): string[] {
-  const scm = ["OE_GITHUB_APP_ID", "OE_GITHUB_APP_SLUG", "GITHUB_APP_PRIVATE_KEY", "OE_GITHUB_APP_CLIENT_ID", "OE_GITHUB_BOT_USER_ID", "GITHUB_WEBHOOK_SECRET"];
-  return variant === "full" ? [...scm, "GITHUB_APP_ID", "GITHUB_APP_SLUG"] : scm;
+  return ["GITHUB_APP_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"];
+}
+
+export function githubAppSettings(app: {
+  readonly variant: GithubAppVariant;
+  readonly id: string;
+  readonly slug: string;
+  readonly clientId: string;
+  readonly botUserId?: string;
+}): Record<string, string | boolean> {
+  return {
+    "github.appId": app.id,
+    "github.appSlug": app.slug,
+    "github.appClientId": app.clientId,
+    ...(app.botUserId === undefined ? {} : { "github.botUserId": app.botUserId }),
+    "github.conversation": app.variant === "full",
+  };
 }
 
 interface Conversion {
@@ -113,23 +128,22 @@ export async function exchangeGithubManifestCode(opts: {
     .map(([k]) => k);
   if (missing.length > 0) throw new Error(`GitHub's reply lacked ${missing.join(", ")}`);
   const env: Record<string, string> = {
-    OE_GITHUB_APP_ID: id!,
-    OE_GITHUB_APP_SLUG: slug!,
     GITHUB_APP_PRIVATE_KEY: pem!,
-    OE_GITHUB_APP_CLIENT_ID: clientId!,
     GITHUB_WEBHOOK_SECRET: webhookSecret!,
   };
-  if (opts.variant === "full") {
-    env.GITHUB_APP_ID = id!;
-    env.GITHUB_APP_SLUG = slug!;
-  }
+  let botUserId: string | undefined;
   try {
     const bot = await opts.fetchFn(`${API}/users/${encodeURIComponent(`${slug}[bot]`)}`, { headers: HEADERS });
     const botId = bot.ok ? str(((await bot.json()) as { id?: unknown }).id) : undefined;
-    if (botId !== undefined && /^\d+$/.test(botId)) env.OE_GITHUB_BOT_USER_ID = botId;
+    if (botId !== undefined && /^\d+$/.test(botId)) botUserId = botId;
   } catch {
   }
-  return { env, appName: str(body.name) ?? slug!, installUrl: `https://github.com/apps/${encodeURIComponent(slug!)}/installations/new` };
+  return {
+    env,
+    settings: githubAppSettings({ variant: opts.variant, id: id!, slug: slug!, clientId: clientId!, ...(botUserId === undefined ? {} : { botUserId }) }),
+    appName: str(body.name) ?? slug!,
+    installUrl: `https://github.com/apps/${encodeURIComponent(slug!)}/installations/new`,
+  };
 }
 
 const isVariant = (v: string): v is GithubAppVariant => GITHUB_APP_VARIANTS.some((x) => x.name === v);
@@ -151,7 +165,8 @@ export const GITHUB_APP_CREATE_FLOW: SurfaceAppCreateFlow = {
   codeProblem: (code) => (/^[A-Za-z0-9_-]{1,128}$/.test(code) ? undefined : "the redirect carried no usable code"),
   exchange: ({ code, variant, fetchFn }) => exchangeGithubManifestCode({ code, variant: isVariant(variant) ? variant : "full", fetchFn }),
   after: [
-    "Store the two secrets in the deployment's credential store: call the ops tool secret_set with names [\"GITHUB_APP_PRIVATE_KEY\", \"GITHUB_WEBHOOK_SECRET\"] (they are operator secrets, OPE-2650). Push each written name except those two to the deployment's environment, piped from .env.local and never printed (the setup skill's deployment-env step), then redeploy.",
+    "Commit the returned settings to agent/settings/settings.ts as `github: { appId, appSlug, appClientId, botUserId, conversation }` (public values, safe in Git). Keep any other github key the file already sets.",
+    "Store each written name in the deployment's credential store: call the ops tool secret_set with names [\"GITHUB_APP_PRIVATE_KEY\", \"GITHUB_WEBHOOK_SECRET\"] (they are operator secrets, OPE-2650), then redeploy with the settings change.",
     "Only after that redeploy, install the app on the repositories the agent works in: open the install link. Installing first sends the app's installation delivery to a deployment that does not hold the new webhook secret yet, and it refuses that delivery.",
     "Optional: on the app's settings page, under Display information, upload the project mark as its logo. The manifest has no logo field.",
   ],

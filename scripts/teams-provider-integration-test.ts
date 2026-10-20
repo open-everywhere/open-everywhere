@@ -28,7 +28,7 @@ const dir = join(tmpdir(), `open-everywhere-teams-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.MICROSOFT_APP_ID = "teams-app-id";
+overrideSettingsForTest({ teams: { appId: "teams-app-id" } });
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 
 registerTeamsProvider();

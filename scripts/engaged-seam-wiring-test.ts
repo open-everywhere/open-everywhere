@@ -9,7 +9,8 @@ const dir = join(tmpdir(), `open-everywhere-engaged-seam-wiring-${process.pid}`)
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.GITHUB_APP_SLUG = "eve-bot";
+const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+overrideSettingsForTest({ github: { appSlug: "eve-bot", conversation: true } });
 process.env.LINEAR_API_KEY = "linear-test-key";
 
 const { resolvePartition, getOperationalStore, defineDomain, ambientSkipFor, OE_ADDRESSED_ATTR } = await import("@open-everywhere/core/agent/adapter-api.js");

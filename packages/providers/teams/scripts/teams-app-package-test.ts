@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
-import { surfaceAppPackageSource } from "@open-everywhere/core/agent/adapter-api.js";
+import { getSettings, overrideSettingsForTest, surfaceAppPackageSource } from "@open-everywhere/core/agent/adapter-api.js";
 import { teamsAppManifestTemplate } from "../agent/app-manifest.js";
 import { buildTeamsAppPackage, decodePng, TEAMS_PROJECT_MARK_ICON_SHA256, type TeamsAppPackageInput } from "../agent/app-package.js";
 import { registerTeamsOps } from "../agent/ops.js";
@@ -131,7 +131,7 @@ ok(!ids(base()).includes("name-brand"), "…and a configured name passes (negati
   ok(decodePng(shipped("outline.png")).width === 32, "the decoder reads the shipped outline PNG");
 }
 
-ok(ids(base({ appId: undefined })).includes("app-id"), "no MICROSOFT_APP_ID ⇒ refused");
+ok(ids(base({ appId: undefined })).includes("app-id"), "no app id ⇒ refused");
 ok(ids(base({ appId: "not-a-guid" })).includes("app-id"), "an app id that is not a GUID ⇒ refused");
 ok(ids(base({ appId: 'a"b\\c' })).includes("app-id"), "an app id holding a quote or backslash is a finding, not a JSON parse crash");
 ok(ids(base({ developerName: "" })).includes("developer-name"), "no developer name ⇒ refused");
@@ -199,12 +199,19 @@ registerTeamsOps();
   const source = surfaceAppPackageSource("teams");
   ok(source !== undefined, "🔴 registerTeamsOps() registers the Teams package builder");
   ok(source!.icons.color === "teams-app/color.png" && source!.outDir === "teams-app", "…with the teams-app/ defaults");
+  const savedAppId = getSettings().teams.appId;
   const input = { host: HOST, route: "org" as const, developerName: "Acme Ltd", icons: { color: COLOR, outline: OUTLINE }, env: { MICROSOFT_APP_ID: APP_ID } };
+  overrideSettingsForTest({ teams: { appId: "" } });
+  const envOnly = source!.build({ ...input, appName: "Acme Helper" });
+  ok(envOnly.findings.some((f) => f.id === "app-id" && f.level === "block"), "🔴 OPE-2650: env MICROSOFT_APP_ID with the teams.appId setting unset ⇒ the app-id block (env ignored)");
+  ok(envOnly.findings.some((f) => f.id === "app-id" && f.fix?.includes("teams.appId") === true), "OPE-2650: …and the fix names the teams.appId setting");
+  overrideSettingsForTest({ teams: { appId: APP_ID } });
   const unnamed = source!.build(input);
   ok(unnamed.findings.some((f) => f.id === "name-brand"), "the registered builder renders from the settings: no identity.name ⇒ the brand ⇒ refused");
   const named = source!.build({ ...input, appName: "Acme Helper" });
   ok(named.archive !== undefined, `…and an explicit appName builds (got ${JSON.stringify(named.findings.filter((f) => f.level === "block"))})`);
-  ok((JSON.parse(named.manifest) as { id: string }).id === APP_ID, "…with the app id read from the env it was handed");
+  ok((JSON.parse(named.manifest) as { id: string }).id === APP_ID, "…with the app id read from the teams.appId setting");
+  overrideSettingsForTest({ teams: { appId: savedAppId } });
   ok(named.steps.some((s) => s.includes("admin.teams.microsoft.com")), "…and the org route's steps name the admin centre");
 }
 

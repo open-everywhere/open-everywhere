@@ -95,6 +95,9 @@ export interface AgentSettings {
   readonly aws: {
     readonly enabled: boolean;
     readonly ssoScopes: readonly string[];
+    readonly region: string;
+    readonly ssoRegion: string;
+    readonly ssoClientId: string;
   };
   readonly bash: {
     readonly timeoutMs: number;
@@ -136,6 +139,8 @@ export interface AgentSettings {
   readonly discord: {
     readonly autoThread: boolean;
     readonly statusUx: boolean;
+    readonly applicationId: string;
+    readonly publicKey: string;
   };
   readonly egress: {
     readonly enforce: boolean;
@@ -151,6 +156,12 @@ export interface AgentSettings {
   readonly github: {
     readonly auth: GithubAuthMode;
     readonly tokenRepos: readonly string[];
+    readonly appId: string;
+    readonly appSlug: string;
+    readonly appClientId: string;
+    readonly botUserId: string;
+    readonly conversation: boolean;
+    readonly installations: Readonly<Record<string, string>>;
   };
   readonly governance: {
     readonly floorTtlMs: number;
@@ -166,6 +177,12 @@ export interface AgentSettings {
   readonly language: {
     readonly output: string;
   };
+  readonly linear: {
+    readonly appName: string;
+    readonly appUserId: string;
+    readonly clientId: string;
+    readonly organizationId: string;
+  };
   readonly memory: {
     readonly dreamCandidateCap: number;
     readonly skillProposalPr: boolean;
@@ -176,6 +193,10 @@ export interface AgentSettings {
   };
   readonly observability: {
     readonly logShip: LogShipSetting;
+  };
+  readonly notion: {
+    readonly botName: string;
+    readonly botUserId: string;
   };
   readonly policyPages: {
     readonly privacy: string;
@@ -246,6 +267,7 @@ export interface AgentSettings {
   };
   readonly teams: {
     readonly serviceHosts: readonly string[];
+    readonly appId: string;
   };
   readonly telemetry: {
     readonly enabled: boolean;
@@ -479,6 +501,22 @@ const auditExportTargetsProblem = (targets: readonly AuditExportTarget[]): strin
   return undefined;
 };
 
+const idOrEmpty = (v: string): string | undefined =>
+  typeof v === "string" && !/\s/u.test(v) ? undefined : 'must be one id with no whitespace, or "" for unset';
+const digitsOrEmpty = (v: string): string | undefined =>
+  typeof v === "string" && /^\d*$/u.test(v) ? undefined : 'must be a numeric id as a string, or "" for unset';
+const awsRegionOrEmpty = (v: string): string | undefined =>
+  typeof v === "string" && /^([a-z]{2,4}(-[a-z]+)+-\d+)?$/u.test(v) ? undefined : 'must be an AWS region such as "us-east-1", or "" for unset';
+const unsetFormat = (v: string): string => (v === "" ? "(unset)" : v);
+const githubInstallationsProblem = (v: Readonly<Record<string, string>>): string | undefined => {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return "must be an object of owner → installation id";
+  for (const [owner, id] of Object.entries(v)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u.test(owner)) return `"${owner}" is not a GitHub owner login`;
+    if (typeof id !== "string" || !/^\d+$/u.test(id)) return `the installation id for "${owner}" must be a numeric string`;
+  }
+  return undefined;
+};
+
 const stringOrStringArray = (value: string | readonly string[]): string | undefined =>
   typeof value === "string" || (Array.isArray(value) && value.every((t) => typeof t === "string")) ? undefined : "must be a string or an array of strings";
 
@@ -597,7 +635,7 @@ export const SETTINGS = {
       path: "aws.enabled",
       shipped: false,
       summary:
-        "The AWS access plane's master flag (was `OE_AWS_ENABLED`). Off (shipped), nothing registers and core's AWS mint and exec paths fail closed. On, the adapter registers the STS mint, the CLI executor and the Identity Center link callback at boot. The regions and the public OIDC client id stay environment wiring (`OE_AWS_REGION`, `OE_AWS_SSO_REGION`, `OE_AWS_SSO_CLIENT_ID`).",
+        "The AWS access plane's master flag (was `OE_AWS_ENABLED`). Off (shipped), nothing registers and core's AWS mint and exec paths fail closed. On, the adapter registers the STS mint, the CLI executor and the Identity Center link callback at boot. The regions and the public OIDC client id are the settings `aws.region`, `aws.ssoRegion` and `aws.ssoClientId`.",
     } satisfies SettingSpec<boolean>,
     ssoScopes: {
       path: "aws.ssoScopes",
@@ -607,6 +645,30 @@ export const SETTINGS = {
         "The OAuth scopes the Identity Center link asks for (was `OE_AWS_SSO_SCOPES`). Empty (shipped) asks for the minter's default, `sso:account:access` plus `openid`. A scope list is what access is asked for, so a wider list widens the agent's reach. A non-empty list must keep `openid`: without it the link cannot verify who consented, and it refuses.",
       format: (v) => (v.length > 0 ? v.join(" ") : "(the minter's default)"),
     } satisfies SettingSpec<readonly string[]>,
+    region: {
+      path: "aws.region",
+      shipped: "",
+      validate: awsRegionOrEmpty,
+      summary:
+        "The operator's default AWS region (was `OE_AWS_REGION`, OPE-2650). The STS mint and the CLI executor apply it when a role grant names no region. Empty (shipped) ⇒ the host's own `AWS_REGION`, and with neither the SDK's own default applies.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    ssoRegion: {
+      path: "aws.ssoRegion",
+      shipped: "",
+      validate: awsRegionOrEmpty,
+      summary:
+        "The IAM Identity Center region the per-person AWS link signs in through (was `OE_AWS_SSO_REGION`, OPE-2650). Empty (shipped) ⇒ `aws.region`, then `AWS_REGION`. With no region at all, the link refuses as not configured.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    ssoClientId: {
+      path: "aws.ssoClientId",
+      shipped: "",
+      validate: idOrEmpty,
+      summary:
+        "The pre-registered PUBLIC OIDC client id this deployment presents at the Identity Center link (was `OE_AWS_SSO_CLIENT_ID`, OPE-2650). It is a public client: there is no client secret. Empty (shipped) ⇒ unset, and the link refuses as not configured.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
   },
   bash: {
     timeoutMs: {
@@ -799,6 +861,22 @@ export const SETTINGS = {
       summary:
         "The Discord 'working' affordances — the 👀/✅ reaction and the holding message edited into the reply. Off, the surface behaves exactly as before the feature: one plain reply post, no reaction, no holding message.",
     } satisfies SettingSpec<boolean>,
+    applicationId: {
+      path: "discord.applicationId",
+      shipped: "",
+      validate: digitsOrEmpty,
+      summary:
+        "Which Discord application this deployment is, its numeric application id (was `DISCORD_APPLICATION_ID`, OPE-2650). The boot-time command sync registers the slash commands on it, and the channel uses it when an interaction carries no application id of its own. Empty (shipped) ⇒ the command sync skips; replies to an interaction still go out, because each interaction names its application. The bot token stays out of Git. See docs/deploy/surfaces/discord.md.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    publicKey: {
+      path: "discord.publicKey",
+      shipped: "",
+      validate: (v: string) => (typeof v === "string" && /^([0-9a-fA-F]{64})?$/u.test(v) ? undefined : 'must be the 64-character hex public key, or "" for unset'),
+      summary:
+        "That application's interaction PUBLIC key, in hex (was `DISCORD_PUBLIC_KEY`, OPE-2650). The Interactions route and the webhook-events route verify every delivery's Ed25519 signature against it. It is public by design, so Git can hold it. Empty (shipped) ⇒ unset: both routes refuse every delivery.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
   },
   egress: {
     enforce: {
@@ -860,7 +938,7 @@ export const SETTINGS = {
       shipped: "app" as GithubAuthMode,
       validate: (v: GithubAuthMode) => (v === "app" || v === "token" ? undefined : 'must be "app" or "token"'),
       summary:
-        "How this deployment signs in to GitHub (OPE-2530). There is ONE credential and NO fallback between the two. `app` (shipped) — the GitHub App (`OE_GITHUB_APP_*`): every call mints a short-lived token narrowed to its repository and its job, and `GITHUB_TOKEN` is never read, even when it is set. A repository the App is not installed on is refused by name. `token` — the personal access token in `GITHUB_TOKEN`, for an organisation that will not create a GitHub App. It reaches ONLY the deployment's own repository (`accessRequests.configRepo`) and the repositories `github.tokenRepos` names, and only where a bundle also grants the repository to the room. Checkout, pull requests and the config-change pull requests work there. The App is never used in this mode: the GitHub webhook route runs only the event-routine fan-out and starts no conversation, and GitHub search and GitHub-backed memory are off. The token cannot be narrowed per session the way an App token is: checkout injects it at the sandbox firewall only on the two exact clone and fetch requests of each repository it reaches (whole-path matches, never a prefix), and refuses on a backend without the firewall. Use a fine-grained token limited to those repositories. TO MOVE TO THE APP, in this order: create it with the ops MCP tool `surface_app_create` (`variant: \"source-control\"` keeps what token mode does); push every name it wrote to `.env.local` to the deployment's environment; set this to `app` and redeploy; then install the App (a token-mode deployment ignores the App's `installation` delivery, so installing first leaves app mode with no installation). The App brings its own `GITHUB_WEBHOOK_SECRET`, which replaces the old one: a repository webhook that feeds event routines needs the new secret, and with `source-control` (no event subscriptions) it stays the only source of those events. With `full`, delete that webhook, or each event reaches your routines twice. Nothing else changes: the grants stay, and `github.tokenRepos` stops being read. See docs/capabilities/source-control.md.",
+        "How this deployment signs in to GitHub (OPE-2530). There is ONE credential and NO fallback between the two. `app` (shipped) — the GitHub App (the `github.appId` and `github.appSlug` settings, and the operator secret `GITHUB_APP_PRIVATE_KEY`): every call mints a short-lived token narrowed to its repository and its job, and `GITHUB_TOKEN` is never read, even when it is set. A repository the App is not installed on is refused by name. `token` — the personal access token in `GITHUB_TOKEN`, for an organisation that will not create a GitHub App. It reaches ONLY the deployment's own repository (`accessRequests.configRepo`) and the repositories `github.tokenRepos` names, and only where a bundle also grants the repository to the room. Checkout, pull requests and the config-change pull requests work there. The App is never used in this mode: the GitHub webhook route runs only the event-routine fan-out and starts no conversation, and GitHub search and GitHub-backed memory are off. The token cannot be narrowed per session the way an App token is: checkout injects it at the sandbox firewall only on the two exact clone and fetch requests of each repository it reaches (whole-path matches, never a prefix), and refuses on a backend without the firewall. Use a fine-grained token limited to those repositories. TO MOVE TO THE APP, in this order: create it with the ops MCP tool `surface_app_create` (`variant: \"source-control\"` keeps what token mode does); commit the public values its status reply returns as `settings` (`github.appId`, `github.appSlug`, `github.appClientId`, `github.botUserId`, `github.conversation`) to `agent/settings/settings.ts`; store the two secrets it wrote to `.env.local` with the ops tool `secret_set` (`GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`); set this to `app` and redeploy; then install the App (a token-mode deployment ignores the App's `installation` delivery, so installing first leaves app mode with no installation). The App brings its own `GITHUB_WEBHOOK_SECRET`, which replaces the old one: a repository webhook that feeds event routines needs the new secret, and with `source-control` (no event subscriptions) it stays the only source of those events. With `full`, delete that webhook, or each event reaches your routines twice. Nothing else changes: the grants stay, and `github.tokenRepos` stops being read. See docs/capabilities/source-control.md.",
     } satisfies SettingSpec<GithubAuthMode>,
     tokenRepos: {
       path: "github.tokenRepos",
@@ -873,6 +951,52 @@ export const SETTINGS = {
         "With `github.auth: \"token\"`, the repositories the personal access token reaches BESIDES the deployment's own repository (`accessRequests.configRepo`), each `owner/repo`. A repository here is still reached only where a bundle grants it to the room. Empty (shipped) ⇒ the token reaches the deployment's own repository and nothing else. Inert with `github.auth: \"app\"`, where the App's installations decide the reach, so moving to the App needs no edit here.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none — the deployment's own repository only)"),
     } satisfies SettingSpec<readonly string[]>,
+    appId: {
+      path: "github.appId",
+      shipped: "",
+      validate: digitsOrEmpty,
+      summary:
+        "The GitHub App's numeric id (was `OE_GITHUB_APP_ID` and `GITHUB_APP_ID`, OPE-2650). The source-control plane and the GitHub conversation surface both mint as this App. Empty (shipped) ⇒ no App: source control is off, and the conversation surface posts nothing. The App's private key and webhook secret stay out of Git. `surface_app_create` returns this value. See docs/capabilities/source-control.md.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    appSlug: {
+      path: "github.appSlug",
+      shipped: "",
+      validate: (v: string) => (typeof v === "string" && /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)?$/u.test(v) ? undefined : 'must be the App\'s lowercase slug, or "" for unset'),
+      summary:
+        "The GitHub App's slug, its `@mention` handle without `[bot]` (was `OE_GITHUB_APP_SLUG` and `GITHUB_APP_SLUG`, OPE-2650). The conversation surface wakes on `@<slug>` only when `github.conversation` is on: off, no mention wakes and every ambient comment drops, so a `source-control` App starts no conversation. The agent knows its own comments by `<slug>[bot]`. The source-control plane needs it beside `github.appId`. Empty (shipped) ⇒ unset: source control is off, and no mention wakes the agent.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    appClientId: {
+      path: "github.appClientId",
+      shipped: "",
+      validate: idOrEmpty,
+      summary:
+        "The GitHub App's PUBLIC OAuth client id (was `OE_GITHUB_APP_CLIENT_ID`, OPE-2650). GitHub accepts it as the issuer of the App's JWT, so the plane signs with it when it is set. Empty (shipped) ⇒ the plane signs with `github.appId`.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    botUserId: {
+      path: "github.botUserId",
+      shipped: "",
+      validate: digitsOrEmpty,
+      summary:
+        "The GitHub user id of the App's bot user, `<slug>[bot]` (was `OE_GITHUB_BOT_USER_ID`, OPE-2650). The source-control plane writes it into the commit e-mail, so GitHub attributes each commit to the App. Empty (shipped) ⇒ the plane falls back to the App id. `surface_app_create` returns this value.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    conversation: {
+      path: "github.conversation",
+      shipped: false,
+      summary:
+        "Whether the GitHub CONVERSATION surface is armed (OPE-2650): an `@<github.appSlug>` mention in an issue, a pull request or a review comment starts a session, and comments in an engaged thread follow. Off (shipped) ⇒ no comment starts a conversation and every ambient comment drops; the source-control plane, the event routines and the `installation` registration work as before. Turn it on only for the `full` App, which subscribes to comment events: `surface_app_create` returns `github.conversation: true` for that variant. A `source-control` App leaves it off. See docs/deploy/surfaces/github.md.",
+    } satisfies SettingSpec<boolean>,
+    installations: {
+      path: "github.installations",
+      shipped: {} as Readonly<Record<string, string>>,
+      validate: githubInstallationsProblem,
+      summary:
+        "Owner login → GitHub App installation id, each id a numeric string (was `OE_GITHUB_INSTALLATIONS`, and the `OE_GITHUB_OWNER` + `OE_GITHUB_INSTALLATION_ID` pair, OPE-2650). An owner listed here resolves to its id, and this table wins over a webhook-discovered installation of the same owner. Empty (shipped) ⇒ the installations the App's `installation` webhook registered are the only ones, which is enough for most deployments.",
+      format: (v) => (Object.keys(v).length === 0 ? "{} (webhook-discovered only)" : JSON.stringify(v)),
+    } satisfies SettingSpec<Readonly<Record<string, string>>>,
   },
   governance: {
     floorTtlMs: {
@@ -952,6 +1076,40 @@ export const SETTINGS = {
       format: (v) => (v === "" ? '"" (no language rule)' : JSON.stringify(v)),
     } satisfies SettingSpec<string>,
   },
+  linear: {
+    appName: {
+      path: "linear.appName",
+      shipped: "",
+      validate: (v: string) => (typeof v === "string" && !/[\r\n]/u.test(v) ? undefined : "must be one line"),
+      summary:
+        "The primary Linear app's display name (was `LINEAR_APP_NAME`, OPE-2650). The Linear surface knows a mention of itself by it. Empty (shipped) ⇒ the surface asks Linear for its own name once and caches it. A registered OAuth app's own name wins over this setting.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    appUserId: {
+      path: "linear.appUserId",
+      shipped: "",
+      validate: idOrEmpty,
+      summary:
+        "The primary Linear app's own user id (was `LINEAR_APP_USER_ID`, OPE-2650). The Linear surface knows its own comments by it, so it never wakes on them. Empty (shipped) ⇒ resolved live from Linear once and cached. A registered OAuth app's own id wins over this setting.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    clientId: {
+      path: "linear.clientId",
+      shipped: "",
+      validate: idOrEmpty,
+      summary:
+        "The primary Linear OAuth app's client id, the public half of its client-credentials pair (an env var until OPE-2650; the Linear provider names it). With it and `LINEAR_CLIENT_SECRET`, the surface mints and caches its own token when no static token is set. Empty (shipped) ⇒ no client-credentials mint for the primary app.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    organizationId: {
+      path: "linear.organizationId",
+      shipped: "",
+      validate: idOrEmpty,
+      summary:
+        "The Linear organization the primary credential belongs to (was `LINEAR_ORGANIZATION_ID`, OPE-2650). Set ⇒ a delivery or a call for a DIFFERENT organization that no registered app claims fails closed, and never falls back to the primary credential. Empty (shipped) ⇒ the primary credential serves an unknown organization too, which suits a one-organization deployment.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+  },
   memory: {
     dreamCandidateCap: {
       path: "memory.dreamCandidateCap",
@@ -1002,6 +1160,24 @@ export const SETTINGS = {
         "Where this deployment ships its structured logs: `{ url, tokenHeader?, service? }` (was `OE_LOG_SHIP_URL`, `OE_LOG_SHIP_TOKEN_HEADER` and `OE_LOG_SERVICE`, OPE-2650). `url` is the full ingest URL of any endpoint that takes a JSON array (Axiom, Better Stack, a local collector). `tokenHeader` (default `authorization`) names the header that carries the operator secret `OE_LOG_SHIP_TOKEN`, stored with `oe secret set OE_LOG_SHIP_TOKEN`. `service` (default `open-everywhere`) stamps every record. An empty `url` (shipped) ⇒ nothing ships and console output is unchanged. See docs/deploy/observability.md.",
       format: (v) => (v.url === "" ? "(off)" : v.url),
     } satisfies SettingSpec<LogShipSetting>,
+  },
+  notion: {
+    botName: {
+      path: "notion.botName",
+      shipped: "",
+      validate: (v: string) => (typeof v === "string" && !/[\r\n]/u.test(v) ? undefined : "must be one line"),
+      summary:
+        "The Notion bot's display name, which the mention judge reads (was `NOTION_BOT_NAME`, OPE-2650). Empty (shipped) ⇒ the surface asks Notion for the bot's name once and caches it.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
+    botUserId: {
+      path: "notion.botUserId",
+      shipped: "",
+      validate: idOrEmpty,
+      summary:
+        "The org-default Notion integration's bot user id (was `NOTION_BOT_USER_ID`, OPE-2650). The surface knows its own comments by it. It pins the ORG-DEFAULT integration only: a per-domain integration always resolves its own id live, so this value can never make one integration read another's comments as its own (OPE-1921). Empty (shipped) ⇒ resolved live once and cached.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
   },
   policyPages: {
     privacy: {
@@ -1340,6 +1516,17 @@ export const SETTINGS = {
         "Bot Connector hosts the Teams provider admits BEYOND the global-cloud default (was `OE_TEAMS_SERVICE_HOSTS`). Each entry is an exact host or a dot-anchored `.suffix`. Empty (shipped) admits the global (commercial) cloud only, which is the Teams provider's own built-in host list. A sovereign-cloud deployment adds its own host here — GCC `smba.infra.gcc.teams.microsoft.com`, GCC High `smba.infra.gov.teams.microsoft.us`, DoD `smba.infra.dod.teams.microsoft.us`. The reply's bearer token only ever goes to a matched host, so list Microsoft-owned hosts only.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(the global-cloud default only)"),
     } satisfies SettingSpec<readonly string[]>,
+    appId: {
+      path: "teams.appId",
+      shipped: "",
+      validate: (v: string) =>
+        typeof v === "string" && /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?$/u.test(v)
+          ? undefined
+          : 'must be the Azure Bot\'s application (client) id, a GUID, or "" for unset',
+      summary:
+        "The Azure Bot's application (client) id, a GUID (was `MICROSOFT_APP_ID` and `TEAMS_APP_ID`, OPE-2650). The Teams channel verifies each inbound token's audience against it, mints its Bot Connector token as it, and fills it into the app package. Empty (shipped) ⇒ unset: the Teams surface refuses inbound activity and posts nothing. The app password stays out of Git. See docs/deploy/surfaces/teams.md.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
   },
   telemetry: {
     enabled: {
@@ -1602,6 +1789,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     aws: {
       enabled: resolve(SETTINGS.aws.enabled, o.aws?.enabled),
       ssoScopes: resolve(SETTINGS.aws.ssoScopes, o.aws?.ssoScopes),
+      region: resolve(SETTINGS.aws.region, o.aws?.region),
+      ssoRegion: resolve(SETTINGS.aws.ssoRegion, o.aws?.ssoRegion),
+      ssoClientId: resolve(SETTINGS.aws.ssoClientId, o.aws?.ssoClientId),
     },
     bash: {
       timeoutMs: resolve(SETTINGS.bash.timeoutMs, o.bash?.timeoutMs),
@@ -1643,6 +1833,8 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     discord: {
       autoThread: resolve(SETTINGS.discord.autoThread, o.discord?.autoThread),
       statusUx: resolve(SETTINGS.discord.statusUx, o.discord?.statusUx),
+      applicationId: resolve(SETTINGS.discord.applicationId, o.discord?.applicationId),
+      publicKey: resolve(SETTINGS.discord.publicKey, o.discord?.publicKey),
     },
     egress: {
       enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce),
@@ -1658,6 +1850,12 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     github: {
       auth: resolve(SETTINGS.github.auth, o.github?.auth),
       tokenRepos: resolve(SETTINGS.github.tokenRepos, o.github?.tokenRepos),
+      appId: resolve(SETTINGS.github.appId, o.github?.appId),
+      appSlug: resolve(SETTINGS.github.appSlug, o.github?.appSlug),
+      appClientId: resolve(SETTINGS.github.appClientId, o.github?.appClientId),
+      botUserId: resolve(SETTINGS.github.botUserId, o.github?.botUserId),
+      conversation: resolve(SETTINGS.github.conversation, o.github?.conversation),
+      installations: resolve(SETTINGS.github.installations, o.github?.installations),
     },
     governance: {
       floorTtlMs: resolve(SETTINGS.governance.floorTtlMs, o.governance?.floorTtlMs),
@@ -1673,6 +1871,12 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     language: {
       output: resolve(SETTINGS.language.output, o.language?.output),
     },
+    linear: {
+      appName: resolve(SETTINGS.linear.appName, o.linear?.appName),
+      appUserId: resolve(SETTINGS.linear.appUserId, o.linear?.appUserId),
+      clientId: resolve(SETTINGS.linear.clientId, o.linear?.clientId),
+      organizationId: resolve(SETTINGS.linear.organizationId, o.linear?.organizationId),
+    },
     memory: {
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap),
       skillProposalPr: resolve(SETTINGS.memory.skillProposalPr, o.memory?.skillProposalPr),
@@ -1683,6 +1887,10 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     },
     observability: {
       logShip: resolve(SETTINGS.observability.logShip, o.observability?.logShip),
+    },
+    notion: {
+      botName: resolve(SETTINGS.notion.botName, o.notion?.botName),
+      botUserId: resolve(SETTINGS.notion.botUserId, o.notion?.botUserId),
     },
     policyPages: {
       privacy: resolve(SETTINGS.policyPages.privacy, o.policyPages?.privacy),
@@ -1753,6 +1961,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     },
     teams: {
       serviceHosts: resolve(SETTINGS.teams.serviceHosts, o.teams?.serviceHosts),
+      appId: resolve(SETTINGS.teams.appId, o.teams?.appId),
     },
     telemetry: {
       enabled: resolve(SETTINGS.telemetry.enabled, o.telemetry?.enabled),

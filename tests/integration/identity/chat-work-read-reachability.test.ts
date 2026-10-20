@@ -97,8 +97,10 @@ function assertWorkerHoldsWorkReads(handle: ScriptedHandle, label: string): void
   }
 }
 
+const BOOT = { settings: { linear: { appUserId: "it-linear-app-actor", appName: "OE Bot" } } } as const;
+
 test("Discord: a delegated worker in it-work-read-fixture-discord holds read_work_channel/read_work_thread", async () => {
-  await bootAgent();
+  await bootAgent(BOOT);
   await pinFixtureDomainGrant("it-work-read-fixture-discord", "discord");
   expect(DISCORD_GUILD_ID, "the fixture channel must sit under the vouched test guild").toBe("1300000000000000100");
 
@@ -115,7 +117,7 @@ test("Discord: a delegated worker in it-work-read-fixture-discord holds read_wor
 }, 420_000);
 
 test("Teams: a delegated worker in it-work-read-fixture-teams holds read_work_channel/read_work_thread", async () => {
-  await bootAgent();
+  await bootAgent(BOOT);
   await pinFixtureDomainGrant("it-work-read-fixture-teams", "teams");
 
   const trustSettings = await import("@open-everywhere/core/agent/settings/settings.js");
@@ -156,11 +158,8 @@ test("Teams: a delegated worker in it-work-read-fixture-teams holds read_work_ch
 }, 420_000);
 
 test("Linear: a delegated worker in e2e-unified holds read_work_channel/read_work_thread", async () => {
-  await bootAgent();
+  await bootAgent(BOOT);
   await pinFixtureDomainGrant("e2e-unified", "linear");
-
-  process.env.LINEAR_APP_USER_ID = "it-linear-app-actor";
-  process.env.LINEAR_APP_NAME = "OE Bot";
 
   const nonce = randomBytes(6).toString("hex");
   const authorId = `it-linear-work-read-author-${nonce}`;

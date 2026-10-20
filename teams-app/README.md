@@ -31,7 +31,7 @@ as `manifest.json` in this directory.
 
 | Placeholder | Value |
 | --- | --- |
-| `{{MICROSOFT_APP_ID}}` | The Azure Bot's **Application (client) ID** (`MICROSOFT_APP_ID`). Used for both `id` and `bots[].botId` — they must match. |
+| `{{MICROSOFT_APP_ID}}` | The Azure Bot's **Application (client) ID**: the value of the `teams.appId` setting in `agent/settings/settings.ts`. Used for both `id` and `bots[].botId` — they must match. |
 | `{{DEVELOPER_NAME}}` | Your org / developer name. |
 
 ## Privacy policy and terms — served by your deployment
@@ -77,7 +77,7 @@ The manual steps below build a package for a sideload or a test tenant.
 
 ```bash
 cd teams-app
-APP_ID="<your MICROSOFT_APP_ID>"
+APP_ID="<your teams.appId setting>"
 DEV="<your org name>"
 
 # manifest.json is the rendered manifest you saved above (its host is already substituted).

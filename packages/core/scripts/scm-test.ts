@@ -19,6 +19,7 @@ import { fetchPrFeedback, renderPrFeedbackForModel, MAX_REVIEW_COMMENTS, MAX_REV
 import { wrapUntrusted, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationHeader, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
+import { getSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { composeGitHubInstallations } from "../agent/scm/installations.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import { repoAllowed, resetGitHubApp } from "../agent/scm/provider.js";
@@ -129,18 +130,35 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
-  ok(loadGitHubAppConfig({}) === null, "plane is optional: null when unconfigured");
-  const cfg = loadGitHubAppConfig({
+  resetSettingsForTest();
+  ok(loadGitHubAppConfig() === null, "plane is optional: null when unconfigured");
+  const legacy: Record<string, string> = {
     OE_GITHUB_APP_ID: "111",
-    GITHUB_APP_PRIVATE_KEY: pkcs1,
     OE_GITHUB_APP_SLUG: "open-everywhere",
     OE_GITHUB_BOT_USER_ID: "12345",
     OE_GITHUB_INSTALLATIONS: '{"acme":"4242"}',
     OE_GITHUB_OWNER: "globex",
     OE_GITHUB_INSTALLATION_ID: "9999",
-  } as NodeJS.ProcessEnv)!;
-  ok(cfg.appSlug === "open-everywhere" && cfg.botUserId === "12345", "config reads app fields");
-  ok(cfg.installations.acme === "4242" && cfg.installations.globex === "9999", "config merges the JSON map and the single-owner pair");
+  };
+  const saved = Object.fromEntries(Object.keys(legacy).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(legacy)) process.env[k] = v;
+  ok(loadGitHubAppConfig() === null, "🔴 OPE-2650: the old id variables in env configure nothing — the settings are unset, so the plane is off");
+  for (const [k, v] of Object.entries(saved)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+
+  overrideSettingsForTest({
+    github: { appId: "111", appSlug: "open-everywhere", appClientId: "Iv1.clientid", botUserId: "12345", installations: { acme: "4242", globex: "9999" } },
+  });
+  const cfg = loadGitHubAppConfig()!;
+  ok(cfg !== null && cfg.appId === "111" && cfg.appSlug === "open-everywhere", "config reads the app id and slug from settings");
+  ok(cfg.clientId === "Iv1.clientid" && cfg.botUserId === "12345", "config reads the client id and the bot user id from settings");
+  ok(typeof cfg.privateKeyPem === "function", "config carries the operator-secret key resolver, never a value");
+  ok(cfg.installations.acme === "4242" && cfg.installations.globex === "9999", "config reads the installations map from settings");
+  (cfg.installations as Record<string, string>).initech = "1";
+  ok(getSettings().github.installations.initech === undefined, "🔴 the returned installations map is a copy — a write to it never reaches the settings");
+  resetSettingsForTest();
 }
 
 {
@@ -166,7 +184,9 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
-  const cfg = loadGitHubAppConfig({ OE_GITHUB_APP_ID: "111", OE_GITHUB_APP_SLUG: "open-everywhere" } as NodeJS.ProcessEnv);
+  overrideSettingsForTest({ github: { appId: "111", appSlug: "open-everywhere" } });
+  const cfg = loadGitHubAppConfig();
+  resetSettingsForTest();
   ok(cfg !== null && typeof cfg.privateKeyPem === "function", "🔴 OPE-2650 the config carries a key RESOLVER, not a value read at load");
   const fetchFn: FetchFn = async () => ({ ok: true, status: 201, text: async () => "", json: async () => ({ token: "t", expires_at: "2026-06-25T13:00:00Z", repositories: [] }) });
   let resolved: string | undefined;
@@ -249,21 +269,14 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   {
     const savedFetch = globalThis.fetch;
     const savedEnv = {
-      id: process.env.OE_GITHUB_APP_ID,
       pem: process.env.GITHUB_APP_PRIVATE_KEY,
-      slug: process.env.OE_GITHUB_APP_SLUG,
-      owner: process.env.OE_GITHUB_OWNER,
-      inst: process.env.OE_GITHUB_INSTALLATION_ID,
       pat: process.env.GITHUB_TOKEN,
     };
     const minted: Record<string, string | undefined>[] = [];
     const urls: string[] = [];
     try {
-      process.env.OE_GITHUB_APP_ID = "111";
+      overrideSettingsForTest({ github: { appId: "111", appSlug: "open-everywhere", installations: { acme: "4242" } } });
       process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
-      process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
-      process.env.OE_GITHUB_OWNER = "acme";
-      process.env.OE_GITHUB_INSTALLATION_ID = "4242";
       delete process.env.GITHUB_TOKEN;
       resetGitHubApp();
       globalThis.fetch = (async (_url: string, init: { body?: string }) => {
@@ -287,12 +300,9 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
       n++;
     } finally {
       globalThis.fetch = savedFetch;
+      resetSettingsForTest();
       for (const [key, value] of Object.entries({
-        OE_GITHUB_APP_ID: savedEnv.id,
         GITHUB_APP_PRIVATE_KEY: savedEnv.pem,
-        OE_GITHUB_APP_SLUG: savedEnv.slug,
-        OE_GITHUB_OWNER: savedEnv.owner,
-        OE_GITHUB_INSTALLATION_ID: savedEnv.inst,
         GITHUB_TOKEN: savedEnv.pat,
       })) {
         if (value === undefined) delete process.env[key];

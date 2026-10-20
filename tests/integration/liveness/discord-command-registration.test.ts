@@ -8,7 +8,6 @@ const API_PREFIX = "https://discord.com/api/v10/";
 const STUB_APPLICATION_ID = "1410000000000000002";
 const STUB_BOT_TOKEN = "integration-stub-discord-bot-token";
 
-process.env.DISCORD_APPLICATION_ID = STUB_APPLICATION_ID;
 process.env.DISCORD_BOT_TOKEN = STUB_BOT_TOKEN;
 
 interface CommandCall {
@@ -30,7 +29,7 @@ installHostFetchStub(API_PREFIX, (url, init) => {
 });
 
 test("booting the deployment registers its own /oe command, with no operator step", async () => {
-  await bootAgent();
+  await bootAgent({ settings: { discord: { applicationId: STUB_APPLICATION_ID } } });
 
   const guild = DISCORD_COMMAND_GUILDS[0];
   expect(guild, "the app declares at least one guild to register into").toBeTruthy();

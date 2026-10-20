@@ -13,7 +13,7 @@ process.env.SLACK_SIGNING_SECRET = SLACK_SECRET;
 process.env.DISCORD_BOT_TOKEN = "sec-bot-token-never-real";
 overrideSettingsForTest({ discord: { autoThread: true } });
 overrideSettingsForTest({ discord: { statusUx: true } });
-delete process.env.DISCORD_PUBLIC_KEY;
+overrideSettingsForTest({ discord: { publicKey: "" } });
 _resetDeploymentIdentityForTest();
 for (const k of ["OE_PLATFORM", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
   delete process.env[k];

@@ -7,6 +7,7 @@ import {
   _resetTeamsBotDisplayNameForTest,
 } from "../agent/channels/teams-bot-name.js";
 import type { TeamsGraphRequester } from "../agent/channels/teams-read.js";
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -66,8 +67,7 @@ function spy(answer: unknown): { req: TeamsGraphRequester; urls: string[] } {
 }
 
 {
-  delete process.env.MICROSOFT_APP_ID;
-  delete process.env.TEAMS_APP_ID;
+  overrideSettingsForTest({ teams: { appId: "" } });
   _resetTeamsBotDisplayNameForTest();
 
   const first = teamsBotDisplayName();

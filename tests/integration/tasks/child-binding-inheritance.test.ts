@@ -27,7 +27,7 @@ const TRUSTED = generateKeyPairSync("ed25519");
 function publicKeyHex(pair: { publicKey: KeyObject }): string {
   return Buffer.from((pair.publicKey.export({ format: "jwk" }) as { x: string }).x, "base64url").toString("hex");
 }
-process.env.DISCORD_PUBLIC_KEY = publicKeyHex(TRUSTED);
+const TRUSTED_PUBLIC_KEY_HEX = publicKeyHex(TRUSTED);
 
 const DISCORD_INTERACTIONS_ROUTE = "/eve/v1/discord";
 const CLICKER_ID = "9000000000000000079";
@@ -51,7 +51,7 @@ let base = "";
 let org = "";
 
 async function armAgent(): Promise<void> {
-  ({ base } = await bootAgent({ sharedSqlite: true }));
+  ({ base } = await bootAgent({ sharedSqlite: true, settings: { discord: { publicKey: TRUSTED_PUBLIC_KEY_HEX } } }));
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ taint: { mode: "on" }, approvals: { judgeMode: "off" } });
   const binding = await import("@open-everywhere/core/agent/identity/binding.js");

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, expect } from "vitest";
+import type { AgentSettingsOverrides } from "@open-everywhere/core/agent/settings/settings.js";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
 import { AUDIT_DUMP_LIMIT, formatAuditTimeoutDump, type AuditDumpRow, type AuditDumpPendingRow } from "./audit-timeout-dump";
@@ -364,7 +365,44 @@ function bootedBuildDir(): string {
   return bootedOutputDir;
 }
 
+const FORK_IDENTITY_SETTINGS: AgentSettingsOverrides = {
+  aws: { region: "", ssoRegion: "", ssoClientId: "" },
+  discord: { applicationId: "", publicKey: DISCORD_APP_KEYS.publicKeyHex },
+  github: { appId: "", appSlug: "", appClientId: "", botUserId: "", installations: {}, conversation: false },
+  linear: { appName: "", appUserId: "", clientId: "", organizationId: "" },
+  notion: { botName: "", botUserId: "" },
+  teams: { appId: MICROSOFT_APP_ID },
+};
+
+function mergeSettingGroups(base: AgentSettingsOverrides | null, patch: AgentSettingsOverrides): AgentSettingsOverrides {
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [group, values] of Object.entries((base ?? {}) as Record<string, Record<string, unknown> | undefined>)) {
+    if (values !== undefined) out[group] = { ...values };
+  }
+  for (const [group, values] of Object.entries(patch as Record<string, Record<string, unknown> | undefined>)) {
+    if (values !== undefined) out[group] = { ...(out[group] ?? {}), ...values };
+  }
+  return out as AgentSettingsOverrides;
+}
+
+function layerForkSettings(patch: AgentSettingsOverrides): void {
+  const key = Symbol.for("open-everywhere.settings.registered.v1");
+  const g = globalThis as { [k: symbol]: unknown };
+  if (!(g[key] instanceof Object) || !("oeSlot" in (g[key] as object))) g[key] = { oeSlot: null };
+  const box = g[key] as { oeSlot: AgentSettingsOverrides | null };
+  let held: AgentSettingsOverrides | null = mergeSettingGroups(box.oeSlot, patch);
+  Object.defineProperty(box, "oeSlot", {
+    configurable: true,
+    enumerable: true,
+    get: () => held,
+    set: (value: AgentSettingsOverrides | null) => {
+      held = value === null || Object.isFrozen(value) ? mergeSettingGroups(value, patch) : value;
+    },
+  });
+}
+
 export interface BootOptions {
+  readonly settings?: AgentSettingsOverrides;
   readonly sharedSqlite?: boolean;
   readonly selfBaseUrl?: boolean;
   readonly stubbedProviderTransport?: boolean;
@@ -441,10 +479,9 @@ export async function bootAgent(opts: BootOptions = {}): Promise<{ base: string 
   process.env.GITHUB_WEBHOOK_SECRET = GITHUB_WEBHOOK_SECRET;
   process.env.LINEAR_WEBHOOK_SECRET = LINEAR_WEBHOOK_SECRET;
   process.env.LINEAR_ACCESS_TOKEN = LINEAR_ACCESS_TOKEN;
-  process.env.MICROSOFT_APP_ID = MICROSOFT_APP_ID;
   delete process.env.MICROSOFT_APP_PASSWORD;
   delete process.env.TEAMS_APP_PASSWORD;
-  if (process.env.DISCORD_PUBLIC_KEY === undefined) process.env.DISCORD_PUBLIC_KEY = DISCORD_APP_KEYS.publicKeyHex;
+  layerForkSettings(mergeSettingGroups(FORK_IDENTITY_SETTINGS, opts.settings ?? {}));
   if (opts.sharedSqlite === true) {
     process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
     process.env.OE_SQLITE_PATH = join(state, "ops.sqlite3");

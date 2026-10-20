@@ -136,7 +136,7 @@ function main(): void {
       "store-bootstrap": 5,
       platform: 23,
       "per-run-seam": 4,
-      "pending-migration": 22,
+      "pending-migration": 0,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -144,7 +144,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 58, `the allowlist holds 58 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 36, `the allowlist holds 36 names (found ${ENV_READ_ALLOWLIST.size})`);
     const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
     ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
     const OPERATOR_SECRET_NAMES = [
@@ -396,3 +396,8 @@ try {
 for (const dir of scratchRoots) rmSync(dir, { recursive: true, force: true });
 
 console.log(`\n✓ env-read allowlist ratchet: ${passed} assertions passed (${ENV_READ_ALLOWLIST.size} names allowed)\n`);
+
+// proves: ENV-002, ENV-003, ENV-005, ENV-006, ENV-010, ENV-011, ENV-028, ENV-029, ENV-062, ENV-063, ENV-097
+// proves: ENV-102, ENV-103, ENV-112, ENV-113, ENV-116, ENV-117, ENV-122, ENV-134, ENV-138, ENV-139, ENV-143
+// proves: ENV-144, ENV-145, ENV-146, ENV-148, ENV-149, DYN-01, DYN-02, DYN-03, DYN-04, DYN-05, DYN-08, DYN-09
+// proves: DYN-10, DYN-11, DYN-12, GEN-05, GEN-06, GEN-07, GEN-08

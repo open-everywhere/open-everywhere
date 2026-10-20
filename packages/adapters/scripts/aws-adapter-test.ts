@@ -4,7 +4,6 @@ import type { AwsCredentials, AwsIdentityRequest } from "@open-everywhere/core/a
 
 delete process.env.AWS_REGION;
 delete process.env.AWS_DEFAULT_REGION;
-delete process.env.OE_AWS_REGION;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

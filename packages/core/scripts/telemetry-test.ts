@@ -26,7 +26,7 @@ import {
   __setLastHeartbeatForTest,
 } from "../agent/observability/telemetry.js";
 import { resetOperationalStore } from "../agent/operational/provider.js";
-import { overrideSettingsForTest, registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
+import { getSettings, overrideSettingsForTest, registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
 
 let n = 0;
@@ -590,17 +590,16 @@ function throwingFetch(): typeof fetch {
   }
 
   const savedDiscordToken = process.env.DISCORD_BOT_TOKEN;
-  const savedGithubAppId = process.env.OE_GITHUB_APP_ID;
-  const savedMicrosoftAppId = process.env.MICROSOFT_APP_ID;
+  const savedGithubAppId = getSettings().github.appId;
+  const savedTeamsAppId = getSettings().teams.appId;
   try {
     clearTelemetryEnv();
-    process.env.MICROSOFT_APP_ID = "test-app-id";
+    overrideSettingsForTest({ teams: { appId: "test-app-id" }, github: { appId: "" } });
     delete process.env.DISCORD_BOT_TOKEN;
-    delete process.env.OE_GITHUB_APP_ID;
     let surfaces = await heartbeatSurfaces("instance-surfaces-a");
-    ok(surfaces.includes("teams") === false, "surfaces: MICROSOFT_APP_ID alone no longer reports teams (core's inline arm is gone)");
+    ok(surfaces.includes("teams") === false, "surfaces: teams.appId alone no longer reports teams (core's inline arm is gone)");
 
-    registerSurfaceCredentialProbe("teams", () => Boolean(process.env.MICROSOFT_APP_ID));
+    registerSurfaceCredentialProbe("teams", () => getSettings().teams.appId !== "");
     surfaces = await heartbeatSurfaces("instance-surfaces-b");
     ok(surfaces.filter((s) => s === "teams").length === 1, "surfaces: a registered probe reports teams exactly once");
 
@@ -612,11 +611,11 @@ function throwingFetch(): typeof fetch {
     surfaces = await heartbeatSurfaces("instance-surfaces-d");
     ok(surfaces.filter((s) => s === "discord").length === 1, "surfaces: a registered probe reports discord exactly once");
 
-    process.env.OE_GITHUB_APP_ID = "test-app-id";
+    overrideSettingsForTest({ github: { appId: "test-app-id" } });
     surfaces = await heartbeatSurfaces("instance-surfaces-e");
-    ok(surfaces.includes("github") === false, "surfaces: OE_GITHUB_APP_ID alone no longer reports github (core's inline arm is gone)");
+    ok(surfaces.includes("github") === false, "surfaces: github.appId alone no longer reports github (core's inline arm is gone)");
 
-    registerSurfaceCredentialProbe("github", () => Boolean(process.env.OE_GITHUB_APP_ID));
+    registerSurfaceCredentialProbe("github", () => getSettings().github.appId !== "");
     surfaces = await heartbeatSurfaces("instance-surfaces-f");
     ok(surfaces.filter((s) => s === "github").length === 1, "surfaces: a registered probe reports github exactly once");
 
@@ -645,10 +644,7 @@ function throwingFetch(): typeof fetch {
     registerSurfaceCredentialProbe("teams", () => false);
     if (savedDiscordToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
     else process.env.DISCORD_BOT_TOKEN = savedDiscordToken;
-    if (savedGithubAppId === undefined) delete process.env.OE_GITHUB_APP_ID;
-    else process.env.OE_GITHUB_APP_ID = savedGithubAppId;
-    if (savedMicrosoftAppId === undefined) delete process.env.MICROSOFT_APP_ID;
-    else process.env.MICROSOFT_APP_ID = savedMicrosoftAppId;
+    overrideSettingsForTest({ github: { appId: savedGithubAppId }, teams: { appId: savedTeamsAppId } });
     clearTelemetryEnv();
     __resetTelemetryForTest();
   }
@@ -862,3 +858,5 @@ function throwingFetch(): typeof fetch {
 }
 
 console.log(`✓ ${n} telemetry assertions passed`);
+
+// proves: SET-102, SET-103, SET-104

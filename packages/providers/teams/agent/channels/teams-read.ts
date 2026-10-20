@@ -1,4 +1,5 @@
 import { resolveTeamsAppId, resolveTeamsAppPassword, resolveTeamsTenantId } from "eve/channels/teams";
+import { teamsAppCredentials } from "./teams-connector.js";
 import {
   auditChannelReadRefusal,
   bindFrom,
@@ -32,7 +33,7 @@ const TEAMS_GRAPH_PAGE_SIZE = 50;
 const TEAMS_GRAPH_MAX_PAGES = 5;
 
 async function mintTeamsGraphTokenOnce(): Promise<BrokeredSecret> {
-  const [appId, appPassword, tenantId] = await Promise.all([resolveTeamsAppId(), resolveTeamsAppPassword(), resolveTeamsTenantId()]);
+  const [appId, appPassword, tenantId] = await Promise.all([resolveTeamsAppId(teamsAppCredentials().appId), resolveTeamsAppPassword(), resolveTeamsTenantId()]);
   if (!tenantId) {
     throw new Error(
       "read: Teams channel reads need MICROSOFT_TENANT_ID (or TEAMS_TENANT_ID) set — Graph's " +

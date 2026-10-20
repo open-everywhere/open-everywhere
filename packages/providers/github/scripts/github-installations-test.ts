@@ -1,3 +1,5 @@
+// proves: surface.app_installed, surface.app_uninstalled
+
 import {
   extractGitHubInstallationEvent,
   handleGitHubInstallationDelivery,

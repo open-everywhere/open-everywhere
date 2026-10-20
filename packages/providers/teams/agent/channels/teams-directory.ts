@@ -1,5 +1,6 @@
 import { type DirectoryCandidate, type FriendlyName } from "@open-everywhere/core/agent/adapter-api.js";
 import { callTeamsConnectorApi } from "eve/channels/teams";
+import { teamsAppCredentials } from "./teams-connector.js";
 import { teamsTeamConversationRefs, type TeamsConversationRef } from "./teams-conversation-ref.js";
 
 const TEAMS_DIRECTORY_MAX_PAGES = 4;
@@ -67,7 +68,7 @@ async function rosterPage(
   if (continuationToken) params.set("continuationToken", continuationToken);
   const path = `/v3/conversations/${encodeURIComponent(team.conversationId)}/pagedmembers?${params.toString()}`;
   try {
-    const res = await callTeamsConnectorApi({ serviceUrl: team.serviceUrl, path, method: "GET" });
+    const res = await callTeamsConnectorApi({ serviceUrl: team.serviceUrl, path, method: "GET", credentials: teamsAppCredentials() });
     if (!res.ok) {
       log(`the roster read did not answer (${res.status}) for conversation ${team.conversationId} — the account directory is unavailable there; linking falls back to the code flow.`);
       return undefined;
@@ -126,7 +127,7 @@ export function teamsFriendlyName(id: string, deps: TeamsNameDeps = {}): Promise
 const TEAMS_NAME_CACHE_MAX = 2000;
 
 async function lookUpTeamsName(id: string, deps: TeamsNameDeps): Promise<FriendlyName | undefined> {
-  const call = deps.call ?? ((input) => callTeamsConnectorApi(input));
+  const call = deps.call ?? ((input) => callTeamsConnectorApi({ ...input, credentials: teamsAppCredentials() }));
   const teams = (await (deps.teams ?? teamsTeamConversationRefs)()).slice(0, TEAMS_NAME_MAX_TEAMS);
   const isConversation = /^19:/.test(id);
   for (const team of teams) {
@@ -149,7 +150,7 @@ async function lookUpTeamsName(id: string, deps: TeamsNameDeps): Promise<Friendl
 }
 
 export async function teamsAccountProfile(id: string, deps: TeamsNameDeps = {}): Promise<{ name?: string; email?: string } | undefined> {
-  const call = deps.call ?? ((input) => callTeamsConnectorApi(input));
+  const call = deps.call ?? ((input) => callTeamsConnectorApi({ ...input, credentials: teamsAppCredentials() }));
   const teams = (await (deps.teams ?? teamsTeamConversationRefs)().catch(() => [])).slice(0, TEAMS_NAME_MAX_TEAMS);
   for (const team of teams) {
     try {

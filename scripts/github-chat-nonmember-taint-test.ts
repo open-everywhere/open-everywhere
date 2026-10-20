@@ -14,11 +14,11 @@ const dir = join(tmpdir(), `open-everywhere-github-chat-nonmember-taint-${proces
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.GITHUB_APP_SLUG = "eve-bot";
+const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+overrideSettingsForTest({ github: { appSlug: "eve-bot", conversation: true } });
 
 const { registerGithubProvider } = await import("@open-everywhere/provider-github/agent/register.js");
 registerGithubProvider();
-const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
 overrideSettingsForTest({ window: { topology: false } });
 const { githubOnComment } = await import("@open-everywhere/provider-github/agent/channels/github.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");

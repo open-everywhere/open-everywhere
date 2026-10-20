@@ -153,7 +153,7 @@ console.log("§2c eve's Discord channel is handed discordBotTokenForEve");
 {
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(join(import.meta.dirname, "..", "packages/providers/discord/agent/channels/discord.ts"), "utf8").replace(/\/\/[^\n]*/g, "");
-  ok(/discordChannel\(\{[\s\S]*?credentials:\s*\{\s*botToken:\s*discordBotTokenForEve\s*\}/.test(src), "🔴 discord.ts hands discordChannel({ credentials: { botToken: discordBotTokenForEve } })");
+  ok(/discordChannel\(\{[\s\S]*?credentials:\s*\{[^}]*\bbotToken:\s*discordBotTokenForEve\b[^}]*\}/.test(src), "🔴 discord.ts hands discordChannel({ credentials: { …, botToken: discordBotTokenForEve } })");
 }
 
 console.log("§3 the gateway key reaches the provider's outgoing request");

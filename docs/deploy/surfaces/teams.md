@@ -135,7 +135,7 @@ alternative described above, which vouches every unverifiable surface on every p
 
 1. In the [Azure Portal](https://portal.azure.com), **Create a resource → Azure Bot** (the modern replacement for *Bot Channels Registration*; either works).
 2. For the bot's identity, choose **Single-tenant** and set `MICROSOFT_TENANT_ID` to that tenant's Directory ID. (Microsoft deprecated new **multi-tenant** Azure Bot creation after **31 July 2025** — fresh registrations are Single-tenant or User-Assigned Managed Identity only, and this integration uses the app-id + secret flow, i.e. Single-tenant. `MICROSOFT_TENANT_ID` is therefore effectively required for any new bot, not optional.) Azure either creates a new **Entra app registration** for you or lets you point at an existing one.
-3. Note the app registration's **Application (client) ID** — this is `MICROSOFT_APP_ID`.
+3. Note the app registration's **Application (client) ID** — this is the `teams.appId` setting (a GUID).
 4. In the app registration, go to **Certificates & secrets → New client secret**, create one, and copy its **Value** immediately — this is `MICROSOFT_APP_PASSWORD`. (Azure calls it a "client secret"; the Bot Framework calls it the "app password" — same thing.)
 5. For a single-tenant bot, copy the **Directory (tenant) ID** — this is `MICROSOFT_TENANT_ID`.
 6. On the Azure Bot resource, open **Configuration** and set the **Messaging endpoint** to:
@@ -151,7 +151,7 @@ alternative described above, which vouches every unverifiable surface on every p
 
 The Azure Bot exists, but Teams needs an **app package** (a manifest + icons) to surface the bot inside Teams. The manifest is **rendered**, not static (OPE-2334): the Teams bundle renders it from this deployment's settings, so the app carries the configured [`identity.name`](../configuration-reference.md) in `name.short`, `name.full` and `description.full` ("Open Everywhere" when no name is configured). Get it from the ops MCP tool — `surface_manifest { "surface": "teams", "baseUrl": "https://<the deployment's host>" }` — which also substitutes your deploy host. An explicit `appName` (at most 30 characters) overrides the configured name. The icons and a build/install README ship at [`teams-app/`](../../../teams-app/). The icons are the project mark, rendered from [`brand/`](../../../brand/README.md): with no name configured the agent presents as the project, so the mark is its default avatar. The manifest is already scoped for `team` + `groupChat` + `personal`.
 
-1. Fill the package: save the rendered manifest as `teams-app/manifest.json`, replace `{{MICROSOFT_APP_ID}}` (your `MICROSOFT_APP_ID`, used for both `id` and `bots[].botId`) and `{{DEVELOPER_NAME}}`, then zip it flat — the `teams-app/README.md` has a one-liner. Keep `color.png` / `outline.png` unless you set `identity.name` and chose your own icon. In that case, replace both before any org-wide install. A checkout without `teams-app/` gets both from <https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/color.png> and <https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/outline.png>.
+1. Fill the package: save the rendered manifest as `teams-app/manifest.json`, replace `{{MICROSOFT_APP_ID}}` (the value of your `teams.appId` setting, used for both `id` and `bots[].botId`) and `{{DEVELOPER_NAME}}`, then zip it flat — the `teams-app/README.md` has a one-liner. Keep `color.png` / `outline.png` unless you set `identity.name` and chose your own icon. In that case, replace both before any org-wide install. A checkout without `teams-app/` gets both from <https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/color.png> and <https://raw.githubusercontent.com/open-everywhere/open-everywhere/main/teams-app/outline.png>.
    - Prefer a GUI? The [Developer Portal for Teams](https://dev.teams.microsoft.com/) (formerly *App Studio*) → **Apps → New app** → **App features → Bot** → select the bot by its app ID does the same thing interactively.
    - The manifest's `privacyUrl` and `termsOfUseUrl` are **not** placeholders: they point at `/privacy` and `/terms` on your own deploy host, and **the deployment serves both**. The host `surface_manifest` substitutes is all they need. The TEXT of both is yours — declare it as `policyPages.privacy` and `policyPages.terms` in `agent/settings/settings.ts` (see [the configuration reference](../configuration-reference.md#agent-settings-behaviour-config-as-code)). Undeclared, each route still answers `200` with a short page saying no document is published yet, so a sideload never breaks; publish real text before an **org-wide** upload, where a reviewer reads them.
 2. The package already declares the three **scopes** — `team` (channel surfaces), `groupChat` (mpim surfaces), `personal` (dm surfaces). Trim them in `manifest.json` if you want a narrower install.
@@ -181,10 +181,20 @@ The Azure Bot exists, but Teams needs an **app package** (a manifest + icons) to
 
 ## Step 3 — Configure the environment
 
-Set these on your deployment (see the Microsoft Teams section of `.env.example`):
+The Application (client) ID is public, so it is a setting in your app's `agent/settings/settings.ts`
+(it was `MICROSOFT_APP_ID`, or its alternate name `TEAMS_APP_ID`, until OPE-2650):
+
+```ts
+// agent/settings/settings.ts
+export const SETTINGS_OVERRIDES = defineSettings({
+  teams: { appId: "00000000-0000-0000-0000-000000000000" }, // the Application (client) ID
+});
+```
+
+The password and the tenant stay env. Set these on your deployment (see the Microsoft Teams section
+of `.env.example`):
 
 ```bash
-MICROSOFT_APP_ID=<application-client-id>
 MICROSOFT_APP_PASSWORD=<client-secret-value>
 # Required for any new (Single-tenant) bot — the Directory (tenant) ID:
 MICROSOFT_TENANT_ID=<directory-tenant-id>
@@ -326,9 +336,10 @@ way.
 
 Teams supports the generic `read_channel`/`read_thread` verbs (the same tools Slack and Discord
 use), backed by Microsoft **Graph** rather than the Bot Framework Connector — the Connector token
-this integration already mints (`MICROSOFT_APP_ID`/`MICROSOFT_APP_PASSWORD`/`MICROSOFT_TENANT_ID`)
-can post activities but exposes no history-read API. The read adapter (`agent/channels/teams-read.ts`)
-mints its own app-only Graph token via the same client-credential flow, same three env vars.
+this integration already mints (the `teams.appId` setting, `MICROSOFT_APP_PASSWORD` and
+`MICROSOFT_TENANT_ID`) can post activities but exposes no history-read API. The read adapter
+(`agent/channels/teams-read.ts`) mints its own app-only Graph token via the same client-credential
+flow, from the same three values.
 
 - **Permission needed:** the app registration's Graph API permissions need something that can read
   channel messages. If your Teams app package already grants the per-team RSC permission
@@ -672,7 +683,7 @@ Ask the operator for each item below. Do not guess any of them.
    be the Partner Center publisher name.
 5. **The deployment's public origin**, for example `https://agent.example.com`. Not `localhost`, and
    on the store route not a domain under `azurewebsites.net`, `microsoft.com` or `onmicrosoft.com`.
-6. **`MICROSOFT_APP_ID`** in `.env.local`. It is the Azure Bot's application id, not a secret.
+6. **The `teams.appId` setting** in `agent/settings/settings.ts`. It is the Azure Bot's application id, not a secret.
 
 For the **store** route, also ask for:
 
@@ -724,7 +735,7 @@ finding to the operator. When nothing blocks, the reply holds `path` (by default
 
 The tool checks the result, not only the inputs. Each check comes from the Teams app manifest
 schema (versions 1.17 and 1.25) or from Microsoft's Teams Store validation guidelines (read
-2026-10-12).
+2026-10-11).
 
 | Check | `org` | `store` |
 | --- | --- | --- |
@@ -862,7 +873,7 @@ The [e2e driver pack](../../../packages/core/scripts/e2e/) drives each surface w
    export E2E_TEAMS_REFRESH_TOKEN=<from the helper above>
    export E2E_TEAMS_TEAM_ID=<from the helper's listing>
    export E2E_TEAMS_CHANNEL_ID=<from the helper's listing>
-   export E2E_TEAMS_BOT_APP_ID=<OE's MICROSOFT_APP_ID>
+   export E2E_TEAMS_BOT_APP_ID=<OE's teams.appId setting>
    E2E_ONLY=J-TEAMS npm run test:e2e-driver
    ```
 

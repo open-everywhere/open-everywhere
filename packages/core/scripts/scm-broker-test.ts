@@ -160,10 +160,8 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
     domainsForSurface: () => [],
   });
 
-  process.env.OE_GITHUB_APP_ID = "111";
+  overrideSettingsForTest({ github: { appId: "111", appSlug: "open-everywhere", installations: { acme: "4242" } } });
   process.env.GITHUB_APP_PRIVATE_KEY = pkcs1;
-  process.env.OE_GITHUB_APP_SLUG = "open-everywhere";
-  process.env.OE_GITHUB_INSTALLATIONS = JSON.stringify({ acme: "4242" });
   resetGitHubApp();
 
   const mintCalls: { repositories: string[]; permissions: Record<string, string> }[] = [];
@@ -414,10 +412,8 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
 
   } finally {
     globalThis.fetch = originalFetch;
-    delete process.env.OE_GITHUB_APP_ID;
+    resetSettingsForTest();
     delete process.env.GITHUB_APP_PRIVATE_KEY;
-    delete process.env.OE_GITHUB_APP_SLUG;
-    delete process.env.OE_GITHUB_INSTALLATIONS;
     resetGitHubApp();
   }
 }

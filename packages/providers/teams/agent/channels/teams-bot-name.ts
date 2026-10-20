@@ -1,4 +1,5 @@
 import { resolveTeamsAppId } from "eve/channels/teams";
+import { teamsAppCredentials } from "./teams-connector.js";
 import type { BotDisplayNameArm } from "@open-everywhere/core/agent/adapter-api.js";
 import { liveTeamsGraphRequest, type TeamsGraphRequester } from "./teams-read.js";
 
@@ -61,7 +62,7 @@ export const teamsBotDisplayName: BotDisplayNameArm = () => {
           const t = setTimeout(() => resolve(undefined), 5000);
           t.unref?.();
         });
-        return await Promise.race([resolveTeamsBotDisplayNameViaGraph(await resolveTeamsAppId(), liveTeamsGraphRequest), timeout]);
+        return await Promise.race([resolveTeamsBotDisplayNameViaGraph(await resolveTeamsAppId(teamsAppCredentials().appId), liveTeamsGraphRequest), timeout]);
       } catch {
         return undefined;
       }

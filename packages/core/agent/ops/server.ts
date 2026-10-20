@@ -336,8 +336,9 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
       description:
         "Create a surface's app from a generated manifest (github). action start: open a local page that sends the manifest to the " +
         "vendor; hand the person `openUrl` to open in a browser on THIS computer. They confirm the app on the vendor's site, and the " +
-        "vendor's keys go straight into the project's .env.local — no value is ever returned. action status: whether the person " +
-        "finished, which env names were written, and the app's install link. Refuses to overwrite env names the file already holds " +
+        "vendor's secret keys go straight into the project's .env.local — no secret is ever returned. action status: whether the person " +
+        "finished, which env names were written, the app's public ids as `settings` (setting path → value) to commit to " +
+        "agent/settings/settings.ts, and the app's install link. Refuses to overwrite env names the file already holds " +
         "unless replace is true. Needs baseUrl (the deployed host the webhook points at).",
       inputSchema: {
         surface: z.string().describe('the surface, e.g. "github"'),

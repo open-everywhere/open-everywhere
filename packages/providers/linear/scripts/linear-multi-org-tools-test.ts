@@ -4,7 +4,7 @@ import { setLinearIssueState, assignLinearIssue, addLinearIssueLabel, linearEnti
 import { resolveLinearTeamId, createLinearIssue, linearTicketCreateAdapter } from "../agent/channels/linear-create.js";
 import { _resetLinearMintCache } from "../agent/channels/linear-credentials.js";
 import { registerLinearProvider } from "../agent/register.js";
-import { defineDomain, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { defineDomain, overrideSettingsForTest, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
 
 registerLinearProvider();
 
@@ -31,7 +31,7 @@ setEnv("LINEAR_AGENT_ACCESS_TOKEN", PRIMARY_TOKEN);
 setEnv("LINEAR_ACCESS_TOKEN", undefined);
 setEnv("LINEAR_API_KEY", undefined);
 setEnv("LINEAR_API_TOKEN", undefined);
-setEnv("LINEAR_ORGANIZATION_ID", undefined);
+overrideSettingsForTest({ linear: { organizationId: "" } });
 setEnv("LINEAR_APP_SOAK_ORG_ID", SOAK_ORG);
 setEnv("LINEAR_APP_SOAK_CLIENT_ID", "soak-client-id");
 setEnv("LINEAR_APP_SOAK_CLIENT_SECRET", "soak-client-secret");
