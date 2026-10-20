@@ -32,7 +32,7 @@ import { DIRECTORY_PREVIEW_DEFAULT_PEOPLE, DIRECTORY_PREVIEW_MAX_PEOPLE, preview
 import { directoryGroupAllowlist, groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
 import { directoryGroupsOf } from "../identity/groups-codemod.js";
 import { deliverGroupsOverlay } from "../identity/groups-delivery.js";
-import { adoptEnvOperatorSecrets, ENV_ADOPT_MAX_NAMES, EnvAdoptFault, SET_BY_ENV_ADOPT, type EnvAdoptResult } from "../credentials/env-adopt.js";
+import { ENV_ADOPT_MAX_NAMES, runEnvAdoptDoor } from "../credentials/env-adopt.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -1095,22 +1095,9 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
           : `forbidden: adopt_env_secrets requires the org-wide "admin" role — an operator secret serves the whole deployment, so no domain role covers it (have: ${roles.length ? roles.join(", ") : "none"}).`);
       if (denial) return errorResult(denial);
       const overwrite = a.overwrite === true;
-      const auditResults = (results: readonly EnvAdoptResult[], fault?: unknown) =>
-        appendAudit({
-          ...orgWideWhere(a.org),
-          principalId: actor,
-          action: "admin.secret.adopt_env",
-          detail: { results: Object.fromEntries(results.map((r) => [r.name, r.outcome])), overwrite, ...(fault === undefined ? {} : auditErrorDetail(fault)) },
-        });
-      let results: readonly EnvAdoptResult[];
-      try {
-        results = await adoptEnvOperatorSecrets({ names: a.names, overwrite, setBy: `${SET_BY_ENV_ADOPT}:${actor}`, org: a.org });
-      } catch (e) {
-        if (e instanceof EnvAdoptFault) await auditResults(e.results, e);
-        return errorResult(`adopt_env_secrets failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      await auditResults(results);
-      return jsonResult({ ok: true, org: a.org, overwrite, results });
+      const outcome = await runEnvAdoptDoor({ names: a.names, overwrite, actor, org: a.org });
+      if (!outcome.ok) return errorResult(`adopt_env_secrets failed: ${outcome.message}`);
+      return jsonResult({ ok: true, org: a.org, overwrite, results: outcome.results });
     },
   );
 }

@@ -1702,6 +1702,10 @@
       "types": "./dist/agent/control/read-route.d.ts",
       "default": "./dist/agent/control/read-route.js"
     },
+    "./agent/control/secret-adopt-route.js": {
+      "types": "./dist/agent/control/secret-adopt-route.d.ts",
+      "default": "./dist/agent/control/secret-adopt-route.js"
+    },
     "./agent/control/server.js": {
       "types": "./dist/agent/control/server.d.ts",
       "default": "./dist/agent/control/server.js"
@@ -4212,6 +4216,7 @@
     "test:control-read": "NODE_NO_WARNINGS=1 tsx scripts/control-read-test.ts",
     "test:s2-ingress": "NODE_NO_WARNINGS=1 tsx scripts/s2-ingress-test.ts",
     "test:test-wake": "NODE_NO_WARNINGS=1 tsx scripts/test-wake-route-test.ts",
+    "test:secret-adopt-route": "NODE_NO_WARNINGS=1 tsx scripts/secret-adopt-route-test.ts",
     "mint:control-token": "tsx scripts/mint-control-token.ts",
     "test:describe-image": "NODE_NO_WARNINGS=1 tsx scripts/describe-image-test.ts",
     "test:post-file": "NODE_NO_WARNINGS=1 tsx scripts/post-file-audit-test.ts",

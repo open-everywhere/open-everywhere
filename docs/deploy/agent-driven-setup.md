@@ -449,12 +449,24 @@ store it wired, so a wrong target is visible at once.
 
 **A value with no local copy.** An operator secret that the deployment already holds as a host
 env var, but the operator cannot read back (on Vercel, a SENSITIVE env var reads back empty), cannot
-take either door. The deployment itself copies it: an org admin calls the control write
-`adopt_env_secrets { "org": "<org>", "names": ["SLACK_BOT_TOKEN"] }` on the deployed control plane
-(see [the control plane](../security/control-plane.md#what-the-mcp-exposes)). The reply says, per
-name, `stored`, `already-stored` or `no-env-value`, and never the value. A stored row is kept unless
-the call passes `overwrite: true`. Only operator-secret names are accepted. After a name reports
-`stored`, delete the env var on the host.
+take either door. The deployment itself copies it. The operator runs, in their own terminal:
+
+```sh
+printf %s "$INJECT_TOKEN" | npx oe secret adopt SLACK_BOT_TOKEN --url https://<deployment>
+```
+
+The command calls the deployment's route `POST /control/v1/secrets/adopt`. The
+`OE_CONTROL_INJECT_TOKENS` family gates that route, and the route answers 404 while the family is
+empty. The token goes on stdin, never on argv. An operator who holds no token from the family mints
+one and stores its `<name>:<sha256 hex>` entry with `npx oe secret set OE_CONTROL_INJECT_TOKENS`
+first, then waits 30 seconds for a running instance to read the new row. The reply says, per name, `stored`, `already-stored` or `no-env-value`, and never the value.
+A stored row is kept unless the command passes `--overwrite`. Never pass `--overwrite` with
+`OE_CONTROL_INJECT_TOKENS` after you stored it to open this door: the env list then replaces your
+entry. An injection token can write operator-secret rows, so treat it as a credential-write secret.
+Only operator-secret names are accepted. After a name reports `stored`, delete the env var on the host. The control MCP write
+`adopt_env_secrets { "org": "<org>", "names": ["SLACK_BOT_TOKEN"] }` runs the same code, but its
+plane answers 404 on a default deployment (see
+[the control plane](../security/control-plane.md#what-the-mcp-exposes)).
 
 The store is **write-only, absolutely**. There is no `secret_get` and no read-back tool anywhere —
 not for you, not for the operator, not for the deployed agent. `secret_list` returns names,
@@ -501,6 +513,7 @@ Two more things you cannot do by construction, and should not try:
 - **The deployed agent holds no secret verb at all.** These tools work because they run on the
   operator's own machine, under the operator's own environment. That is the trust root, and it is
   why the setup path is an operator-side agent rather than a hosted one. The one deployed door that
-  writes an **operator secret** is the org-admin control write `adopt_env_secrets`, and it is not the
-  agent's: it copies a value the deployment already holds in its environment, and it returns no
-  value.
+  writes an **operator secret** is the env-adopt door: the org-admin control write
+  `adopt_env_secrets` and its REST route `POST /control/v1/secrets/adopt`, which `oe secret adopt`
+  calls. It is not the agent's: it copies a value the deployment already holds in its environment,
+  and it returns no value.

@@ -69,6 +69,8 @@ const OTHERS: ReadonlyArray<{ method: string; path: string; contentType?: string
   { method: "DELETE", path: "/control/v1/mcp" },
   { method: "POST", path: "/control/v1/test/wake" },
   { method: "POST", path: "/control/v1/test/wake", contentType: "application/json", body: "not json" },
+  { method: "POST", path: "/control/v1/secrets/adopt" },
+  { method: "POST", path: "/control/v1/secrets/adopt", contentType: "application/json", body: '{"names":' },
 ];
 
 test("every control route answers a bad or unexpected request below 500, under every auth header", async () => {

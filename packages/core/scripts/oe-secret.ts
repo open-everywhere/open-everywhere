@@ -15,6 +15,7 @@ export interface SecretCliIo {
   out(line: string): void;
   err(line: string): void;
   readStdin(): Promise<string>;
+  fetch?: typeof fetch;
 }
 
 const USAGE = [
@@ -24,6 +25,9 @@ const USAGE = [
   "  oe secret set --from-file PATH          batch-load a .env-shaped KEY=VALUE file",
   "  oe secret list [--all] [--json]         names + provenance ONLY (never values)",
   "  oe secret rm <name>                     delete one stored secret",
+  "  oe secret adopt <name>... --url URL     the DEPLOYMENT copies each named env value into its own store",
+  "    [--token-file PATH] [--overwrite]     (a value you have no copy of, such as a Vercel SENSITIVE env var).",
+  "                                          Reads an OE_CONTROL_INJECT_TOKENS token from stdin (or --token-file).",
   "",
   "  --root-env PATH   read DATABASE_URL / OE_CREDENTIAL_ENCRYPTION_KEY from PATH (default ./.env.local)",
   "  --org ORG         the org the rows are keyed by (default \"default\"; a deployment declares its own in agent/identity/surfaces.ts)",
@@ -52,7 +56,7 @@ function positionals(args: readonly string[], valueFlags: readonly string[]): st
   return out;
 }
 
-const VALUE_FLAGS = ["--value-file", "--from-file", "--root-env", "--org", "--as"];
+const VALUE_FLAGS = ["--value-file", "--from-file", "--root-env", "--org", "--as", "--url", "--token-file"];
 
 function stripOneTrailingNewline(text: string): string {
   return text.endsWith("\r\n") ? text.slice(0, -2) : text.endsWith("\n") ? text.slice(0, -1) : text;
@@ -70,6 +74,15 @@ export async function runSecretCommand(args: readonly string[], io: SecretCliIo)
   const label = flagValue(rest, "--as");
   const setBy = label ? `${SET_BY_CLI}:${label}` : SET_BY_CLI;
 
+  if (verb === "adopt") {
+    try {
+      return await runAdopt(rest, io, { json, ...(org ? { org } : {}) });
+    } catch (err) {
+      io.err(`✗ oe secret adopt: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+  }
+
   loadRootOfTrustEnv(resolve(flagValue(rest, "--root-env") ?? ".env.local"));
   declareOperatorOrg(org);
 
@@ -84,7 +97,7 @@ export async function runSecretCommand(args: readonly string[], io: SecretCliIo)
       case "delete":
         return await runRemove(rest, io, { json, ...(org ? { org } : {}) });
       default:
-        io.err(`oe secret: unknown verb "${verb}". Known: set, list, rm.`);
+        io.err(`oe secret: unknown verb "${verb}". Known: set, list, rm, adopt.`);
         io.err(USAGE);
         return 2;
     }
@@ -200,6 +213,80 @@ async function runRemove(args: readonly string[], io: SecretCliIo, opts: { json:
     );
   else io.out(`· nothing to remove: no secret named "${name}" in ${target.label}.`);
   return removed ? 0 : 1;
+}
+
+const SECRET_ADOPT_PATH = "/control/v1/secrets/adopt";
+
+interface AdoptReplyResult {
+  readonly name: string;
+  readonly outcome: string;
+  readonly replaced?: boolean;
+}
+
+async function runAdopt(args: readonly string[], io: SecretCliIo, opts: { json: boolean; org?: string }): Promise<number> {
+  const names = positionals(args, VALUE_FLAGS);
+  const rawUrl = flagValue(args, "--url");
+  if (names.length === 0 || rawUrl === undefined) {
+    io.err(names.length === 0 ? "✗ oe secret adopt: name at least one operator secret." : "✗ oe secret adopt: --url <deployment URL> is required.");
+    io.err(USAGE);
+    return 2;
+  }
+  let base: URL;
+  try {
+    base = new URL(rawUrl);
+  } catch {
+    io.err("✗ oe secret adopt: --url is not a URL.");
+    return 2;
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname);
+  if (base.protocol !== "https:" && !(base.protocol === "http:" && loopback)) {
+    io.err("✗ oe secret adopt: --url must be https:// (plain http:// is accepted for a loopback host only).");
+    return 2;
+  }
+  const tokenFile = flagValue(args, "--token-file");
+  const token = stripOneTrailingNewline(tokenFile !== undefined ? readFileSync(resolve(tokenFile), "utf8") : await io.readStdin()).trim();
+  if (token.length === 0) {
+    io.err("✗ oe secret adopt: the token was empty. Pipe an OE_CONTROL_INJECT_TOKENS token on stdin, or pass --token-file PATH.");
+    return 1;
+  }
+  const overwrite = args.includes("--overwrite");
+  const target = new URL(SECRET_ADOPT_PATH, base);
+  const res = await (io.fetch ?? fetch)(target, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ names, ...(overwrite ? { overwrite: true } : {}), ...(opts.org ? { org: opts.org } : {}) }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await res.text();
+  let reply: { ok?: boolean; error?: string; results?: AdoptReplyResult[] } = {};
+  try {
+    reply = JSON.parse(text) as typeof reply;
+  } catch {
+  }
+  if (res.status === 404) {
+    io.err(
+      `✗ oe secret adopt: ${target.origin} answered 404 on ${SECRET_ADOPT_PATH}. The route is unarmed while the deployment holds no ` +
+        "OE_CONTROL_INJECT_TOKENS entry. A family stored in the last 30 seconds can take that long to reach a running instance, so try again. " +
+        "A deployment that runs a core release without this route also answers 404, and so does a wrong URL.",
+    );
+    return 1;
+  }
+  if (res.status === 401 || res.status === 403) {
+    io.err(`✗ oe secret adopt: ${target.origin} refused the token (${res.status}). Its sha256 must be listed in the deployment's OE_CONTROL_INJECT_TOKENS. A read token is refused.`);
+    return 1;
+  }
+  if (!res.ok || reply.ok !== true || !Array.isArray(reply.results)) {
+    io.err(`✗ oe secret adopt: ${target.origin} answered ${res.status}: ${reply.error ?? "no usable reply"}`);
+    return 1;
+  }
+  if (opts.json) {
+    io.out(JSON.stringify({ ok: true, deployment: target.origin, overwrite, results: reply.results }, null, 2));
+    return 0;
+  }
+  io.out(`✓ ${target.origin} handled ${reply.results.length} name(s):`);
+  for (const r of reply.results) io.out(`  ${r.name}: ${r.outcome}${r.replaced === true ? " (replaced)" : ""}`);
+  if (reply.results.some((r) => r.outcome === "stored")) io.out("  Delete the host env var of each `stored` name: while it is set, it is still the fallback.");
+  return 0;
 }
 
 function line(r: SecretWriteResult): string {

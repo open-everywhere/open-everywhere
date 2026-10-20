@@ -1,11 +1,14 @@
 import { CredentialError } from "../access/credentials.js";
+import { orgWideWhere } from "../approvals/actions.js";
+import { appendAudit } from "../audit/audit.js";
+import { auditErrorDetail } from "../audit/tool-action.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { isOperatorSecretName } from "../ops/operator-secret-roster.js";
 import { envFallbackValue } from "./operator-secret-env.js";
 import { SECRET_STORE_ENV_KEYS, secretNameRefusal, setOperatorSecret } from "./operator-secrets.js";
 
-export const SET_BY_ENV_ADOPT = "operator:env-adopt";
+const SET_BY_ENV_ADOPT = "operator:env-adopt";
 
 export const ENV_ADOPT_MAX_NAMES = 64;
 
@@ -38,7 +41,7 @@ function envAdoptRefusal(names: readonly string[]): string | undefined {
   return undefined;
 }
 
-export class EnvAdoptFault extends CredentialError {
+class EnvAdoptFault extends CredentialError {
   constructor(
     message: string,
     readonly results: readonly EnvAdoptResult[],
@@ -55,7 +58,7 @@ export interface AdoptEnvSecretsInput {
   readonly env?: NodeJS.ProcessEnv;
 }
 
-export async function adoptEnvOperatorSecrets(input: AdoptEnvSecretsInput): Promise<readonly EnvAdoptResult[]> {
+async function adoptEnvOperatorSecrets(input: AdoptEnvSecretsInput): Promise<readonly EnvAdoptResult[]> {
   const refusal = envAdoptRefusal(input.names);
   if (refusal) throw new CredentialError(refusal);
   const org = input.org ?? deploymentOrg();
@@ -87,4 +90,48 @@ export async function adoptEnvOperatorSecrets(input: AdoptEnvSecretsInput): Prom
 
 function withoutValue(text: string, value: string): string {
   return text.split(value).join("[redacted]");
+}
+
+export type EnvAdoptDoorOutcome =
+  | { readonly ok: true; readonly results: readonly EnvAdoptResult[] }
+  | { readonly ok: false; readonly refused: true; readonly message: string }
+  | { readonly ok: false; readonly refused: false; readonly message: string };
+
+export async function runEnvAdoptDoor(input: {
+  readonly names: readonly string[];
+  readonly overwrite: boolean;
+  readonly actor: string;
+  readonly org: string;
+  readonly env?: NodeJS.ProcessEnv;
+}): Promise<EnvAdoptDoorOutcome> {
+  const auditResults = (results: readonly EnvAdoptResult[], fault?: unknown) =>
+    appendAudit({
+      ...orgWideWhere(input.org),
+      principalId: input.actor,
+      action: "admin.secret.adopt_env",
+      detail: {
+        results: Object.fromEntries(results.map((r) => [r.name, r.outcome])),
+        overwrite: input.overwrite,
+        ...(fault === undefined ? {} : auditErrorDetail(fault)),
+      },
+    });
+  let results: readonly EnvAdoptResult[];
+  try {
+    results = await adoptEnvOperatorSecrets({
+      names: input.names,
+      overwrite: input.overwrite,
+      setBy: `${SET_BY_ENV_ADOPT}:${input.actor}`,
+      org: input.org,
+      ...(input.env === undefined ? {} : { env: input.env }),
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (e instanceof EnvAdoptFault) {
+      await auditResults(e.results, e);
+      return { ok: false, refused: false, message };
+    }
+    return { ok: false, refused: e instanceof CredentialError, message };
+  }
+  await auditResults(results);
+  return { ok: true, results };
 }

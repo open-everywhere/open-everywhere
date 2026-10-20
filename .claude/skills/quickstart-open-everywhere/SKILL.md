@@ -46,13 +46,21 @@ that repository ships no `env:pipe` script. Everything else is the same.
   var, and the user cannot read the value back. On Vercel a SENSITIVE env var reads back empty:
   `vercel env pull` writes `[SENSITIVE]`. Then `npx oe env set` has no value to take, and
   `secret_set` has nothing to move. Do not tell the user to set a value they cannot read. The
-  deployment copies it itself: an org admin calls the control write
-  `adopt_env_secrets { "org": "<org>", "names": ["SLACK_BOT_TOKEN"] }` on the deployed control
-  plane, under its own org-admin auth. The deployment must run 0.9.0 or later. The reply gives each
-  name as `stored`, `already-stored` or `no-env-value`, and never the value. A stored row stays
-  unless the call passes `overwrite: true`. Only operator-secret names are accepted, never
-  `DATABASE_URL` or `OE_CREDENTIAL_ENCRYPTION_KEY`. After a name reports `stored`, tell the user to
-  delete that env var on the host.
+  deployment copies it itself. The user runs, in their own terminal,
+  `npx oe secret adopt SLACK_BOT_TOKEN --url https://<deployment>` with a token from the
+  deployment's `OE_CONTROL_INJECT_TOKENS` family on stdin. The command calls the deployment's
+  `POST /control/v1/secrets/adopt` route, and that route answers 404 while the family is empty. If
+  the user holds no token from it, they mint one and store its `<name>:<sha256 hex>` entry with
+  `npx oe secret set OE_CONTROL_INJECT_TOKENS` first, then wait 30 seconds for a running instance
+  to read the new row. An injection token can write operator-secret rows, so treat it as a
+  credential-write secret. The deployment must run 0.9.0 or later. The reply gives each name as
+  `stored`, `already-stored` or `no-env-value`, and never the value. A stored row stays unless the
+  command passes `--overwrite`. Never pass `--overwrite` with `OE_CONTROL_INJECT_TOKENS` after the
+  user stored it to open this door: the env list then replaces their entry. Only operator-secret
+  names are accepted, never `DATABASE_URL` or `OE_CREDENTIAL_ENCRYPTION_KEY`. After a name reports
+  `stored`, tell the user to delete that env var on the host. The control MCP write
+  `adopt_env_secrets { "org": "<org>", "names": ["SLACK_BOT_TOKEN"] }` runs the same code, but its
+  plane answers 404 on a default deployment, so name the command.
 - **If an ops tool answers "the app now runs @open-everywhere/core X; this ops server runs Y"**, the
   server predates an upgrade. Ask the user to restart it (`/mcp`, then reconnect
   `open-everywhere-ops`) and call again. Never work around it: a stale server serves old code. A

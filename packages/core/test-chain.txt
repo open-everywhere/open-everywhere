@@ -549,3 +549,4 @@ test:exit-kit
 test:budget-guest
 test:discord-dm-card
 test:list-fixture
+test:secret-adopt-route
