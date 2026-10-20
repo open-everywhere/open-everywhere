@@ -72,4 +72,43 @@ ok(!canReceiveJudgedWake(nativeDmCtx), "🔴 OPE-771: a Discord DM session is fa
 ok(!canReceiveJudgedWake(nativeGroupDmCtx), "🔴 OPE-771: a Discord group-DM session is false for the same reason — `isDm` covers channel_type 3 too");
 ok(canReceiveJudgedWake(nativeChannelCtx), "OPE-771: a Discord guild channel/thread session is true — it mixes raw `direct` (on @mention) with judged `thread-follow`/`name-drop`, so it is not 'only ever direct'");
 
-console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming + message permalink + native member check + canReceiveJudgedWake DM/channel split, composed core + bundle)`);
+{
+  const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const { buildResolveRequest } = await import("@open-everywhere/core/agent/access/request.js");
+  const { resolveAccess } = await import("@open-everywhere/core/agent/access/resolver.js");
+  const { defineMcpServers, mcpServerBindings, mcpServerBundles, mcpServerConnectorCredentials } = await import("@open-everywhere/core/agent/connections/mcp-servers.js");
+  const { defineSurface, registerSurfaces } = await import("@open-everywhere/core/agent/identity/trust.js");
+  const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/settings/settings.js");
+  const servers = defineMcpServers([{ name: "fullstory", url: "https://mcp.fullstory.example/mcp", description: "FullStory sessions." }]);
+  const bundles = mcpServerBundles(servers);
+  const bindings = mcpServerBindings(servers);
+  const catalogues = mcpServerConnectorCredentials(servers);
+  registerConfig({
+    loadBundles: () => bundles,
+    loadBindings: () => bindings,
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  const dmCtx = {
+    channel: { kind: "discord" },
+    session: { auth: { current: { authenticator: "discord", principalId: "U_dm", principalType: "discord-user", attributes: { channel_id: "DM1", channel_type: "1", user_id: "U_dm" } } } },
+  } as unknown as BindableContext;
+  const reach = () => resolveAccess(buildResolveRequest(dmCtx), bundles, bindings, {}, catalogues).connectors;
+  const unvouched = buildResolveRequest(dmCtx);
+  ok(unvouched.mode === "dm" && unvouched.callerTrust === "external", "🔴 OPE-2415: an unvouched Discord DM caller carries callerTrust external through the registered mapper");
+  ok(reach().length === 0, "🔴 OPE-2415: …and reaches no server granted to oe:everyone");
+  registerSurfaces([defineSurface({ key: "discord/G7", trust: "internal" })]);
+  ok(reach().length === 0, "OPE-2415: a GUILD vouch does not cover a DM — the DM's workspace is the caller's own user id");
+  registerSurfaces([defineSurface({ key: "discord/U_dm", trust: "internal" })]);
+  ok(reach().join() === "fullstory", "OPE-2415: a `discord/<userId>` vouch admits that DM caller to oe:everyone");
+  registerSurfaces([]);
+  overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
+  ok(reach().join() === "fullstory", "OPE-2415: identity.blanketTrust internal admits an unvouched Discord DM caller");
+  overrideSettingsForTest({ identity: { blanketTrust: "none" } });
+  ok(reach().length === 0, "OPE-2415: with the blanket vouch gone, the caller is external again");
+}
+
+console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming + message permalink + native member check + canReceiveJudgedWake DM/channel split + oe:everyone DM trust, composed core + bundle)`);

@@ -13,6 +13,7 @@ import {
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
 import { EVERYONE_GROUP } from "../identity/everyone-group.js";
+import type { Trust } from "../identity/binding.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import { expandConnectorGrant, type ConnectorCredentials, type ResolvedConnectorCredential } from "./connector-credentials.js";
 
@@ -26,6 +27,7 @@ export interface ResolveRequest {
   readonly domains?: readonly string[];
   readonly principalId?: string;
   readonly groups?: readonly string[];
+  readonly callerTrust?: Trust;
   readonly principalLinkSets?: readonly string[];
   readonly memberPlane?: readonly string[];
   readonly ownAccountAsk?: { readonly connector: string };
@@ -217,7 +219,7 @@ export function resolveAccess(
         callerKey !== undefined &&
         binding.scope.level === "group" &&
         binding.scope.group !== undefined &&
-        (callerGroups.has(binding.scope.group) || binding.scope.group === EVERYONE_GROUP) &&
+        (binding.scope.group === EVERYONE_GROUP ? req.callerTrust === "internal" : callerGroups.has(binding.scope.group)) &&
         (binding.scope.platform === undefined || binding.scope.platform === req.platform)
       ) {
         specificity = SPECIFICITY.group;

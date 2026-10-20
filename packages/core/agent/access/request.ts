@@ -38,6 +38,7 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
     domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: b.domainSurface ?? p.surface }),
     principalId: acting,
     groups: groupsForPrincipal(getConfig().loadGroups?.() ?? [], acting === undefined ? undefined : tryPrincipalKey(p.platform, p.workspace, acting)),
+    ...(b.mode === "dm" ? { callerTrust: b.trust } : {}),
     ...(memberPlane.length === 0 ? {} : { memberPlane }),
   };
 }

@@ -289,9 +289,10 @@ person in chat cannot add one.
    posts a "Connect my account" card, and they sign in with their own account once. A channel
    gets nothing until an admin grants the server's `workspace-oauth` credential (the org's own
    account) on a bundle in `agent/access/bundles.ts`.
-5. Say who "each person" is: every account that can DM the agent, an external one included (a
-   Slack Connect user, a Discord user who shares a server with the bot). If external people can
-   DM the agent, offer to narrow the entry with `people: { groups: ["<group>"] }`.
+5. Say who "each person" is: every INTERNAL person who can DM the agent. An external account (a
+   Slack Connect user, a Slack guest, a Discord user whom the deployment does not vouch) does not
+   get the server. To give it to a named external person, or to narrow it, offer
+   `people: { groups: ["<group>"] }` with a group that lists those people.
 
 With no server declared, nothing changes: the build writes no connection for one, and only the
 shipped connections (Notion) stay mounted.

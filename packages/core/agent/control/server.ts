@@ -162,13 +162,14 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "Preview effective access",
       description:
-        'Resolve what a given scope can reach — reachable hosts, connections (secret NAMES only), repos, plugins, host-side connectors, and the instruction precedence stack. The same resolution the running agent uses. No secret values. Scope-gated: for a channel or mpim ask, an org-wide "admin" previews any scope and a "domain:<name>" role only a platform/workspace/channel triple that resolves to its own domain, with an omitted segment taking its default (local/dev/default) for the gate as well as for the answer. A mode="dm" ask answers about the PERSON named by principalId, not about the triple, and no domain covers a person — so it needs the org-wide "admin" role. Read-only.',
+        'Resolve what a given scope can reach — reachable hosts, connections (secret NAMES only), repos, plugins, host-side connectors, and the instruction precedence stack. The same resolution the running agent uses. No secret values. Scope-gated: for a channel or mpim ask, an org-wide "admin" previews any scope and a "domain:<name>" role only a platform/workspace/channel triple that resolves to its own domain, with an omitted segment taking its default (local/dev/default) for the gate as well as for the answer. A mode="dm" ask answers about the PERSON named by principalId, not about the triple, and no domain covers a person — so it needs the org-wide "admin" role. A mode="dm" ask answers as an EXTERNAL caller unless callerTrust is "internal", because only an internal caller is in the built-in oe:everyone group. Read-only.',
       inputSchema: {
         platform: z.string().optional(),
         workspace: z.string().optional(),
         channel: z.string().optional(),
         mode: SESSION_MODE.optional(),
         principalId: z.string().optional(),
+        callerTrust: z.enum(["internal", "external"]).optional(),
       },
     },
     (args) =>

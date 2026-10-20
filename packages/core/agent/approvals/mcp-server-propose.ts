@@ -78,7 +78,7 @@ export function validateMcpServerProposal(declaration: McpServerDeclaration, dec
 
 export function mcpServerReachLine(d: McpServerDeclaration): string {
   return d.people === undefined
-    ? "⚠ Reach: EVERY person who can DM the agent, an external account included (a Slack Connect user, a guest), each as themselves through their own sign-in. Add `people: { groups: [...] }` to the entry to narrow it."
+    ? "⚠ Reach: EVERY internal person who can DM the agent, each as themselves through their own sign-in. An external account (a Slack Connect user, a guest) gets it only through a person-group that lists them. Add `people: { groups: [...] }` to the entry to narrow it."
     : `Reach: only the person-group(s) ${d.people.groups.map((g) => `\`${inlineForReview(g)}\``).join(", ")}, each person as themselves, in their own DM.`;
 }
 

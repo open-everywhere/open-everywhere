@@ -29,7 +29,7 @@ export function isSecretRef(ref: string): boolean {
 
 export function mcpServerProposeAudienceRefusal(binding: Pick<SurfaceBinding, "trust">, opts: { readonly nonMember: boolean; readonly actingPrincipal: string | undefined }): string | undefined {
   if (binding.trust === "external") {
-    return "this conversation is external (a shared channel, a guest or an outside account), and a declared MCP server reaches every person who can DM the agent — so it can't be proposed from here. Ask an internal person to propose it, or an admin to add it to agent/access/mcp-servers.ts by hand.";
+    return "this conversation is external (a shared channel, a guest or an outside account), and a declared MCP server reaches every internal person who can DM the agent — so it can't be proposed from here. Ask an internal person to propose it, or an admin to add it to agent/access/mcp-servers.ts by hand.";
   }
   if (opts.nonMember) {
     return "a message from someone outside the workspace woke this turn, so I can't propose a new MCP server from it. Ask again in a conversation with members only.";
@@ -45,7 +45,7 @@ const HTTPS_URL = z.string().url().refine((u) => u.startsWith("https://"), "must
 export default defineTool({
   description:
     "Propose setting up a vendor's hosted MCP server for this deployment — the answer to \"set up FullStory\" or \"connect <vendor>\". Research it FIRST with web_search and web_fetch: find the vendor's OWN MCP endpoint in its docs, then read its OAuth metadata (/.well-known/oauth-protected-resource on the MCP URL, then /.well-known/oauth-authorization-server on the server it names). A `registration_endpoint` there means dynamic client registration: omit `signIn` (or pass only `scopes`). No registration endpoint means the vendor issues a static client: pass `signIn.mode: \"static-confidential\"` with its endpoints, the public client id and a secret REF like \"db:<vendor>:oauth-client-secret\" — never a secret value. " +
-    "This does NOT set anything up. It posts a card; approving it opens a pull request on the deployment's config repo that adds ONE entry to agent/access/mcp-servers.ts, for an admin to merge. The PR names the doc URLs you pass, so pass the pages you actually read, and every vendor-side step a person must do by hand. A merged entry reaches EVERY person who can DM the agent unless `people.groups` narrows it — say so to the person. Refused in an external or guest conversation. The posted card IS the reply — do not add narration after this call.",
+    "This does NOT set anything up. It posts a card; approving it opens a pull request on the deployment's config repo that adds ONE entry to agent/access/mcp-servers.ts, for an admin to merge. The PR names the doc URLs you pass, so pass the pages you actually read, and every vendor-side step a person must do by hand. A merged entry reaches EVERY internal person who can DM the agent unless `people.groups` narrows it — say so to the person. Refused in an external or guest conversation. The posted card IS the reply — do not add narration after this call.",
   inputSchema: z.object({
     name: z.string().min(1).describe('The connection slug: lowercase, a letter first, e.g. "fullstory".'),
     url: HTTPS_URL.describe("The vendor's hosted MCP endpoint, from the vendor's own docs. No query string."),
@@ -69,7 +69,7 @@ export default defineTool({
       ])
       .optional()
       .describe("Omit for dynamic client registration with no scopes."),
-    peopleGroups: z.array(z.string().min(1)).optional().describe("Person-groups to narrow the server to. Omit to give it to every person who can DM the agent."),
+    peopleGroups: z.array(z.string().min(1)).optional().describe("Person-groups to narrow the server to. Omit to give it to every internal person who can DM the agent."),
     docUrls: z.array(HTTPS_URL).min(1).max(8).describe("The vendor documentation pages you read to get the URL and the sign-in. The reviewer checks the entry against them."),
     vendorSteps: z.array(z.string().min(1)).max(8).optional().describe("Steps a person must do in the vendor's console, e.g. \"Create an OAuth app in Settings → Integrations\"."),
     reason: z.string().optional().describe("Why this is wanted, for the PR body."),

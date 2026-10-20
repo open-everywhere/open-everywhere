@@ -198,7 +198,7 @@ console.log("§3 the PR");
   ok(args.docUrls.every((u) => body.includes(u)), "§3 the PR body names every vendor doc URL the agent used");
   ok(body.includes("Create an OAuth app in Settings → Integrations"), "§3 …the vendor-side step the agent named");
   ok(body.includes("/oauth/v1/callback") && body.includes("npx oe secret set db:acme:oauth-client-secret"), "§3 …and, for a static client, the redirect URI and the secret-store command");
-  ok(body.includes("EVERY person who can DM the agent"), "§3 …and says a merged entry reaches every person who can DM the agent");
+  ok(body.includes("EVERY internal person who can DM the agent") && body.includes("only through a person-group that lists them"), "§3 …and says a merged entry reaches every internal person who can DM the agent, and an external one only through a group");
   ok(mcpServerReachLine({ ...FULLSTORY, people: { groups: ["support"] } }).includes("`support`"), "§3 a narrowed entry says which group it reaches");
   ok(mcpServerSetupSteps({ declaration: FULLSTORY, vendorSteps: [] }).length === 0, "§3 a dynamic-registration server adds no client steps");
   network = 0;

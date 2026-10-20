@@ -50,7 +50,7 @@ export function assertGroupsValid(groups: readonly Group[]): void {
     if (!g.name || g.name.trim().length === 0) {
       bad.push(`  ${where} has an empty name — a group's name is the id every binding references`);
     } else if (g.name === EVERYONE_GROUP) {
-      bad.push(`  group "${g.name}" is reserved — it is the built-in "every person in their own DM" group (identity/groups.ts EVERYONE_GROUP), and its membership is computed, never listed. Rename this group.`);
+      bad.push(`  group "${g.name}" is reserved — it is the built-in "every internal person in their own DM" group (identity/groups.ts EVERYONE_GROUP), and its membership is computed, never listed. Rename this group.`);
     } else if (seen.has(g.name)) {
       bad.push(`  group name "${g.name}" is defined more than once (bindings reference groups by name — names must be unique)`);
     } else {

@@ -108,9 +108,9 @@ const GROUPS: Group[] = [{ name: "sales", members: ["slack/T1/USALES"] }];
 console.log("§3 who reaches it");
 {
   const resolve = (req: ResolveRequest) => resolveAccess(req, BUNDLES, BINDINGS, {}, CATALOGUES);
-  const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" };
+  const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1", callerTrust: "internal" };
   const inDm = resolve(dm);
-  ok(inDm.connectors.includes("fullstory"), "§3 🔴 in a DM, any attested caller reaches a declared server");
+  ok(inDm.connectors.includes("fullstory"), "§3 🔴 in a DM, an attested internal caller reaches a declared server");
   ok(inDm.connectorCredentials["fullstory"]?.principal === "user", "§3 …as THEMSELVES: the bound credential is user-principal");
   ok(!inDm.connectors.includes("acme"), "§3 a server narrowed to a group is not reached by a caller outside it");
   ok(resolve({ ...dm, groups: ["sales"] }).connectors.includes("acme"), "§3 …and is reached by a caller inside it");
@@ -119,6 +119,18 @@ console.log("§3 who reaches it");
   const { principalId: _p, ...anonymous } = dm;
   ok(resolve(anonymous).connectors.length === 0, "§3 🔴 a DM with no attested caller reaches none — oe:everyone is never 'anybody'");
   ok(resolve({ ...dm, groups: [EVERYONE_GROUP] , mode: "channel" }).connectors.length === 0, "§3 naming oe:everyone in the request opens no channel");
+
+  const external: ResolveRequest = { ...dm, principalId: "UEXT", callerTrust: "external" };
+  ok(resolve(external).connectors.length === 0, "§3 🔴 an EXTERNAL DM caller (a Slack Connect user, a guest) reaches no declared server by default");
+  const { callerTrust: _t, ...unstated } = dm;
+  ok(resolve(unstated).connectors.length === 0, "§3 🔴 a DM request with no caller trust fails closed: it reaches none");
+  ok(resolve({ ...dm, callerTrust: "Internal" as never }).connectors.length === 0, "§3 🔴 only the exact verdict `internal` admits — an unknown value reaches none");
+  ok(resolve({ ...external, groups: [EVERYONE_GROUP] }).connectors.length === 0, "§3 🔴 an external caller who CARRIES oe:everyone in its groups is still not in it");
+  ok(resolve({ ...dm, platform: "discord", workspace: "G1", principalId: "D9", callerTrust: "external" }).connectors.length === 0, "§3 🔴 an external caller on another platform reaches none (the real Discord mapper's verdict: scripts/discord-provider-integration-test.ts)");
+  ok(resolve({ ...external, groups: ["sales"] }).connectors.join() === "acme", "§3 an external caller in a DECLARED group reaches that group's server, and only it");
+  const named = resolveAccess(external, BUNDLES, [...BINDINGS, { bundle: "mcp-server:fullstory", scope: { level: "principal", principal: "slack/T1/UEXT" } }], {}, CATALOGUES);
+  ok(named.connectors.includes("fullstory"), "§3 …and a principal binding that names the external caller grants them the server on purpose");
+  ok(resolve({ ...dm, mode: "channel", channel: "C1", callerTrust: "internal" }).connectors.length === 0, "§3 an internal trust verdict opens no channel either");
 }
 
 console.log("§4 the registries");
@@ -226,7 +238,7 @@ console.log("§7 a personal-surface server (OPE-2421)");
   const all = [...bundles, botSlack];
   const allBindings = [...bindings, { bundle: "bot-slack", scope: { level: "principal" as const, principal: "slack/T1/U1" } }];
   const resolve = (req: ResolveRequest) => resolveAccess(req, all, allBindings, {}, catalogues);
-  const slackDm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" };
+  const slackDm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1", callerTrust: "internal" };
   const inDm = resolve(slackDm);
   ok(inDm.connectors.includes("slack-as-you") && inDm.connectorCredentials["slack-as-you"]?.principal === "user", "§7 🔴 a Slack DM reaches it, as the person");
   ok(
@@ -234,6 +246,7 @@ console.log("§7 a personal-surface server (OPE-2421)");
     "§7 🔴 it rides the connector plane: the DM's egress keeps the bot's Slack key and gains no Slack MCP host",
   );
   ok(!resolve({ ...slackDm, platform: "discord", workspace: "G1" }).connectors.includes("slack-as-you"), "§7 🔴 a DM on ANOTHER platform does not reach it");
+  ok(!resolve({ ...slackDm, callerTrust: "external" }).connectors.includes("slack-as-you"), "§7 🔴 an external Slack DM partner (a Slack Connect user, a guest) does not reach it (OPE-2415)");
   ok(!resolve({ ...slackDm, mode: "channel", channel: "C1" }).connectors.includes("slack-as-you"), "§7 🔴 a Slack channel does not reach it");
   ok(!resolve({ ...slackDm, mode: "mpim", channel: "G2" }).connectors.includes("slack-as-you"), "§7 🔴 a Slack group DM does not reach it");
   const { CREDENTIAL_GRANT_ROLES } = await import("../agent/access/credential-grant.js");
@@ -306,6 +319,38 @@ console.log("§7 a personal-surface server (OPE-2421)");
 
   const { declaredMcpServers } = await import("../agent/connections/mcp-servers.js");
   ok(declaredMcpServers().map((s) => s.name).join() === "slack-as-you", "§7 defineMcpServers records the list the app declared, for a provider's ops plane");
+}
+
+console.log("§8 the seam: the DM binding's trust reaches the resolver (OPE-2415)");
+{
+  const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
+  registerSlackFixtureMapper();
+  const { registerConfig } = await import("../agent/access/config.js");
+  registerConfig({
+    loadBundles: () => BUNDLES,
+    loadBindings: () => BINDINGS,
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadGroups: () => GROUPS,
+  });
+  const { buildResolveRequest } = await import("../agent/access/request.js");
+  const ctx = (attrs: Record<string, string>, user = "U1"): never =>
+    ({
+      channel: { kind: "slack" },
+      session: { auth: { current: { attributes: { team_id: "T1", channel_id: "D1", channel_type: "im", user_id: user, ...attrs }, principalId: user, principalType: "slack-user" } } },
+    }) as never;
+  const reach = (c: never) => resolveAccess(buildResolveRequest(c), BUNDLES, BINDINGS, {}, CATALOGUES);
+  const internalReq = buildResolveRequest(ctx({ dm_partner_trust: "internal" }));
+  ok(internalReq.callerTrust === "internal", "§8 a verified internal Slack DM partner carries callerTrust internal");
+  ok(reach(ctx({ dm_partner_trust: "internal" })).connectors.includes("fullstory"), "§8 🔴 …and reaches the declared server through the real request builder");
+  ok(reach(ctx({ dm_partner_trust: "external" }, "UEXT")).connectors.length === 0, "§8 🔴 a verified EXTERNAL Slack DM partner reaches none");
+  ok(reach(ctx({}, "UEXT")).connectors.length === 0, "§8 🔴 an UNVERIFIED DM partner fails closed to external and reaches none");
+  ok(reach(ctx({ dm_partner_trust: "external" }, "USALES")).connectors.join() === "acme", "§8 an external partner listed in a declared group reaches that group's server only");
+  const channelReq = buildResolveRequest(ctx({ channel_type: "channel", channel_id: "C1", trust_checked: "true" }));
+  ok(channelReq.callerTrust === undefined, "§8 a channel request carries no caller trust: a group binding never resolves there");
 }
 
 console.log(`\n✓ mcp-servers: ${passed} assertions passed`);

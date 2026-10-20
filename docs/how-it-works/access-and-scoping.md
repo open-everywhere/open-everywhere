@@ -193,16 +193,32 @@ Being in several groups at once is normal and expected.
 > group or `principal` binding, as before.
 
 **The built-in group `oe:everyone`** (OPE-2414) is the one group nobody declares and nobody
-lists. The resolver matches it in a DM for any caller with an acting principal, and never in a
-channel, a group DM or a fire. It is how a server declared in `agent/access/mcp-servers.ts` reaches
-every person's DM as that person ([Connectors](../extending/connectors.md#declare-an-mcp-server-in-your-app)).
-🔴 "Every person" means every account that can DM the agent. The resolver has no trust input, so
-`oe:everyone` also matches an external account: a Slack Connect user, a Discord user who shares a
-server with the bot. Such a person reaches only what their own account on the vendor sees, through
-their own sign-in, but the sign-in runs through the deployment's OAuth client. Where external people
-can DM the agent, narrow each server with `people: { groups: [...] }`. A declared group may not take
-the name, a `group` binding may name it without a registry entry, and the broad-grant lint calls a
-credentialed `oe:everyone` binding broad, so it needs `allowBroad`.
+lists. It holds every **internal** person. The resolver matches it in a DM only for a caller with an
+acting principal whose DM trust is `internal`, and never in a channel, a group DM or a fire. It is
+how a server declared in `agent/access/mcp-servers.ts` reaches every internal person's DM as that
+person ([Connectors](../extending/connectors.md#declare-an-mcp-server-in-your-app)).
+
+🔴 **An external account is not in `oe:everyone`** (OPE-2415). The posture is "internal lax,
+external locked". The resolver reads the DM's own trust verdict, which asks whether the partner is
+an internal member and fails closed to `external` ([DM partner trust](./identity.md#dm-partner-trust)).
+So a Slack Connect user, a Slack guest and an account from an undeclared workspace stay out. A
+lookup that failed also stays out, with one exception: a workspace or Grid `trust: "internal"`
+declaration, or `identity.blanketTrust: "internal"`, raises a DM partner whose lookup failed. That
+partner is then in `oe:everyone`. Discord has no workspace membership, so a Discord DM is internal
+only where the deployment vouches it: a `trust: "internal"` entry on `discord/<userId>` in
+`agent/identity/surfaces.ts` (a DM's workspace is the caller's own user id, so a guild entry does
+not cover it), or `identity.blanketTrust: "internal"`. Without one, a Discord user who shares a
+server with the bot is external. A request that carries `oe:everyone` in its `groups` does not make the caller a
+member: only the trust verdict does.
+
+**To grant an external person on purpose**, name them. List their account in a declared group and
+bind that group (for a declared MCP server, name the group in `people: { groups: [...] }`), or bind
+the bundle at `principal` scope to their key. A declared group and a `principal` binding match
+whatever the caller's trust, so the grant is a reviewed line in Git, never a side effect of a wide
+default. A declared group may not take the name `oe:everyone`, a `group` binding may name it without
+a registry entry, and the broad-grant lint calls a credentialed `oe:everyone` binding broad, so it
+needs `allowBroad`. `access_preview` and `scripts/access-preview.ts` answer a DM ask as an external
+caller unless the ask sets `callerTrust: "internal"` (`--caller-trust internal`).
 
 **Both personal levels are self-serve-able.** The [access-request](./access-requests.md) flow
 reaches `principal` and `group` scopes as well as channels: a person can ask for a connector in

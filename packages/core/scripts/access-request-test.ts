@@ -415,6 +415,11 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
     { bundle: "mine", scope: { level: "group", group: "payments-team" } },
   ]);
   ok(withGroupGrant.connectors.includes("asana"), "group access: what the GROUP is bound to does");
+  const everyone = groupEffectiveAccess("oe:everyone", "slack", "T1", personalBundles, [
+    ...personalBindings,
+    { bundle: "mine", scope: { level: "group", group: "oe:everyone" } },
+  ]);
+  ok(everyone.connectors.includes("asana"), "group access: what oe:everyone is bound to does, so a duplicate grant is not planned");
 }
 
 const kind = actionKind("access.request");

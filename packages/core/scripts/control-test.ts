@@ -95,6 +95,25 @@ ok("accessView connectors is an array", Array.isArray(access.connectors));
     registerConfig(saved);
   }
 }
+{
+  const saved = getConfig();
+  const { defineMcpServers, mcpServerBindings, mcpServerBundles, mcpServerConnectorCredentials } = await import("../agent/connections/mcp-servers.js");
+  const servers = defineMcpServers([{ name: "fullstory", url: "https://mcp.fullstory.example/mcp", description: "FullStory sessions." }]);
+  registerConfig({
+    ...saved,
+    loadBundles: () => mcpServerBundles(servers),
+    loadBindings: () => mcpServerBindings(servers),
+    loadConnectorCredentials: () => mcpServerConnectorCredentials(servers),
+  });
+  try {
+    const q = { platform: "slack", workspace: "T1", channel: "D1", mode: "dm" as const, principalId: "U1" };
+    ok("access_preview: a DM ask with callerTrust internal shows the server granted to oe:everyone", (await accessView({ ...q, callerTrust: "internal" })).connectors.includes("fullstory"));
+    ok("access_preview: 🔴 a DM ask without callerTrust answers as an external caller and shows none", (await accessView(q)).connectors.length === 0);
+    ok("access_preview: 🔴 a DM ask with callerTrust external shows none", (await accessView({ ...q, callerTrust: "external" })).connectors.length === 0);
+  } finally {
+    registerConfig(saved);
+  }
+}
 for (const c of access.connections) {
   ok(`connection ${c.id} exposes only a secretRef name, never a value`, !("secret" in c) && !("token" in c) && !("authorization" in c));
 }

@@ -31,7 +31,7 @@ function tenantClaims(domains: readonly Domain[]): Map<string, readonly string[]
 
 export function groupWidth(group: Group | undefined, name?: string): string | undefined {
   if (name === EVERYONE_GROUP) {
-    return `"${EVERYONE_GROUP}" is the built-in group of EVERY person who DMs the agent — every one of them gets this capability in their own DM`;
+    return `"${EVERYONE_GROUP}" is the built-in group of EVERY internal person who DMs the agent — every one of them gets this capability in their own DM`;
   }
   if (!group) return undefined;
   const sets = group.members.filter(isLinkSetMember).length;

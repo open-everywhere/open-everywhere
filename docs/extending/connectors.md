@@ -60,16 +60,24 @@ Then run `npx oe build` and commit the diff. What the entry gives you:
   clientSecretRef, bodyEncoding }`. `clientSecretRef` names the secret in the credential store,
   never its value. `defineMcpServers` refuses a literal `clientSecret`, a non-`https` URL, and a URL
   with a user-info part or a query string, because a token in a URL is a secret in Git.
-- **Each person's own account, in their own DM.** Core derives a `user-oauth` credential and a
-  bundle that grants it at the built-in `oe:everyone` person-group. The resolver matches that group
-  only in a DM with an attested caller, so every person reaches the server as THEMSELVES. A person
+- **Each internal person's own account, in their own DM.** Core derives a `user-oauth` credential
+  and a bundle that grants it at the built-in `oe:everyone` person-group. The resolver matches that
+  group only in a DM with an attested caller whose DM trust is `internal`, so every internal person
+  reaches the server as THEMSELVES. A person
   who has not signed in gets the "Connect my account" card on their first call. This needs
   `connectors.userPrincipal`, which ships on: with it off, a DM's `user-oauth` binding is refused,
   so a declared server works in no DM.
-- 🔴 **"Every person" includes external accounts.** The resolver has no trust input, so a Slack
-  Connect user or a Discord user who shares a server with the bot also matches `oe:everyone`. They
-  reach only what their own vendor account sees, but they sign in through your OAuth client. Where
-  external people can DM the agent, narrow the entry with `people: { groups: ["<group>"] }`. A
+- 🔴 **An external account does not get the server by default** (OPE-2415). The resolver reads the
+  DM's trust verdict, which fails closed to `external`, so a Slack Connect user, a Slack guest and an
+  unvouched Discord user (one who only shares a server with the bot) are not in `oe:everyone`. They
+  do not sign in through your OAuth client unless you grant them on purpose. A workspace or Grid
+  `trust: "internal"` declaration, or `identity.blanketTrust: "internal"`, raises a DM partner whose
+  lookup failed, so that partner is in `oe:everyone`. See
+  [the built-in group](../how-it-works/access-and-scoping.md#person-groups-grouping-people-not-rooms) for what counts as internal on each
+  platform.
+- **To grant an external person, or to narrow the server,** name person-groups:
+  `people: { groups: ["<group>"] }`. A declared group matches whatever the caller's trust, so a group
+  that lists an external account gives that person the server, as a reviewed line in Git. A
   group that is broad (a link-set member, or 8+ members) also needs
   `people: { groups: [...], allowBroad: "<reason>" }`. `allowBroad` applies to every group in
   the entry, and the lint refuses it on a narrow group. To give the server to a broad group and a
@@ -116,8 +124,9 @@ never applies the change itself, and nothing is set up until the merge.
   For a static client, that is the redirect URI to register
   (`https://<host>/oauth/v1/callback`) and the `npx oe secret set <clientSecretRef>` command to run
   after the merge.
-- 🔴 The PR and the card both say that a merged entry reaches every person who can DM the agent,
-  unless the entry names `people.groups`.
+- 🔴 The PR and the card both say that a merged entry reaches every internal person who can DM the
+  agent, unless the entry names `people.groups`, and that an external account gets it only through
+  a group that lists them.
 - The tool refuses an external conversation (a shared channel, a guest, an outside account), a turn
   that a non-member's message woke, and a routine fire. A message the worker reads during the turn
   from an author refuted as a non-member taints the turn instead. While `taint.mode` is on (the

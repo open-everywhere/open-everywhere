@@ -197,7 +197,7 @@ export function mcpServerBindings(servers: readonly McpServerDeclaration[]): Bin
         bundle,
         scope: { level: "group", group: EVERYONE_GROUP, ...platform },
         allowBroad:
-          "a declared MCP server: every person reaches it in their OWN DM as THEMSELVES, through their own sign-in " +
+          "a declared MCP server: every internal person reaches it in their OWN DM as THEMSELVES, through their own sign-in " +
           "(agent/access/mcp-servers.ts). A personal credential never resolves in a channel.",
       },
     ];

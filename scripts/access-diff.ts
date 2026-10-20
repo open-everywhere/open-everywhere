@@ -68,7 +68,7 @@ function resolveWith(grants: GrantsFile, scope: DiffScope): EffectiveAccess {
     const principalId = scope.address.slice(slash + 1);
     return resolve({ mode: "dm", platform, workspace: "-", channel: "-", principalId, groups: groupsForPrincipal(loadGroups(), scope.address) });
   }
-  return resolve({ mode: "dm", platform: "-", workspace: "-", channel: "-", principalId: "-", groups: [scope.address] });
+  return resolve({ mode: "dm", platform: "-", workspace: "-", channel: "-", principalId: "-", groups: [scope.address], callerTrust: "internal" });
 }
 
 function diffLines(b: Record<string, string[]>, a: Record<string, string[]>): string[] {

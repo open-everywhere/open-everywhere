@@ -27,6 +27,7 @@ const req: ResolveRequest = {
   channel,
   domains: domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
   principalId: arg("principal"),
+  ...(arg("caller-trust") === "internal" ? { callerTrust: "internal" as const } : {}),
 };
 
 const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadConnectorCredentials());

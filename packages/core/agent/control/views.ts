@@ -22,7 +22,7 @@ import type { AnalyticsScope } from "../access/analytics-scope.js";
 import type { CapLevel, UsageSummaryRow } from "../operational/store.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
 import { modelPricing, estimateCostUsd } from "../spend/pricing.js";
-import { deploymentOrg } from "../identity/binding.js";
+import { deploymentOrg, type Trust } from "../identity/binding.js";
 import { listDomainSkills, listDomainSkillRevisions } from "../skills/domain-skills.js";
 import type { DomainSkillRow, DomainSkillRevisionRow } from "../operational/store.js";
 import { providerById, type MemoryAccess } from "../memory/provider.js";
@@ -908,6 +908,7 @@ export interface AccessQuery {
   readonly channel?: string;
   readonly mode?: SessionMode;
   readonly principalId?: string;
+  readonly callerTrust?: Trust;
 }
 
 export function accessQueryScope(q: AccessQuery = {}): { platform: string; workspace: string; channel: string } {
@@ -924,6 +925,7 @@ export async function accessView(q: AccessQuery = {}) {
     channel,
     domains: cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
     principalId: q.principalId,
+    ...(q.callerTrust === undefined ? {} : { callerTrust: q.callerTrust }),
   };
   const access = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadConnectorCredentials?.() ?? []);
   const routing = resolveDomainForChannel(`${platform}/${workspace}/${channel}`, cfg.loadDomains());

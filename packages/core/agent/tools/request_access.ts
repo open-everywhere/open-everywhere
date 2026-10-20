@@ -100,7 +100,7 @@ export function groupEffectiveAccess(
 ): PlanContext["access"] {
   const groupBindings = bindings.filter((b) => b.scope.level === "group" && b.scope.group === group);
   return resolveAccess(
-    { mode: "dm", platform, workspace, channel: "-", principalId: "-", groups: [group] },
+    { mode: "dm", platform, workspace, channel: "-", principalId: "-", groups: [group], callerTrust: "internal" },
     bundles,
     groupBindings,
     getConfig().pluginRegistry,
