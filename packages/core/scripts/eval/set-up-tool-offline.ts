@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { insertMcpServerEntry, renderMcpServerEntry } from "../../agent/connections/mcp-servers-codemod.js";
-import { defineMcpServers, type McpServerDeclaration } from "../../agent/connections/mcp-servers.js";
+import { validateMcpServers, type McpServerDeclaration } from "../../agent/connections/mcp-servers.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../../../..");
@@ -68,7 +68,7 @@ export function scoreSetUpRun(calls: readonly RecordedCall[]): SetUpScore {
       description: String(input["description"]),
       ...(signIn !== undefined && signIn.mode !== "static-confidential" && Array.isArray((signIn as { scopes?: unknown }).scopes) ? { signIn: { scopes: (signIn as { scopes: string[] }).scopes } } : {}),
     };
-    defineMcpServers([declaration]);
+    validateMcpServers([declaration]);
     const template = readFileSync(join(REPO, "packages/create/template/agent/access/mcp-servers.ts"), "utf8");
     const edited = insertMcpServerEntry(template, declaration);
     diffEntry = renderMcpServerEntry(declaration);

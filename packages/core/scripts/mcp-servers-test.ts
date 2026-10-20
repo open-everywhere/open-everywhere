@@ -317,8 +317,10 @@ console.log("§7 a personal-surface server (OPE-2421)");
   }
   ok(authErr.includes("answers only in that person's 1:1 DM"), "§7 🔴 the built connection's auth refuses it too, before any mint");
 
-  const { declaredMcpServers } = await import("../agent/connections/mcp-servers.js");
+  const { declaredMcpServers, validateMcpServers } = await import("../agent/connections/mcp-servers.js");
   ok(declaredMcpServers().map((s) => s.name).join() === "slack-as-you", "§7 defineMcpServers records the list the app declared, for a provider's ops plane");
+  ok(validateMcpServers([FULLSTORY]).length === 1, "§7 validateMcpServers accepts a whole declaration (negative control)");
+  ok(declaredMcpServers().map((s) => s.name).join() === "slack-as-you", "§7 🔴 validateMcpServers records nothing: an unapproved list never reaches the ops plane (OPE-2642)");
 }
 
 console.log("§8 the seam: the DM binding's trust reaches the resolver (OPE-2415)");

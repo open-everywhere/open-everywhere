@@ -100,7 +100,7 @@ function declarationProblems(s: McpServerDeclaration, where: string): string[] {
   return bad;
 }
 
-export function defineMcpServers(servers: readonly McpServerDeclaration[]): readonly McpServerDeclaration[] {
+export function validateMcpServers(servers: readonly McpServerDeclaration[]): readonly McpServerDeclaration[] {
   const bad: string[] = [];
   const seen = new Set<string>();
   servers.forEach((s, i) => {
@@ -112,7 +112,11 @@ export function defineMcpServers(servers: readonly McpServerDeclaration[]): read
   if (bad.length > 0) {
     throw new Error(`agent/access/mcp-servers.ts is not valid:\n  ${bad.join("\n  ")}`);
   }
-  const frozen = Object.freeze(servers.map((s) => Object.freeze({ ...s })));
+  return Object.freeze(servers.map((s) => Object.freeze({ ...s })));
+}
+
+export function defineMcpServers(servers: readonly McpServerDeclaration[]): readonly McpServerDeclaration[] {
+  const frozen = validateMcpServers(servers);
   DECLARED.clear();
   for (const s of frozen) DECLARED.set(s.name, s);
   return frozen;

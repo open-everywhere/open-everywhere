@@ -1,7 +1,7 @@
 import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { requesterWords } from "../channels/friendly-ids.js";
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
-import { defineMcpServers, type McpServerDeclaration } from "../connections/mcp-servers.js";
+import { validateMcpServers, type McpServerDeclaration } from "../connections/mcp-servers.js";
 import { insertMcpServerEntry } from "../connections/mcp-servers-codemod.js";
 import { CONTRIBUTIONS } from "../contributions.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
@@ -73,7 +73,7 @@ export function validateMcpServerProposal(declaration: McpServerDeclaration, dec
       `a connection named "${declaration.name}" is already mounted by @open-everywhere/core, so \`oe build\` would refuse this entry. Pick another name (for example "${declaration.name}-mcp").`,
     );
   }
-  defineMcpServers([...declared, declaration]);
+  validateMcpServers([...declared, declaration]);
 }
 
 export function mcpServerReachLine(d: McpServerDeclaration): string {

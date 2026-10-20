@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -71,15 +71,20 @@ async function runMeasurement(): Promise<number> {
     const newAtRoot = await threw(() => justBashWrite(join(root, "rogue.md"), "x"));
     ok(newAtRoot !== null && newAtRoot.code === "EACCES", "just-bash: creating a NEW file directly at the fenced root fails with EACCES");
 
+    const dockerInput = join(base, "docker-input");
     const dockerWrite = (path: string, content: string): number => {
+      writeFileSync(dockerInput, content);
+      const stdin = openSync(dockerInput, "r");
       try {
-        execFileSync("/bin/sh", ["-c", `mkdir -p '${dirname(path)}' && cat > '${path}'`], { input: content, stdio: ["pipe", "pipe", "pipe"] });
+        execFileSync("/bin/sh", ["-c", `mkdir -p '${dirname(path)}' && cat > '${path}'`], { stdio: [stdin, "pipe", "pipe"] });
         return 0;
       } catch (err) {
         return finishedRun(err as ChildResult, "the docker-backend write").status;
+      } finally {
+        closeSync(stdin);
       }
     };
-    ok(dockerWrite(join(root, "unowned-docker", "stolen.md"), "x") !== 0, "docker: creating a NEW silo directory under the fenced root fails");
+    ok(dockerWrite(join(root, "unowned-docker", "stolen.md"), "x".repeat(1 << 20)) !== 0, "docker: creating a NEW silo directory under the fenced root fails");
     ok(!existsSync(join(root, "unowned-docker")), "…and the directory really is absent afterwards");
     ok(dockerWrite(join(ownedSilo, "docker-note.md"), "kept") === 0, "docker: a NEW file inside an owned silo still writes");
     ok(dockerWrite(join(root, "MEMORY.md"), "# index v3\n") === 0, "docker: rewriting an EXISTING file at the fenced root SUCCEEDS — truncate-in-place");

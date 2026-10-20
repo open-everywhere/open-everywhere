@@ -6,8 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerConfig } from "../agent/access/config.js";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import { insertMcpServerEntry, renderMcpServerEntry } from "../agent/connections/mcp-servers-codemod.js";
-import type { McpServerDeclaration } from "../agent/connections/mcp-servers.js";
-import { executeMcpServerPropose, mcpServerReachLine, mcpServerSetupSteps, requireMcpServerProposeConfig, type McpServerProposeArgs } from "../agent/approvals/mcp-server-propose.js";
+import { declaredMcpServers, defineMcpServers, type McpServerDeclaration } from "../agent/connections/mcp-servers.js";
+import { executeMcpServerPropose, mcpServerReachLine, mcpServerSetupSteps, requireMcpServerProposeConfig, validateMcpServerProposal, type McpServerProposeArgs } from "../agent/approvals/mcp-server-propose.js";
 import proposeTool, { isSecretRef, mcpServerProposeAudienceRefusal, nonMemberWake } from "../agent/tools/propose_mcp_server.js";
 import { actionKind } from "../agent/approvals/actions.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../agent/access/taint-signal.js";
@@ -225,6 +225,34 @@ console.log("§3 the PR");
       return String(e).includes("baseMcpServers");
     }
   })(), "§3 a deployment with no MCP server baseline refuses, naming it");
+}
+
+console.log("§3b a proposal never changes the live MCP-server registry (OPE-2642)");
+{
+  const declared = defineMcpServers([FULLSTORY]);
+  const names = () => declaredMcpServers().map((s) => s.name).join();
+  ok(names() === "fullstory", "§3b the app's declaration records its own list (negative control)");
+  validateMcpServerProposal(STATIC, declared);
+  ok(names() === "fullstory", `§3b a valid candidate that propose_mcp_server validates does not enter the registry — got ${JSON.stringify(names())}`);
+  const dry = await executeMcpServerPropose(
+    {
+      org: "default",
+      scopeKey: "slack/T1/D1",
+      requestId: "22222222-3333-4444-8555-666666666666",
+      declaration: STATIC,
+      docUrls: ["https://docs.acme.example/mcp"],
+      vendorSteps: [],
+      requestedBy: "U1",
+      channelId: "D1",
+      threadTs: null,
+      configRepo: "acme/oe-config",
+    },
+    "U2",
+    { config: { adminChannel: "C0ADMIN", configRepo: "acme/oe-config", baseBundles: () => [], baseBindings: () => [], baseMcpServers: () => declaredMcpServers(), dryRun: true } },
+  );
+  ok(dry.includes("validation passed"), "§3b the send path validates the candidate (negative control)");
+  ok(names() === "fullstory", `§3b …and a member's send does not put it in the registry either — got ${JSON.stringify(names())}`);
+  defineMcpServers([]);
 }
 
 console.log("§4 the routing sends \"set up X\" to propose_mcp_server");
