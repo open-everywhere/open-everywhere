@@ -1,5 +1,5 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readdirSync, readlinkSync, statSync } from "node:fs";
+import { join, win32 } from "node:path";
 
 import { outputImportFailures } from "./hosted-externals-output-scan.js";
 import { computedImportFailures } from "./hosted-externals-source-scan.js";
@@ -28,13 +28,34 @@ if (functionDirs.length === 0) {
   process.exit(1);
 }
 
+const liveFunctions = new Set(
+  functionDirs.filter((name) => {
+    const path = join(OUTPUT_DIR, name);
+    return !lstatSync(path).isSymbolicLink() && statSync(path).isDirectory();
+  }),
+);
+const skippedJunctions: string[] = [];
+const judgedDirs = functionDirs.filter((name) => {
+  const path = join(OUTPUT_DIR, name);
+  if (!lstatSync(path).isSymbolicLink() || existsSync(path)) return true;
+  const twin = win32.basename(readlinkSync(path));
+  if (!liveFunctions.has(twin)) return true;
+  skippedJunctions.push(`${name} → ${twin}`);
+  return false;
+});
+if (skippedJunctions.length > 0) {
+  console.log(
+    `↷ skipped ${skippedJunctions.length} dead junction(s) to a live function (Windows local build): ${skippedJunctions.join(", ")}`,
+  );
+}
+
 const failures: string[] = [];
 let checkedImports = 0;
 let checkedFiles = 0;
 let guardedImports = 0;
 const guardedNotes: string[] = [];
 
-for (const dir of functionDirs) {
+for (const dir of judgedDirs) {
   const scan = outputImportFailures(join(OUTPUT_DIR, dir), dir);
   failures.push(...scan.failures);
   checkedImports += scan.checkedImports;
@@ -57,6 +78,6 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `✓ ${checkedImports} bare import(s) in ${checkedFiles} module file(s) across ${functionDirs.length} hosted function(s) resolve from their own bundle` +
+  `✓ ${checkedImports} bare import(s) in ${checkedFiles} module file(s) across ${judgedDirs.length} hosted function(s) resolve from their own bundle` +
     (guardedImports > 0 ? `; ${guardedImports} guarded optional load(s) not judged` : ""),
 );

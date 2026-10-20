@@ -487,7 +487,12 @@ Rollback is the last resort. These catch the same class **before** a deploy exis
   (OPE-2657). The lint prints such a load as a note when its package is absent, not as a finding.
   A `catch` that holds a `throw` is no guard, and a dynamic `import()` counts as guarded only when
   the `try` awaits it. The lint does not see a `catch` that calls a function which throws or exits
-  the process, or code after the `try` that uses the missing package. The same suite proves its logic over scratch build trees.
+  the process, or code after the `try` that uses the missing package. A local `vercel build --prod`
+  on Windows writes each route function as a junction to a deleted temp copy of `__server.func`.
+  The pass skips a `*.func` link ONLY when its target is gone and the target's name is a live
+  function directory beside it, and it prints the skipped links in one line (OPE-2658). A dead link
+  to any other name, and a real function without `index.mjs`, still red. The same suite proves its
+  logic over scratch build trees.
 - `npm run lint:eve-patch` — the committed dependency patches are really in the installed bytes,
   and every workspace pins the patched version. In `npm test`.
 - `npm run lint:env-docs` — a new env var the runtime reads that no operator could know to set.

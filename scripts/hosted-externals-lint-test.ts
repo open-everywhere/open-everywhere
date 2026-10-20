@@ -375,6 +375,57 @@ try {
     ok(!present.stderr.includes("note:"), "(10) a traced guarded load makes no note");
   }
 
+  {
+    const OUT = ".vercel/output/functions";
+    const SERVER = `${OUT}/__server.func`;
+    const junctionTree = (target: string, server: string): string => {
+      const tree = scratchTree({ [`${SERVER}/index.mjs`]: server, [`gone/${target}/index.mjs`]: "export {};\n" });
+      symlinkSync(join(tree, "gone", target), join(tree, OUT, "index.func"), "dir");
+      rmSync(join(tree, "gone"), { recursive: true, force: true });
+      return tree;
+    };
+
+    const dead = runLint(junctionTree("__server.func", "export {};\n"));
+    ok(dead.code === 0, "(11) 🔴 a dead junction to the live __server.func is green");
+    ok(!dead.stderr.includes("no index.mjs"), "(11) the dead junction is not reported as a function");
+    ok(
+      dead.stderr.includes("skipped 1 dead junction(s) to a live function (Windows local build): index.func → __server.func"),
+      "(11) the skip names the junction and its live twin in one line",
+    );
+    ok(dead.stderr.includes("across 1 hosted function(s)"), "(11) only the live function is counted");
+
+    const realRed = runLint(junctionTree("__server.func", 'import "ghost-behind-junction";\n'));
+    ok(realRed.code === 1, "(11) a real missing import in the live function still exits 1");
+    ok(
+      realRed.stderr.includes('__server.func/index.mjs: "ghost-behind-junction" is imported but not present'),
+      "(11) the finding names the live function's file",
+    );
+
+    const stranger = runLint(junctionTree("other.func", "export {};\n"));
+    ok(stranger.code === 1, "(11) a dead link to a name with no live function exits 1");
+    ok(stranger.stderr.includes("index.func: no index.mjs"), "(11) that link is reported, not skipped");
+
+    const liveTree = scratchTree({
+      [`${SERVER}/index.mjs`]: "export {};\n",
+      "elsewhere/__server.func/index.mjs": 'import "ghost-behind-live-link";\n',
+    });
+    symlinkSync(join(liveTree, "elsewhere", "__server.func"), join(liveTree, OUT, "index.func"), "dir");
+    const liveLink = runLint(liveTree);
+    ok(liveLink.code === 1, "(11) 🔴 a live link with a live twin's name is judged, and its missing import exits 1");
+    ok(
+      liveLink.stderr.includes('index.func/index.mjs: "ghost-behind-live-link" is imported but not present'),
+      "(11) the finding names the live link's file",
+    );
+    ok(!liveLink.stderr.includes("dead junction"), "(11) a live link is never skipped");
+
+    const noEntry = runLint(
+      scratchTree({ [`${SERVER}/index.mjs`]: "export {};\n", [`${OUT}/privacy.func/.vc-config.json`]: "{}\n" }),
+    );
+    ok(noEntry.code === 1, "(11) a real function with no index.mjs exits 1");
+    ok(noEntry.stderr.includes("privacy.func: no index.mjs"), "(11) the finding names the real function");
+    ok(!noEntry.stderr.includes("dead junction"), "(11) a real directory is never skipped");
+  }
+
   console.log(`✓ hosted-externals source and output passes: ${passed} assertions`);
 } finally {
   for (const dir of scratchRoots) rmSync(dir, { recursive: true, force: true });
