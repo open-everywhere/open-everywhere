@@ -65,7 +65,7 @@ Under `justbash` the app process and the session send from the same source IP, s
 tell them apart by address. The app's model call therefore carries the proxy token as
 `Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>`, and the proxy decides it against a separate
 **host plane** that names the model gateway host (`ai-gateway.vercel.sh`, or the host of
-`OE_AI_GATEWAY_URL`), plus the hosts of any non-gateway transcription route the app registers for the
+`models.targets.gateway.url`), plus the hosts of any non-gateway transcription route the app registers for the
 meeting bot (`api.deepinfra.com`, a self-hosted speech server; OPE-2470). The app keeps one host list
 and pushes it whole, because the proxy replaces its host plane on every push. A request without the credential is a session request, held to the session's
 compiled policy, which never needs to name the gateway. Under Tier B the credentialed CONNECT is

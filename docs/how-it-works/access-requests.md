@@ -220,15 +220,23 @@ at propose time.
 
 ## Enabling it (operator)
 
-Fail-closed: with either of the first two unset, the tool refuses politely and the flow
-is off.
+The flow is configured in Git, not in the environment (OPE-2650). Fail-closed: with
+`adminChannel` or `configRepo` unset, the tool refuses politely and the flow is off.
 
-```bash
-OE_ACCESS_ADMIN_CHANNEL=C…        # Slack channel that hears "PR opened — merge to grant"
-OE_ACCESS_CONFIG_REPO=owner/repo  # this deployment's config repo (the grants overlay lives here)
-OE_ACCESS_CONFIG_BASE=main        # optional, default main
-OE_ACCESS_GRANTS_PATH=agent/access/grants.generated.ts   # optional, default shown
+```ts
+// agent/settings/settings.ts
+export const SETTINGS_OVERRIDES = defineSettings({
+  accessRequests: {
+    adminChannel: "C…",        // the channel that hears "PR opened — merge to grant"
+    configRepo: "owner/repo",  // this deployment's config repo (the grants overlay lives here)
+    configBase: "main",        // optional, "main" ships
+  },
+});
 ```
+
+The overlay paths (`grantsPath`, `hooksPath`, `agentsPath`, `bindingsPath`) are fields of the
+app's `agent/access/access-requests.ts`. Each one has a code default, so set one only to move that
+overlay.
 
 A dry run is not an environment variable. Set `dryRun: true` in the app's
 `agent/access/access-requests.ts` to make taps validate and report with no branch or PR (e2e).

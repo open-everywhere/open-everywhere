@@ -121,7 +121,7 @@ function main(): void {
 
   {
     const list = synthetic({
-      OE_A: { klass: "identity", why: "which org this is." },
+      OE_A: { klass: "root-of-trust", why: "the DSN every stored secret lives behind." },
       OE_B: { klass: "pending-migration", why: "OPE-1153: a cap." },
     });
     ok(auditEnvReads(readsOf("OE_A", "OE_B"), list).length === 0, "a matching inventory and allowlist produce no reds");
@@ -132,11 +132,13 @@ function main(): void {
     for (const [, e] of ENV_READ_ALLOWLIST) census.set(e.klass, (census.get(e.klass) ?? 0) + 1);
     const expected: Record<string, number> = {
       "settings-lever": 0,
-      secret: 33,
-      connection: 36,
-      identity: 19,
-      platform: 20,
-      "pending-migration": 3,
+      "root-of-trust": 4,
+      "store-bootstrap": 5,
+      platform: 23,
+      "per-run-seam": 4,
+      secret: 2,
+      connection: 2,
+      "pending-migration": 63,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -144,7 +146,9 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 111, `the allowlist holds 111 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 103, `the allowlist holds 103 names (found ${ENV_READ_ALLOWLIST.size})`);
+    const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration" && e.klass !== "secret" && e.klass !== "connection");
+    ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
   }
 
   {

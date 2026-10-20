@@ -57,6 +57,11 @@ export interface AgentSettings {
   readonly a2a: {
     readonly inbound: boolean;
   };
+  readonly accessRequests: {
+    readonly adminChannel: string;
+    readonly configRepo: string;
+    readonly configBase: string;
+  };
   readonly agent: {
     readonly sessionInputTokenBudget: number;
     readonly compactionThresholdPercent: number;
@@ -392,6 +397,31 @@ export const SETTINGS = {
         "Whether this deployment accepts INBOUND A2A calls: another organisation's agent calls this agent through its published A2A agent card (`GET /.well-known/agent-card.json`) and its JSON-RPC route (`POST /a2a/jsonrpc`). Off (shipped) ⇒ both routes answer 404 — the ingress does not exist. On, the routes ALSO need at least one caller declared in `agent/access/a2a-inbound.ts`: with none, they still answer 404. Every call must authenticate as a declared caller (a JWT from a declared issuer, or a declared bearer secret by credential-store ref); an unauthenticated or undeclared call is refused 401 before any turn starts. A call lands as a job in its caller's own surface of the caller's declared domain, bound EXTERNAL (read-only `public` memory) and unattended — and it holds that domain's tool and connector grants, so declare a caller only in a domain whose grants you would expose to it. See docs/extending/a2a-agents.md.",
     } satisfies SettingSpec<boolean>,
   },
+  accessRequests: {
+    adminChannel: {
+      path: "accessRequests.adminChannel",
+      shipped: "",
+      validate: (v: string) => (typeof v === "string" && !/\s/u.test(v) ? undefined : "must be one channel id, with no whitespace"),
+      summary:
+        "The channel that hears \"PR opened — merge to grant\" for every pull request the access-request, `create_agent`, `declare_webhook` and `propose_mcp_server` flows open (was `OE_ACCESS_ADMIN_CHANNEL`, OPE-2650). It is also the governance-channel fallback when no memory domain is a governance domain. Empty (shipped) ⇒ unset: with this setting OR `accessRequests.configRepo` unset, each flow refuses politely and nothing else changes. See docs/how-it-works/access-requests.md.",
+      format: (v) => (v === "" ? "(unset)" : v),
+    } satisfies SettingSpec<string>,
+    configRepo: {
+      path: "accessRequests.configRepo",
+      shipped: "",
+      validate: (v: string) => (v === "" || /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(v) ? undefined : 'must be "owner/repo", or "" for unset'),
+      summary:
+        "This deployment's own config repository, `owner/repo` — the repository the grants, agents, webhook and credential-binding overlays live in, and the one every config pull request targets (was `OE_ACCESS_CONFIG_REPO`, OPE-2650). The GitHub App needs write access to it. Empty (shipped) ⇒ unset: the pull-request flows refuse politely, and with `github.auth: \"token\"` the token reaches no repository of its own. See docs/how-it-works/access-requests.md.",
+      format: (v) => (v === "" ? "(unset)" : v),
+    } satisfies SettingSpec<string>,
+    configBase: {
+      path: "accessRequests.configBase",
+      shipped: "main",
+      validate: (v: string) => (typeof v === "string" && /^[A-Za-z0-9_./-]+$/u.test(v) && !v.includes("..") ? undefined : "must be one branch name"),
+      summary:
+        "The base branch of `accessRequests.configRepo`: each config pull request branches from it and merges into it (was `OE_ACCESS_CONFIG_BASE`, OPE-2650).",
+    } satisfies SettingSpec<string>,
+  },
   agent: {
     sessionInputTokenBudget: {
       path: "agent.sessionInputTokenBudget",
@@ -632,7 +662,7 @@ export const SETTINGS = {
       shipped: SHIPPED_MODEL_TARGETS,
       validate: validateModelTargets,
       summary:
-        "WHERE model calls go (OPE-2556): named targets, `{ <name>: { kind, url?, providers?: { only?, order? }, dataPolicy?, options? } }`. One kind is implemented, `\"vercel-ai-gateway\"`, and an unknown kind fails config load. A route or a stack role picks a target with `via`; with no `via` it uses the target named `gateway`, which must exist. A bare model id (a declared subagent's model, eve's `evaluate()`) uses the target of the stack role that names the id, else the primary role's target (OPE-2566), so it never falls back to `gateway` while the primary names another target. That holds when the app's `agent/model/models.ts` calls `registerBareModelRoutes`: an app scaffolded before 0.8.0 does not, so its bare ids go through `gateway`, the process logs that once, and `npm run check:model-config` exits 1 on it; `npm run check:model-config` and `oe sovereignty` name each declared subagent (`agent/subagents/*`) with the target its model goes through, and flag a model that no role names; eve's `evaluate()` model is not listed, and it takes the primary role's target. `url` is the target's base URL (for example a relay or an on-prem gateway); it replaces the `OE_AI_GATEWAY_URL` env var, which still works for the `gateway` target for one release (the process warns once, the first time the process reads the target), and the setting wins when both are set. It is read once, at the target's first call, so a change needs a restart. `providers.only` is a DEMAND: only those providers may serve a call through the target, a call cannot widen the list, and a model with no allowed provider fails closed with an error that names the row. Under `eve dev`, eve resolves a literal model id through its own local gateway, and that call carries no `only` row. `providers.order` is a preference for the order the gateway tries providers in; a route's `providerOrder` wins over it. `dataPolicy` (OPE-2531) holds `models.dataPolicy` rows that every call through the target demands on top of the deployment's own: a target adds a row and never removes one, and two different regions refuse the call. `options` are gateway options for every call through the target, as a floor (a call's own key wins); an option that a typed row owns (`only`, `order`, `zeroDataRetention`, `disallowPromptTraining`, `inferenceRegion`) fails config load. Shipped: one `gateway` target with no rows, so no request changes.",
+        "WHERE model calls go (OPE-2556): named targets, `{ <name>: { kind, url?, providers?: { only?, order? }, dataPolicy?, options? } }`. One kind is implemented, `\"vercel-ai-gateway\"`, and an unknown kind fails config load. A route or a stack role picks a target with `via`; with no `via` it uses the target named `gateway`, which must exist. A bare model id (a declared subagent's model, eve's `evaluate()`) uses the target of the stack role that names the id, else the primary role's target (OPE-2566), so it never falls back to `gateway` while the primary names another target. That holds when the app's `agent/model/models.ts` calls `registerBareModelRoutes`: an app scaffolded before 0.8.0 does not, so its bare ids go through `gateway`, the process logs that once, and `npm run check:model-config` exits 1 on it; `npm run check:model-config` and `oe sovereignty` name each declared subagent (`agent/subagents/*`) with the target its model goes through, and flag a model that no role names; eve's `evaluate()` model is not listed, and it takes the primary role's target. `url` is the target's base URL (for example a relay or an on-prem gateway); it replaced the `OE_AI_GATEWAY_URL` env var, which OPE-2650 deleted: nothing reads that variable any more. It is read once, at the target's first call, so a change needs a restart. `providers.only` is a DEMAND: only those providers may serve a call through the target, a call cannot widen the list, and a model with no allowed provider fails closed with an error that names the row. Under `eve dev`, eve resolves a literal model id through its own local gateway, and that call carries no `only` row. `providers.order` is a preference for the order the gateway tries providers in; a route's `providerOrder` wins over it. `dataPolicy` (OPE-2531) holds `models.dataPolicy` rows that every call through the target demands on top of the deployment's own: a target adds a row and never removes one, and two different regions refuse the call. `options` are gateway options for every call through the target, as a floor (a call's own key wins); an option that a typed row owns (`only`, `order`, `zeroDataRetention`, `disallowPromptTraining`, `inferenceRegion`) fails config load. Shipped: one `gateway` target with no rows, so no request changes.",
       format: (v) =>
         Object.entries(v)
           .map(([name, t]) => `${name}: ${modelTargetWords(t)}`)
@@ -689,7 +719,7 @@ export const SETTINGS = {
       shipped: "app" as GithubAuthMode,
       validate: (v: GithubAuthMode) => (v === "app" || v === "token" ? undefined : 'must be "app" or "token"'),
       summary:
-        "How this deployment signs in to GitHub (OPE-2530). There is ONE credential and NO fallback between the two. `app` (shipped) — the GitHub App (`OE_GITHUB_APP_*`): every call mints a short-lived token narrowed to its repository and its job, and `GITHUB_TOKEN` is never read, even when it is set. A repository the App is not installed on is refused by name. `token` — the personal access token in `GITHUB_TOKEN`, for an organisation that will not create a GitHub App. It reaches ONLY the deployment's own repository (`OE_ACCESS_CONFIG_REPO`) and the repositories `github.tokenRepos` names, and only where a bundle also grants the repository to the room. Checkout, pull requests and the config-change pull requests work there. The App is never used in this mode: the GitHub webhook route runs only the event-routine fan-out and starts no conversation, and GitHub search and GitHub-backed memory are off. The token cannot be narrowed per session the way an App token is: checkout injects it at the sandbox firewall only on the two exact clone and fetch requests of each repository it reaches (whole-path matches, never a prefix), and refuses on a backend without the firewall. Use a fine-grained token limited to those repositories. TO MOVE TO THE APP, in this order: create it with the ops MCP tool `surface_app_create` (`variant: \"source-control\"` keeps what token mode does); push every name it wrote to `.env.local` to the deployment's environment; set this to `app` and redeploy; then install the App (a token-mode deployment ignores the App's `installation` delivery, so installing first leaves app mode with no installation). The App brings its own `GITHUB_WEBHOOK_SECRET`, which replaces the old one: a repository webhook that feeds event routines needs the new secret, and with `source-control` (no event subscriptions) it stays the only source of those events. With `full`, delete that webhook, or each event reaches your routines twice. Nothing else changes: the grants stay, and `github.tokenRepos` stops being read. See docs/capabilities/source-control.md.",
+        "How this deployment signs in to GitHub (OPE-2530). There is ONE credential and NO fallback between the two. `app` (shipped) — the GitHub App (`OE_GITHUB_APP_*`): every call mints a short-lived token narrowed to its repository and its job, and `GITHUB_TOKEN` is never read, even when it is set. A repository the App is not installed on is refused by name. `token` — the personal access token in `GITHUB_TOKEN`, for an organisation that will not create a GitHub App. It reaches ONLY the deployment's own repository (`accessRequests.configRepo`) and the repositories `github.tokenRepos` names, and only where a bundle also grants the repository to the room. Checkout, pull requests and the config-change pull requests work there. The App is never used in this mode: the GitHub webhook route runs only the event-routine fan-out and starts no conversation, and GitHub search and GitHub-backed memory are off. The token cannot be narrowed per session the way an App token is: checkout injects it at the sandbox firewall only on the two exact clone and fetch requests of each repository it reaches (whole-path matches, never a prefix), and refuses on a backend without the firewall. Use a fine-grained token limited to those repositories. TO MOVE TO THE APP, in this order: create it with the ops MCP tool `surface_app_create` (`variant: \"source-control\"` keeps what token mode does); push every name it wrote to `.env.local` to the deployment's environment; set this to `app` and redeploy; then install the App (a token-mode deployment ignores the App's `installation` delivery, so installing first leaves app mode with no installation). The App brings its own `GITHUB_WEBHOOK_SECRET`, which replaces the old one: a repository webhook that feeds event routines needs the new secret, and with `source-control` (no event subscriptions) it stays the only source of those events. With `full`, delete that webhook, or each event reaches your routines twice. Nothing else changes: the grants stay, and `github.tokenRepos` stops being read. See docs/capabilities/source-control.md.",
     } satisfies SettingSpec<GithubAuthMode>,
     tokenRepos: {
       path: "github.tokenRepos",
@@ -699,7 +729,7 @@ export const SETTINGS = {
           ? undefined
           : 'must be a list of repositories, each "owner/repo"',
       summary:
-        "With `github.auth: \"token\"`, the repositories the personal access token reaches BESIDES the deployment's own repository (`OE_ACCESS_CONFIG_REPO`), each `owner/repo`. A repository here is still reached only where a bundle grants it to the room. Empty (shipped) ⇒ the token reaches the deployment's own repository and nothing else. Inert with `github.auth: \"app\"`, where the App's installations decide the reach, so moving to the App needs no edit here.",
+        "With `github.auth: \"token\"`, the repositories the personal access token reaches BESIDES the deployment's own repository (`accessRequests.configRepo`), each `owner/repo`. A repository here is still reached only where a bundle grants it to the room. Empty (shipped) ⇒ the token reaches the deployment's own repository and nothing else. Inert with `github.auth: \"app\"`, where the App's installations decide the reach, so moving to the App needs no edit here.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(none — the deployment's own repository only)"),
     } satisfies SettingSpec<readonly string[]>,
   },
@@ -1349,6 +1379,11 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
   return {
     a2a: {
       inbound: resolve(SETTINGS.a2a.inbound, o.a2a?.inbound),
+    },
+    accessRequests: {
+      adminChannel: resolve(SETTINGS.accessRequests.adminChannel, o.accessRequests?.adminChannel),
+      configRepo: resolve(SETTINGS.accessRequests.configRepo, o.accessRequests?.configRepo),
+      configBase: resolve(SETTINGS.accessRequests.configBase, o.accessRequests?.configBase),
     },
     agent: {
       sessionInputTokenBudget: resolve(SETTINGS.agent.sessionInputTokenBudget, o.agent?.sessionInputTokenBudget),

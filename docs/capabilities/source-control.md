@@ -35,7 +35,7 @@ them, set `github: { auth: "token" }` in `agent/settings/settings.ts` and put a 
 token in `GITHUB_TOKEN`.
 
 - **The token reaches only the repositories declared for it.** By default that is the deployment's
-  own repository (`OE_ACCESS_CONFIG_REPO`). `github.tokenRepos` names more, each `owner/repo`. A
+  own repository (`accessRequests.configRepo`). `github.tokenRepos` names more, each `owner/repo`. A
   repository is reached only where a bundle ALSO grants it to the room. `list_repos` lists only those.
 - **Checkout, pull requests and the config-change pull requests work there.** `checkout_repo`
   injects the token at the sandbox firewall on exactly two requests per reached repository: the

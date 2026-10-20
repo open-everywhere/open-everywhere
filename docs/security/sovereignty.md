@@ -47,7 +47,7 @@ operates in, not only that one. This page does not give legal advice.
 | **Audit** | the operational store, hash-chained | the same | the database's operator, and each SIEM you export to | `OE_OPERATIONAL_PROVIDER`, else `DATABASE_URL` (`packages/core/agent/operational/selection.ts`); `auditExport.targets` |
 | **Credentials** | AES-256-GCM ciphertext in the operational store; the key `OE_CREDENTIAL_ENCRYPTION_KEY` in the project environment | the same; the key in your container's environment | the database's operator holds ciphertext; the host holds the key | `packages/core/agent/credentials/db-broker.ts` |
 | **Config** | your Git repository | your Git repository | your Git host (for example GitHub, US) | a pull request ([Config-as-code](../how-it-works/config-as-code.md)) |
-| **Gateway** | the Vercel AI Gateway, or your own | the same | Vercel Inc. (US), or your gateway's operator | `models.targets.<name>.url`, with the deprecated `OE_AI_GATEWAY_URL` as the `gateway` target's fallback (`packages/core/agent/model/targets.ts`, `packages/adapters/agent/model/target-url.ts`) |
+| **Gateway** | the Vercel AI Gateway, or your own | the same | Vercel Inc. (US), or your gateway's operator | `models.targets.<name>.url` (`packages/core/agent/model/targets.ts`, `packages/adapters/agent/model/target-url.ts`) |
 | **Model route** | the upstream provider the gateway picks for each call | the same | that provider | `models.stack` (`agent/model/stacks.ts`), `models.dataPolicy` (`packages/core/agent/model/data-policy.ts`) and `models.targets` `providers.only` |
 | **Transcription** (voice clips and meeting audio) | the stack's transcription role: the gateway, or a direct route | the same | the gateway's provider; DeepInfra (US) for a `deepinfra` route; your server for a `self-hosted` route | the transcription role in `agent/model/stacks.ts` (`packages/adapters/agent/model/transcription-routes.ts`); `voiceClips.enabled: false` keeps voice clips in the deployment |
 | **Chat surface** | the chat platform (Slack, Teams, Discord, …) | the same | the platform's operator (for example Salesforce, Microsoft) | the roster's `providers` (`roster.config.ts`) |
@@ -80,8 +80,8 @@ Four rows need a closer reading:
   `roster.config.ts` (the chat platforms);
 - the app's `package.json` (whether each script that starts eve sets `EVE_TELEMETRY_DISABLED=1`)
   and `agent/agent.ts` (whether it names a workflow world);
-- the app's `.env.local` over the shell environment (the stores, the deprecated `OE_AI_GATEWAY_URL`
-  fallback of the `gateway` target, the telemetry switches, log shipping);
+- the app's `.env.local` over the shell environment (the stores, the telemetry switches, log
+  shipping);
 - `vercel.json`'s `regions`, `.vercel/project.json` and the Git `origin` remote.
 
 ```

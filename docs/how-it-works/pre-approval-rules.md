@@ -358,7 +358,7 @@ at once. One person keeps at most 20 DM rules.
 request names who asked for the act, who confirmed the rule, the card's id, and quotes the act in the
 card's own words. The admin channel gets a note. Nothing applies until an admin merges it. Each
 domain's merged rules become one bundle (`domain-rules:<domain>`), bound at that domain's scope only.
-A deployment with `accessRequests.dryRun` writes the audit row and opens nothing.
+A deployment with `loadAccessRequests().dryRun` writes the audit row and opens nothing.
 
 An app scaffolded before this feature has no `agent/access/domain-rules.ts`. Copy the template's file,
 and add the two `domainRuleBundles` / `domainRuleBindings` lines to `agent/access/bundles.ts` as the

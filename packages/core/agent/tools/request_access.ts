@@ -147,6 +147,7 @@ export function planRequestAccess(
   if (binding.trust === "external") {
     throw new Error("this channel is externally shared — access can't be widened from an external surface; an internal admin can PR a grant by hand.");
   }
+  // principal-gate: presence — the tool is TWO-STEP: the agent only offers the button, and a human in the channel sends the request.
   const requestedBy = actingPrincipalId(binding);
   if (!requestedBy) {
     throw new Error("request_access needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not ask for its own channel to be widened in that person's name. Ask someone in this channel to request it.");
@@ -261,7 +262,7 @@ const requestAccessEntry = defineTool({
           if (!ar?.adminChannel || !ar?.configRepo) {
             throw new Error(
               "access requests aren't enabled on this deployment (no admin channel / config repo configured — " +
-                "OE_ACCESS_ADMIN_CHANNEL + OE_ACCESS_CONFIG_REPO). An admin can PR the grant by hand instead.",
+                "settings accessRequests.adminChannel + accessRequests.configRepo). An admin can PR the grant by hand instead.",
             );
           }
 

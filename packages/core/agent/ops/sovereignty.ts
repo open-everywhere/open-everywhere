@@ -2,7 +2,7 @@ import { resolveMemoryProviderId } from "../memory/backing-selection.js";
 import { resolveOperationalSelection } from "../operational/selection.js";
 import { telemetrySwitches } from "../observability/telemetry.js";
 import { dataPolicyActive, dataPolicyWords, type ModelDataPolicy } from "../model/data-policy.js";
-import { DEFAULT_MODEL_VIA, type ModelTargets } from "../model/targets.js";
+import type { ModelTargets } from "../model/targets.js";
 
 export type SovereigntyHost = "vercel" | "docker" | "unknown";
 
@@ -258,9 +258,8 @@ export function sovereigntyReport(input: SovereigntyInput): SovereigntyReport {
   });
 
   const targets = Object.entries(settings.models.targets).map(([name, t]) => {
-    const fromEnv = name === DEFAULT_MODEL_VIA ? env.OE_AI_GATEWAY_URL?.trim() || undefined : undefined;
-    const raw = t.url ?? fromEnv;
-    const source = t.url !== undefined ? `models.targets.${name}.url` : fromEnv !== undefined ? "OE_AI_GATEWAY_URL, deprecated" : undefined;
+    const raw = t.url;
+    const source = t.url !== undefined ? `models.targets.${name}.url` : undefined;
     const host = raw === undefined ? undefined : (urlHost(raw) ?? `a ${source} that does not parse as a URL`);
     return { name, host, source, only: t.providers?.only };
   });

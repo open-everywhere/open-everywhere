@@ -3566,7 +3566,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const reply = outcome.text.replace(/\s+/g, " ").slice(0, 240);
           return ctx.fixtureMissing(
             outcome.noConfigRepo
-              ? `S-DM-MCP-PROPOSE: the target has no config repo or admin channel for proposals (OE_ACCESS_CONFIG_REPO / OE_ACCESS_ADMIN_CHANNEL), so the tool refuses before any card. Reply: "${reply}"`
+              ? `S-DM-MCP-PROPOSE: the target has no config repo or admin channel for proposals (accessRequests.configRepo / accessRequests.adminChannel), so the tool refuses before any card. Reply: "${reply}"`
               : `S-DM-MCP-PROPOSE: the target's app does not wire AccessRequestsConfig.baseMcpServers (agent/access/access-requests.ts), so the tool refuses before any card. Reply: "${reply}"`,
           );
         }
@@ -9270,7 +9270,7 @@ export const SCENARIOS: readonly Scenario[] = [
             "binding: binding_proposed cites the intake id + carries references only (connector/credential/storedRef), never a value",
           );
         } else {
-          ctx.log("binding: no credential.binding_proposed row — the binding follow-on fail-safe-SKIPPED (OE_ACCESS_CONFIG_REPO unset in prod); the store leg still proved out. Configure the access config repo to exercise the binding PR.");
+          ctx.log("binding: no credential.binding_proposed row — the binding follow-on fail-safe-SKIPPED (accessRequests.configRepo unset in prod); the store leg still proved out. Configure the access config repo to exercise the binding PR.");
         }
       }
 

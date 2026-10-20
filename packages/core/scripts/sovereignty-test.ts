@@ -131,15 +131,13 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
 
 {
   ok("the default gateway is the Vercel AI Gateway", row(report({}), "gateway").compellable === "Vercel Inc. (US)");
-  const own = report({ env: { OE_AI_GATEWAY_URL: "https://llm.acme.example/v4/ai?key=zzz" } });
-  const badGw = report({ env: { OE_AI_GATEWAY_URL: "llm.acme.example/v4?key=zzz" } });
-  ok("a set OE_AI_GATEWAY_URL that does not parse is never reported as the Vercel default", row(badGw, "gateway").where.includes("does not parse") && row(badGw, "gateway").compellable !== "Vercel Inc. (US)");
+  const withUrl = (url: string) => report({ settings: { ...SHIPPED, models: { ...SHIPPED.models, targets: { gateway: { kind: "vercel-ai-gateway", url } } } } });
+  const own = withUrl("https://llm.acme.example/v4/ai?key=zzz");
+  const badGw = withUrl("llm.acme.example/v4?key=zzz");
+  ok("a set models.targets.gateway.url that does not parse is never reported as the Vercel default", row(badGw, "gateway").where.includes("does not parse") && row(badGw, "gateway").compellable !== "Vercel Inc. (US)");
   ok("…and never prints its value", !JSON.stringify(badGw).includes("zzz"));
-  const viaSetting = report({
-    env: { OE_AI_GATEWAY_URL: "https://old.acme.example" },
-    settings: { ...SHIPPED, models: { ...SHIPPED.models, targets: { gateway: { kind: "vercel-ai-gateway", url: "https://new.acme.example/v4/ai" } } } },
-  });
-  ok("🔴 models.targets.gateway.url wins over OE_AI_GATEWAY_URL, as in the adapter", row(viaSetting, "gateway").where === "your gateway at new.acme.example (models.targets.gateway.url)");
+  const staleEnv = report({ env: { OE_AI_GATEWAY_URL: "https://old.acme.example" } });
+  ok("🔴 the deleted OE_AI_GATEWAY_URL is not reported as a gateway", row(staleEnv, "gateway").compellable === "Vercel Inc. (US)" && !row(staleEnv, "gateway").where.includes("old.acme.example"));
   const only = report({
     settings: { ...SHIPPED, models: { ...SHIPPED.models, targets: { gateway: { kind: "vercel-ai-gateway", providers: { only: ["azure", "bedrock"] } } } } },
   });
@@ -151,17 +149,19 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
     },
   });
   ok("🔴 providers.only on one target of two does not narrow the model route", row(mixed, "model route").compellable.startsWith("the upstream provider"));
-  const envTwo = report({
-    env: { OE_AI_GATEWAY_URL: "https://old.acme.example" },
-    settings: { ...SHIPPED, models: { ...SHIPPED.models, targets: { gateway: { kind: "vercel-ai-gateway" }, relay: { kind: "vercel-ai-gateway" } } } },
+  const two = report({
+    settings: {
+      ...SHIPPED,
+      models: { ...SHIPPED.models, targets: { gateway: { kind: "vercel-ai-gateway", url: "https://old.acme.example" }, relay: { kind: "vercel-ai-gateway" } } },
+    },
   });
   ok(
-    "🔴 OE_AI_GATEWAY_URL retargets only the gateway target",
-    row(envTwo, "gateway").where.includes("gateway: your gateway at old.acme.example") && row(envTwo, "gateway").where.includes("relay: the Vercel AI Gateway"),
+    "🔴 one target's url retargets only that target",
+    row(two, "gateway").where.includes("gateway: your gateway at old.acme.example") && row(two, "gateway").where.includes("relay: the Vercel AI Gateway"),
   );
-  ok("…and both operators are compellable", row(envTwo, "gateway").compellable.includes("Vercel Inc. (US)") && row(envTwo, "gateway").compellable.includes("the operator of old.acme.example"));
+  ok("…and both operators are compellable", row(two, "gateway").compellable.includes("Vercel Inc. (US)") && row(two, "gateway").compellable.includes("the operator of old.acme.example"));
   ok("no providers.only: the gateway's allowlist decides", row(report({}), "model route").compellable.startsWith("the upstream provider"));
-  ok("OE_AI_GATEWAY_URL names the operator's gateway by host", row(own, "gateway").where.includes("llm.acme.example") && !JSON.stringify(own).includes("zzz"));
+  ok("models.targets.gateway.url names the operator's gateway by host", row(own, "gateway").where.includes("llm.acme.example") && !JSON.stringify(own).includes("zzz"));
   const eu = report({ settings: { ...SHIPPED, models: { ...SHIPPED.models, dataPolicy: { zeroRetention: true, region: "eu" } } } });
   ok("models.dataPolicy.region pins the model route's region", row(eu, "model route").region.startsWith("EU only"));
   ok("the data policy is named in words", row(eu, "model route").where.includes("zero retention, region EU"));

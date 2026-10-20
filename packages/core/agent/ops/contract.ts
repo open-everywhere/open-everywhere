@@ -99,9 +99,9 @@ export const DEPLOYMENT_CONTRACT: readonly ContractRequirement[] = [
     routes: {
       vercel: "OIDC. A deployed Vercel project authenticates to the gateway with no key to set.",
       docker:
-        "`AI_GATEWAY_API_KEY`, or `OE_AI_GATEWAY_URL` pointed at a compatible relay. Behind the egress proxy the model call is held to the app's host plane: the gateway's one host (the default, or the relay's), plus any non-gateway transcription route host the app registers.",
+        "`AI_GATEWAY_API_KEY`, or `models.targets.gateway.url` in `agent/settings/settings.ts` pointed at a compatible relay. Behind the egress proxy the model call is held to the app's host plane: the gateway's one host (the default, or the relay's), plus any non-gateway transcription route host the app registers.",
     },
-    env: ["AI_GATEWAY_API_KEY", "OE_AI_GATEWAY_URL"],
+    env: ["AI_GATEWAY_API_KEY"],
   },
   {
     id: "secrets",

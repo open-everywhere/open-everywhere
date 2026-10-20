@@ -244,6 +244,14 @@ console.log("5 — a bad override fails the boot, not a turn:");
     ok(message.includes(needle), `${label} (got: ${message.slice(0, 120) || "NO THROW"})`);
   };
   refuses(() => defineSettings({ windows: { topology: true } } as never), "unknown settings group", "[5] a typo'd GROUP is refused by name");
+  refuses(() => defineSettings({ accessRequests: { configRepo: "not a repo" } }), "owner/repo", "[5] OPE-2650 — accessRequests.configRepo refuses a value that is not owner/repo");
+  refuses(() => defineSettings({ accessRequests: { adminChannel: "C1 C2" } }), "one channel id", "[5] OPE-2650 — accessRequests.adminChannel refuses whitespace");
+  refuses(() => defineSettings({ accessRequests: { configBase: "../main" } }), "one branch name", "[5] OPE-2650 — accessRequests.configBase refuses a path escape");
+  {
+    const accepted = defineSettings({ accessRequests: { configRepo: "acme/config", adminChannel: "C0123", configBase: "release/2026" } });
+    ok(getSettings(accepted).accessRequests.configRepo === "acme/config", "[5] OPE-2650 — a well-formed accessRequests override is accepted and resolves (the negative control)");
+    ok(getSettings({}).accessRequests.configRepo === "" && getSettings({}).accessRequests.configBase === "main", "[5] OPE-2650 — unset ships: no config repo, base main");
+  }
   refuses(() => defineSettings({ window: { topolgy: true } } as never), "unknown setting", "[5] a typo'd KEY is refused by name");
   refuses(() => defineSettings({ window: { unifiedRedrive: false } } as never), "unknown setting", "[5] 🔴 OPE-1145 — `window.unifiedRedrive` is DELETED: a deployment that still registers the old off switch FAILS the boot, rather than booting with an ignored key and an operator who believes the correction is off");
   refuses(() => defineSettings({ bash: { timeoutMs: "600000" } } as never), "expected number", "[5] a wrong-typed value is refused");

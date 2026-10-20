@@ -61,7 +61,7 @@ export function personalTokenFor(repo: string, subject = ""): string {
   if (!tokenReaches(repo)) {
     const reach = tokenRepos();
     throw new Error(
-      `the personal access token does not reach ${repo}. It reaches ${reach.length > 0 ? reach.join(", ") : "no repository yet (OE_ACCESS_CONFIG_REPO is not set)"}: ` +
+      `the personal access token does not reach ${repo}. It reaches ${reach.length > 0 ? reach.join(", ") : "no repository yet (accessRequests.configRepo is not set)"}: ` +
         `the deployment's own repository and github.tokenRepos in agent/settings/settings.ts. Add the repository there, or move to the GitHub App.`,
     );
   }

@@ -62,7 +62,7 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
   ok(a.you === "You're an admin.", "§1 🔴 the incident's asker, who is on the roster, reads \"You're an admin.\"");
   ok(a.admins === "The admin is you.", `§1 the sole admin reads as "you" (saw: ${a.admins})`);
   ok(a.notYet.length === 1 && /Changing my setup from chat is off/.test(a.notYet[0]!.what), "§1 an admin reads that config changes from chat are off");
-  ok(a.forOperator.some((s) => s.startsWith("OE_ACCESS_CONFIG_REPO")) && a.forOperator.some((s) => s.startsWith("OE_ACCESS_ADMIN_CHANNEL")), "§1 the operator detail names both missing settings");
+  ok(a.forOperator.some((s) => s.startsWith("accessRequests.configRepo")) && a.forOperator.some((s) => s.startsWith("accessRequests.adminChannel")), "§1 the operator detail names both missing settings");
   ok(a.adminCanDoNow.some((s) => /spending limit/.test(s)) && !a.adminCanDoNow.some((s) => /pull request/.test(s)), "§1 the runtime controls are listed, and the config changes are NOT while they cannot work");
 }
 {

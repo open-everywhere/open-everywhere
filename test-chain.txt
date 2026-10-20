@@ -47,6 +47,7 @@ lint:manual-compaction-guard
 lint:env-docs
 lint:deploy-contract
 test:env-read-allowlist
+test:access-requests-settings
 test:deployment-identity
 lint:ambient-env
 test:ambient-env-lint

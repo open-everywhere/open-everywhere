@@ -53,7 +53,7 @@ export function requireWebhookDeclareConfig(override?: AccessRequestsConfig): En
   if (!cfg?.adminChannel || !cfg.configRepo) {
     throw new Error(
       "config-as-code webhook declarations aren't enabled on this deployment — an operator must configure the admin channel + config repo " +
-        "(AppConfig.loadAccessRequests; env OE_ACCESS_ADMIN_CHANNEL / OE_ACCESS_CONFIG_REPO). Until then, a hook is declared by hand-editing agent/webhooks/hooks.ts in a PR.",
+        "(AppConfig.loadAccessRequests; settings accessRequests.adminChannel / accessRequests.configRepo). Until then, a hook is declared by hand-editing agent/webhooks/hooks.ts in a PR.",
     );
   }
   if (!cfg.baseWebhooks) {

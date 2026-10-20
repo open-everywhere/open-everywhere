@@ -72,7 +72,7 @@ export function decodeCaptureBody(row: ModelCallWireRow): DecodedCapture {
 const DEFAULT_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v4/ai";
 
 export function gatewayBaseUrl(env: Readonly<Record<string, string | undefined>> = process.env): string {
-  const override = env.OE_AI_GATEWAY_URL?.trim();
+  const override = env.OE_SOAK_GATEWAY_URL?.trim();
   return override && override.length > 0 ? override : DEFAULT_GATEWAY_BASE_URL;
 }
 

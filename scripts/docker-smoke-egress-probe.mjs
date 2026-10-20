@@ -10,7 +10,7 @@ const SESSION_HOST = process.env.OE_SMOKE_SESSION_HOST || "example.com";
 const UNDECLARED_HOST = process.env.OE_SMOKE_UNDECLARED_HOST || "example.org";
 const CREDENTIAL_UNDECLARED_HOST = process.env.OE_SMOKE_CREDENTIAL_UNDECLARED_HOST || "example.net";
 const MODEL = process.env.OE_SMOKE_MODEL || "openai/gpt-6-luna";
-const GW = gatewayHost(process.env.OE_AI_GATEWAY_URL?.trim() || undefined);
+const GW = gatewayHost(undefined);
 
 const line = (id, pass, detail) => console.log(`PROBE ${id} ${pass ? "ok" : "fail"} ${String(detail).replace(/\s+/g, " ").slice(0, 300)}`);
 const errText = (err) => `${err?.message ?? err}${err?.cause ? ` (cause: ${err.cause.message ?? err.cause})` : ""}`;

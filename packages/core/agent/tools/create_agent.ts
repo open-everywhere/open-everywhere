@@ -91,6 +91,7 @@ export default defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "propose that agent"));
     }
     const venue = venueResult.venue;
+    // principal-gate: presence — a new channel-resident agent is standing trusted behaviour (a domain +
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
@@ -109,7 +110,7 @@ export default defineTool({
     if (!ar?.adminChannel || !ar?.configRepo) {
       throw new Error(
         "creating agents from chat isn't enabled on this deployment (no admin channel / config repo configured — " +
-          "OE_ACCESS_ADMIN_CHANNEL + OE_ACCESS_CONFIG_REPO). An admin can add an agent by hand instead.",
+          "settings accessRequests.adminChannel + accessRequests.configRepo). An admin can add an agent by hand instead.",
       );
     }
 

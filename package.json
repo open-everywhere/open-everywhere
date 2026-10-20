@@ -123,6 +123,7 @@
     "lint:deploy-contract": "tsx scripts/deploy-contract-generate.ts --check",
     "docs:contract": "tsx scripts/deploy-contract-generate.ts",
     "test:env-read-allowlist": "NODE_NO_WARNINGS=1 tsx scripts/env-read-allowlist-test.ts",
+    "test:access-requests-settings": "NODE_NO_WARNINGS=1 tsx scripts/access-requests-settings-test.ts",
     "test:deployment-identity": "NODE_NO_WARNINGS=1 tsx scripts/deployment-identity-test.ts",
     "test:deployment-identity-boot": "NODE_NO_WARNINGS=1 tsx scripts/deployment-identity-boot-test.ts",
     "test:instrumentation-hosted-boot": "NODE_NO_WARNINGS=1 tsx scripts/instrumentation-hosted-boot-test.ts",

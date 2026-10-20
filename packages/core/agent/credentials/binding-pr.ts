@@ -77,7 +77,7 @@ export async function stageCredentialBindingPr(
     cfg = null;
   }
   if (!cfg?.configRepo) {
-    return { staged: false, dryRun: true, skipped: "config repo not configured (loadAccessRequests / OE_ACCESS_CONFIG_REPO) — credential-binding PR skipped" };
+    return { staged: false, dryRun: true, skipped: "config repo not configured (loadAccessRequests / accessRequests.configRepo) — credential-binding PR skipped" };
   }
   const baseCataloguesFn = deps.baseConnectorCredentials ?? cfg.baseConnectorCredentials;
   if (!baseCataloguesFn) {
@@ -86,7 +86,7 @@ export async function stageCredentialBindingPr(
 
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
-  const bindingsPath = deps.bindingsPath ?? process.env.OE_CREDENTIAL_BINDINGS_PATH ?? "agent/access/credential-bindings.generated.ts";
+  const bindingsPath = deps.bindingsPath ?? cfg.bindingsPath ?? "agent/access/credential-bindings.generated.ts";
   const liveArmed = cfg.credentialBindingLive === true && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 

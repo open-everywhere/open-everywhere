@@ -164,7 +164,7 @@ grants overlay uses; the GitHub **merge is the approval**, and the memberships t
 next deploy of the merged config. This is review mode *automated*, not replaced. There is
 deliberately no auto-apply-to-a-running-instance mode — silently granting credentials to whoever an
 IdP group happens to contain is the thing the reviewed-diff rule exists to prevent, and `deliver:true`
-refuses politely unless the config repo is configured (`OE_ACCESS_CONFIG_REPO`), exactly as
+refuses politely unless the config repo is configured (`accessRequests.configRepo`), exactly as
 `request_access` does. Which IdP groups sync at all is narrowable with the setting `directory.groupAllowlist`
 (a string array of verbatim IdP group names; empty syncs every group) — a deployer who grants
 the agent 3 of their 50 Okta groups need not carry 50 in the overlay. Narrowing never waits for the
@@ -1724,7 +1724,7 @@ own row.
 | `admin.identity.purge_link_set_credentials` | Every credential a link set holds is purged. | The link-set id and the purged count. |
 | `admin.identity.directory_sync_now` | An on-demand directory sync runs. | The provider, the policy, the planned counts, what was applied, and how many warnings the plan raised. |
 | `admin.identity.directory_groups_plan` | A directory-group plan is requested. | The provider, the people count, the planned counts, the warning count, and the allowlist size when groups are allowlisted. Plan mode returns the content and applies nothing. |
-| `admin.identity.directory_groups_pr` | A directory-group plan is turned into a config pull request. | The same plan fields, plus the delivery outcome (`no-op`, `dry-run`, `opened` or `updated`) — so a plan that produced no pull request reads differently from one that did. `dry-run` means `accessRequests.dryRun` held the write. |
+| `admin.identity.directory_groups_pr` | A directory-group plan is turned into a config pull request. | The same plan fields, plus the delivery outcome (`no-op`, `dry-run`, `opened` or `updated`) — so a plan that produced no pull request reads differently from one that did. `dry-run` means `loadAccessRequests().dryRun` held the write. |
 
 ### One more row on this plane
 

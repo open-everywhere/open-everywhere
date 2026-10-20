@@ -85,7 +85,7 @@ role needs no other change. A clip is one call along the same primary and fallba
 > for Voxtral, the `european-open-weights` primary. The Gateway serves no Voxtral id (probed
 > 2026-10-15), so the bake-off has no Gateway route for Voxtral.
 
-What was checked on 2026-10-12, and what was not:
+What was checked on 2026-10-11, and what was not:
 
 - Both American ids are `transcription` models with `zdr: "all"` in the public Gateway
   catalogue, on one provider each. The catalogue calls the xAI model "Grok STT".
@@ -465,7 +465,7 @@ export default defineSettings({
 | Key | What it does |
 |---|---|
 | `kind` | The target's adapter. Only `"vercel-ai-gateway"` exists. An unknown kind fails config load. |
-| `url` | The target's base URL. It replaces the `OE_AI_GATEWAY_URL` env var (see below). The adapter reads it once, at the target's first call, so a change needs a restart. |
+| `url` | The target's base URL. It replaced the deleted `OE_AI_GATEWAY_URL` env var (see below). The adapter reads it once, at the target's first call, so a change needs a restart. |
 | `providers.only` | A **demand**: only these providers may serve a call through this target. A call cannot widen the list. A call that sets its own `only` gets the intersection, and an empty intersection refuses. |
 | `providers.order` | A **preference**: the order the gateway tries providers in. A route's `providerOrder` wins over it. Every name in `order` must also be in `only`, when `only` is set. |
 | `dataPolicy` | Rows (`zeroRetention`, `noTraining`, `region`) that every call through this target demands **on top of** `models.dataPolicy` (OPE-2531). A target adds a row and never removes one: a `false` here does not turn off a deployment row. Two different regions cannot both be met, so a call under them refuses, and the live config check names it. |
@@ -490,10 +490,9 @@ That holds for a standing seat (the `supervisor` role) and a routine that runs o
 the supervisor role. The utility side calls (the dream and facet judges, the meeting recap) use the
 utility role's `via`.
 
-**`OE_AI_GATEWAY_URL` is deprecated.** It still retargets the `gateway` target when that target has no
-`url`, for one release, and the process warns once, the first time the process reads the target. When both are set, the setting wins, and the process
-warns once, the first time the process reads the target to say that the env var is ignored. Move the value to `models.targets.gateway.url`: it is config, and config
-lives in Git.
+**`OE_AI_GATEWAY_URL` is gone (OPE-2650).** 0.8.0 deprecated it, and nothing reads it now. A
+deployment that still sets it gets the shipped gateway endpoint. Put the value in
+`models.targets.gateway.url`: it is config, and config lives in Git.
 
 **The route key `providers` is now `providerOrder`.** The gateway always read it as an order hint,
 never as an allowlist, and the old name hid that. A route that still names `providers` fails config

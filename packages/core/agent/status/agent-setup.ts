@@ -192,14 +192,14 @@ function configGaps(f: AgentSetupFacts, repoWords?: string): { ready: boolean; g
       what: "Changing my setup from chat is off.",
       step: "Whoever runs this deployment names my own repository and an admin channel in its settings, then deploys.",
     });
-    if (c.repo === undefined) operator.push("OE_ACCESS_CONFIG_REPO: this deployment's own repository, as owner/repo.");
-    if (!c.adminChannel) operator.push("OE_ACCESS_ADMIN_CHANNEL: the channel that hears about each pull request.");
+    if (c.repo === undefined) operator.push("accessRequests.configRepo (agent/settings/settings.ts): this deployment's own repository, as owner/repo.");
+    if (!c.adminChannel) operator.push("accessRequests.adminChannel (agent/settings/settings.ts): the channel that hears about each pull request.");
     return { ready: false, gaps, operator };
   }
   const owner = repoOwner(c.repo);
   if (owner === undefined) {
     gaps.push({ what: "Changing my setup from chat is off.", step: "Whoever runs this deployment sets my own repository as owner/name, then deploys." });
-    operator.push("OE_ACCESS_CONFIG_REPO must be owner/repo.");
+    operator.push("accessRequests.configRepo must be owner/repo.");
     return { ready: false, gaps, operator };
   }
   const repo = repoWords ?? c.repo!;

@@ -18,7 +18,7 @@ export function requireGroupsDeliveryConfig(override?: AccessRequestsConfig): Gr
   if (!cfg?.configRepo) {
     throw new Error(
       "IdP group-overlay bot-PR delivery isn't configured on this deployment — an operator must set the config repo " +
-        "(AppConfig.loadAccessRequests; env OE_ACCESS_CONFIG_REPO). Until then, directory_groups_plan still returns the " +
+        "(AppConfig.loadAccessRequests; setting accessRequests.configRepo). Until then, directory_groups_plan still returns the " +
         "overlay content for an admin to commit by hand.",
     );
   }
@@ -92,7 +92,7 @@ export async function deliverGroupsOverlay(plan: GroupSyncPlan, deps: GroupsDeli
       repo,
       branch,
       committed: false,
-      note: `dry run (accessRequests.dryRun) — would commit ${groupsPath} to ${repo}#${branch} and open a PR against ${base}; no branch, no PR.`,
+      note: `dry run (loadAccessRequests().dryRun) — would commit ${groupsPath} to ${repo}#${branch} and open a PR against ${base}; no branch, no PR.`,
     };
   }
   const token = await (deps.resolveToken ?? resolveConfigRepoWriteToken)(repo);

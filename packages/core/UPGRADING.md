@@ -95,6 +95,39 @@ that release or a later one as the target, this one-liner is the bootstrap too:
 npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 ```
 
+## 0.9.0 — not released yet
+
+🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the first set: the access-request wiring and the deprecated `OE_AI_GATEWAY_URL`.
+
+eve peer: `0.71.0`
+
+**Breaking**
+
+- The access-request flows read no environment variable (OPE-2650). `OE_ACCESS_ADMIN_CHANNEL`, `OE_ACCESS_CONFIG_REPO` and `OE_ACCESS_CONFIG_BASE` are the settings `accessRequests.adminChannel`, `accessRequests.configRepo` and `accessRequests.configBase` in `agent/settings/settings.ts`. `OE_ACCESS_GRANTS_PATH`, `OE_WEBHOOK_HOOKS_PATH`, `OE_AGENTS_PATH` and `OE_CREDENTIAL_BINDINGS_PATH` are gone: each overlay path is a field of the app's `agent/access/access-requests.ts` with a code default (`bindingsPath` is new there). A deployment that sets the variables and does not move the values loses `request_access`, `create_agent`, `declare_webhook`, `propose_mcp_server`, the credential-binding pull request and the directory-group delivery: each one refuses politely as unconfigured. With `github.auth: "token"`, the token also stops reaching the deployment's own repository until `accessRequests.configRepo` is set.
+- `OE_AI_GATEWAY_URL` is gone (OPE-2650). 0.8.0 deprecated it for `models.targets.gateway.url`. Nothing reads it now, so a deployment that still sets it and has no target `url` sends its model calls to the shipped Vercel AI Gateway endpoint.
+- `targetBaseUrl` (adapters `model/gateway.ts`) takes no `env` argument, and `DEPRECATED_GATEWAY_URL_ENV` is no longer exported. `gatewayCatalogUrl` (adapters `model/gateway-probe.ts`) takes no argument.
+
+**Config migrations**
+
+- If the deployment sets `OE_ACCESS_ADMIN_CHANNEL`, `OE_ACCESS_CONFIG_REPO` or `OE_ACCESS_CONFIG_BASE`, copy each value into `accessRequests: { adminChannel, configRepo, configBase }` in `agent/settings/settings.ts`, deploy, then unset the variables (OPE-2650). (apply by hand)
+- If the deployment sets `OE_ACCESS_GRANTS_PATH`, `OE_WEBHOOK_HOOKS_PATH`, `OE_AGENTS_PATH` or `OE_CREDENTIAL_BINDINGS_PATH` to a non-default path, set `grantsPath`, `hooksPath`, `agentsPath` or `bindingsPath` in the object `loadAccessRequests()` returns in `agent/access/access-requests.ts`. A default path needs no step (OPE-2650). (apply by hand)
+- If the deployment still sets `OE_AI_GATEWAY_URL`, move its value to `models: { targets: { gateway: { kind: "vercel-ai-gateway", url: "<the value>" } } }` in `agent/settings/settings.ts`, then unset the env var (OPE-2650; the 0.8.0 step of OPE-2556). (apply by hand)
+
+**Environment**
+
+- remove `OE_ACCESS_ADMIN_CHANNEL`
+- remove `OE_ACCESS_CONFIG_REPO`
+- remove `OE_ACCESS_CONFIG_BASE`
+- remove `OE_ACCESS_GRANTS_PATH`
+- remove `OE_WEBHOOK_HOOKS_PATH`
+- remove `OE_AGENTS_PATH`
+- remove `OE_CREDENTIAL_BINDINGS_PATH`
+- remove `OE_AI_GATEWAY_URL`
+
+**Manual steps**
+
+- BEFORE you deploy 0.9.0, move every removed variable this deployment sets into the line its config migration names, and merge that change in the same deploy. A value left only in the env store is lost at that deploy: the flow it armed turns off with no error. After the deploy, delete the variables from the env store.
+
 ## 0.8.1 — 2026-10-19
 
 0.8.1 is a patch release. It needs no upgrade step. It has two fixes. The first is on Slack. The second is in core and acts on every surface that marks a message as addressed. First, a person in a 1:1 DM with the Slack bot now sees a 👀 and a `Working...` status line in the DM while the turn runs (OPE-2629). Both signs clear when the turn finishes or waits on the person. A turn that fails does not clear its signs. A group DM shows no signs. The 👀 needs the `reactions:write` scope, and the status line needs the `assistant:write` scope and the agent view. The current Slack manifest grants all three. An install that never re-applied the manifest does not show the matching sign, and logs the fix once per process. Second, the seat no longer skips an addressed ask as a duplicate only because carried history holds an earlier answer to the same words (OPE-2623). On a message that the surface marks as addressed, the seat now needs its own earlier answer to the same ask in the current generation of the window. An answer from before the window last rotated does not count. A message without that mark has no such check. A seat that records no session tail, such as a thread seat or a per-surface seat, has no earlier answer to show, so it cannot skip a marked message as a duplicate. One gap stays: the check can run before the surface records the new message, and then it judges only the earlier messages that wait for an answer. A refused skip writes the new audit row `reply.no_reply_duplicate_refused`.

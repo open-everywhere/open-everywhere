@@ -25,6 +25,7 @@ export interface AccessRequestsConfig {
   readonly grantsPath?: string;
   readonly hooksPath?: string;
   readonly agentsPath?: string;
+  readonly bindingsPath?: string;
   readonly mcpServersPath?: string;
   readonly domainRulesPath?: string;
   readonly groupsPath?: string;

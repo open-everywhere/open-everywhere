@@ -70,13 +70,18 @@ four authored ones not at all, which is where a new behaviour would slip in unre
 | Group | Rows |
 |---|---|
 | The settings mechanism | 10 |
-| Settings keys (the schema) | 86 |
-| This deployment's overrides | 7 |
-| Environment variables the runtime reads | 111 |
+| Settings keys (the schema) | 90 |
+| This deployment's overrides | 6 |
+| Environment variables the runtime reads | 103 |
 | Dynamic env read sites (key not statically resolvable) | 11 |
 | The configuration reference, its generators and its ratchets | 10 |
-| The model registry | 27 |
-| **Total** | **262** |
+| The model registry | 28 |
+| **Total** | **258** |
+
+OPE-2650's first pull request deleted eight environment variables: the seven access-request
+names (three became the `accessRequests.*` settings, four became plain code defaults in the app's
+access-request config) and the deprecated `OE_AI_GATEWAY_URL`. Their ENV rows are gone, the
+three new keys have SET rows, and the counts above are that tree's.
 
 OPE-2411 part 2 moved twenty-three of the environment variables into config (eighteen new settings
 keys, two access-request config fields, and each connector's sign-in declaration), deleted the
@@ -187,6 +192,9 @@ means total over two-level specs, not over any nesting.
 
 | ID | Symbol | Code | Behaviour | Documented by | Tested by |
 |---|---|---|---|---|---|
+| SET-089 | `settings.accessRequests.adminChannel` | `packages/core/agent/settings/settings.ts:765` | The channel that hears "PR opened — merge to grant" for every config pull request (was `OE_ACCESS_ADMIN_CHANNEL`, OPE-2650). Empty ⇒ unset, and the flows refuse. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` | ? |
+| SET-090 | `settings.accessRequests.configBase` | `packages/core/agent/settings/settings.ts:781` | The base branch of the config repository (was `OE_ACCESS_CONFIG_BASE`, OPE-2650). Ships `main`. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` | ? |
+| SET-091 | `settings.accessRequests.configRepo` | `packages/core/agent/settings/settings.ts:773` | This deployment's own config repository, `owner/repo` (was `OE_ACCESS_CONFIG_REPO`, OPE-2650). Empty ⇒ unset, and the flows refuse. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` | ? |
 | SET-001 | `settings.agent.compactionThresholdPercent` | `packages/core/agent/settings/settings.ts:425` | eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. A FRACTION IS THE ONLY THING AUTHORED: the absolute token… Ships `0.5 (50% of the window)`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` *(2 pages)* | ? |
 | SET-002 | `settings.agent.sessionInputTokenBudget` | `packages/core/agent/settings/settings.ts:432` | eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. ONE SHARED BUDGET: every delegated worker's input counts toward its seat's total, and a worker starts with only the seat's remaining share. Read at BOOT (it is a `defineAgent` argument). Ships `30000000`. Code-only. | `docs/deploy/configuration-reference.md#agent-settings-behaviour-config-as-code` | ? |
 | SET-003 | `settings.approvals.checkpointTtlHours` | `packages/core/agent/settings/settings.ts:457` | TTL for the session-checkpoint memos of a LIVE session, in hours. A GC bound, not the death mechanism — the memo's session id embeds the window generation, so a rotation drops it regardless. It does NOT bound a ROUTINE fire's continue grant, which carries no expiry: approving a durable job's… Ships `24 h`. Code-only. | `docs/deploy/configuration-reference.md#session-cost-checkpoints-soft-control` | ? |
@@ -320,15 +328,9 @@ means total over two-level specs, not over any nesting.
 | ENV-029 | `NODE_ENV` | `packages/core/agent/observability/ship.ts:176` | Node's own ambient mode. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` *(3 pages)* | ? |
 | ENV-030 | `NOTION_BOT_NAME` | `packages/providers/notion/agent/channels/notion.ts:157` | which Notion bot this deployment posts as. | `docs/deploy/surfaces/notion.md#step-3-configure-the-environment` *(code sample only)* | ? |
 | ENV-031 | `NOTION_BOT_USER_ID` | `packages/providers/notion/agent/channels/notion.ts:156` | that bot's Notion user id. | `docs/deploy/surfaces/notion.md#step-3-configure-the-environment` | ? |
-| ENV-033 | `OE_ACCESS_ADMIN_CHANNEL` | `agent/access/access-requests.ts:34` | the channel access requests are posted to — a wiring target, per install. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` *(2 pages)* | ? |
-| ENV-034 | `OE_ACCESS_CONFIG_BASE` | `agent/access/access-requests.ts:36` | the base branch of that config repo. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` *(2 pages)* | ? |
-| ENV-035 | `OE_ACCESS_CONFIG_REPO` | `agent/access/access-requests.ts:35` | which repo holds this deployment's config-as-code. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` *(3 pages)* | ? |
-| ENV-037 | `OE_ACCESS_GRANTS_PATH` | `agent/access/access-requests.ts:37` | where the generated grant table lives in that repo. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` *(2 pages)* | ? |
 | ENV-039 | `OE_ADMIN_OIDC_AUDIENCE` | `packages/core/agent/control/auth.ts:539` | the audience that provider mints for this deployment. | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(2 pages)* | ? |
 | ENV-040 | `OE_ADMIN_OIDC_ISSUER` | `packages/core/agent/control/auth.ts:538` | the admin identity provider's issuer URL. | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(3 pages)* | ? |
 | ENV-042 | `OE_ADMIN_STATIC_TOKEN` | `packages/core/agent/control/auth.ts:544` | the static bearer token for the admin control plane. | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(3 pages)* | ? |
-| ENV-045 | `OE_AGENTS_PATH` | `agent/access/access-requests.ts:60` | where the generated agent roster lives in that repo. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` | ? |
-| ENV-046 | `OE_AI_GATEWAY_URL` | `packages/adapters/agent/model/gateway.ts:20` | the model gateway base URL. | `docs/deploy/configuration-reference.md#model-gateway` | ? |
 | ENV-052 | `OE_AWS_REGION` | `packages/adapters/agent/aws/config.ts:7` | the operator's default AWS region — which regional endpoints a mint and a CLI call reach. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
 | ENV-053 | `OE_AWS_SSO_CLIENT_ID` | `packages/adapters/agent/aws/config.ts:16` | the pre-registered PUBLIC OIDC client id this deployment presents at the Identity Center link — the same class as LINEAR_CLIENT_ID, the public half of a client pair. | `docs/deploy/configuration-reference.md#aws-access-plane-optional-off-by-default` | ? |
 | ENV-054 | `OE_AWS_SSO_REGION` | `packages/adapters/agent/aws/config.ts:14` | the Identity Center region, where the SSO OIDC and portal endpoints live. | `docs/deploy/configuration-reference.md#host-injected-set-by-the-platform-not-you` | ? |
@@ -336,7 +338,6 @@ means total over two-level specs, not over any nesting.
 | ENV-057 | `OE_CONTROL_INJECT_TOKENS` | `packages/core/agent/control/auth.ts:368` | the WAKE-INJECTION service tokens `POST /control/v1/test/wake` authenticates against — a disjoint family from OE_CONTROL_READ_TOKENS, and the sharper of the two (injection is a write and a spoofing vector). | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(2 pages)* | ? |
 | ENV-058 | `OE_CONTROL_OAUTH_SIGNING_SECRET` | `packages/core/agent/control/oauth-tokens.ts:30` | the HS256 key the control plane's own authorization server signs access tokens and authorization codes with, and the resource server verifies them against (agent/control/oauth-tokens.ts). Infrastructure, not a roster: the clients, their secret DIGESTS and the allowed audiences are tracked literals… | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(2 pages)* | ? |
 | ENV-059 | `OE_CONTROL_READ_TOKENS` | `packages/core/agent/control/read-route.ts:120` | the service tokens the control read route accepts. | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(3 pages)* | ? |
-| ENV-061 | `OE_CREDENTIAL_BINDINGS_PATH` | `packages/core/agent/credentials/binding-pr.ts:139` | where the generated credential-binding table lives. | `docs/deploy/configuration-reference.md#credential-broker` | ? |
 | ENV-062 | `OE_CREDENTIAL_ENCRYPTION_KEY` | `packages/core/agent/credentials/db-broker.ts:40` | the AES-256-GCM key the db credential broker encrypts every stored credential with. | `docs/deploy/configuration-reference.md#credential-broker` *(10 pages)* | ? |
 | ENV-063 | `OE_DB_OWNER_URL` | `packages/core/agent/ops/quickstart.ts:89` | the OWNER-role Postgres DSN, the second connection string of the two-role database setup — present ⇒ the app connects as a non-owner runtime role. | `docs/extending/database.md#hardening-the-two-role-split-recommended-closes-the-owner-ddl-escape` | ? |
 | ENV-067 | `OE_DIRECTORY_OKTA_ORG_URL` | `packages/adapters/agent/directory/config.ts:9` | the Okta org this deployment syncs against — an HTTPS target, per install. | `docs/deploy/configuration-reference.md#identity-directory-sync-pre-populating-links-from-an-idp` *(2 pages)* | ? |
@@ -380,7 +381,6 @@ means total over two-level specs, not over any nesting.
 | ENV-128 | `OE_TELEMETRY_OTLP_URL` | `packages/core/agent/observability/telemetry.ts:319` | the OTLP collector endpoint. | `docs/deploy/configuration-reference.md#telemetry` *(2 pages)* | ? |
 | ENV-132 | `OE_TRANSCRIPT_RELAY_SECRET` | `packages/core/agent/control/transcript-relay.ts:142` | the shared secret the transcript relay route authenticates with. | `docs/deploy/configuration-reference.md#control-plane-remote-admin-auth` *(2 pages)* | ? |
 | ENV-134 | `OE_VISIBILITY` | `packages/core/agent/identity/binding.ts:394` | the binding visibility stand-in, read ONLY by bindLocal, clamped to private/public. | `docs/deploy/configuration-reference.md#identity-partitioning` | ? |
-| ENV-135 | `OE_WEBHOOK_HOOKS_PATH` | `agent/access/access-requests.ts:53` | where the generated webhook table lives in that repo. | `docs/deploy/configuration-reference.md#access-requests-the-widen-slow-path` | ? |
 | ENV-138 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:82` | the standard OTel endpoint var. The adapters OTLP destination (packages/adapters/agent/instrumentation.ts) reads it with the OTel SDK's own conventions. | `docs/deploy/configuration-reference.md#observability` *(2 pages)* | ? |
 | ENV-139 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `packages/adapters/agent/instrumentation.ts:81` | the standard OTel traces endpoint var, same convention. | `docs/deploy/configuration-reference.md#observability` | ? |
 | ENV-140 | `SLACK_BOT_TOKEN` | `packages/providers/slack/agent/setup/credentials.ts` | the Slack bot token. Since OPE-2231 the env var is the FIRST of two homes — the resolver falls back to this deployment's encrypted credential store, where `/setup` puts it. | `docs/deploy/configuration-reference.md#surface-credentials` *(7 pages)* | ? |

@@ -6,13 +6,14 @@ import { loadBaseWebhooks } from "../webhooks/hooks.js";
 import { MCP_SERVERS } from "./mcp-servers.js";
 import { loadBaseDomains, loadBaseSilos, loadDomains } from "../memory/config/domains.js";
 import { loadGroups } from "../identity/groups.js";
+import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
 
 export function loadAccessRequests(): AccessRequestsConfig | null {
+  const { adminChannel, configRepo, configBase } = getSettings().accessRequests;
   return {
-    adminChannel: process.env.OE_ACCESS_ADMIN_CHANNEL,
-    configRepo: process.env.OE_ACCESS_CONFIG_REPO,
-    configBase: process.env.OE_ACCESS_CONFIG_BASE || undefined,
-    grantsPath: process.env.OE_ACCESS_GRANTS_PATH || undefined,
+    adminChannel: adminChannel || undefined,
+    configRepo: configRepo || undefined,
+    configBase,
     dryRun: false,
     credentialBindingLive: false,
     baseBundles: loadBaseBundles,
@@ -20,10 +21,8 @@ export function loadAccessRequests(): AccessRequestsConfig | null {
     domainRegistry: loadDomains,
     groupRegistry: loadGroups,
     baseConnectorCredentials: loadBaseConnectorCredentials,
-    hooksPath: process.env.OE_WEBHOOK_HOOKS_PATH || undefined,
     baseWebhooks: loadBaseWebhooks,
     baseMcpServers: () => MCP_SERVERS,
-    agentsPath: process.env.OE_AGENTS_PATH || undefined,
     baseAgents: emptyAgentsFile,
     baseDomains: loadBaseDomains,
     baseSilos: loadBaseSilos,

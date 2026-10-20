@@ -75,27 +75,44 @@ of them. That is what a sweep is: it finds instances, and only a lint kills a cl
 
 `npm run lint:env-docs` now carries that lint. It scans every `process.env.X` the runtime reads —
 module level or lazy — and requires each name to be on the explicit allowlist in
-`scripts/env-read-allowlist.ts`, under one of **six** classes, with a stated reason the lint itself
-checks for. **Five** are permanent, and they are the line above restated: `secret`, `connection`,
-`identity`, `platform`, and `settings-lever` for the settings module itself (empty today — see the
-limits below). **A read in runtime code that is on no list reds the `test` chain**, and the failure says to move
-the value to settings/config.
+`scripts/env-read-allowlist.ts`, in a class, with a stated reason the lint itself checks for. **A
+read in runtime code that is on no list reds the `test` chain**, and the failure says to move the
+value to settings, or to the db secret store with `getOperatorSecret()`.
 
-The sixth class, `pending-migration`, is the honest backlog: **3 names** that still read
-`process.env` directly. They are not a permitted pattern — each is held under OPE-1153 or OPE-2411
-with its own reason, and the list is **shrink-only**: once a name moves, its entry must go, or the
-lint reds. The three are `OE_TELEMETRY` and `OE_TELEMETRY_DEBUG` (left in env by a maintainer
-ruling) and `OE_PRINCIPAL` (the local principal stand-in: a committed value would ship to
-production). The first family to move was the three webhook-verification walls, now the
-`webhooks.allowUnverified*` settings. OPE-2411 moved the rest in two parts. Part 1 made thirteen
-pure tunables into code constants with no setting at all (the DM seat's rotation thresholds, the
-backscroll reach-back, the Notion hot-cache bounds, the log-ship batch knobs, the webhook ingress
-bounds, the denial-log poll interval and the Notion API version), and took six test valves out of
-shipped runtime code. A knob nobody needs to turn is not a setting. Part 2 moved every real choice
-into config: the access-plane master flags and scope lists, the directory policy, the admin control
-plane's role rules, the model pins, the trust declarations and the platform floors. The
-[configuration reference](../deploy/configuration-reference.md#moved-to-config-ope-2411) maps each
-deleted variable to the line that replaces it.
+The classes are the env-minimalism rule (OPE-2650). Env holds four things and
+no more, and each is a permanent class: `root-of-trust` (the database DSNs, the credential
+encryption key and the public origin), `store-bootstrap` (what the process needs to open the
+operational store before it can read a stored secret), `platform` (a name the host or a vendor
+convention defines, which the code only reads back) and `per-run-seam` (a value right for one shell
+or one invocation and wrong to commit). `settings-lever` stays declared and empty: the settings
+schema reads no environment. Everything else is a setting in Git or an operator secret in the db
+store.
+
+`pending-migration` is the honest backlog: **63 names**, and since OPE-2650 it is also the sweep's
+plan. Every name that is not a survivor sits there with its TARGET, either a setting path or
+"operator secret".
+The list is **shrink-only**: once a name moves, its entry must go, or the lint reds. The suite pins
+the survivor count (36), so a new survivor costs a reviewed line. The four `OE_DIRECTORY_*` names
+keep their old `secret` and `connection` classes until OPE-2649 moves them. The first sweep pull
+request deleted eight names: the access-request wiring (now the `accessRequests.*` settings and the
+app's own `loadAccessRequests` fields) and the deprecated `OE_AI_GATEWAY_URL` (now
+`models.targets.gateway.url`). The [configuration
+reference](../deploy/configuration-reference.md#moved-to-config-ope-2650) maps each deleted variable
+to the line that replaces it.
+
+Before OPE-2650 the backlog held three names: `OE_TELEMETRY` and `OE_TELEMETRY_DEBUG` (left in env
+by an earlier rule) and `OE_PRINCIPAL` (the local principal stand-in). The telemetry
+pair now carries a settings target. `OE_PRINCIPAL` is a `per-run-seam`: a committed value would ship
+to production. The first family to move off the backlog was the three webhook-verification walls,
+now the `webhooks.allowUnverified*` settings. OPE-2411 moved the rest in two parts. Part 1 made
+thirteen pure tunables into code constants with no setting at all (the DM seat's rotation
+thresholds, the backscroll reach-back, the Notion hot-cache bounds, the log-ship batch knobs, the
+webhook ingress bounds, the denial-log poll interval and the Notion API version), and took six test
+valves out of shipped runtime code. A knob nobody needs to turn is not a setting. Part 2 moved every
+real choice into config: the access-plane master flags and scope lists, the directory policy, the
+admin control plane's role rules, the model pins, the trust declarations and the platform floors.
+The [configuration reference](../deploy/configuration-reference.md#moved-to-config-ope-2411) maps
+each of those deleted variables to the line that replaces it.
 
 Three names that sat in that backlog are worth naming on their own, because each *looks* like a
 legitimate env fact and is not. `OE_TRUST` read as identity but defeated a fail-closed DM downgrade.

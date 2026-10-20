@@ -22,7 +22,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { targetBaseUrl } from "./target-url.js";
 
-export { DEPRECATED_GATEWAY_URL_ENV, targetBaseUrl } from "./target-url.js";
+export { targetBaseUrl } from "./target-url.js";
 
 type GatewayModel = ReturnType<typeof gateway>;
 type GatewayProvider = typeof gateway;

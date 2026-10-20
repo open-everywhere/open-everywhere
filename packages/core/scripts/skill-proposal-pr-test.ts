@@ -420,7 +420,7 @@ async function crossing(occurrences: number): Promise<Proposal | null> {
   const res = await openSkillProposalPr("dryco", proposal, { provider, delivery: "dry-delivery-1" });
   ok(res.opened === false && res.dryRun === true, "🔴 dryRun: the shipped-on proposal PR opens NOTHING on a dry-run install");
   ok(provider.calls.length === 0, `🔴 dryRun: the provider is never touched — no credential, no branch, no file, no PR (got ${provider.calls.join(", ") || "none"})`);
-  ok((res.skipped ?? "").includes("accessRequests.dryRun"), "dryRun: the skip names the switch that held the write");
+  ok((res.skipped ?? "").includes("loadAccessRequests().dryRun"), "dryRun: the skip names the switch that held the write");
   ok(res.repo === "dryco/config" && res.branch === skillProposalBranch(SCOPE, proposal.detail!["signature"] as string), "dryRun: the result says which repo and branch a live run would write");
 
   const rows = await readAudit({ org: "dryco", action: SKILL_PROPOSAL_PR_ACTION });

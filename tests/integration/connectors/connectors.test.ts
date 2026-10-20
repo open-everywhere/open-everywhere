@@ -202,14 +202,11 @@ test("C — negative control: an eve-authored STATUS row (needsAuthorization) fe
 });
 
 test("D — request_access grant-connector for an ungranted connector mints a real access.request card under the egress spoof, no network", async () => {
-  process.env.OE_ACCESS_ADMIN_CHANNEL = "C_IT_ADMIN_FAKE";
-  process.env.OE_ACCESS_CONFIG_REPO = "example-owner/open-everywhere-it-fixture";
-  afterThisTest(() => {
-    delete process.env.OE_ACCESS_ADMIN_CHANNEL;
-    delete process.env.OE_ACCESS_CONFIG_REPO;
-  });
-
   await bootAgent();
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  const { adminChannel, configRepo } = settings.getSettings().accessRequests;
+  settings.overrideSettingsForTest({ accessRequests: { adminChannel: "C_IT_ADMIN_FAKE", configRepo: "example-owner/open-everywhere-it-fixture" } });
+  afterThisTest(() => settings.overrideSettingsForTest({ accessRequests: { adminChannel, configRepo } }));
 
   const handle = disposeLater(
     registerScript({

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   GATEWAY_CATALOG_URL,
   GATEWAY_PROBE_TIMEOUT_MS,
@@ -12,6 +13,10 @@ const ok = (cond: boolean, label: string): void => {
   assert.ok(cond, label);
   n++;
 };
+
+function retarget(url: string | undefined): void {
+  overrideSettingsForTest({ models: { targets: { gateway: url === undefined ? { kind: "vercel-ai-gateway" } : { kind: "vercel-ai-gateway", url } } } });
+}
 
 function fetchStub(reply: { ok: boolean; status: number } | Error): { impl: typeof globalThis.fetch; urls: string[] } {
   const urls: string[] = [];
@@ -65,9 +70,10 @@ function fetchStub(reply: { ok: boolean; status: number } | Error): { impl: type
 {
   const key = "gw-s3cr3t-DO-NOT-PUBLISH";
   const vendorError = new Error(`getaddrinfo ENOTFOUND gateway-internal.acme.invalid (key ${key})`);
+  retarget("https://gateway-internal.acme.invalid/v4/ai");
   for (const reply of [{ ok: false, status: 401 } as const, vendorError]) {
     const answer = await probeGatewayRoute({
-      env: { AI_GATEWAY_API_KEY: key, OE_AI_GATEWAY_URL: `https://gateway-internal.acme.invalid/v4/ai` },
+      env: { AI_GATEWAY_API_KEY: key },
       vercel: false,
       fetchImpl: fetchStub(reply).impl,
     });
@@ -76,25 +82,31 @@ function fetchStub(reply: { ok: boolean; status: number } | Error): { impl: type
     ok(!wire.includes("acme.invalid"), "…and neither does the configured gateway host");
     ok(!wire.includes("ENOTFOUND"), "…and neither does the vendor's own error text");
   }
+  retarget(undefined);
 }
 
 {
-  ok(gatewayCatalogUrl({}) === GATEWAY_CATALOG_URL, "no override ⇒ the shipped public catalog endpoint");
+  ok(gatewayCatalogUrl() === GATEWAY_CATALOG_URL, "no override ⇒ the shipped public catalog endpoint");
+  process.env.OE_AI_GATEWAY_URL = "https://relay.example.invalid/v4/ai";
+  ok(gatewayCatalogUrl() === GATEWAY_CATALOG_URL, "🔴 the deleted OE_AI_GATEWAY_URL is not read");
+  delete process.env.OE_AI_GATEWAY_URL;
+  retarget("https://relay.example.invalid/v4/ai");
   ok(
-    gatewayCatalogUrl({ OE_AI_GATEWAY_URL: "https://relay.example.invalid/v4/ai" }) === "https://relay.example.invalid/v1/models/catalog",
+    gatewayCatalogUrl() === "https://relay.example.invalid/v1/models/catalog",
     "an override is taken from its ORIGIN — it names the chat base, not the catalog",
   );
-  ok(
-    gatewayCatalogUrl({ OE_AI_GATEWAY_URL: "not a url" }) === GATEWAY_CATALOG_URL,
-    "an unparseable override falls back to the default rather than answering a misleading unreachable",
-  );
+  retarget("not a url");
+  ok(gatewayCatalogUrl() === GATEWAY_CATALOG_URL, "an unparseable override falls back to the default rather than answering a misleading unreachable");
+  retarget("https://relay.example.invalid/v4/ai");
   const probed = fetchStub({ ok: true, status: 200 });
-  await probeGatewayRoute({ env: { AI_GATEWAY_API_KEY: "k", OE_AI_GATEWAY_URL: "https://relay.example.invalid/v4/ai" }, vercel: false, fetchImpl: probed.impl });
+  await probeGatewayRoute({ env: { AI_GATEWAY_API_KEY: "k" }, vercel: false, fetchImpl: probed.impl });
   ok(probed.urls[0] === "https://relay.example.invalid/v1/models/catalog", "…and the probe really requests the retargeted URL");
+  retarget(undefined);
 }
 
 {
-  const relay = { OE_AI_GATEWAY_URL: "https://relay.example.invalid/v4/ai" };
+  retarget("https://relay.example.invalid/v4/ai");
+  const relay = {};
   const keyless = await probeGatewayRoute({ env: relay, vercel: false, fetchImpl: fetchStub({ ok: true, status: 200 }).impl });
   ok(keyless.met === "unknown", "a retargeted gateway with no AI_GATEWAY_API_KEY is NOT MEASURED — a relay may need none");
   ok(keyless.detail.includes("not measured"), "…and the detail says so");
@@ -104,6 +116,7 @@ function fetchStub(reply: { ok: boolean; status: number } | Error): { impl: type
   }
   const broken = await probeGatewayRoute({ env: { ...relay, AI_GATEWAY_API_KEY: "k" }, vercel: false, fetchImpl: fetchStub({ ok: false, status: 502 }).impl });
   ok(broken.met === "no", "a retargeted gateway answering 502 is a real no");
+  retarget(undefined);
   const defaultGateway = await probeGatewayRoute({ env: { AI_GATEWAY_API_KEY: "k" }, vercel: false, fetchImpl: fetchStub({ ok: false, status: 404 }).impl });
   ok(defaultGateway.met === "no", "the DEFAULT gateway answering 404 is a real no (the retarget arm does not widen to it)");
   const keylessDefault = await probeGatewayRoute({ env: {}, vercel: false, fetchImpl: fetchStub({ ok: true, status: 200 }).impl });

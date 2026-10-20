@@ -55,7 +55,7 @@ export function requireAccessRequestsConfig(override?: AccessRequestsConfig): En
   if (!cfg?.adminChannel || !cfg.configRepo) {
     throw new Error(
       "access requests aren't enabled on this deployment — an operator must configure the admin channel + config repo " +
-        "(AppConfig.loadAccessRequests; env OE_ACCESS_ADMIN_CHANNEL / OE_ACCESS_CONFIG_REPO). Until then, an admin can PR the grant by hand.",
+        "(AppConfig.loadAccessRequests; settings accessRequests.adminChannel / accessRequests.configRepo). Until then, an admin can PR the grant by hand.",
     );
   }
   return cfg as EnabledAccessRequestsConfig;

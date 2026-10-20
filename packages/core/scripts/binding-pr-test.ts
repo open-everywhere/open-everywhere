@@ -234,6 +234,22 @@ function ghDeps(state: FakeGh) {
 }
 
 {
+  const state = fakeGh("new");
+  process.env.OE_CREDENTIAL_BINDINGS_PATH = "env/should-not-be-read.ts";
+  try {
+    await stageCredentialBindingPr(
+      { ...baseArgs, credentialAuditId: "intake-moved" },
+      { ...ghDeps(state), config: cfg({ bindingsPath: "agent/access/moved-bindings.generated.ts" }) },
+    );
+  } finally {
+    delete process.env.OE_CREDENTIAL_BINDINGS_PATH;
+  }
+  const written = Object.keys(state.files);
+  ok(written.length === 1 && written[0]!.endsWith(":agent/access/moved-bindings.generated.ts"), "path: 🔴 the app's bindingsPath decides where the overlay is committed");
+  ok(!written.some((k) => k.includes("should-not-be-read")), "path: 🔴 the deleted OE_CREDENTIAL_BINDINGS_PATH is not read");
+}
+
+{
   const state = fakeGh("open-exists");
   const branch = "credential-binding/acme-key";
   state.branches[branch] = "base-sha";

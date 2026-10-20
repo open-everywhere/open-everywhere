@@ -71,7 +71,7 @@ from the demonstration. The person reads it, tests it, and proposes it by pull r
    rule, the judge, a bypass), throws. The pull request goes on the config repo, on the same path as the dream
    cycle's [skill proposals](skills-and-plugins.md#the-agent-proposes-a-skill-the-learn-loops-pull-request).
    The file goes under `.agents/skills/<name>/SKILL.md`, and merging is what arms the skill. The same switches
-   apply: `memory.skillProposalPr`, `accessRequests.configRepo` and `accessRequests.dryRun`. A second proposal
+   apply: `memory.skillProposalPr`, `accessRequests.configRepo` and `loadAccessRequests().dryRun`. A second proposal
    of the same draft updates its own pull request.
 
 **What the demonstration never records.** It never records the text the person types into a field: a text input

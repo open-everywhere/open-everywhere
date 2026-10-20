@@ -153,7 +153,7 @@ export const postPrWalkthroughEntry = defineTool({
     let deliveryNote: string;
     if (!channel) {
       deliveryNote =
-        "no governance admin channel is configured on this deployment (AppConfig.loadAccessRequests / OE_ACCESS_ADMIN_CHANNEL), " +
+        "no governance admin channel is configured on this deployment (AppConfig.loadAccessRequests / accessRequests.adminChannel), " +
         "so the walkthrough was not posted anywhere — relay it yourself, and say that it was not delivered to the admins";
     } else {
       try {

@@ -62,7 +62,7 @@ export function requireAgentCreateConfig(override?: AccessRequestsConfig): Enabl
   if (!cfg?.adminChannel || !cfg.configRepo) {
     throw new Error(
       "creating agents from chat isn't enabled on this deployment — an operator must configure the admin channel + config repo " +
-        "(AppConfig.loadAccessRequests; env OE_ACCESS_ADMIN_CHANNEL / OE_ACCESS_CONFIG_REPO). Until then, an admin can add an agent by hand-editing config in a PR.",
+        "(AppConfig.loadAccessRequests; settings accessRequests.adminChannel / accessRequests.configRepo). Until then, an admin can add an agent by hand-editing config in a PR.",
     );
   }
   if (!cfg.baseAgents) {

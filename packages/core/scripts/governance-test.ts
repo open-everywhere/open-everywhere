@@ -62,7 +62,7 @@ const ok = (cond: boolean, label: string) => {
   ok(!isGovernanceChannel("slack/T1/C_ENG", [gov, org, plain]), "isGovernanceChannel false for an ordinary domain channel");
   ok(governanceChannelFor([gov, org, plain]) === "slack/T1/C_ADMIN", "governanceChannelFor picks the first governance channel");
   ok(governanceChannelFor([org, plain]) === undefined, "governanceChannelFor is undefined with no governance domain + no fallback");
-  ok(governanceChannelFor([org, plain], "slack/T1/C_FALLBACK") === "slack/T1/C_FALLBACK", "governanceChannelFor uses the OE_ACCESS_ADMIN_CHANNEL fallback alias");
+  ok(governanceChannelFor([org, plain], "slack/T1/C_FALLBACK") === "slack/T1/C_FALLBACK", "governanceChannelFor uses the accessRequests.adminChannel fallback alias");
 
   const throwsGov = (d: Domain, needle: RegExp, label: string) => {
     let threw = false;

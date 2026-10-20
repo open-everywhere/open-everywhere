@@ -114,7 +114,6 @@ APP_ENV=(
   -e OE_EGRESS_PROXY_URL="http://$PROXY:8080" -e OE_EGRESS_PROXY_TOKEN="$TOKEN"
 )
 [ -n "${AI_GATEWAY_API_KEY:-}" ] && APP_ENV+=(-e AI_GATEWAY_API_KEY)
-[ -n "${OE_AI_GATEWAY_URL:-}" ] && APP_ENV+=(-e OE_AI_GATEWAY_URL)
 for k in OE_SMOKE_MODEL OE_SMOKE_SESSION_HOST OE_SMOKE_UNDECLARED_HOST OE_SMOKE_CREDENTIAL_UNDECLARED_HOST; do
   [ -n "${!k:-}" ] && APP_ENV+=(-e "$k")
 done
@@ -131,7 +130,7 @@ fi
 
 proxy_logs=$("$DOCKER" logs "$PROXY" 2>&1 || true)
 denied=$("$DOCKER" exec "$PROXY" cat /var/log/oe-egress/denied.log 2>/dev/null || true)
-GW_HOST=$(node -e 'try{process.stdout.write(new URL(process.argv[1]).hostname)}catch{process.stdout.write("ai-gateway.vercel.sh")}' "${OE_AI_GATEWAY_URL:-}")
+GW_HOST="ai-gateway.vercel.sh"
 UNDECLARED="${OE_SMOKE_UNDECLARED_HOST:-example.org}"
 CRED_UNDECLARED="${OE_SMOKE_CREDENTIAL_UNDECLARED_HOST:-example.net}"
 

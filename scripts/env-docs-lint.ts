@@ -254,8 +254,8 @@ console.log(
     `${GRANDFATHERED.size} grandfathered (frozen 2026-08-10, must only shrink), 0 new gaps. ` +
     `${computedReadCount} name-in-file read(s) reached their name through a COMPUTED key (OPE-1160). ` +
     `Reverse arm: ${documentedNames.size} documented name(s), ${REVERSE_EXEMPT.size} exempt, 0 stale rows. ` +
-    `Allowlist arm: ${ENV_READ_ALLOWLIST.size} allowed, ${pendingMigration} pending migration to settings ` +
-    `(OPE-1153, must only shrink), 0 unallowed reads. ` +
+    `Allowlist arm: ${ENV_READ_ALLOWLIST.size} allowed, ${pendingMigration} pending migration to settings or the secret store ` +
+    `(OPE-2650, must only shrink), 0 unallowed reads. ` +
     `Dynamic-site arm: ${dynamicSites.length} unresolvable read site(s), ${DYNAMIC_ENV_READ_SITES.size} excused ` +
     `(must only shrink).`,
 );

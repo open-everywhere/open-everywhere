@@ -155,19 +155,15 @@ const MODEL = "openai/gpt-6-luna";
 }
 
 {
-  const warnings: string[] = [];
-  const realWarn = console.warn;
-  console.warn = (m: unknown) => void warnings.push(String(m));
+  ok(targetBaseUrl("gateway", GW) === undefined, "url: no url → the default endpoint");
+  ok(targetBaseUrl("gateway", { ...GW, url: "https://a.invalid/v4/ai" }) === "https://a.invalid/v4/ai", "url: the target url is the base url");
+  const prior = process.env.OE_AI_GATEWAY_URL;
+  process.env.OE_AI_GATEWAY_URL = "https://env.invalid/v4/ai";
   try {
-    ok(targetBaseUrl("gateway", GW, {}) === undefined, "url: no url and no env → the default endpoint");
-    ok(targetBaseUrl("gateway", { ...GW, url: "https://a.invalid/v4/ai" }, {}) === "https://a.invalid/v4/ai" && warnings.length === 0, "url: the target url wins, with no warning");
-    ok(targetBaseUrl("gateway", GW, { OE_AI_GATEWAY_URL: "https://env.invalid/v4/ai" }) === "https://env.invalid/v4/ai", "url: the deprecated env var still retargets the gateway target");
-    ok(warnings.some((w) => w.includes("OE_AI_GATEWAY_URL is deprecated") && w.includes("models.targets.gateway.url")), "url: the env var warns, and names the setting to move to");
-    ok(targetBaseUrl("eu", GW, { OE_AI_GATEWAY_URL: "https://env.invalid/v4/ai" }) === undefined, "url: the env var retargets only the `gateway` target");
-    ok(targetBaseUrl("gateway", { ...GW, url: "https://a.invalid/v4/ai" }, { OE_AI_GATEWAY_URL: "https://env.invalid/v4/ai" }) === "https://a.invalid/v4/ai", "url: the setting wins over the env var");
-    ok(warnings.some((w) => w.includes("is set and ignored")), "url: an ignored env var warns");
+    ok(targetBaseUrl("gateway", GW) === undefined, "url: 🔴 OE_AI_GATEWAY_URL no longer retargets the gateway target");
   } finally {
-    console.warn = realWarn;
+    if (prior === undefined) delete process.env.OE_AI_GATEWAY_URL;
+    else process.env.OE_AI_GATEWAY_URL = prior;
   }
 }
 
@@ -199,7 +195,6 @@ const onlyRefusal = (): Response =>
   new Response(JSON.stringify({ error: { message: "No available providers match the 'only' filter", type: "invalid_request_error" } }), { status: 400, headers: { "content-type": "application/json" } });
 const bodyGw = (c: Captured): AnyOpts => ((c.body["providerOptions"] as AnyOpts | undefined)?.["gateway"] ?? {}) as AnyOpts;
 
-delete process.env.OE_AI_GATEWAY_URL;
 overrideSettingsForTest({
   models: {
     targets: {

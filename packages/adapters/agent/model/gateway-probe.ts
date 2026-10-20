@@ -14,13 +14,13 @@ export const GATEWAY_CATALOG_URL = "https://ai-gateway.vercel.sh/v1/models/catal
 
 export const GATEWAY_PROBE_TIMEOUT_MS = 2_000;
 
-function gatewayBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+function gatewayBaseUrl(): string | undefined {
   const targets = getSettings().models.targets;
-  return targetBaseUrl(DEFAULT_MODEL_VIA, modelTargetFor(DEFAULT_MODEL_VIA, targets), env);
+  return targetBaseUrl(DEFAULT_MODEL_VIA, modelTargetFor(DEFAULT_MODEL_VIA, targets));
 }
 
-export function gatewayCatalogUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const override = gatewayBaseUrl(env);
+export function gatewayCatalogUrl(): string {
+  const override = gatewayBaseUrl();
   if (!override) return GATEWAY_CATALOG_URL;
   try {
     return `${new URL(override).origin}/v1/models/catalog`;
@@ -64,7 +64,6 @@ async function cachedConfigCheck(deps: GatewayProbeDeps, models: () => readonly 
   const cache = deps.cache ?? CONFIG_CHECK_CACHE;
   const now = (deps.now ?? Date.now)();
   if (cache.value !== undefined && now - cache.value.at < MODEL_CONFIG_CHECK_TTL_MS) return cache.value.result;
-  const env = deps.env ?? process.env;
   let result: ConfigCheckResult;
   try {
     const settings = getSettings().models;
@@ -72,7 +71,7 @@ async function cachedConfigCheck(deps: GatewayProbeDeps, models: () => readonly 
       models: models(),
       targets: settings.targets,
       policy: settings.dataPolicy,
-      baseUrlFor: (via) => targetBaseUrl(via, modelTargetFor(via, settings.targets), env),
+      baseUrlFor: (via) => targetBaseUrl(via, modelTargetFor(via, settings.targets)),
       timeoutMs: GATEWAY_PROBE_TIMEOUT_MS,
       ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
     });
@@ -87,7 +86,7 @@ export async function probeGatewayRoute(deps: GatewayProbeDeps = {}): Promise<Pr
   const env = deps.env ?? process.env;
   const vercel = deps.vercel ?? onVercel();
   const keySet = (env.AI_GATEWAY_API_KEY ?? "").trim().length > 0;
-  const retargeted = gatewayBaseUrl(env) !== undefined;
+  const retargeted = gatewayBaseUrl() !== undefined;
   if (!vercel && !keySet) {
     if (retargeted) {
       return { met: "unknown", detail: "the model route is retargeted (models.targets.gateway.url) and holds no AI_GATEWAY_API_KEY — a relay may need neither, so this was not measured" };
@@ -99,7 +98,7 @@ export async function probeGatewayRoute(deps: GatewayProbeDeps = {}): Promise<Pr
   const controller = new AbortController();
   const fuse = setTimeout(() => controller.abort(), GATEWAY_PROBE_TIMEOUT_MS);
   try {
-    const res = await fetchImpl(gatewayCatalogUrl(env), { method: "GET", signal: controller.signal });
+    const res = await fetchImpl(gatewayCatalogUrl(), { method: "GET", signal: controller.signal });
     if (!res.ok) {
       if (retargeted && (res.status === 404 || res.status === 405)) {
         return { met: "unknown", detail: `the retargeted model gateway does not serve a model catalog (HTTP ${res.status}), so reachability was not measured; the credential posture is ${credential}` };

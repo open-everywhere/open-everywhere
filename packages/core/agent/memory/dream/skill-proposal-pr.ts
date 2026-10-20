@@ -223,7 +223,7 @@ export async function openSkillProposalPr(
     return {
       opened: false,
       dryRun: true,
-      skipped: `dry run (accessRequests.dryRun) — would commit ${skillProposalPath(name)} to ${repo}#${branch} and open a PR against ${base}; no branch, no PR`,
+      skipped: `dry run (loadAccessRequests().dryRun) — would commit ${skillProposalPath(name)} to ${repo}#${branch} and open a PR against ${base}; no branch, no PR`,
       repo,
       branch,
       ...none,

@@ -149,7 +149,7 @@ The deployment reaches the Vercel AI Gateway and authenticates to it. No turn ca
 every role in the model stack resolves through the gateway.
 
 - **Vercel:** OIDC. A deployed project authenticates with no key to set.
-- **Docker:** `AI_GATEWAY_API_KEY`, or `OE_AI_GATEWAY_URL` pointed at a compatible relay.
+- **Docker:** `AI_GATEWAY_API_KEY`, or `models.targets.gateway.url` in `agent/settings/settings.ts` pointed at a compatible relay.
 
 <a id="req-secrets"></a>
 

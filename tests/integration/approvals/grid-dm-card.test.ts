@@ -1,3 +1,5 @@
+// proves: approval.requested
+
 import { afterAll, expect, test } from "vitest";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
@@ -164,12 +166,16 @@ function mcpProposeInput(name: string): Record<string, unknown> {
 }
 
 async function proposeMcpServerInDm(input: { readonly channelId: string; readonly userId: string; readonly name: string; readonly tag: string }) {
-  process.env.OE_ACCESS_ADMIN_CHANNEL = "C_IT_ADMIN_FAKE";
-  process.env.OE_ACCESS_CONFIG_REPO = "example-owner/open-everywhere-it-fixture";
+  let restore: (() => void) | undefined;
   try {
     await bootAgent({ stubbedProviderTransport: true, sharedSqlite: true });
     const settings = await import("@open-everywhere/core/agent/settings/settings.js");
-    settings.overrideSettingsForTest({ approvals: { judgeMode: "off" } });
+    const { adminChannel, configRepo } = settings.getSettings().accessRequests;
+    restore = () => settings.overrideSettingsForTest({ accessRequests: { adminChannel, configRepo } });
+    settings.overrideSettingsForTest({
+      approvals: { judgeMode: "off" },
+      accessRequests: { adminChannel: "C_IT_ADMIN_FAKE", configRepo: "example-owner/open-everywhere-it-fixture" },
+    });
     const floor = await import("@open-everywhere/core/agent/access/audience-floor.js");
     floor._resetAudienceFloorCacheForTest();
 
@@ -214,8 +220,7 @@ async function proposeMcpServerInDm(input: { readonly channelId: string; readonl
       buttons: approvalButtons(postMark, input.channelId).map((a) => a.split(":")[1]),
     };
   } finally {
-    delete process.env.OE_ACCESS_ADMIN_CHANNEL;
-    delete process.env.OE_ACCESS_CONFIG_REPO;
+    restore?.();
   }
 }
 
