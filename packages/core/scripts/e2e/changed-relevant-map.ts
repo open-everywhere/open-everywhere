@@ -281,8 +281,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/tools/write_canvas.ts",
       "packages/core/agent/tools/update_list.ts",
     ],
-    scenarios: ["S-CANVAS-LIST"],
-    why: "S-CANVAS-LIST (OPE-2521) is the only leg that drives an agent-written canvas. It asks for a canvas in the e2e channel, gates that the canvas.write card previews it, approves it, and reads the canvas the canvas.write row names back from Slack with the driver's own token.",
+    scenarios: ["S-CANVAS-LIST", "S-LIST-WRITE"],
+    why: "S-CANVAS-LIST (OPE-2521) is the only leg that drives an agent-written canvas. It asks for a canvas in the e2e channel, gates that the canvas.write card previews it, approves it, and reads the canvas the canvas.write row names back from Slack with the driver's own token. S-LIST-WRITE (OPE-2551) is the only leg that drives an agent-written List. It asks for a row in the fixture List shared in the e2e channel and then for an edit of that row, gates that each list.write card quotes the change, approves it, and reads the row back from Slack with the driver's own token.",
   },
   {
     area: "cover",

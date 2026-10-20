@@ -130,6 +130,7 @@ import {
 } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, createdCanvasId, memoryCanvasTeach, readCanvasById, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
+import { LIST_FIXTURE_SETUP, LIST_FIXTURE_TITLE, LIST_NOTE_COLUMN, LIST_WRITE_ACTION, findFixtureList, fixtureColumns, listWriteRow, readListRows, rowFieldText, rowsTitled, type ListRowsRead } from "./list-fixture.js";
 import {
   auditSessionIds,
   decomposeSession,
@@ -6730,6 +6731,144 @@ export const SCENARIOS: readonly Scenario[] = [
         canvasShowsFact(shown, bot),
         `S-CANVAS-LIST: the created canvas is the bot's and holds the run token ${fact} (${shown.kind === "canvas" ? `by ${shown.creator ?? "unknown"}, holds it: ${shown.holdsText}` : shown.kind === "error" ? `${shown.method} failed: ${shown.error}` : shown.kind})`,
       );
+    },
+  },
+
+  {
+    id: "S-LIST-WRITE",
+    title: "Lists the agent writes (OPE-2551): an add and an edit each post a card that quotes the row, and the approved List holds the row and its note",
+    requires: ["slack", "synthetic"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-LIST-WRITE gates on list.write rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const channel = slack.channelId;
+      const call = (method: string, params: Record<string, string>) => slack.apiRaw(method, params);
+      const scopeMissing = (r: { kind: string; method?: string; scope?: string }) =>
+        ctx.fixtureMissing(`S-LIST-WRITE: the driver token (E2E_SLACK_USER_TOKEN) lacks the user scope ${r.scope}, which ${r.method} needs. Add it to the driver app and reinstall.`);
+
+      const found = await findFixtureList(call, channel);
+      if (found.kind === "missing-scope") return scopeMissing(found);
+      ctx.gate(found.kind !== "error", `S-LIST-WRITE: the driver can list the files of ${channel} (${found.kind === "error" ? `${found.method} failed: ${found.error}` : found.kind})`);
+      if (found.kind !== "found") {
+        return ctx.fixtureMissing(`S-LIST-WRITE: no List titled "${LIST_FIXTURE_TITLE}" is shared in ${channel} (${found.kind === "absent" ? found.scanned : 0} files read). ${LIST_FIXTURE_SETUP}`);
+      }
+      const before = await readListRows(call, found.id);
+      if (before.kind === "missing-scope") return scopeMissing(before);
+      ctx.gate(before.kind === "rows", `S-LIST-WRITE: the driver can read the fixture List's rows (${before.kind === "error" ? `${before.method} failed: ${before.error}` : before.kind})`);
+      const cols = await fixtureColumns(call, found.id);
+      if (cols.kind === "missing-scope") return scopeMissing(cols);
+      if (cols.kind === "unfit") return ctx.fixtureMissing(`S-LIST-WRITE: ${cols.why}. ${LIST_FIXTURE_SETUP}`);
+      ctx.gate(cols.kind === "columns", `S-LIST-WRITE: the driver can read the fixture List's columns (${cols.kind === "error" ? `${cols.method} failed: ${cols.error}` : cols.kind})`);
+      if (cols.kind !== "columns") return;
+      ctx.log(`fixture List ${found.id}: title column "${cols.titleName}", ${before.kind === "rows" ? before.items.length : 0} row(s) before the run`);
+
+      const rowTitle = `OE list row ${factToken("listrow")}`;
+      const note = factToken("listnote");
+      const rowsNow = async (): Promise<ListRowsRead> => readListRows(call, found.id);
+      let rowId: string | undefined;
+
+      try {
+        const sinceAdd = await presenceSince(ctx, "S-LIST-WRITE add");
+        await driveDecide({
+          slack,
+          synthetic: ctx.synthetic!,
+          gate: ctx.gate,
+          log: ctx.log,
+          ask: `add one row to the Slack List ${found.link} with ${cols.titleName} "${rowTitle}". Set no other column.`,
+          leg: "S-LIST-WRITE add",
+          decision: "approve",
+          timeoutMs: FILE_REPLY_WAIT,
+          precheck: (card) => {
+            const visible = [card.text, ...(card.blockTexts ?? [])].join("\n");
+            if (card.approvalCard?.kind !== "list.write") return `the card is not a list.write card (kind ${card.approvalCard?.kind ?? "none"})`;
+            if (!visible.includes(rowTitle)) return `the card's visible lines do not quote the new row "${rowTitle}": ${visible.slice(0, 300)}`;
+            return undefined;
+          },
+        });
+        let added: AuditWireEntry | undefined;
+        await pollOptional(
+          async () => {
+            added = listWriteRow(await read({ sinceIso: sinceAdd, actions: [LIST_WRITE_ACTION], platform: "slack", limit: 50 }), found.id, channel, "added");
+            return added !== undefined ? true : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-LIST-WRITE: the list.write row of the approved add" },
+        );
+        ctx.gate(
+          added !== undefined,
+          `S-LIST-WRITE: an approved list.write row names the List ${found.id} in ${channel} and adds a row. None did: the write failed after the click (a deployment app without lists:write fails here), or the tool never ran`,
+        );
+        if (!added) return;
+        let titled: Record<string, unknown>[] = [];
+        let rows = { kind: "rows", items: [] } as ListRowsRead;
+        await pollOptional(
+          async () => {
+            rows = await rowsNow();
+            titled = rows.kind === "rows" ? rowsTitled(rows.items, cols.titleId, rowTitle) : [];
+            return rows.kind !== "rows" || titled.length > 0 ? true : undefined;
+          },
+          { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-LIST-WRITE: the added row in the List" },
+        );
+        rowId = typeof titled[0]?.["id"] === "string" ? (titled[0]["id"] as string) : undefined;
+        ctx.gate(
+          titled.length === 1 && rowId !== undefined,
+          `S-LIST-WRITE: exactly one row of the List holds the title "${rowTitle}" (${rows.kind === "rows" ? `${titled.length} of ${rows.items.length} rows` : `${rows.method} failed: ${rows.kind === "error" ? rows.error : rows.scope}`})`,
+        );
+        if (rowId === undefined) return;
+
+        const sinceEdit = await presenceSince(ctx, "S-LIST-WRITE edit");
+        await driveDecide({
+          slack,
+          synthetic: ctx.synthetic!,
+          gate: ctx.gate,
+          log: ctx.log,
+          ask: `in the Slack List ${found.link}, change the row "${rowTitle}": set its ${LIST_NOTE_COLUMN} to ${note}. Change no other column.`,
+          leg: "S-LIST-WRITE edit",
+          decision: "approve",
+          timeoutMs: FILE_REPLY_WAIT,
+          precheck: (card) => {
+            const visible = [card.text, ...(card.blockTexts ?? [])].join("\n");
+            if (card.approvalCard?.kind !== "list.write") return `the card is not a list.write card (kind ${card.approvalCard?.kind ?? "none"})`;
+            if (!visible.includes(note)) return `the card's visible lines do not quote the new note ${note}: ${visible.slice(0, 300)}`;
+            return undefined;
+          },
+        });
+        let changed: AuditWireEntry | undefined;
+        await pollOptional(
+          async () => {
+            changed = listWriteRow(await read({ sinceIso: sinceEdit, actions: [LIST_WRITE_ACTION], platform: "slack", limit: 50 }), found.id, channel, "changed");
+            return changed !== undefined ? true : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-LIST-WRITE: the list.write row of the approved edit" },
+        );
+        ctx.gate(changed !== undefined, `S-LIST-WRITE: an approved list.write row names the List ${found.id} in ${channel} and changes a row. None did: the write failed after the click, or the tool never ran`);
+        if (!changed) return;
+        let shown: string | undefined;
+        await pollOptional(
+          async () => {
+            rows = await rowsNow();
+            const row = rows.kind === "rows" ? rows.items.find((i) => i["id"] === rowId) : undefined;
+            shown = row ? rowFieldText(row, cols.noteId) : undefined;
+            return rows.kind !== "rows" || shown?.includes(note) ? true : undefined;
+          },
+          { timeoutMs: 60_000, initialDelayMs: 1_000, maxDelayMs: 5_000, what: "S-LIST-WRITE: the note in the edited row" },
+        );
+        ctx.gate(
+          shown?.includes(note) === true,
+          `S-LIST-WRITE: the row "${rowTitle}" holds the ${LIST_NOTE_COLUMN} ${note} (${rows.kind === "rows" ? `it holds ${shown === undefined ? "no note" : JSON.stringify(shown.slice(0, 120))}` : `${rows.method} failed: ${rows.kind === "error" ? rows.error : rows.scope}`})`,
+        );
+      } finally {
+        if (rowId !== undefined) {
+          const del = await call("slackLists.items.delete", { list_id: found.id, id: rowId }).catch((e: unknown): Record<string, unknown> => ({ ok: false, error: String(e) }));
+          ctx.log(del.ok === true ? `clean-up: deleted the row ${rowId}` : `clean-up: the row ${rowId} stays in the fixture List (slackLists.items.delete: ${String(del.error)}${del["needed"] ? `, needs ${String(del["needed"])}` : ""})`);
+        }
+      }
     },
   },
 

@@ -544,3 +544,4 @@ test:workflow-discovery
 test:first-routine
 test:ask-watch
 test:exit-kit
+test:list-fixture
