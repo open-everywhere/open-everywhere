@@ -136,6 +136,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "S-APP-HOME", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-SIDE-PANEL", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-SESSION-STOP", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
+  { id: "S-DM-MCP-PROPOSE", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-JOB-WAIT", parallel: "safe", resources: ["seat:dm"] },
   { id: "S-REPLY-FEEDBACK", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-REPLY-FOLLOWUPS", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },

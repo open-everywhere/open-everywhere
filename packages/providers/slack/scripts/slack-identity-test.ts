@@ -318,6 +318,11 @@ overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
 ok(bindFrom(dmUnverified).trust === "internal", "bindFrom: OE_TRUST=internal vouches for an unverified DM partner (dev/test)");
 overrideSettingsForTest({ identity: { blanketTrust: "none" } });
 
+const gridDmMember = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", is_ext_shared: "true", trust_checked: "true", dm_partner_trust: "internal" });
+ok(bindFrom(gridDmMember).trust === "internal", "bindFrom: a Slack DM with the share bit set and an internal partner → internal (the bit is not read)");
+const gridDmGuest = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", is_ext_shared: "true", trust_checked: "true", dm_partner_trust: "external" });
+ok(bindFrom(gridDmGuest).trust === "external", "bindFrom: negative control — the same DM with a guest or outside partner → external");
+
 const bridged = bindFrom(
   bridgedContext({
     platform: "slack",

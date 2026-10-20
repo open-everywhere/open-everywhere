@@ -3436,6 +3436,107 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-DM-MCP-PROPOSE",
+    title: "An MCP-server propose card in the person's own DM (OPE-2640): a DM ask to add a hosted MCP server posts the mcp-server.propose card in that DM, with no audience refusal",
+    requires: ["slack", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) {
+        return ctx.fixtureMissing("S-DM-MCP-PROPOSE gates on the mcp-server.propose approval rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const dm = ctx.dm!;
+      await fenceDmSeat(ctx, "S-DM-MCP-PROPOSE");
+      const nonce = Date.now().toString(36);
+      const name = `sentry-e2e-${nonce}`;
+      const askAt = await presenceSince(ctx, "S-DM-MCP-PROPOSE ask");
+      const { ts: askTs } = await dm.post(
+        fixtureLine(
+          `e2e S-DM-MCP-PROPOSE: please propose adding an MCP server for this deployment with propose_mcp_server. Use exactly these fields and do not research: ` +
+            `name "${name}", url "https://mcp.sentry.dev/mcp", description "Sentry issues and errors (e2e run ${nonce})", ` +
+            `no signIn (the server supports dynamic client registration), docUrls ["https://docs.sentry.io/product/sentry-mcp/"].`,
+        ),
+      );
+      const REFUSAL = /can't put an approval card in this DM|this conversation is external|can't propose a new MCP server/i;
+      const NO_CONFIG_REPO = /proposing an MCP server from chat isn't enabled/i;
+      const NO_BASE_SERVERS = /doesn't expose its declared MCP servers/i;
+      let pending: { pendingId: string; org: string; ts: string } | undefined;
+      try {
+        const outcome = await pollUntil(
+          async () => {
+            const [messages, rows] = await Promise.all([
+              dm.collectBotMessagesAfter(askTs, askTs),
+              read({ sinceIso: askAt, actions: ["approval.requested", "approval.denied", "approval.autoapproved"], limit: 500 }),
+            ]);
+            const mine = rows.filter((r) => dS(r, "kind") === "mcp-server.propose");
+            if (mine.some((r) => r.action === "approval.autoapproved")) return { kind: "autoapproved" as const };
+            const denied = mine.find((r) => r.action === "approval.denied" && dS(r, "at") === "propose" && dS(r, "venueChannel") === dm.channelId);
+            if (denied) return { kind: "denied" as const, reason: dS(denied, "reason") ?? "unknown" };
+            const unwired = messages.find((m) => NO_CONFIG_REPO.test(m.text) || NO_BASE_SERVERS.test(m.text));
+            if (unwired) return { kind: "unwired" as const, text: unwired.text, noConfigRepo: NO_CONFIG_REPO.test(unwired.text) };
+            const refused = messages.find((m) => REFUSAL.test(m.text));
+            if (refused) return { kind: "refused" as const, text: refused.text };
+            const requestedIds = new Set(mine.filter((r) => r.action === "approval.requested").map((r) => dS(r, "id")));
+            const card = messages.find((m) => {
+              const btn = approveButton(m);
+              return btn !== undefined && requestedIds.has(btn.pendingId);
+            });
+            return card ? { kind: "card" as const, card, button: approveButton(card)! } : undefined;
+          },
+          {
+            timeoutMs: FILE_REPLY_WAIT,
+            what:
+              `the mcp-server.propose card for "${name}" in the DM, or a refusal. With neither, the likely causes are: the seat did not forward, ` +
+              "the worker did not call propose_mcp_server, a refusal the seat reworded (\"isn't enabled\" or an audience refusal), or an approver-chain deny or allow",
+          },
+        );
+        ctx.gate(
+          outcome.kind !== "autoapproved",
+          "🔴 S-DM-MCP-PROPOSE: the approver chain AUTO-APPROVED mcp-server.propose with no card, so a PR against the config repo opened unless the target sets dryRun. " +
+            "Close any such PR by hand. This leg needs the kind pinned to a card on the target.",
+        );
+        if (outcome.kind === "autoapproved") return;
+        if (outcome.kind === "unwired") {
+          const reply = outcome.text.replace(/\s+/g, " ").slice(0, 240);
+          return ctx.fixtureMissing(
+            outcome.noConfigRepo
+              ? `S-DM-MCP-PROPOSE: the target has no config repo or admin channel for proposals (OE_ACCESS_CONFIG_REPO / OE_ACCESS_ADMIN_CHANNEL), so the tool refuses before any card. Reply: "${reply}"`
+              : `S-DM-MCP-PROPOSE: the target's app does not wire AccessRequestsConfig.baseMcpServers (agent/access/access-requests.ts), so the tool refuses before any card. Reply: "${reply}"`,
+          );
+        }
+        ctx.gate(outcome.kind !== "denied", `🔴 S-DM-MCP-PROPOSE: no propose-time approval.denied row for the DM card (reason ${outcome.kind === "denied" ? outcome.reason : "none"}) — the DM roster floored the person's own DM to guest`);
+        ctx.gate(
+          outcome.kind !== "refused",
+          `🔴 S-DM-MCP-PROPOSE: the DM got an audience refusal, not the card. Reply: "${outcome.kind === "refused" ? outcome.text.replace(/\s+/g, " ").slice(0, 240) : ""}"`,
+        );
+        if (outcome.kind !== "card") return;
+        pending = { pendingId: outcome.button.pendingId, org: outcome.button.org, ts: outcome.card.ts };
+        ctx.gate(outcome.button.org.length > 0, `S-DM-MCP-PROPOSE: the card ${outcome.card.ts} carries the org in its button value`);
+        ctx.log(`diagnostic (not scored): the card's text ${outcome.card.text.includes(name) ? "names" : "does not name"} "${name}"`);
+        ctx.log(`S-DM-MCP-PROPOSE: mcp-server.propose card ${outcome.card.ts} (pending ${pending.pendingId}) posted in the DM — NOT tapped; the teardown expires it when DATABASE_URL is set, else the TTL sweep does`);
+        const after = await dm.collectBotMessagesAfter(askTs, askTs);
+        const refusal = after.find((m) => REFUSAL.test(m.text));
+        ctx.gate(refusal === undefined, `S-DM-MCP-PROPOSE: no audience refusal in the DM after the ask (found: "${refusal?.text.replace(/\s+/g, " ").slice(0, 200) ?? ""}")`);
+      } finally {
+        const dbUrl = process.env.DATABASE_URL;
+        if (pending && dbUrl) {
+          try {
+            const store = await wireNeonOperationalStore(dbUrl);
+            const won = await store.decidePendingAction(pending.org, pending.pendingId, "expired", "system", new Date().toISOString());
+            ctx.log(`S-DM-MCP-PROPOSE teardown: ${pending.pendingId} → ${won ? "expired out-of-band (no Slack bytes)" : "already terminal — nothing written"}`);
+          } catch (err) {
+            ctx.log(`S-DM-MCP-PROPOSE teardown: expiring ${pending.pendingId} failed (best-effort, not gated): ${String(err instanceof Error ? err.message : err)}`);
+          }
+        } else if (pending) {
+          ctx.log(`S-DM-MCP-PROPOSE teardown: no DATABASE_URL — ${pending.pendingId} is left for the TTL sweep (the run-unique name keeps the next run's ask fresh)`);
+        }
+      }
+    },
+  },
+  {
     id: "J-MPIM",
     proves: ["PAR-mpim"],
     title:
