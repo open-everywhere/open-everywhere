@@ -12,7 +12,6 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
-process.env.OE_INTAKE_PAGE_SIGNING_KEY = randomBytes(32).toString("base64");
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
 await import("./_register-test-config.js");

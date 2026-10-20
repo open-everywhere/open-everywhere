@@ -1,6 +1,6 @@
 import { createCredentialIntake, completeCredentialIntake, type RequestCredentialIntakeInput, type CredentialIntakeDeps } from "./intake.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { mintPageToken, pageBaseUrl, verifyPageToken, isReservedGrantConnector, PAGE_TOKEN_KEY_ENV, type PageTokenClaims } from "./page-token.js";
+import { mintPageToken, pageBaseUrl, verifyPageToken, isReservedGrantConnector, PAGE_TOKEN_KEY_NAME, type PageTokenClaims } from "./page-token.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "./self-secrets.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
 
@@ -9,8 +9,8 @@ export const INTAKE_PAGE_PATH = "/connect/v1/intake";
 const TOKEN_FIELD = "t";
 const VALUE_FIELD = "k";
 
-async function intakePageSigningKey(env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  return getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
+async function intakePageSigningKey(): Promise<string> {
+  return getOrMintSelfSecret(PAGE_TOKEN_KEY_NAME);
 }
 
 function intakePageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -43,7 +43,7 @@ export async function issueIntakePageLink(
   const env = deps.env ?? process.env;
   const base = intakePageBaseUrl(env);
   if (!base || !selfSecretsArmed()) return undefined;
-  const secret = await intakePageSigningKey(env);
+  const secret = await intakePageSigningKey();
 
   const { id, expiresAt } = await createCredentialIntake(input, deps);
   const token = mintIntakePageToken(
@@ -112,7 +112,7 @@ function intakeRowOpen(row: CredentialIntakeRow | null, boundTo: string, nowMs: 
 export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
-  const secret = await intakePageSigningKey(env);
+  const secret = await intakePageSigningKey();
 
   const now = (deps.now ?? (() => new Date()))().getTime();
   const token = new URL(req.url).searchParams.get(TOKEN_FIELD) ?? "";
@@ -127,7 +127,7 @@ export async function handleIntakePageGet(req: Request, deps: IntakePageHandlerD
 export async function handleIntakePagePost(req: Request, deps: IntakePageHandlerDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
-  const secret = await intakePageSigningKey(env);
+  const secret = await intakePageSigningKey();
 
   const now = (deps.now ?? (() => new Date()))().getTime();
 

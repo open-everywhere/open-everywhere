@@ -13,7 +13,6 @@ const ORG = "default";
 const AES_KEY = randomBytes(32).toString("base64");
 const SIGN_KEY = randomBytes(32).toString("base64");
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = AES_KEY;
-process.env.OE_INTAKE_PAGE_SIGNING_KEY = SIGN_KEY;
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
 const SENTINEL = "sk-PAGE-SECRET-VALUE-1a2b3c4d5e6f-DO-NOT-LEAK";
@@ -29,6 +28,7 @@ const { dbCredentialRef } = await import("../agent/credentials/ref.js");
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const vault = encryptedKvVault();
 const { resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
+await vault.write("self:OE_INTAKE_PAGE_SIGNING_KEY", SIGN_KEY);
 type ConnectorCredentials = import("../agent/access/connector-credentials.js").ConnectorCredentials;
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 
@@ -106,29 +106,41 @@ console.log("2. issueIntakePageLink:");
   const aud = await readAudit({ org: ORG });
   ok(aud.some((r) => r.action === "credential.intake_requested" && r.platform === "discord"), "issue: audits credential.intake_requested on the real surface platform");
 
+  process.env.OE_INTAKE_PAGE_SIGNING_KEY = "an-env-key-that-0.9.0-never-reads";
+  resetSelfSecretCache();
+  const envIgnored = await page.issueIntakePageLink(
+    { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
+    { now: () => t0, mintId: () => "intake-link-env-ignored" },
+  );
+  const envIgnoredTok = new URL(envIgnored!.url).searchParams.get("t")!;
+  ok(page.verifyIntakePageToken(envIgnoredTok, SIGN_KEY, t0.getTime()) !== null, "issue: an env var of the key's name is NOT read — the link verifies against the vault's key");
+  ok(page.verifyIntakePageToken(envIgnoredTok, "an-env-key-that-0.9.0-never-reads", t0.getTime()) === null, "…and not against the env value");
+  delete process.env.OE_INTAKE_PAGE_SIGNING_KEY;
+
+  await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
   resetSelfSecretCache();
   const mintedRes = await page.issueIntakePageLink(
     { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
-    { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: "" }, now: () => t0, mintId: () => "intake-link-mint" },
+    { now: () => t0, mintId: () => "intake-link-mint" },
   );
-  ok(mintedRes !== undefined, "issue: no signing key env var ⇒ STILL issues a link (mints on first use, OPE-408 step 3)");
+  ok(mintedRes !== undefined, "issue: no stored signing key ⇒ STILL issues a link (mints on first use, OPE-408 step 3)");
   const mintedInVault = await vault.read("self:OE_INTAKE_PAGE_SIGNING_KEY");
-  ok(typeof mintedInVault === "string" && mintedInVault.length > 0, "…and the minted key is durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
-  await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  ok(typeof mintedInVault === "string" && mintedInVault.length > 0 && mintedInVault !== SIGN_KEY, "…and the minted key is durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
+  await vault.write("self:OE_INTAKE_PAGE_SIGNING_KEY", SIGN_KEY);
   resetSelfSecretCache();
 
   const savedRealKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   const unarmed = await page.issueIntakePageLink(
     { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
-    { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: SIGN_KEY }, now: () => t0 },
+    { now: () => t0 },
   );
   ok(unarmed === undefined, "issue: vault unarmed (no OE_CREDENTIAL_ENCRYPTION_KEY) ⇒ undefined (honest degrade)");
   process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedRealKey;
 
   const noBase = await page.issueIntakePageLink(
     { org: ORG, connector: "notion", ref: REF, requestedBy: OWNER, channelId: "C_X", platform: "discord" },
-    { env: { OE_INTAKE_PAGE_SIGNING_KEY: SIGN_KEY }, now: () => t0 },
+    { env: {}, now: () => t0 },
   );
   ok(noBase === undefined, "issue: no resolvable base URL ⇒ undefined");
 }
@@ -158,14 +170,15 @@ console.log("3. GET:");
   ok(expired.status === 404, "GET: an expired token → generic 404");
   ok((await bad.text()) === (await (await page.handleIntakePageGet(getReq(tok), { now: () => new Date(t0.getTime() + 20 * 60 * 1000) })).text()), "GET: bad-token and expired-token pages are byte-identical (no oracle)");
 
-  resetSelfSecretCache();
-  const stillRoutable = await page.handleIntakePageGet(getReq(tok), { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: "" }, now: () => t0 });
-  ok(stillRoutable.status === 404, "GET: no signing key env var ⇒ 404 for THIS token (it mints a NEW key, so tok's old signature no longer verifies) — not a route-disarm 404");
   await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  resetSelfSecretCache();
+  const stillRoutable = await page.handleIntakePageGet(getReq(tok), { now: () => t0 });
+  ok(stillRoutable.status === 404, "GET: no stored signing key ⇒ 404 for THIS token (it mints a NEW key, so tok's old signature no longer verifies) — not a route-disarm 404");
+  await vault.write("self:OE_INTAKE_PAGE_SIGNING_KEY", SIGN_KEY);
   resetSelfSecretCache();
   const savedRealKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
   delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
-  const disarmed = await page.handleIntakePageGet(getReq(tok), { env: { ...process.env, OE_INTAKE_PAGE_SIGNING_KEY: SIGN_KEY }, now: () => t0 });
+  const disarmed = await page.handleIntakePageGet(getReq(tok), { now: () => t0 });
   ok(disarmed.status === 404, "GET: vault unarmed ⇒ 404 (route effectively does not exist)");
   process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedRealKey;
 }

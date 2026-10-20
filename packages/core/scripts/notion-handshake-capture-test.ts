@@ -11,7 +11,6 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
-process.env.OE_INTAKE_PAGE_SIGNING_KEY = randomBytes(32).toString("base64");
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
 const TOKEN = "secret_FAKE-NOTION-VERIFICATION-TOKEN-0123456789abcdefghijklmnop-DO-NOT-USE";
@@ -141,7 +140,7 @@ const armed = await run({});
   eq(capture.HANDSHAKE_REVEAL_PRINCIPAL, "operator:deploy-log", "the bound principal is the documented sentinel");
   const fresh = await run({});
   const freshToken = linkToken(fresh.text);
-  const claims = verifyPageToken(freshToken, pageTokenSigningKey()!, "reveal", Date.now())!;
+  const claims = verifyPageToken(freshToken, (await pageTokenSigningKey())!, "reveal", Date.now())!;
   eq(claims.rb, capture.HANDSHAKE_REVEAL_PRINCIPAL, "the TOKEN binds to the sentinel");
 
   const row = await store.getCredentialIntake(ORG, claims.id);

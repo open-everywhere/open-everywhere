@@ -149,16 +149,19 @@ process.env.OE_CONTROL_INJECT_TOKENS = `eval-injector:${INJECT_SHA}`;
 }
 
 {
-  const { verifyServiceToken, verifyInjectToken, parseServiceTokenEntries, injectTokenEntries } = await import("../agent/control/auth.js");
-  const readEntries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  const injEntries = injectTokenEntries();
+  const { verifyServiceToken, verifyInjectToken, readTokenEntries, injectTokenEntries } = await import("../agent/control/auth.js");
+  const readEntries = await readTokenEntries();
+  const injEntries = await injectTokenEntries();
   ok(verifyServiceToken(INJECT_SECRET, readEntries) === null, "the READ verifier refuses an INJECT-family token value");
   ok(verifyServiceToken(READ_SECRET, readEntries)?.readOnly === true, "…while still admitting its own family as a readOnly principal");
   ok(verifyInjectToken(READ_SECRET, injEntries) === null, "the INJECT verifier refuses a READ-family token value");
   ok(verifyInjectToken(INJECT_SECRET, injEntries)?.subject === "svc:eval-injector", "…and admits its own family as svc:<name>");
   const inj = verifyInjectToken(INJECT_SECRET, injEntries) as unknown as Record<string, unknown>;
   ok(inj.roles === undefined && inj.readOnly === undefined, "an inject identity carries NO roles and NO readOnly flag (not an AdminIdentity)");
-  ok(injectTokenEntries({} as NodeJS.ProcessEnv).length === 0, "injectTokenEntries is fail-closed on an env with no OE_CONTROL_INJECT_TOKENS");
+  const savedInject = process.env.OE_CONTROL_INJECT_TOKENS;
+  delete process.env.OE_CONTROL_INJECT_TOKENS;
+  ok((await injectTokenEntries()).length === 0, "injectTokenEntries is fail-closed with no OE_CONTROL_INJECT_TOKENS stored or on the env on-ramp");
+  if (savedInject !== undefined) process.env.OE_CONTROL_INJECT_TOKENS = savedInject;
 }
 
 {

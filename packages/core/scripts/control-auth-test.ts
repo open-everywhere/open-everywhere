@@ -1,3 +1,5 @@
+// proves: control.service_call
+
 import assert from "node:assert/strict";
 import { AddressInfo } from "node:net";
 import { routeAuth } from "eve/channels/auth";
@@ -12,7 +14,7 @@ import {
   parseServiceTokenEntries,
   makeServiceTokenAuthenticator,
   verifyServiceToken,
-  adminAuthenticatorFromEnv,
+  resolveAdminAuthenticator,
   serviceTokenAuth,
   injectTokenAuth,
   SERVICE_TOKEN_ISSUER,
@@ -263,32 +265,129 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
 {
   for (const k of ["OE_ADMIN_OIDC_ISSUER", "OE_ADMIN_OIDC_AUDIENCE", "OE_ADMIN_STATIC_TOKEN", "OE_CONTROL_READ_TOKENS"]) delete process.env[k];
   resetSettingsForTest();
-  ok("fromEnv: nothing configured -> null (fail-closed, unchanged)", adminAuthenticatorFromEnv() === null);
+  ok("resolve: nothing configured -> null (fail-closed, unchanged)", (await resolveAdminAuthenticator()) === null);
 
   process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SVC_SHA}`;
-  const fromEnv = adminAuthenticatorFromEnv();
-  ok("fromEnv: OE_CONTROL_READ_TOKENS alone arms the authenticator", fromEnv !== null);
-  ok("fromEnv: the service token authenticates as its svc principal", (await fromEnv!(reqWith(SVC_SECRET)))?.subject === "svc:e2e-harness");
-  ok("fromEnv: garbage bearer is still refused", (await fromEnv!(reqWith("garbage"))) === null);
+  const viaOnRamp = await resolveAdminAuthenticator();
+  ok("resolve: OE_CONTROL_READ_TOKENS alone (env on-ramp) arms the authenticator", viaOnRamp !== null);
+  ok("resolve: the service token authenticates as its svc principal", (await viaOnRamp!(reqWith(SVC_SECRET)))?.subject === "svc:e2e-harness");
+  ok("resolve: garbage bearer is still refused", (await viaOnRamp!(reqWith("garbage"))) === null);
   delete process.env.OE_CONTROL_READ_TOKENS;
 }
 
 {
+  const { randomBytes } = await import("node:crypto");
+  const { setOperatorSecret, removeOperatorSecret } = await import("../agent/credentials/operator-secrets.js");
+  const { resetControlSecretCache, CONTROL_SECRET_TTL_MS, controlSecret } = await import("../agent/control/control-secrets.js");
+  const { oauthSigningSecret } = await import("../agent/control/oauth-tokens.js");
+  const { readTokenEntries } = await import("../agent/control/auth.js");
+  const savedKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
   resetSettingsForTest();
-  ok("settings: control.githubAdmin off (shipped) + nothing else configured -> null", adminAuthenticatorFromEnv() === null);
+
+  await setOperatorSecret({ name: "OE_CONTROL_READ_TOKENS", value: `stored-harness:${SVC_SHA}`, setBy: "operator:cli" });
+  const stored = await resolveAdminAuthenticator();
+  ok("store: a STORED OE_CONTROL_READ_TOKENS arms the authenticator with no env var", stored !== null && process.env.OE_CONTROL_READ_TOKENS === undefined);
+  ok("store: …and the stored entry authenticates its svc principal", (await stored!(reqWith(SVC_SECRET)))?.subject === "svc:stored-harness");
+  await removeOperatorSecret("OE_CONTROL_READ_TOKENS");
+  ok("store: inside the memo window the stored answer is reused", (await readTokenEntries()).length === 1);
+  ok("store: …and past the window the deleted row reads as unset", (await controlSecret("OE_CONTROL_READ_TOKENS", Date.now() + CONTROL_SECRET_TTL_MS + 1)) === undefined);
+  resetControlSecretCache();
+  ok("store: a deleted row closes the door once the memo is gone", (await resolveAdminAuthenticator()) === null);
+
+  process.env.OE_CONTROL_READ_TOKENS = `env-harness:${SVC_SHA}`;
+  await setOperatorSecret({ name: "OE_CONTROL_READ_TOKENS", value: `stored-harness:${SVC_SHA}`, setBy: "operator:cli" });
+  resetControlSecretCache();
+  ok("store: with a row AND an env var, the row wins", (await (await resolveAdminAuthenticator())!(reqWith(SVC_SECRET)))?.subject === "svc:stored-harness");
+  await removeOperatorSecret("OE_CONTROL_READ_TOKENS");
+  resetControlSecretCache();
+  ok("store: after the row is deleted, the still-set env var answers again", (await (await resolveAdminAuthenticator())!(reqWith(SVC_SECRET)))?.subject === "svc:env-harness");
+  delete process.env.OE_CONTROL_READ_TOKENS;
+  resetControlSecretCache();
+
+  await setOperatorSecret({ name: "OE_CONTROL_READ_TOKENS", value: `stored-harness:${SVC_SHA}`, setBy: "operator:cli" });
+  resetControlSecretCache();
+  const armedKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  let faulted = false;
+  try {
+    await readTokenEntries();
+  } catch {
+    faulted = true;
+  }
+  ok("store: a stored row under an unarmed key REJECTS (a fault), it does not read as unset", faulted);
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = armedKey;
+  await removeOperatorSecret("OE_CONTROL_READ_TOKENS");
+  resetControlSecretCache();
+
+  const signing = "s".repeat(48);
+  await setOperatorSecret({ name: "OE_CONTROL_OAUTH_SIGNING_SECRET", value: signing, setBy: "operator:cli" });
+  ok("store: oauthSigningSecret() with no argument reads the STORED key", (await oauthSigningSecret()) === signing);
+  await removeOperatorSecret("OE_CONTROL_OAUTH_SIGNING_SECRET");
+  resetControlSecretCache();
+  ok("store: NEGATIVE CONTROL — with the row gone the plane is unarmed (null)", (await oauthSigningSecret()) === null);
+
+  await setOperatorSecret({ name: "OE_ADMIN_STATIC_TOKEN", value: "stored-static-2650", setBy: "operator:cli" });
+  resetControlSecretCache();
+  const admin = await (await resolveAdminAuthenticator())!(reqWith("stored-static-2650"));
+  ok("store: a STORED OE_ADMIN_STATIC_TOKEN is the admin credential", admin !== null && admin.roles.includes("admin"));
+  process.env.OE_ADMIN_STATIC_TOKEN = "retired-env-static";
+  ok("store: the stored value wins — a retired env value authenticates nobody", (await (await resolveAdminAuthenticator())!(reqWith("retired-env-static"))) === null);
+  delete process.env.OE_ADMIN_STATIC_TOKEN;
+  await removeOperatorSecret("OE_ADMIN_STATIC_TOKEN");
+  resetControlSecretCache();
+
+  if (savedKey === undefined) delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  else process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedKey;
+}
+
+{
+  resetSettingsForTest();
+  ok("settings: control.githubAdmin off (shipped) + nothing else configured -> null", (await resolveAdminAuthenticator()) === null);
   overrideSettingsForTest({ control: { githubAdmin: true } });
-  ok("settings: control.githubAdmin on arms the authenticator with nothing in env", adminAuthenticatorFromEnv() !== null);
+  ok("settings: control.githubAdmin on arms the authenticator with nothing in env", (await resolveAdminAuthenticator()) !== null);
   resetSettingsForTest();
+
+  process.env.OE_ADMIN_OIDC_ISSUER = ISSUER;
+  process.env.OE_ADMIN_OIDC_AUDIENCE = AUDIENCE;
+  ok("settings: the retired OE_ADMIN_OIDC_* env pair arms nothing", (await resolveAdminAuthenticator()) === null);
+  delete process.env.OE_ADMIN_OIDC_ISSUER;
+  delete process.env.OE_ADMIN_OIDC_AUDIENCE;
+  overrideSettingsForTest({ control: { adminOidc: { issuer: ISSUER, audience: AUDIENCE } } });
+  ok("settings: control.adminOidc { issuer, audience } arms the authenticator", (await resolveAdminAuthenticator()) !== null);
+  resetSettingsForTest();
+  for (const [bad, why] of [
+    [{ issuer: ISSUER, audience: "" }, "half a pair"],
+    [{ issuer: "", audience: AUDIENCE }, "half a pair"],
+    [{ issuer: "http://accounts.example.com", audience: AUDIENCE }, "https"],
+    [{ issuer: "not a url", audience: AUDIENCE }, "issuer URL"],
+  ] as const) {
+    let message = "";
+    try {
+      defineSettings({ control: { adminOidc: bad } });
+    } catch (err) {
+      message = String(err);
+    }
+    ok(`settings: defineSettings refuses control.adminOidc with ${why}`, message.includes("control.adminOidc"));
+  }
+  let accepted = true;
+  try {
+    defineSettings({ control: { adminOidc: { issuer: ISSUER, audience: AUDIENCE } } });
+    defineSettings({ control: { adminOidc: { issuer: "", audience: "" } } });
+  } catch {
+    accepted = false;
+  }
+  ok("settings: NEGATIVE CONTROL — a full pair and an empty pair are both accepted", accepted);
 
   process.env.OE_ADMIN_STATIC_TOKEN = "s3cret-2411";
   overrideSettingsForTest({ control: { adminRoleRules: [{ roles: ["domain:finance"], issuer: "static" }] } });
-  const ruled = await adminAuthenticatorFromEnv()!(reqWith("s3cret-2411"));
+  const ruled = await (await resolveAdminAuthenticator())!(reqWith("s3cret-2411"));
   ok(
     "settings: a control.adminRoleRules rule grants its roles to a matching identity",
     ruled !== null && ruled.roles.includes("domain:finance") && ruled.roles.includes("admin"),
   );
   resetSettingsForTest();
-  const unruled = await adminAuthenticatorFromEnv()!(reqWith("s3cret-2411"));
+  const unruled = await (await resolveAdminAuthenticator())!(reqWith("s3cret-2411"));
   ok("settings: …and with no declared rule the identity holds only the implied admin role", unruled !== null && !unruled.roles.includes("domain:finance"));
   delete process.env.OE_ADMIN_STATIC_TOKEN;
 
@@ -316,7 +415,7 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
 
   const svcName = `svc-test-${process.pid}-${Date.now()}`;
   process.env.OE_CONTROL_READ_TOKENS = `${svcName}:${SVC_SHA}`;
-  const authenticate = adminAuthenticatorFromEnv();
+  const authenticate = await resolveAdminAuthenticator();
   const server = createAdminHttpServer({ authenticate: authenticate!, includeWrites: true });
   const url = await listen(server);
 
@@ -410,3 +509,5 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
 }
 
 console.log(`\n✓ control auth: ${n} assertions passed (OIDC verify, identity model, verified-email linking + guardrails, RBAC, read-only service tokens, eve route-auth walk)\n`);
+
+// proves: SET-071, SET-072, SET-092

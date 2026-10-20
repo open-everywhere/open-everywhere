@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-self-secrets
+
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +13,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
-const { getOrMintSelfSecret, selfSecretsArmed, resetSelfSecretWarnings, resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
+const { getOrMintSelfSecret, selfSecretsArmed, resetSelfSecretCache } = await import("../agent/credentials/self-secrets.js");
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { getSecretVia } = await import("../agent/access/credentials.js");
 const { registerDbCredentialBroker } = await import("../agent/credentials/db-broker.js");
@@ -31,7 +33,6 @@ const vault = encryptedKvVault();
 
 console.log("1+2+3. resolution order, mint durability, distinct names:");
 {
-  resetSelfSecretWarnings();
   ok(selfSecretsArmed(), "armed: OE_CREDENTIAL_ENCRYPTION_KEY is set");
 
   eq(await vault.read("self:OE_TEST_MINT_A"), null, "precondition: nothing stored yet under this ref");
@@ -43,10 +44,11 @@ console.log("1+2+3. resolution order, mint durability, distinct names:");
   const second = await getOrMintSelfSecret("OE_TEST_MINT_A");
   eq(second, minted, "mint is idempotent: a second call converges on the SAME stored value, not a fresh mint");
 
-  process.env.OE_TEST_MINT_B = "env-on-ramp-value-for-B";
-  const fromEnv = await getOrMintSelfSecret("OE_TEST_MINT_B");
-  eq(fromEnv, "env-on-ramp-value-for-B", "env on-ramp: an unset-in-vault name with an env var present resolves from env");
-  eq(await vault.read("self:OE_TEST_MINT_B"), null, "…and the env value is NOT auto-promoted into the vault");
+  process.env.OE_TEST_MINT_B = "env-value-that-0.9.0-ignores";
+  const notFromEnv = await getOrMintSelfSecret("OE_TEST_MINT_B");
+  ok(notFromEnv !== "env-value-that-0.9.0-ignores" && notFromEnv.length >= 32, "no env arm: an env var of the same name is not read — the resolver mints instead");
+  eq(await vault.read("self:OE_TEST_MINT_B"), notFromEnv, "…and the vault holds the MINT, not the env value");
+  delete process.env.OE_TEST_MINT_B;
 
   await vault.write("self:OE_TEST_MINT_C", "stored-wins-value");
   process.env.OE_TEST_MINT_C = "env-value-that-should-be-ignored";

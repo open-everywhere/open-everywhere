@@ -212,7 +212,7 @@ A presence-only checklist (it never prints a value). The full surface is in the 
 - Mint OE_CREDENTIAL_ENCRYPTION_KEY with the ops tool `scaffold_credential_key`: it writes a base64 32-byte AES-256 key into .env.local and never prints it. The encrypted credential store fails closed on every read and write without it.
 - The Vercel route needs NO AI_GATEWAY_API_KEY: a deployed project authenticates to the AI Gateway with OIDC.
 - Each chat surface adds its own names — Slack reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from the environment.
-- Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (the deployment mints it into the credential store).
+- Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store).
 - Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name. Both read .env.local and the shell only.
 - Set the values on the deployment instead (the Vercel dashboard, say)? Add `--host https://<host>`: the step then also reads the deployment's own verdicts from its public `/eve/v1/oe/status` route.
 
@@ -240,7 +240,7 @@ Before going live, run a real task in a pilot channel and walk the setup runbook
 - 🔴 THIS CHECK NEVER READS THE DEPLOYMENT'S OWN ENVIRONMENT. Every step above reads .env.local and your shell. `.env.local` is gitignored and never ships, so the deployment reads only what you set ON it: DATABASE_URL, OE_CREDENTIAL_ENCRYPTION_KEY, SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET. A full house here says nothing about any of them.
 - Set each one for Production without printing it: `npm run -s env:pipe -- <NAME> | npx vercel env add <NAME> production`. Always pipe it straight into `vercel env add`; never run `env:pipe` bare, because a shell that is not a terminal prints the value. The Neon integration already set DATABASE_URL there, and it selects postgres for both stores on its own — no provider selector to push. A variable added after a deploy reaches the functions only on the NEXT deploy.
 - Mint OE_CREDENTIAL_ENCRYPTION_KEY with the ops tool `scaffold_credential_key`, which writes it to .env.local and never prints it. Without it the encrypted credential store fails closed on every read and write.
-- Not needed on a deployment: the two store selectors (DATABASE_URL resolves both), OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (the deployment mints it into the credential store). On the Vercel route, AI_GATEWAY_API_KEY is not needed either — OIDC covers it.
+- Not needed on a deployment: the two store selectors (DATABASE_URL resolves both), OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store). On the Vercel route, AI_GATEWAY_API_KEY is not needed either — OIDC covers it.
 - Send the app a direct message in Slack, then @mention it in a channel you invited it to.
 - Safety checklist: https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/setup-runbook.md#safety-checklist-the-anti-footgun-list
 

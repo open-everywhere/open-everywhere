@@ -2,8 +2,13 @@ import { createHash, createSecretKey, randomUUID, timingSafeEqual } from "node:c
 import { SignJWT, jwtVerify } from "jose";
 import { getOperationalStore } from "../operational/provider.js";
 import { authorizationCodeAudience } from "./oauth-clients.js";
+import { CONTROL_OAUTH_SIGNING_SECRET, controlSecret } from "./control-secrets.js";
 
-export const OAUTH_SIGNING_SECRET_ENV = "OE_CONTROL_OAUTH_SIGNING_SECRET";
+export const OAUTH_SIGNING_SECRET_NAME = CONTROL_OAUTH_SIGNING_SECRET;
+
+export type SigningSecretSource = () => Promise<string | undefined>;
+
+export const storedSigningSecret: SigningSecretSource = () => controlSecret(CONTROL_OAUTH_SIGNING_SECRET);
 
 export const MIN_SIGNING_SECRET_LENGTH = 32;
 
@@ -14,12 +19,12 @@ export const AUTHORIZATION_CODE_TTL_SECONDS = 60;
 const ACCESS_TOKEN_TYPE = "at+jwt";
 const AUTHORIZATION_CODE_TYPE = "oe-authz-code+jwt";
 
-export function oauthSigningSecret(env: NodeJS.ProcessEnv = process.env): string | null {
-  const raw = (env[OAUTH_SIGNING_SECRET_ENV] ?? "").trim();
+export async function oauthSigningSecret(source: SigningSecretSource = storedSigningSecret): Promise<string | null> {
+  const raw = ((await source()) ?? "").trim();
   if (raw.length === 0) return null;
   if (raw.length < MIN_SIGNING_SECRET_LENGTH) {
     console.warn(
-      `[open-everywhere:control] ${OAUTH_SIGNING_SECRET_ENV} ignored — it must be at least ${MIN_SIGNING_SECRET_LENGTH} characters. The control MCP plane stays off. Value not shown.`,
+      `[open-everywhere:control] ${OAUTH_SIGNING_SECRET_NAME} ignored — it must be at least ${MIN_SIGNING_SECRET_LENGTH} characters. The control MCP plane stays off. Value not shown.`,
     );
     return null;
   }

@@ -812,7 +812,7 @@ const ok = (label: string, cond: boolean) => {
         for (const name of PREFLIGHT_SECRET_NAMES.filter((n) => fix.includes(n) || check.name.includes(n))) {
           ok(
             `${target}: the "${check.name}" fix names a door for ${name} that keeps the value from the agent`,
-            fix.includes(`npx oe env set ${name}`) || (name === CREDENTIAL_KEY_ENV_NAME && fix.includes("scaffold_credential_key")),
+            fix.includes(`npx oe env set ${name}`) || fix.includes(`npx oe secret set ${name}`) || (name === CREDENTIAL_KEY_ENV_NAME && fix.includes("scaffold_credential_key")),
           );
           examined.add(`${check.name} | ${name}`);
         }
@@ -825,11 +825,10 @@ const ok = (label: string, cond: boolean) => {
     "deploy store: operational = postgres | DATABASE_URL",
     "deploy store: memory = postgres | DATABASE_URL",
     `credential store key (${CREDENTIAL_KEY_ENV_NAME}) | ${CREDENTIAL_KEY_ENV_NAME}`,
-    "control-plane admin auth | OE_ADMIN_STATIC_TOKEN",
   ]) {
     ok(`the preflight-fix door arm examined "${pair}"`, examined.has(pair));
   }
-  for (const name of ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"]) {
+  for (const name of ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "OE_ADMIN_STATIC_TOKEN"]) {
     const r = await call("scaffold_env", { values: { [name]: SENTINEL } });
     ok(`🔴 scaffold_env refuses a value for ${name}`, r.isError || r.body.ok === false);
   }

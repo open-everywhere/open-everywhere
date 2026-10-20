@@ -113,9 +113,12 @@ controls. That is why the link goes only to the person's own DM, works once, and
 spends nothing; why every state-changing request needs the `x-oe-pb` header (a cross-site form cannot send
 one); and why `forget` ends every session. Every failure on these routes renders the same 404.
 
-The routes need the page signing key (`OE_INTAKE_PAGE_SIGNING_KEY`) and a public URL (`OE_PUBLIC_BASE_URL`,
-or the Vercel production URL), which the [credential intake page](../security/credentials-and-planes.md)
-already uses. Without them, `watch` and `my_browser_handoff` refuse and post nothing.
+The routes need the credential vault (`OE_CREDENTIAL_ENCRYPTION_KEY`), where the page signing key mints
+itself on first use, and a public URL (`OE_PUBLIC_BASE_URL`, or the Vercel production URL). The
+[credential intake page](../security/credentials-and-planes.md) uses the same key and the same URL.
+Without them, `watch` and `my_browser_handoff` refuse and post nothing. Before 0.9.0 these routes read
+the key only from an `OE_INTAKE_PAGE_SIGNING_KEY` env var, so they stayed dark on a deployment whose key
+lived in the vault (OPE-2650).
 
 ## The take-over lock
 

@@ -25,7 +25,7 @@ import {
   auditRowProblems,
 } from "../packages/core/agent/ops/census.js";
 import { consequentialAuditActions, CONSEQUENTIAL_AUDIT_ACTIONS } from "../packages/core/agent/audit/action-registry.js";
-import { OAUTH_SIGNING_SECRET_ENV } from "../packages/core/agent/control/oauth-tokens.js";
+import { OAUTH_SIGNING_SECRET_NAME } from "../packages/core/agent/control/oauth-tokens.js";
 import type { Bundle } from "../packages/core/agent/access/bundle.js";
 import type { ConnectorCredentials } from "../packages/core/agent/access/connector-credentials.js";
 import type { WebhookHook } from "../packages/core/agent/webhooks/config.js";
@@ -278,11 +278,12 @@ check("the SAME route is REQUIRED once the arming condition holds — the skip n
   );
 });
 
-check("the SHIPPED arming table names control-mcp.ts and reads the signing secret the channel itself reads", () => {
+check("the SHIPPED arming table names control-mcp.ts, decides on the tracked issuer, and names the signing secret", () => {
   const entry = ROUTE_ARMING.find((a) => a.channel === "control-mcp.ts");
   assert.ok(entry, "the control plane's entry must exist — it is the channel that ships dark");
-  assert.equal(entry!.armed({}), false, "an empty environment cannot arm it");
-  assert.match(entry!.darkReason, new RegExp(OAUTH_SIGNING_SECRET_ENV, "u"), "the reason must name what to set");
+  assert.equal(entry!.armed({}), false, "no issuer is declared on this repository, so it cannot be armed");
+  assert.equal(entry!.armed({ [OAUTH_SIGNING_SECRET_NAME]: "x".repeat(48) }), false, "the operator's env is not read");
+  assert.match(entry!.darkReason, new RegExp(OAUTH_SIGNING_SECRET_NAME, "u"), "the reason must name what to set");
 });
 
 check("every channel the arming table names is a real mounted channel file", () => {

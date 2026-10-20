@@ -8,7 +8,7 @@ import { listRoutineFires } from "../routines/fire-audit.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 
-const TRANSCRIPT_RELAY_SECRET_ENV = "OE_TRANSCRIPT_RELAY_SECRET";
+const TRANSCRIPT_RELAY_SECRET_NAME = "OE_TRANSCRIPT_RELAY_SECRET";
 
 export const TRANSCRIPT_RELAY_PATH = "/eve/v1/internal/transcript";
 
@@ -47,11 +47,6 @@ export interface TranscriptRelayResult {
   readonly eventCount: number;
   readonly complete: boolean;
   readonly text: string;
-}
-
-export function transcriptRelaySecret(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const v = (env.OE_TRANSCRIPT_RELAY_SECRET ?? "").trim();
-  return v.length > 0 ? v : undefined;
 }
 
 export function transcriptRelayConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -106,7 +101,7 @@ export async function handleTranscriptRelay(
   if ("tooLarge" in read) return json(413, { error: `payload exceeds ${TRANSCRIPT_RELAY_MAX_BODY_BYTES} bytes` });
   const rawBody = read.body;
 
-  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_ENV, { env });
+  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_NAME);
   if (!verifyWebhookSignature(secret, rawBody, req.headers.get(TRANSCRIPT_RELAY_SIGNATURE_HEADER))) {
     return json(401, { error: "unauthorized: missing or invalid transcript signature" });
   }
@@ -194,7 +189,7 @@ export async function fetchRoutineTranscript(
       "transcript reading is not configured on this deployment — arm OE_CREDENTIAL_ENCRYPTION_KEY (and set OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
     );
   }
-  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_ENV, { env });
+  const secret = await getOrMintSelfSecret(TRANSCRIPT_RELAY_SECRET_NAME);
   const body = JSON.stringify({ ...request, issuedAt: Date.now() });
   const url = `${base}${TRANSCRIPT_RELAY_PATH}`;
   const res = await (deps.fetchImpl ?? fetch)(url, {

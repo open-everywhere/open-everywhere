@@ -1,7 +1,7 @@
 import type { AttachSessionFn } from "eve/channels";
 import { routeAuth } from "eve/channels/auth";
 import { classifySessionId } from "../channels/window-key.js";
-import { parseServiceTokenEntries, serviceTokenAuth, type EveSessionAuth } from "./auth.js";
+import { readTokenEntries, serviceTokenAuth, type EveSessionAuth } from "./auth.js";
 import { auditView, usageWindowView, unifiedDomainAudit, toolUsageView } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
 import type { AuditFilter } from "../audit/audit.js";
@@ -35,7 +35,7 @@ function json(status: number, body: unknown): Response {
 }
 
 async function authorizeRead(req: Request): Promise<EveSessionAuth | Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  const entries = await readTokenEntries();
   if (entries.length === 0) return new Response("not found", { status: 404 });
   return routeAuth(req, serviceTokenAuth(entries));
 }

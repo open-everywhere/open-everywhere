@@ -289,7 +289,7 @@ test("③ my_browser_handoff gives the person the controls; the private link wor
   const linkIds = Object.keys(row.state.links);
   expect(linkIds.length, "the hand-off recorded ONE unspent watch link").toBe(1);
   const pageToken = await import("@open-everywhere/core/agent/credentials/page-token.js");
-  const key = pageToken.pageTokenSigningKey()!;
+  const key = (await pageToken.pageTokenSigningKey())!;
   expect(key, "the tier arms the page signing key").toBeDefined();
   const token = pageToken.mintPageToken({ v: 1, aud: "browser-view", org, id: linkIds[0]!, rb: row.state.person, exp: row.state.links[linkIds[0]!]! }, key);
 

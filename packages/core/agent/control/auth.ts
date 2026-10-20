@@ -5,6 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { domainForChannel, memoryRefs, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getSettings, type AdminRoleRule } from "../settings/settings.js";
+import { ADMIN_STATIC_TOKEN_SECRET, CONTROL_INJECT_TOKENS_SECRET, CONTROL_READ_TOKENS_SECRET, controlSecret } from "./control-secrets.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { serviceTokenFireAttributes } from "../routines/fire-auth.js";
 
@@ -167,8 +168,6 @@ export function staticTokenVerifier(opts: { token: string; subject?: string }): 
 
 export const SERVICE_TOKEN_ISSUER = "service-token";
 
-const READ_TOKEN_ENV = "OE_CONTROL_READ_TOKENS";
-const INJECT_TOKEN_ENV = "OE_CONTROL_INJECT_TOKENS";
 
 export interface ServiceTokenEntry {
   readonly name: string;
@@ -178,7 +177,7 @@ export interface ServiceTokenEntry {
 const SERVICE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-export function parseServiceTokenEntries(raw: string | undefined, envName: string = READ_TOKEN_ENV): ServiceTokenEntry[] {
+export function parseServiceTokenEntries(raw: string | undefined, secretName: string = CONTROL_READ_TOKENS_SECRET): ServiceTokenEntry[] {
   if (!raw || raw.trim().length === 0) return [];
   const out: ServiceTokenEntry[] = [];
   raw.split(",").forEach((part, i) => {
@@ -189,7 +188,7 @@ export function parseServiceTokenEntries(raw: string | undefined, envName: strin
     const hash = at > 0 ? entry.slice(at + 1).toLowerCase() : "";
     if (!SERVICE_NAME.test(name) || !SHA256_HEX.test(hash)) {
       console.warn(
-        `[open-everywhere:control] ${envName} entry #${i + 1} ignored — expected "name:sha256hex" (lowercase name, 64-hex-char sha256 of the token). Entry content not shown.`,
+        `[open-everywhere:control] ${secretName} entry #${i + 1} ignored — expected "name:sha256hex" (lowercase name, 64-hex-char sha256 of the token). Entry content not shown.`,
       );
       return;
     }
@@ -198,8 +197,12 @@ export function parseServiceTokenEntries(raw: string | undefined, envName: strin
   return out;
 }
 
-export function injectTokenEntries(env: NodeJS.ProcessEnv = process.env): ServiceTokenEntry[] {
-  return parseServiceTokenEntries(env[INJECT_TOKEN_ENV], INJECT_TOKEN_ENV);
+export async function readTokenEntries(): Promise<ServiceTokenEntry[]> {
+  return parseServiceTokenEntries(await controlSecret(CONTROL_READ_TOKENS_SECRET), CONTROL_READ_TOKENS_SECRET);
+}
+
+export async function injectTokenEntries(): Promise<ServiceTokenEntry[]> {
+  return parseServiceTokenEntries(await controlSecret(CONTROL_INJECT_TOKENS_SECRET), CONTROL_INJECT_TOKENS_SECRET);
 }
 
 function matchServiceToken(token: string, entries: readonly ServiceTokenEntry[]): ServiceTokenEntry | null {
@@ -252,19 +255,18 @@ export function makeAdminAuthenticator(
   };
 }
 
-export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<AdminIdentity | null>) | null {
+export async function resolveAdminAuthenticator(): Promise<((req: IncomingMessage) => Promise<AdminIdentity | null>) | null> {
   const verifiers: TokenVerifier[] = [];
   const rules: RoleRule[] = [];
-  const serviceTokens = parseServiceTokenEntries(process.env[READ_TOKEN_ENV], READ_TOKEN_ENV);
-
-  const issuer = process.env.OE_ADMIN_OIDC_ISSUER;
-  const audience = process.env.OE_ADMIN_OIDC_AUDIENCE;
-  if (issuer && audience) verifiers.push(genericOidcVerifier({ issuer, audience }));
+  const serviceTokens = await readTokenEntries();
 
   const control = getSettings().control;
+  const { issuer, audience } = control.adminOidc;
+  if (issuer && audience) verifiers.push(genericOidcVerifier({ issuer, audience }));
+
   if (control.githubAdmin) verifiers.push(githubOAuthVerifier());
 
-  const staticToken = process.env.OE_ADMIN_STATIC_TOKEN;
+  const staticToken = await controlSecret(ADMIN_STATIC_TOKEN_SECRET);
   if (staticToken) {
     verifiers.push(staticTokenVerifier({ token: staticToken }));
     rules.push({ roles: ["admin"], issuer: "static" });

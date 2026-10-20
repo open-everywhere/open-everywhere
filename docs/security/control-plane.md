@@ -680,8 +680,9 @@ copy of the deployment's `DATABASE_URL` on an operator's laptop. The local stdio
 Either of these missing ⇒ **every** route of this plane answers 404, and an unarmed deployment does
 not disclose that the seam exists:
 
-- `OE_CONTROL_OAUTH_SIGNING_SECRET` — the HS256 key. At least 32 characters; a shorter value is
-  ignored with a warning and the plane stays off, never half-armed.
+- `OE_CONTROL_OAUTH_SIGNING_SECRET` — the HS256 key, an operator secret in the db credential store
+  (`npx oe secret set OE_CONTROL_OAUTH_SIGNING_SECRET`; an env var until 0.9.0). At least 32
+  characters; a shorter value is ignored with a warning and the plane stays off, never half-armed.
 - `CONTROL_OAUTH_ISSUER` in `packages/core/agent/control/oauth-clients.ts` — this deployment's
   public origin, `https://<host>`, with no path. A tracked literal, and it ships **empty**.
 
@@ -710,8 +711,9 @@ pasting their own origin.
 
 **Why the registry is in Git and not in env.** A client id, a redirect URI, an allowed audience and
 a secret digest are declarations of who this deployment trusts. `AGENTS.md` rules that a trust
-declaration is a tracked literal and env carries infrastructure only. The signing key is
-infrastructure by that same rule — it is a key, not a list.
+declaration is a tracked literal and env carries infrastructure only. The signing key is a key, not
+a list, so it is not in Git either: since 0.9.0 (OPE-2650) it is an operator secret in the db
+credential store, because env holds only the root of trust.
 
 **The two grants.**
 
@@ -722,8 +724,8 @@ infrastructure by that same rule — it is a key, not a list.
 
 🔴 **The person leg is not a browser login, and this is the honest bound.** `/control/v1/oauth/authorize`
 does not show a consent page and sets no cookie. It requires the caller to present a credential the
-deployment's **existing** admin door already accepts (`OE_ADMIN_OIDC_ISSUER`, a GitHub user token when the setting
-`control.githubAdmin` is on, or `OE_ADMIN_STATIC_TOKEN`) and mints a code for that identity. So the flow is a correct
+deployment's **existing** admin door already accepts (the `control.adminOidc` provider, a GitHub user token when the setting
+`control.githubAdmin` is on, or the `OE_ADMIN_STATIC_TOKEN` operator secret) and mints a code for that identity. So the flow is a correct
 authorization-code round trip for a CLI or any client that can set an `Authorization` header, and a
 browser that opens the URL with no bearer gets a 401. Federating a human identity through a chat
 provider is the separate leg of OPE-72 and is **not built**.
@@ -770,8 +772,9 @@ both halves so an eve upgrade that changes either reds a gate.
 
 🔴 **There is no per-token revocation, and no doc should say there is.** An access token lives 10
 minutes and there is no refresh token, so the revocation window is the token's own lifetime.
-Rotating `OE_CONTROL_OAUTH_SIGNING_SECRET` invalidates every outstanding token at once — that is
-the break-glass. A revocation list would mean a store read on every control call, and the store is
+Rotating `OE_CONTROL_OAUTH_SIGNING_SECRET` invalidates every outstanding token within 30 seconds
+(each process reuses a resolved control secret for 30 seconds) — that is the break-glass. Unset any
+env var of that name too, or a store outage brings the old key back. A revocation list would mean a store read on every control call, and the store is
 what an operator reaches this plane to inspect when it is unhealthy.
 
 **Audited, naming the principal.** Every token issue (`control.oauth_token_issued`), every
@@ -804,8 +807,8 @@ Optional: with the env unset, the mode doesn't exist and behaviour is unchanged.
 
 ```bash
 npm run mint:control-token -w @open-everywhere/core -- e2e-harness
-# prints the token VALUE (→ your CI secret store) and the "e2e-harness:<sha256hex>" env
-# entry (→ the deployment's OE_CONTROL_READ_TOKENS; comma-separate for more)
+# prints the token VALUE (→ your CI secret store) and the "e2e-harness:<sha256hex>"
+# entry (→ the deployment's OE_CONTROL_READ_TOKENS operator secret; comma-separate for more)
 ```
 
 or by hand:
@@ -813,12 +816,16 @@ or by hand:
 ```bash
 TOKEN=$(openssl rand -hex 32)                      # the credential — store it in your CI secret store
 HASH=$(printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1)
-# on the deployment:
-OE_CONTROL_READ_TOKENS="e2e-harness:$HASH"          # comma-separate for more: "name:sha256hex,name2:…"
+# on the deployment — an operator secret in the db credential store (an env var until 0.9.0):
+printf '%s' "e2e-harness:$HASH" | npx oe secret set OE_CONTROL_READ_TOKENS   # comma-separate for more: "name:sha256hex,name2:…"
 ```
 
-The deployed env holds only the **sha256 hash**, never the token — leaking the env doesn't leak
-a usable credential. Names are lowercase `[a-z0-9_-]` (they become the audit principal
+`oe secret set` REPLACES the stored value, so to add a token, store the whole comma-separated list.
+A change reaches the deployment within 30 seconds, with no redeploy. To revoke a token, store the list
+without it, and unset any `OE_CONTROL_READ_TOKENS` env var too: while no row is stored, that variable
+is read again. The
+store holds only the **sha256 hash**, never the token — leaking it doesn't leak a usable
+credential. Names are lowercase `[a-z0-9_-]` (they become the audit principal
 `svc:<name>`); a malformed entry is dropped fail-closed with a warning that deliberately never
 echoes the entry content. Verification is a constant-time digest compare (`timingSafeEqual`);
 token values are never logged anywhere.
@@ -1175,7 +1182,7 @@ because it is a different power:
 ```bash
 npm run mint:control-token -w @open-everywhere/core -- e2e-injector --inject
 # prints the token VALUE (→ your harness env, as E2E_CONTROL_INJECT_TOKEN) and the
-# "e2e-injector:<sha256hex>" entry (→ the deployment's OE_CONTROL_INJECT_TOKENS)
+# "e2e-injector:<sha256hex>" entry (→ the deployment's OE_CONTROL_INJECT_TOKENS operator secret)
 ```
 
 **Why it is not a read token.** Injection transitively **writes** (the receive registers a

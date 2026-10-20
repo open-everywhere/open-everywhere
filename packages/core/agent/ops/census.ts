@@ -5,7 +5,7 @@ import { CONTROL_OAUTH_ISSUER } from "../control/oauth-clients.js";
 import { controlOAuthIssuer } from "../control/oauth-resource.js";
 import { a2aInboundDeclaration } from "../a2a/inbound/declaration.js";
 import { getSettings } from "../settings/settings.js";
-import { OAUTH_SIGNING_SECRET_ENV, oauthSigningSecret } from "../control/oauth-tokens.js";
+import { OAUTH_SIGNING_SECRET_NAME } from "../control/oauth-tokens.js";
 import type { WebhookHook } from "../webhooks/config.js";
 
 export interface CensusCredential {
@@ -171,11 +171,12 @@ export interface ChannelArming {
 export const ROUTE_ARMING: readonly ChannelArming[] = [
   {
     channel: "control-mcp.ts",
-    armed: (env) => oauthSigningSecret(env) !== null && controlOAuthIssuer(CONTROL_OAUTH_ISSUER) !== null,
+    armed: () => controlOAuthIssuer(CONTROL_OAUTH_ISSUER) !== null,
     darkReason:
-      `dark by declaration: the control OAuth plane answers 404 on every route until ${OAUTH_SIGNING_SECRET_ENV} is set ` +
-      `(at least 32 characters) AND a valid issuer is declared in agent/control/oauth-clients.ts. One of the two is absent ` +
-      `here, so this route's 404 is the shipped design, not a missing mount. Arm both and the census requires it again.`,
+      `dark by declaration: the control OAuth plane answers 404 on every route until a valid issuer is declared in ` +
+      `agent/control/oauth-clients.ts AND the ${OAUTH_SIGNING_SECRET_NAME} operator secret is stored (\`oe secret set ` +
+      `${OAUTH_SIGNING_SECRET_NAME}\`, at least 32 characters). No issuer is declared here, so this route's 404 is the ` +
+      `shipped design, not a missing mount. Declare one and the census requires it again.`,
   },
   {
     channel: "a2a-inbound.ts",
@@ -195,7 +196,7 @@ export interface TokenGatedRoute {
 
 const PERSONAL_BROWSER_LIVE_REASON =
   "a token-gated watch-session route of the personal browser (OPE-2441) — it answers 404 without the person's " +
-  "signed session cookie and the CSRF header, and on every request while OE_INTAKE_PAGE_SIGNING_KEY is unset, " +
+  "signed session cookie and the CSRF header, and on every request while OE_CREDENTIAL_ENCRYPTION_KEY is unset, " +
   "so a bare probe cannot tell mounted from absent (OPE-2478)";
 
 export const TOKEN_GATED_ROUTES: readonly TokenGatedRoute[] = [

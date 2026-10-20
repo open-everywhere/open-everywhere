@@ -97,7 +97,7 @@ npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 
 ## 0.9.0 — not released yet
 
-🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the first set: the access-request wiring and the deprecated `OE_AI_GATEWAY_URL`. OPE-2649 moves the Okta directory configuration out of the environment: the selector and the org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and the API token is the operator secret `OKTA_API_TOKEN`. A deployment that never armed the Okta directory adapter needs no step for it.
+🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the sets landed so far: the access-request wiring, the deprecated `OE_AI_GATEWAY_URL`, and the control plane with the self-minted keys. OPE-2649 moves the Okta directory configuration out of the environment: the selector and the org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and the API token is the operator secret `OKTA_API_TOKEN`. A deployment that never armed the Okta directory adapter needs no step for it.
 
 eve peer: `0.71.0`
 
@@ -107,6 +107,10 @@ eve peer: `0.71.0`
 - `OE_AI_GATEWAY_URL` is gone (OPE-2650). 0.8.0 deprecated it for `models.targets.gateway.url`. Nothing reads it now, so a deployment that still sets it and has no target `url` sends its model calls to the shipped Vercel AI Gateway endpoint.
 - `targetBaseUrl` (adapters `model/gateway.ts`) takes no `env` argument, and `DEPRECATED_GATEWAY_URL_ENV` is no longer exported. `gatewayCatalogUrl` (adapters `model/gateway-probe.ts`) takes no argument.
 - The Okta directory adapter no longer reads environment variables (OPE-2649). `OE_DIRECTORY_PROVIDER`, `OE_DIRECTORY_OKTA_ORG_URL`, `OE_DIRECTORY_OKTA_TOKEN_REF` and `OE_DIRECTORY_OKTA_TOKEN_BROKER` are deleted, and nothing reads them. A deployment that set them boots with the directory plane OFF until it declares the settings and stores the secret. The selector is `directory.provider` (`"none"` shipped, or `"okta"`). The org URL is `directory.oktaOrgUrl`, and settings load refuses a value that is not `https:`. The API token is the operator secret `OKTA_API_TOKEN`, under that fixed name. The adapter reads it from the DB-backed store only, and refuses a value that only an environment variable holds. In `@open-everywhere/adapters`, `OktaDirectoryConfig` loses `tokenRef` and `tokenBroker`, `loadOktaDirectoryConfig` and `oktaDirectoryEnabled` take the `directory` settings group instead of an environment, and `OktaDirectoryDeps.resolveToken` takes no argument.
+- The control plane reads no OIDC env var (OPE-2650). `OE_ADMIN_OIDC_ISSUER` and `OE_ADMIN_OIDC_AUDIENCE` are the setting `control.adminOidc: { issuer, audience }` in `agent/settings/settings.ts`. A deployment that sets the variables and does not move the values loses its OIDC admin sign-in: the remote control plane refuses those tokens. Half a pair, or an issuer that is not an `https:` URL, fails the boot.
+- `OE_CONTROL_READ_TOKENS`, `OE_CONTROL_INJECT_TOKENS`, `OE_CONTROL_OAUTH_SIGNING_SECRET` and `OE_ADMIN_STATIC_TOKEN` are operator secrets in the db credential store (OPE-2650). Store each with `npx oe secret set <NAME>`. A rotation reaches the deployment within 30 seconds, with no redeploy. A stored row wins over an env var of the same name, and an env var is still read, with a one-time warning, while no row is stored or while the store is unreachable. So unset each variable once its value is stored: while it is set, deleting the row does not revoke the credential.
+- `OE_INTAKE_PAGE_SIGNING_KEY`, `OE_SPAWN_DISPATCH_SECRET` and `OE_TRANSCRIPT_RELAY_SECRET` are no longer read from the environment (OPE-2650). Each was already a self-shared secret that mints itself in the encrypted vault (OPE-408); the env var was an on-ramp, and it is gone. A deployment that set one and never stored it mints a fresh value at its first read after the upgrade, so a credential-intake, secret-reveal or watch-page link issued before the deploy stops working (ask for a new one), and a self-dispatch or transcript-relay call in flight across the deploy fails once. The personal browser's watch page now signs with the vault's key: before 0.9.0 it read only the env var, so it stayed dark on a deployment that did not set it.
+- Core API (OPE-2650): `adminAuthenticatorFromEnv` is `resolveAdminAuthenticator`, and it is async. `injectTokenEntries` is async and takes no `env`; the new `readTokenEntries` is its READ-family twin. `oauthSigningSecret`, `controlResourceAuth`, `controlProtectedResourceMetadata`, `authorizeControlMcp` and `handleControlMcpRequest` take a `SigningSecretSource` in place of an `env`, and the first three are async; `ControlOAuthDeps.env` is `signingSecret`. `OAUTH_SIGNING_SECRET_ENV` is `OAUTH_SIGNING_SECRET_NAME`. `pageTokenSigningKey` is async and takes no `env`, and `PAGE_TOKEN_KEY_ENV` is `PAGE_TOKEN_KEY_NAME`. `selfDispatchSecret`, `transcriptRelaySecret`, `resetSelfSecretWarnings` and `SelfSecretDeps.env` are gone. The `preflight` ops check no longer reads `OE_ADMIN_STATIC_TOKEN`, and `ENV_CONFIG_NAMES` and `PREFLIGHT_SECRET_NAMES` no longer carry the admin names.
 
 **Config migrations**
 
@@ -114,6 +118,9 @@ eve peer: `0.71.0`
 - If the deployment sets `OE_ACCESS_GRANTS_PATH`, `OE_WEBHOOK_HOOKS_PATH`, `OE_AGENTS_PATH` or `OE_CREDENTIAL_BINDINGS_PATH` to a non-default path, set `grantsPath`, `hooksPath`, `agentsPath` or `bindingsPath` in the object `loadAccessRequests()` returns in `agent/access/access-requests.ts`. A default path needs no step (OPE-2650). (apply by hand)
 - If the deployment still sets `OE_AI_GATEWAY_URL`, move its value to `models: { targets: { gateway: { kind: "vercel-ai-gateway", url: "<the value>" } } }` in `agent/settings/settings.ts`, then unset the env var (OPE-2650; the 0.8.0 step of OPE-2556). (apply by hand)
 - A deployment that armed the Okta directory adapter (OPE-2649): add `directory: { provider: "okta", oktaOrgUrl: "https://<your-org>.okta.com" }` to `SETTINGS_OVERRIDES` in `agent/settings/settings.ts`, next to the `directory.oktaApps` it already declares. Use the value `OE_DIRECTORY_OKTA_ORG_URL` held. (apply by hand)
+- If the deployment sets `OE_ADMIN_OIDC_ISSUER` and `OE_ADMIN_OIDC_AUDIENCE`, copy both values into `control: { adminOidc: { issuer, audience } }` in `agent/settings/settings.ts`, deploy, then unset the variables (OPE-2650). (apply by hand)
+- If the deployment sets `OE_CONTROL_READ_TOKENS`, `OE_CONTROL_INJECT_TOKENS`, `OE_CONTROL_OAUTH_SIGNING_SECRET` or `OE_ADMIN_STATIC_TOKEN`, store each value with `npx oe secret set <NAME>` (from a shell that holds the deployment's `DATABASE_URL` and `OE_CREDENTIAL_ENCRYPTION_KEY`), then unset the variable. The order is free: the env var keeps working until the row exists (OPE-2650). (apply by hand)
+- If the deployment sets `OE_INTAKE_PAGE_SIGNING_KEY`, `OE_SPAWN_DISPATCH_SECRET` or `OE_TRANSCRIPT_RELAY_SECRET`, unset it. There is nothing to copy: each mints itself in the encrypted vault (OPE-2650). (apply by hand)
 
 **Environment**
 
@@ -129,6 +136,11 @@ eve peer: `0.71.0`
 - remove `OE_DIRECTORY_OKTA_ORG_URL`
 - remove `OE_DIRECTORY_OKTA_TOKEN_REF`
 - remove `OE_DIRECTORY_OKTA_TOKEN_BROKER`
+- remove `OE_ADMIN_OIDC_ISSUER`
+- remove `OE_ADMIN_OIDC_AUDIENCE`
+- remove `OE_INTAKE_PAGE_SIGNING_KEY`
+- remove `OE_SPAWN_DISPATCH_SECRET`
+- remove `OE_TRANSCRIPT_RELAY_SECRET`
 
 **Manual steps**
 

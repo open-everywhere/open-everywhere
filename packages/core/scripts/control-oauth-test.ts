@@ -35,9 +35,9 @@ const authModule = await import("../agent/control/auth.js");
 
 const ORIGIN = "https://oe.example";
 const SECRET = "a".repeat(48);
-const ARMED: NodeJS.ProcessEnv = { [tokens.OAUTH_SIGNING_SECRET_ENV]: SECRET };
+const ARMED: import("../agent/control/oauth-tokens.js").SigningSecretSource = async () => SECRET;
 const DECLARED = ORIGIN;
-const UNARMED: NodeJS.ProcessEnv = {};
+const UNARMED: import("../agent/control/oauth-tokens.js").SigningSecretSource = async () => undefined;
 
 const MACHINE_SECRET = "s3cret-machine-value-not-in-the-tree";
 const MACHINE_DIGEST = createHash("sha256").update(MACHINE_SECRET, "utf-8").digest("hex");
@@ -86,34 +86,34 @@ const mcpRequest = (token: string | null, body: unknown = { jsonrpc: "2.0", id: 
   });
 
 {
-  ok(route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { env: UNARMED, issuer: DECLARED }).status === 404, "unarmed: AS metadata 404s");
-  ok(route.handleProtectedResourceMetadata(get(resource.CONTROL_PROTECTED_RESOURCE_METADATA_PATH), { env: UNARMED, issuer: DECLARED }).status === 404, "unarmed: protected-resource metadata 404s");
-  ok((await route.handleAuthorize(get(`${route.CONTROL_OAUTH_AUTHORIZE_PATH}?client_id=operator-cli`), { env: UNARMED, clients: REGISTRY, issuer: DECLARED })).status === 404, "unarmed: authorize 404s");
-  ok((await route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "client_credentials" }), { env: UNARMED, issuer: DECLARED })).status === 404, "unarmed: token endpoint 404s");
+  ok((await route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { signingSecret: UNARMED, issuer: DECLARED })).status === 404, "unarmed: AS metadata 404s");
+  ok((await route.handleProtectedResourceMetadata(get(resource.CONTROL_PROTECTED_RESOURCE_METADATA_PATH), { signingSecret: UNARMED, issuer: DECLARED })).status === 404, "unarmed: protected-resource metadata 404s");
+  ok((await route.handleAuthorize(get(`${route.CONTROL_OAUTH_AUTHORIZE_PATH}?client_id=operator-cli`), { signingSecret: UNARMED, clients: REGISTRY, issuer: DECLARED })).status === 404, "unarmed: authorize 404s");
+  ok((await route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "client_credentials" }), { signingSecret: UNARMED, issuer: DECLARED })).status === 404, "unarmed: token endpoint 404s");
   ok((await mcp.handleControlMcpRequest(get(resource.CONTROL_MCP_PATH), UNARMED, DECLARED)).status === 404, "unarmed: the MCP mount 404s (it does not disclose the seam)");
 
-  const short: NodeJS.ProcessEnv = { [tokens.OAUTH_SIGNING_SECRET_ENV]: "short" };
-  ok(tokens.oauthSigningSecret(short) === null, "a signing secret below the minimum length leaves the plane off");
-  ok(route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { env: short, issuer: DECLARED }).status === 404, "…and every route stays 404 with it");
-  ok(tokens.oauthSigningSecret(ARMED) === SECRET, "a long-enough secret arms the plane");
+  const short: import("../agent/control/oauth-tokens.js").SigningSecretSource = async () => "short";
+  ok((await tokens.oauthSigningSecret(short)) === null, "a signing secret below the minimum length leaves the plane off");
+  ok((await route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { signingSecret: short, issuer: DECLARED })).status === 404, "…and every route stays 404 with it");
+  ok((await tokens.oauthSigningSecret(ARMED)) === SECRET, "a long-enough secret arms the plane");
 
   ok(clients.CONTROL_OAUTH_ISSUER === "", "the tracked issuer literal ships EMPTY");
   ok(resource.controlOAuthIssuer("") === null && resource.controlOAuthIssuer() === null, "…and an undeclared issuer resolves to null");
-  ok(route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { env: ARMED }).status === 404, "NEGATIVE CONTROL: armed secret + undeclared issuer ⇒ the plane is still 404");
+  ok((await route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { signingSecret: ARMED })).status === 404, "NEGATIVE CONTROL: armed secret + undeclared issuer ⇒ the plane is still 404");
   ok((await mcp.handleControlMcpRequest(mcpRequest(null), ARMED)).status === 404, "…including the MCP mount");
   for (const bad of ["http://oe.example", "https://oe.example/path", "not a url", "https://oe.example/"]) {
     ok(resource.controlOAuthIssuer(bad) === null, `a malformed issuer literal (${bad}) leaves the plane off, never half-armed`);
   }
   ok(resource.controlOAuthIssuer(DECLARED) === DECLARED, "a well-formed https origin is accepted");
 
-  ok(route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { env: ARMED, issuer: DECLARED, clients: [] }).status === 200, "secret + issuer, EMPTY registry: the discovery document publishes");
+  ok((await route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { signingSecret: ARMED, issuer: DECLARED, clients: [] })).status === 200, "secret + issuer, EMPTY registry: the discovery document publishes");
   ok((await mcp.handleControlMcpRequest(mcpRequest(null), ARMED, DECLARED)).status === 401, "…the MCP mount answers 401, not 404 — the routes exist");
-  const noClient = await route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "client_credentials", client_id: "deploy-bot", client_secret: "anything" }), { env: ARMED, issuer: DECLARED, clients: [] });
+  const noClient = await route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "client_credentials", client_id: "deploy-bot", client_secret: "anything" }), { signingSecret: ARMED, issuer: DECLARED, clients: [] });
   ok(noClient.status === 401, "…and neither grant can issue a token to anybody");
 }
 
 {
-  const as = (await route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { env: ARMED, issuer: DECLARED }).json()) as Record<string, unknown>;
+  const as = (await (await route.handleAuthorizationServerMetadata(get(route.CONTROL_OAUTH_SERVER_METADATA_PATH), { signingSecret: ARMED, issuer: DECLARED })).json()) as Record<string, unknown>;
   ok(as["issuer"] === ORIGIN, "RFC 8414: the issuer is the deployment's own origin");
   ok(JSON.stringify(as["code_challenge_methods_supported"]) === JSON.stringify(["S256"]), "RFC 8414: S256 is the only PKCE method advertised (OAuth 2.1 removes plain)");
   ok(!("registration_endpoint" in as), "RFC 8414: no dynamic client registration is advertised — clients are tracked literals");
@@ -121,7 +121,7 @@ const mcpRequest = (token: string | null, body: unknown = { jsonrpc: "2.0", id: 
   ok(typeof as["service_documentation"] === "string" && !(as["service_documentation"] as string).includes(resource.CONTROL_MCP_PATH), "RFC 8414: service_documentation points at human docs, never at the protected resource");
   ok(JSON.stringify(as["grant_types_supported"]) === JSON.stringify(["authorization_code", "client_credentials"]), "RFC 8414: exactly the two implemented grants are advertised");
 
-  const prm = (await route.handleProtectedResourceMetadata(get(resource.CONTROL_PROTECTED_RESOURCE_METADATA_PATH), { env: ARMED, issuer: DECLARED }).json()) as Record<string, unknown>;
+  const prm = (await (await route.handleProtectedResourceMetadata(get(resource.CONTROL_PROTECTED_RESOURCE_METADATA_PATH), { signingSecret: ARMED, issuer: DECLARED })).json()) as Record<string, unknown>;
   ok(prm["resource"] === `${ORIGIN}${resource.CONTROL_MCP_PATH}`, "RFC 9728: the resource identifier is the MCP mount's URL");
   ok(JSON.stringify(prm["authorization_servers"]) === JSON.stringify([ORIGIN]), "RFC 9728: the authorization server is this deployment");
   ok(JSON.stringify(prm["scopes_supported"]) === JSON.stringify([...resource.CONTROL_ADVERTISED_SCOPES]), "RFC 9728: the advertised scopes come off eve's own oauthResource decoration");
@@ -139,13 +139,13 @@ const mcpRequest = (token: string | null, body: unknown = { jsonrpc: "2.0", id: 
 }
 
 async function tokenFor(body: Record<string, string>): Promise<Response> {
-  return route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, body), { env: ARMED, clients: REGISTRY, issuer: DECLARED });
+  return route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, body), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED });
 }
 
 let machineToken = "";
 {
   const good = await route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "client_credentials", client_id: "deploy-bot", client_secret: MACHINE_SECRET }), {
-    env: ARMED,
+    signingSecret: ARMED,
     clients: REGISTRY,
     issuer: DECLARED,
   });
@@ -170,7 +170,7 @@ let machineToken = "";
       headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from(`deploy-bot:${MACHINE_SECRET}`).toString("base64")}` },
       body: new URLSearchParams({ grant_type: "client_credentials" }).toString(),
     }),
-    { env: ARMED, clients: REGISTRY, issuer: DECLARED },
+    { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED },
   );
   ok(basic.status === 200, "client_secret_basic authenticates the same client");
 
@@ -190,7 +190,7 @@ let machineToken = "";
       headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from("a:%").toString("base64")}` },
       body: new URLSearchParams({ grant_type: "client_credentials" }).toString(),
     }),
-    { env: ARMED, clients: REGISTRY, issuer: DECLARED },
+    { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED },
   );
   ok(malformedBasic.status === 401, `a malformed Basic credential is refused 401, not 500 (got ${malformedBasic.status})`);
 
@@ -305,11 +305,11 @@ const authorizeUrl = (over: Record<string, string> = {}) => {
 
 let code = "";
 {
-  const denied = await route.handleAuthorize(get(authorizeUrl()), { env: ARMED, clients: REGISTRY, issuer: DECLARED });
+  const denied = await route.handleAuthorize(get(authorizeUrl()), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED });
   ok(denied.status === 401, "authorize with NO identity is refused 401 (no identity door is configured in this process)");
   ok(/Bearer/i.test(denied.headers.get("www-authenticate") ?? ""), "…with a Bearer challenge, not a login page — the browser leg is OPE-72 (a), not built");
 
-  const granted = await route.handleAuthorize(get(authorizeUrl()), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
+  const granted = await route.handleAuthorize(get(authorizeUrl()), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
   ok(granted.status === 302, "authorize with an admin identity redirects");
   const location = new URL(granted.headers.get("location") ?? "");
   ok(location.origin + location.pathname === REDIRECT, "…to the registered redirect URI, exactly");
@@ -318,23 +318,23 @@ let code = "";
   ok(code.length > 0, "…and an authorization code");
   ok(location.searchParams.get("iss") === DECLARED, "…and RFC 9207 `iss`, so a client behind one redirect URI knows which server answered");
 
-  const badRedirect = await route.handleAuthorize(get(authorizeUrl({ redirect_uri: "https://evil.example/steal" })), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
+  const badRedirect = await route.handleAuthorize(get(authorizeUrl({ redirect_uri: "https://evil.example/steal" })), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
   ok(badRedirect.status === 400 && badRedirect.headers.get("location") === null, "an unregistered redirect_uri is refused DIRECTLY — the endpoint is never an open redirector");
 
-  const unknownClient = await route.handleAuthorize(get(authorizeUrl({ client_id: "deploy-bot" })), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
+  const unknownClient = await route.handleAuthorize(get(authorizeUrl({ client_id: "deploy-bot" })), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
   ok(unknownClient.status === 400 && unknownClient.headers.get("location") === null, "a client registered for client_credentials cannot walk the person flow");
 
-  const plain = await route.handleAuthorize(get(authorizeUrl({ code_challenge_method: "plain" })), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
+  const plain = await route.handleAuthorize(get(authorizeUrl({ code_challenge_method: "plain" })), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
   ok(plain.status === 302 && (new URL(plain.headers.get("location") ?? "").searchParams.get("error") ?? "") === "invalid_request", "code_challenge_method=plain is refused (OAuth 2.1 removes it)");
 
   const serviceIdentity = async () => ({ issuer: authModule.SERVICE_TOKEN_ISSUER, subject: "svc:e2e-harness", emailVerified: false, roles: ["admin"], readOnly: true });
-  const serviceDenied = await route.handleAuthorize(get(authorizeUrl()), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity: serviceIdentity });
+  const serviceDenied = await route.handleAuthorize(get(authorizeUrl()), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity: serviceIdentity });
   ok(serviceDenied.status === 403, `NEGATIVE CONTROL: a READ service token cannot authorize a control-plane client (got ${serviceDenied.status})`);
   ok(serviceDenied.headers.get("location") === null, "…and it is refused directly, never by redirecting with a code");
   const familyRows = await readAudit({ org: "acme", action: "control.oauth_refused", limit: 50 });
   ok(familyRows.some((r) => r.principalId === "svc:e2e-harness"), "…and the refusal is audited, naming the service principal");
 
-  const overreach = await route.handleAuthorize(get(authorizeUrl({ scope: "control:domain:eng" })), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
+  const overreach = await route.handleAuthorize(get(authorizeUrl({ scope: "control:domain:eng" })), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
   ok((new URL(overreach.headers.get("location") ?? "").searchParams.get("error") ?? "") === "invalid_scope", "a scope outside the client's registration is refused on the person leg too");
   const scopeProbeRows = await readAudit({ org: "acme", action: "control.oauth_refused", limit: 50 });
   ok(
@@ -348,7 +348,7 @@ let code = "";
   const markCodeSpent = async (_org: string, key: string) => (spent.has(key) ? false : (spent.add(key), true));
   const exchange = (over: Record<string, string> = {}, deps: Record<string, unknown> = {}) =>
     route.handleToken(form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "authorization_code", client_id: "operator-cli", code, redirect_uri: REDIRECT, code_verifier: verifier, ...over }), {
-      env: ARMED,
+      signingSecret: ARMED,
       clients: REGISTRY,
       issuer: DECLARED,
       markCodeSpent,
@@ -371,12 +371,12 @@ let code = "";
   const replay = await exchange();
   ok(replay.status === 400 && ((await replay.json()) as { error: string }).error === "invalid_grant", "REPLAYING the same code is refused — single use, claimed atomically");
 
-  const granted = await route.handleAuthorize(get(authorizeUrl()), { env: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
+  const granted = await route.handleAuthorize(get(authorizeUrl()), { signingSecret: ARMED, clients: REGISTRY, issuer: DECLARED, adminIdentity });
   const fresh = new URL(granted.headers.get("location") ?? "").searchParams.get("code") ?? "";
   const storeDown = await route.handleToken(
     form(route.CONTROL_OAUTH_TOKEN_PATH, { grant_type: "authorization_code", client_id: "operator-cli", code: fresh, redirect_uri: REDIRECT, code_verifier: verifier }),
     {
-      env: ARMED,
+      signingSecret: ARMED,
       clients: REGISTRY,
       issuer: DECLARED,
       markCodeSpent: async () => {
@@ -468,7 +468,7 @@ let code = "";
   const evePkgJson = readFileSync(resolve(here, "../../../node_modules/eve/package.json"), "utf-8");
   ok(!evePkgJson.includes('"./internal/mcp'), "…and no package export makes that internal module reachable");
 
-  const auth = resource.controlResourceAuth(ARMED, DECLARED);
+  const auth = await resource.controlResourceAuth(ARMED, DECLARED);
   ok(auth !== null, "the resource AuthFn is built when the plane is armed");
   const { readOAuthResourceOptions } = await import("eve/channels/auth");
   const options = auth === null ? undefined : readOAuthResourceOptions(auth);

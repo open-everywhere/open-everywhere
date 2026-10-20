@@ -1666,6 +1666,10 @@
       "types": "./dist/agent/control/capture-window-read.d.ts",
       "default": "./dist/agent/control/capture-window-read.js"
     },
+    "./agent/control/control-secrets.js": {
+      "types": "./dist/agent/control/control-secrets.d.ts",
+      "default": "./dist/agent/control/control-secrets.js"
+    },
     "./agent/control/delivery-history.js": {
       "types": "./dist/agent/control/delivery-history.d.ts",
       "default": "./dist/agent/control/delivery-history.js"

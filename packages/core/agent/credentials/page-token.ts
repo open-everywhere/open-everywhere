@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { getOrMintSelfSecret, selfSecretsArmed } from "./self-secrets.js";
 
-export const PAGE_TOKEN_KEY_ENV = "OE_INTAKE_PAGE_SIGNING_KEY";
+export const PAGE_TOKEN_KEY_NAME = "OE_INTAKE_PAGE_SIGNING_KEY";
 
 export type PageAudience = "intake" | "reveal" | "browser-view" | "browser-session";
 
@@ -27,9 +28,9 @@ export interface PageTokenClaims {
   readonly exp: number;
 }
 
-export function pageTokenSigningKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const v = (env[PAGE_TOKEN_KEY_ENV] ?? "").trim();
-  return v.length > 0 ? v : undefined;
+export async function pageTokenSigningKey(): Promise<string | undefined> {
+  if (!selfSecretsArmed()) return undefined;
+  return getOrMintSelfSecret(PAGE_TOKEN_KEY_NAME);
 }
 
 export function pageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {

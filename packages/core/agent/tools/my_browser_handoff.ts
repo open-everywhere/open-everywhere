@@ -53,7 +53,7 @@ export default defineTool({
       throw err;
     }
     const link = await issueWatchLink(owner);
-    if (link === undefined) throw new Error("this deployment can't make a private link to your browser (it has no page signing key, OE_INTAKE_PAGE_SIGNING_KEY, or no public URL), so I can't hand you the controls");
+    if (link === undefined) throw new Error("this deployment can't make a private link to your browser (its credential store is not armed, OE_CREDENTIAL_ENCRYPTION_KEY, so it has no page signing key, or it has no public URL), so I can't hand you the controls");
     const reason = input.reason.trim();
     const teach = input.teach !== undefined ? { name: input.teach.name.trim(), goal: input.teach.goal.trim() } : undefined;
     if (teach !== undefined) await startTeaching(owner.org, owner.person, teach);

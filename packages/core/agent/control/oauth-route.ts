@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { adminAuthenticatorFromEnv, SERVICE_TOKEN_ISSUER, type AdminIdentity } from "./auth.js";
+import { resolveAdminAuthenticator, SERVICE_TOKEN_ISSUER, type AdminIdentity } from "./auth.js";
 import {
   CONTROL_OAUTH_CLIENTS,
   CONTROL_OAUTH_ISSUER,
@@ -20,9 +20,11 @@ import {
   mintAuthorizationCode,
   oauthSigningSecret,
   pkceVerifierMatches,
+  storedSigningSecret,
   redeemAuthorizationCode,
   verifyAuthorizationCode,
   type MarkCodeSpentFn,
+  type SigningSecretSource,
 } from "./oauth-tokens.js";
 import { CONTROL_ADVERTISED_SCOPES, CONTROL_MCP_PATH, controlMcpResource, controlOAuthIssuer, controlProtectedResourceMetadata } from "./oauth-resource.js";
 import { appendAudit } from "../audit/audit.js";
@@ -34,7 +36,7 @@ export const CONTROL_OAUTH_TOKEN_PATH = "/control/v1/oauth/token";
 export const CONTROL_OAUTH_SERVER_METADATA_PATH = "/.well-known/oauth-authorization-server";
 
 export interface ControlOAuthDeps {
-  readonly env?: NodeJS.ProcessEnv;
+  readonly signingSecret?: SigningSecretSource;
   readonly clients?: readonly ControlOAuthClient[];
   readonly issuer?: string;
   readonly adminIdentity?: (req: Request) => Promise<AdminIdentity | null>;
@@ -52,14 +54,14 @@ function oauthError(status: number, code: string, description: string, headers: 
 
 const NOT_FOUND = () => new Response("not found", { status: 404 });
 
-function armed(deps: ControlOAuthDeps): { secret: string; issuer: string } | null {
-  const secret = oauthSigningSecret(deps.env ?? process.env);
+async function armed(deps: ControlOAuthDeps): Promise<{ secret: string; issuer: string } | null> {
+  const secret = await oauthSigningSecret(deps.signingSecret ?? storedSigningSecret);
   const issuer = controlOAuthIssuer(deps.issuer ?? CONTROL_OAUTH_ISSUER);
   return secret === null || issuer === null ? null : { secret, issuer };
 }
 
-export function handleAuthorizationServerMetadata(_req: Request, deps: ControlOAuthDeps = {}): Response {
-  const live = armed(deps);
+export async function handleAuthorizationServerMetadata(_req: Request, deps: ControlOAuthDeps = {}): Promise<Response> {
+  const live = await armed(deps);
   if (live === null) return NOT_FOUND();
   const issuer = live.issuer;
   return json(200, {
@@ -77,8 +79,8 @@ export function handleAuthorizationServerMetadata(_req: Request, deps: ControlOA
   });
 }
 
-export function handleProtectedResourceMetadata(_req: Request, deps: ControlOAuthDeps = {}): Response {
-  const doc = controlProtectedResourceMetadata(deps.env ?? process.env, deps.issuer ?? CONTROL_OAUTH_ISSUER);
+export async function handleProtectedResourceMetadata(_req: Request, deps: ControlOAuthDeps = {}): Promise<Response> {
+  const doc = await controlProtectedResourceMetadata(deps.signingSecret ?? storedSigningSecret, deps.issuer ?? CONTROL_OAUTH_ISSUER);
   if (doc === null) return NOT_FOUND();
   return json(200, doc, { "access-control-allow-origin": "*" });
 }
@@ -92,8 +94,12 @@ async function resolveAdminIdentity(req: Request, deps: ControlOAuthDeps): Promi
   if (deps.adminIdentity) return deps.adminIdentity(req);
   let authenticate: ((req: IncomingMessage) => Promise<AdminIdentity | null>) | null = null;
   try {
-    authenticate = adminAuthenticatorFromEnv();
-  } catch {
+    authenticate = await resolveAdminAuthenticator();
+  } catch (err) {
+    console.error(
+      `[open-everywhere:control] the admin door could not resolve its secrets, so authorize refuses every caller: ${err instanceof Error ? err.name : "error"}. ` +
+        "Check OE_CREDENTIAL_ENCRYPTION_KEY against the key the control secrets were stored with.",
+    );
     return null;
   }
   if (!authenticate) return null;
@@ -111,7 +117,7 @@ export function scopesAllowedForIdentity(identity: AdminIdentity): string[] {
 }
 
 export async function handleAuthorize(req: Request, deps: ControlOAuthDeps = {}): Promise<Response> {
-  const live = armed(deps);
+  const live = await armed(deps);
   if (live === null) return NOT_FOUND();
   const { secret, issuer } = live;
 
@@ -179,7 +185,7 @@ function redirectError(redirectUri: string, code: string, description: string, s
 }
 
 export async function handleToken(req: Request, deps: ControlOAuthDeps = {}): Promise<Response> {
-  const live = armed(deps);
+  const live = await armed(deps);
   if (live === null) return NOT_FOUND();
   const { secret } = live;
 

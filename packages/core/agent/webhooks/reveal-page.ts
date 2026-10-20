@@ -3,7 +3,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
-import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_ENV, REVEAL_GRANT_CONNECTOR } from "../credentials/page-token.js";
+import { mintPageToken, pageBaseUrl, verifyPageToken, PAGE_TOKEN_KEY_NAME, REVEAL_GRANT_CONNECTOR } from "../credentials/page-token.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 import { webhookVerifier, type WebhookSenderGuidance } from "./verifier.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
@@ -38,7 +38,7 @@ export async function issueRevealLink(input: IssueRevealLinkInput, deps: RevealG
   const env = deps.env ?? process.env;
   const base = pageBaseUrl(env);
   if (!base || !selfSecretsArmed()) return undefined;
-  const secret = await getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
+  const secret = await getOrMintSelfSecret(PAGE_TOKEN_KEY_NAME);
 
   const now = (deps.now ?? (() => new Date()))();
   const expiresAt = new Date(now.getTime() + REVEAL_GRANT_TTL_MS).toISOString();
@@ -127,7 +127,7 @@ function grantOpen(row: CredentialIntakeRow | null, boundTo: string, nowMs: numb
 export async function handleRevealGet(req: Request, deps: RevealPageDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
-  const secret = await getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
+  const secret = await getOrMintSelfSecret(PAGE_TOKEN_KEY_NAME);
 
   const nowMs = (deps.now ?? (() => new Date()))().getTime();
   const token = new URL(req.url).searchParams.get(TOKEN_FIELD) ?? "";
@@ -142,7 +142,7 @@ export async function handleRevealGet(req: Request, deps: RevealPageDeps = {}): 
 export async function handleRevealPost(req: Request, deps: RevealPageDeps = {}): Promise<Response> {
   const env = deps.env ?? process.env;
   if (!selfSecretsArmed()) return new Response("not found", { status: 404 });
-  const signingKey = await getOrMintSelfSecret(PAGE_TOKEN_KEY_ENV, { env });
+  const signingKey = await getOrMintSelfSecret(PAGE_TOKEN_KEY_NAME);
 
   const now = (deps.now ?? (() => new Date()))();
   const nowMs = now.getTime();

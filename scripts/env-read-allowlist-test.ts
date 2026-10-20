@@ -136,7 +136,7 @@ function main(): void {
       "store-bootstrap": 5,
       platform: 23,
       "per-run-seam": 4,
-      "pending-migration": 63,
+      "pending-migration": 54,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -144,7 +144,7 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 99, `the allowlist holds 99 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 90, `the allowlist holds 90 names (found ${ENV_READ_ALLOWLIST.size})`);
     const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
     ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
   }
@@ -278,7 +278,7 @@ function main(): void {
   }
 
   {
-    ok(DYNAMIC_ENV_READ_SITES.size === 11, `11 dynamic sites are excused (found ${DYNAMIC_ENV_READ_SITES.size})`);
+    ok(DYNAMIC_ENV_READ_SITES.size === 10, `10 dynamic sites are excused (found ${DYNAMIC_ENV_READ_SITES.size})`);
     const bare = [...DYNAMIC_ENV_READ_SITES].filter(([, why]) => why.trim().length < 10);
     ok(bare.length === 0, `every excused site carries a reason (bare: ${bare.map(([k]) => k).join(", ")})`);
   }

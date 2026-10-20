@@ -9,7 +9,7 @@ import {
   scopesToGrant,
   type ControlGrant,
 } from "./oauth-clients.js";
-import { oauthSigningSecret } from "./oauth-tokens.js";
+import { oauthSigningSecret, storedSigningSecret, type SigningSecretSource } from "./oauth-tokens.js";
 
 export const CONTROL_MCP_PATH = "/control/v1/mcp";
 export const CONTROL_PROTECTED_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource/control/v1/mcp";
@@ -24,8 +24,11 @@ export function controlMcpResource(issuer: string): string {
   return new URL(CONTROL_MCP_PATH, issuer).toString();
 }
 
-export function controlResourceAuth(env: NodeJS.ProcessEnv = process.env, declaredIssuer: string = CONTROL_OAUTH_ISSUER): AuthFn<Request> | null {
-  const secret = oauthSigningSecret(env);
+export async function controlResourceAuth(
+  signingSecret: SigningSecretSource = storedSigningSecret,
+  declaredIssuer: string = CONTROL_OAUTH_ISSUER,
+): Promise<AuthFn<Request> | null> {
+  const secret = await oauthSigningSecret(signingSecret);
   if (secret === null) return null;
   const issuer = controlOAuthIssuer(declaredIssuer);
   if (issuer === null) return null;
@@ -50,10 +53,10 @@ export interface ControlOAuthPrincipal extends ControlGrant {
 
 export async function authorizeControlMcp(
   req: Request,
-  env: NodeJS.ProcessEnv = process.env,
+  signingSecret: SigningSecretSource = storedSigningSecret,
   declaredIssuer: string = CONTROL_OAUTH_ISSUER,
 ): Promise<ControlOAuthPrincipal | Response> {
-  const auth = controlResourceAuth(env, declaredIssuer);
+  const auth = await controlResourceAuth(signingSecret, declaredIssuer);
   const issuer = controlOAuthIssuer(declaredIssuer);
   if (auth === null || issuer === null) return new Response("not found", { status: 404 });
   const verified = await routeAuth(req, auth);
@@ -99,11 +102,11 @@ function withResourceMetadata(res: Response, issuer: string): Response {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
-export function controlProtectedResourceMetadata(
-  env: NodeJS.ProcessEnv = process.env,
+export async function controlProtectedResourceMetadata(
+  signingSecret: SigningSecretSource = storedSigningSecret,
   declaredIssuer: string = CONTROL_OAUTH_ISSUER,
-): Record<string, unknown> | null {
-  const auth = controlResourceAuth(env, declaredIssuer);
+): Promise<Record<string, unknown> | null> {
+  const auth = await controlResourceAuth(signingSecret, declaredIssuer);
   const issuer = controlOAuthIssuer(declaredIssuer);
   if (auth === null || issuer === null) return null;
   const options = readOAuthResourceOptions(auth);

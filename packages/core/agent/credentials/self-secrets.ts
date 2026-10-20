@@ -6,25 +6,12 @@ import { SELF_SECRET_REF_NAMESPACE } from "./reserved-refs.js";
 
 export interface SelfSecretDeps {
   readonly vault?: EncryptedKvVault;
-  readonly env?: NodeJS.ProcessEnv;
-}
-
-const envOnrampWarned = new Set<string>();
-
-export function resetSelfSecretWarnings(): void {
-  envOnrampWarned.clear();
 }
 
 const resolvedCache = new Map<string, Promise<string>>();
 
 export function resetSelfSecretCache(): void {
   resolvedCache.clear();
-}
-
-function noticeOnce(name: string, message: string): void {
-  if (envOnrampWarned.has(name)) return;
-  envOnrampWarned.add(name);
-  console.warn(message);
 }
 
 export function selfSecretsArmed(): boolean {
@@ -42,7 +29,7 @@ export async function getOrMintSelfSecret(name: string, deps: SelfSecretDeps = {
   if (!deps.vault) {
     const cached = resolvedCache.get(name);
     if (cached) return cached;
-    const resolution = resolveOrMint(name, encryptedKvVault(), deps.env ?? process.env);
+    const resolution = resolveOrMint(name, encryptedKvVault());
     const promise = resolution.then((result) => result.value);
     resolvedCache.set(name, promise);
     resolution.then(
@@ -55,7 +42,7 @@ export async function getOrMintSelfSecret(name: string, deps: SelfSecretDeps = {
     );
     return promise;
   }
-  const result = await resolveOrMint(name, deps.vault, deps.env ?? process.env);
+  const result = await resolveOrMint(name, deps.vault);
   return result.value;
 }
 
@@ -64,22 +51,12 @@ interface ResolvedSelfSecret {
   readonly mintedFresh: boolean;
 }
 
-async function resolveOrMint(name: string, vault: EncryptedKvVault, env: NodeJS.ProcessEnv): Promise<ResolvedSelfSecret> {
+async function resolveOrMint(name: string, vault: EncryptedKvVault): Promise<ResolvedSelfSecret> {
   const ref = `${SELF_SECRET_REF_NAMESPACE}${name}`;
 
   return vault.withLock(ref, async () => {
     const stored = await vault.read(ref);
     if (stored !== null) return { value: stored, mintedFresh: false };
-
-    const fromEnv = (env[name] ?? "").trim();
-    if (fromEnv.length > 0) {
-      noticeOnce(
-        name,
-        `[open-everywhere:credentials] self-shared secret "${name}" resolved from the environment — the encrypted vault is its ` +
-          `default home. It will keep reading from the env var until you remove it (nothing here promotes it automatically).`,
-      );
-      return { value: fromEnv, mintedFresh: false };
-    }
 
     const minted = randomBytes(32).toString("base64url");
     await vault.write(ref, minted, { createdBy: "host:auto-mint" });

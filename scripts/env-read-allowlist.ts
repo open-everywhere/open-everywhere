@@ -97,16 +97,6 @@ allow("pending-migration", [
   ],
   ["SLACK_BOT_TOKEN", "OPE-2650: → operator secret. The Slack bot token."],
   ["SLACK_SIGNING_SECRET", "OPE-2650: → operator secret. The Slack request signing secret."],
-  ["OE_ADMIN_STATIC_TOKEN", "OPE-2650: → operator secret. The static bearer token for the admin control plane."],
-  ["OE_CONTROL_READ_TOKENS", "OPE-2650: → operator secret. The service tokens the control read route accepts."],
-  [
-    "OE_CONTROL_INJECT_TOKENS",
-    "OPE-2650: → operator secret. The WAKE-INJECTION service tokens `POST /control/v1/test/wake` authenticates against — a disjoint family from OE_CONTROL_READ_TOKENS.",
-  ],
-  [
-    "OE_CONTROL_OAUTH_SIGNING_SECRET",
-    "OPE-2650: → operator secret. The HS256 key the control plane's own authorization server signs access tokens and authorization codes with (agent/control/oauth-tokens.ts).",
-  ],
   ["OE_EGRESS_PROXY_TOKEN", "OPE-2650: → operator secret (the app side; the proxy container keeps its own env). The bearer token for the self-host egress proxy."],
   ["OE_LOG_SHIP_TOKEN", "OPE-2650: → operator secret. The bearer token for the log endpoint."],
   ["OE_TELEMETRY_OTLP_HEADERS", "OPE-2650: → operator secret. OTLP request headers — the value carries the collector's auth token."],
@@ -116,9 +106,6 @@ allow("pending-migration", [
     "AI_GATEWAY_API_KEY",
     "OPE-2650: → operator secret. The model gateway key. The AI SDK reads the same name from env itself, so the move hands the stored key to `createGateway({ apiKey })` in the adapter.",
   ],
-  ["OE_INTAKE_PAGE_SIGNING_KEY", "OPE-2650: → operator secret (self-shared, minted in the vault). The signing secret for intake page tokens."],
-  ["OE_SPAWN_DISPATCH_SECRET", "OPE-2650: → operator secret (self-shared, minted in the vault). The shared secret the self-dispatch route authenticates a spawned wake with."],
-  ["OE_TRANSCRIPT_RELAY_SECRET", "OPE-2650: → operator secret (self-shared, minted in the vault). The shared secret the transcript relay route authenticates with."],
 
   ["DISCORD_APPLICATION_ID", "OPE-2650: → setting `discord.applicationId`. Which Discord application this deployment is; public."],
   ["DISCORD_PUBLIC_KEY", "OPE-2650: → setting `discord.publicKey`. Discord's interaction PUBLIC key, which the webhook signature check verifies against — public by design, so Git can hold it."],
@@ -143,8 +130,6 @@ allow("pending-migration", [
 
   ["OE_AWS_REGION", "OPE-2650: → setting `aws.region`. The operator's default AWS region."],
   ["OE_AWS_SSO_REGION", "OPE-2650: → setting `aws.ssoRegion`. The Identity Center region."],
-  ["OE_ADMIN_OIDC_ISSUER", "OPE-2650: → setting `control.adminOidc.issuer`. The admin identity provider's issuer URL."],
-  ["OE_ADMIN_OIDC_AUDIENCE", "OPE-2650: → setting `control.adminOidc.audience`. The audience that provider mints for this deployment."],
   ["OE_EGRESS_PROXY_URL", "OPE-2650: → setting `egress.proxyUrl`. The self-host egress proxy origin."],
   ["OE_EGRESS_SOURCE_IP", "OPE-2650: → setting `egress.sourceIp`. The fixed source IP this deployment egresses from."],
   ["OE_EGRESS_DENIAL_LOG", "OPE-2650: → setting `egress.denialLog`. Where the self-host egress proxy writes its denial log."],
@@ -170,10 +155,6 @@ const DYNAMIC_SITES = new Map<string, string>([
   [
     "packages/core/agent/credentials/operator-secrets.ts::name",
     "an operator secret looked up by the name the operator gave it.",
-  ],
-  [
-    "packages/core/agent/credentials/self-secrets.ts::name",
-    "the agent's own secret lookup, keyed by the same operator-given name.",
   ],
   [
     "packages/providers/linear/agent/channels/linear-credentials.ts::name",

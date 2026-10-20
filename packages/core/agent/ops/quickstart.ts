@@ -1,6 +1,6 @@
 import { resolveOperationalSelection } from "../operational/selection.js";
 import { resolveMemoryProviderId } from "../memory/backing-selection.js";
-import { getSettings } from "../settings/settings.js";
+import { getSettings, type AdminOidcSetting } from "../settings/settings.js";
 import { basename, dirname } from "node:path";
 import { parseEnv } from "node:util";
 import { coreNodeRange, nodeRangeSatisfied } from "./package-info.js";
@@ -30,6 +30,7 @@ export interface PreflightOptions {
   readonly nodeVersion?: string;
   readonly nodeRange?: string;
   readonly githubAdmin?: boolean;
+  readonly adminOidc?: AdminOidcSetting;
 }
 
 const DEPLOY_STORE_ENV = {
@@ -45,9 +46,8 @@ function operationalStoreDetail(env: NodeJS.ProcessEnv): string {
   return id;
 }
 
-function adminAuthConfigured(env: NodeJS.ProcessEnv, githubAdmin: boolean): boolean {
-  const set = (v: string | undefined) => v !== undefined && v !== "";
-  return (set(env.OE_ADMIN_OIDC_ISSUER) && set(env.OE_ADMIN_OIDC_AUDIENCE)) || githubAdmin || set(env.OE_ADMIN_STATIC_TOKEN);
+function adminAuthConfigured(adminOidc: AdminOidcSetting, githubAdmin: boolean): boolean {
+  return (adminOidc.issuer !== "" && adminOidc.audience !== "") || githubAdmin;
 }
 
 export function docUrl(path: string): string {
@@ -174,14 +174,16 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
         : `set ${CREDENTIAL_KEY_ENV_NAME} to a base64-encoded ${CREDENTIAL_KEY_BYTES}-byte key — the ops MCP tool \`scaffold_credential_key\` mints one into .env.local without printing it`,
   });
 
-  const hasAdminAuth = adminAuthConfigured(env, options.githubAdmin ?? getSettings().control.githubAdmin);
+  const hasAdminAuth = adminAuthConfigured(options.adminOidc ?? getSettings().control.adminOidc, options.githubAdmin ?? getSettings().control.githubAdmin);
   checks.push({
     name: "control-plane admin auth",
     status: hasAdminAuth ? "ok" : "info",
-    detail: hasAdminAuth ? "configured" : "none — the REMOTE control plane will 401 until set (local stdio is fine)",
+    detail: hasAdminAuth
+      ? "configured"
+      : "none in tracked settings — the REMOTE control plane will 401 until one is set (local stdio is fine). A stored OE_ADMIN_STATIC_TOKEN operator secret also arms it; this check cannot see the store",
     fix: hasAdminAuth
       ? undefined
-      : `optional: set OE_ADMIN_OIDC_ISSUER/_AUDIENCE with scaffold_env (any OIDC provider), set \`control.githubAdmin: true\` in agent/settings/settings.ts, or the person runs \`${envSetCommand("OE_ADMIN_STATIC_TOKEN")}\` in their own terminal`,
+      : `optional: set \`control.adminOidc: { issuer, audience }\` (any OIDC provider) or \`control.githubAdmin: true\` in agent/settings/settings.ts, or the person runs \`${secretSetCommand("OE_ADMIN_STATIC_TOKEN")}\` in their own terminal`,
   });
 
   const ready = checks.every((c) => c.status !== "missing");
@@ -192,8 +194,6 @@ export const ENV_CONFIG_NAMES = [
   "OE_OPERATIONAL_PROVIDER",
   "OE_MEMORY_PROVIDER",
   "OE_PUBLIC_BASE_URL",
-  "OE_ADMIN_OIDC_ISSUER",
-  "OE_ADMIN_OIDC_AUDIENCE",
 ] as const;
 
 export const PREFLIGHT_SECRET_NAMES = [
@@ -201,10 +201,13 @@ export const PREFLIGHT_SECRET_NAMES = [
   "DATABASE_URL",
   "OE_DB_OWNER_URL",
   CREDENTIAL_KEY_ENV_NAME,
-  "OE_ADMIN_STATIC_TOKEN",
 ] as const;
 
 export const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+function secretSetCommand(name: string): string {
+  return `npx oe secret set ${name}`;
+}
 
 export function envSetCommand(name: string): string {
   return `npx oe env set ${name}`;

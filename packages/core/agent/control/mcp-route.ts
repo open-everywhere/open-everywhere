@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { buildControlServer } from "./server.js";
 import { authorizeControlMcp, CONTROL_MCP_PATH } from "./oauth-resource.js";
+import { storedSigningSecret, type SigningSecretSource } from "./oauth-tokens.js";
 import { CONTROL_OAUTH_ISSUER } from "./oauth-clients.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -9,10 +10,10 @@ export { CONTROL_MCP_PATH };
 
 export async function handleControlMcpRequest(
   req: Request,
-  env: NodeJS.ProcessEnv = process.env,
+  signingSecret: SigningSecretSource = storedSigningSecret,
   declaredIssuer: string = CONTROL_OAUTH_ISSUER,
 ): Promise<Response> {
-  const principal = await authorizeControlMcp(req, env, declaredIssuer);
+  const principal = await authorizeControlMcp(req, signingSecret, declaredIssuer);
   if (principal instanceof Response) return principal;
 
   const rpc = await readRpcSummary(req);

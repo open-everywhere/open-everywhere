@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +18,8 @@ const { actionKind: getActionKind } = await import("../agent/approvals/actions.j
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { isRuntimeUsageKind } = await import("../agent/spend/usage-events.js");
 const { overrideSettingsForTest, resetSettingsForTest } = await import("../agent/settings/settings.js");
-const { mintPageToken } = await import("../agent/credentials/page-token.js");
+const { mintPageToken, verifyPageToken } = await import("../agent/credentials/page-token.js");
+const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 import type { BoxListing, BoxSpec, LongLivedBoxBackend } from "../agent/sandbox/long-lived-box.js";
 import type { PersonalBrowserPolicy } from "../agent/personal-browser/policy.js";
 import type { BrowserOwner } from "../agent/personal-browser/lifecycle.js";
@@ -368,13 +370,20 @@ const ana = ownerFor("UANA");
 
 {
   const KEY = "a".repeat(48);
-  const env = { OE_INTAKE_PAGE_SIGNING_KEY: KEY, OE_PUBLIC_BASE_URL: "https://oe.example" } as NodeJS.ProcessEnv;
+  const env = { OE_PUBLIC_BASE_URL: "https://oe.example" } as NodeJS.ProcessEnv;
   const posts: { channelId: string; text: string }[] = [];
   const vdeps = { ...deps(backend), env, post: async (_p: string, t: { channelId: string; text: string }) => (posts.push(t), "ts") };
-  ok((await viewer.issueWatchLink({ org: ORG, person: ana.person }, { ...vdeps, env: {} as NodeJS.ProcessEnv })) === undefined, "no page signing key → no link");
+  const savedAesKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  ok((await viewer.issueWatchLink({ org: ORG, person: ana.person }, vdeps)) === undefined, "no credential vault → no page signing key → no link");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+  await encryptedKvVault().write("self:OE_INTAKE_PAGE_SIGNING_KEY", KEY);
+  process.env.OE_INTAKE_PAGE_SIGNING_KEY = "b".repeat(48);
   const link = (await viewer.issueWatchLink({ org: ORG, person: ana.person }, vdeps))!;
+  delete process.env.OE_INTAKE_PAGE_SIGNING_KEY;
   ok(link.url.startsWith("https://oe.example/browser/v1/view?t="), "a link names the view route under the public URL");
   const token = decodeURIComponent(new URL(link.url).searchParams.get("t")!);
+  ok(verifyPageToken(token, KEY, "browser-view", Date.now()) !== null, "🔴 the link is signed with the VAULT's page key, not an env var of that name");
   const get = await viewer.handleViewGet(new Request(link.url), vdeps);
   ok(get.status === 200 && (await get.text()).includes("Open my browser"), "the link's GET renders the button page");
   ok(Object.keys((await storeMod.getPersonalBrowserState(ORG, ana.person))!.state.links).length === 1, "🔴 the GET consumed nothing (an unfurler cannot burn the link)");
@@ -412,6 +421,8 @@ const ana = ownerFor("UANA");
   const hb = await viewer.handleLiveControl(withCookie("/browser/v1/live/control", { method: "POST", body: JSON.stringify({ action: "handback" }) }), vdeps);
   ok(hb.status === 200 && posts.some((p) => p.channelId === ana.dmChannelId && /handed your browser back/.test(p.text)), "the page hand-back returns the controls and tells the person's DM");
   ok((await input({ kind: "text", text: "more" })).status === 409, "…and input is refused again");
+  if (savedAesKey === undefined) delete process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
+  else process.env.OE_CREDENTIAL_ENCRYPTION_KEY = savedAesKey;
 }
 
 {

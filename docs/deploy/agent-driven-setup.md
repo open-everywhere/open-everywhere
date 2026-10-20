@@ -205,15 +205,19 @@ cannot inspect spend, audit or access from outside the box. Local stdio needs no
 
 Unlike the credential store's key, this one has no mint-and-forget tool, and that is deliberate: the
 admin token is a bearer credential the operator must also hold to call the control plane, so it can
-never be write-only. Have them generate it (`openssl rand -hex 32`), keep it, and write it with
-`npx oe env set OE_ADMIN_STATIC_TOKEN` in their own terminal. Never invent one for them.
+never be write-only. Have them generate it (`openssl rand -hex 32`), keep it, and store it with
+`npx oe secret set OE_ADMIN_STATIC_TOKEN` in their own terminal. It is an operator secret in the db
+credential store, not an env var (OPE-2650, 0.9.0). Never invent one for them.
 
-Offer the OIDC form instead — `OE_ADMIN_OIDC_ISSUER` plus `OE_ADMIN_OIDC_AUDIENCE`, against any
-provider the operator already runs. Prefer it for anything beyond a trial: nothing is then held on
-either side. Neither value is a secret, so you write them yourself:
+Offer the OIDC form instead — the `control.adminOidc` setting, against any provider the operator
+already runs. Prefer it for anything beyond a trial: nothing is then held on either side. Neither
+value is a secret, and both are tracked config since 0.9.0 (they were the `OE_ADMIN_OIDC_*` env
+vars), so you write them yourself into `agent/settings/settings.ts`:
 
-```
-scaffold_env { "values": { "OE_ADMIN_OIDC_ISSUER": "<the issuer URL>", "OE_ADMIN_OIDC_AUDIENCE": "<the audience>" } }
+```ts
+export default defineSettings({
+  control: { adminOidc: { issuer: "<the issuer URL>", audience: "<the audience>" } },
+});
 ```
 
 ## Step 10 — Link the Vercel project
@@ -271,7 +275,7 @@ Three variables a local run uses are not needed on Vercel:
   (`packages/core/agent/channels/self-dispatch.ts`, `packages/core/agent/credentials/page-token.ts`). Set it only for a custom
   domain.
 - `OE_INTAKE_PAGE_SIGNING_KEY` — the deployment mints it into the credential store on first use
-  (`packages/core/agent/credentials/self-secrets.ts`).
+  (`packages/core/agent/credentials/self-secrets.ts`). It is not an env var at all since 0.9.0.
 
 Pipe each value out of the file rather than reading it into your own context. The CLI takes the
 value on standard input when it is not attached to a terminal. A literal value goes the same way,

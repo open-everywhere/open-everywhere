@@ -44,7 +44,7 @@ export const envChecklistStep: SetupStep = {
           ? "The Docker route also needs a model route: AI_GATEWAY_API_KEY. There is no OIDC off Vercel. Running a different model backend is an adapter swap in app code, not an env setting — https://github.com/open-everywhere/open-everywhere/blob/main/docs/extending/adapter-model.md."
           : "The Vercel route needs NO AI_GATEWAY_API_KEY: a deployed project authenticates to the AI Gateway with OIDC.",
         "Each chat surface adds its own names — Slack reads SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET from the environment.",
-        "Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (the deployment mints it into the credential store).",
+        "Not needed on a deployment: OE_PUBLIC_BASE_URL (only for a custom domain) and OE_INTAKE_PAGE_SIGNING_KEY (not an env var since 0.9.0: the deployment mints it into the credential store).",
         "Run `npx @open-everywhere/create --check --json`, or the ops tool `preflight`, for the live verdict per name. Both read .env.local and the shell only.",
         "Set the values on the deployment instead (the Vercel dashboard, say)? Add `--host https://<host>`: the step then also reads the deployment's own verdicts from its public `/eve/v1/oe/status` route.",
       ],

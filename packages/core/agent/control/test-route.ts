@@ -120,7 +120,7 @@ function defaultContainerNoun(platform: string): string | undefined {
 }
 
 export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs["to"]): Promise<Response> {
-  const entries = injectTokenEntries();
+  const entries = await injectTokenEntries();
   if (!testWakeEnabled() || entries.length === 0) return new Response("not found", { status: 404 });
 
   const identity = await routeAuth(req, injectTokenAuth(entries));

@@ -409,3 +409,5 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
 
 assert.ok(passed > 0);
 console.log(`✓ okta-directory-test: ${passed} assertions passed`);
+
+// proves: SET-075, SET-093, SET-094

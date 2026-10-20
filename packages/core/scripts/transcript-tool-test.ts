@@ -28,7 +28,6 @@ import {
   parseTranscriptRelayRequest,
   signTranscriptRelayBody,
   transcriptRelayConfigured,
-  transcriptRelaySecret,
   type TranscriptRelayResult,
 } from "../agent/control/transcript-relay.js";
 import { listRoutineFires, ROUTINE_AUDIT } from "../agent/routines/fire-audit.js";
@@ -386,7 +385,7 @@ const FIRE = {
 {
   process.env.OE_TRANSCRIPT_RELAY_SECRET = SECRET;
   process.env.OE_PUBLIC_BASE_URL = BASE;
-  ok(transcriptRelaySecret() === SECRET && transcriptRelayConfigured(), "client: configured when the secret + a resolvable base URL exist");
+  ok(transcriptRelayConfigured(), "client: configured when the vault is armed and a base URL resolves");
 
   const req = { org: "acme", platform: "slack", workspace: "W1", surface: "C-ops", routineId: FIRE.routineId, fireDepth: 1 };
 

@@ -11,7 +11,6 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 const ORG = "default";
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
-process.env.OE_INTAKE_PAGE_SIGNING_KEY = randomBytes(32).toString("base64");
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
 const SENTINEL = "FAKE-HOOK-SIGNING-SECRET-1a2b3c-DO-NOT-USE";
@@ -51,7 +50,7 @@ const eq = (a: unknown, b: unknown, label: string) => {
 
 const store = getOperationalStore();
 const vault = encryptedKvVault();
-const KEY = pageTokenSigningKey()!;
+const KEY = (await pageTokenSigningKey())!;
 const USER = "U-DECIDER";
 const OTHER = "U-SOMEONE-ELSE";
 
@@ -221,18 +220,16 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   const { token: tokenBeforeMint } = await freshGrant();
   ok(reveal.revealPageAvailable(), "armed: vault + base url present");
 
-  const saved = process.env.OE_INTAKE_PAGE_SIGNING_KEY;
-  delete process.env.OE_INTAKE_PAGE_SIGNING_KEY;
+  await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
   resetSelfSecretCache();
-  ok(reveal.revealPageAvailable(), "no signing key env var ⇒ STILL available (mints on first use, OPE-408 step 3)");
+  ok(reveal.revealPageAvailable(), "no stored signing key ⇒ STILL available (mints on first use, OPE-408 step 3)");
   const { token: mintedToken } = await freshGrant();
-  eq((await reveal.handleRevealGet(getReq(mintedToken))).status, 200, "no signing key env var ⇒ GET still 200 (resolves via mint)");
+  eq((await reveal.handleRevealGet(getReq(mintedToken))).status, 200, "no stored signing key ⇒ GET still 200 (resolves via mint)");
   const mintedLink = await reveal.issueRevealLink({ org: ORG, ref: "hook:mint-check", revealTo: USER, label: "mint-check" });
   ok(mintedLink !== undefined, "…and a link CAN still be minted");
   const mintedValue = await vault.read("self:OE_INTAKE_PAGE_SIGNING_KEY");
-  ok(typeof mintedValue === "string" && mintedValue.length > 0, "the minted signing key is durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
-  process.env.OE_INTAKE_PAGE_SIGNING_KEY = saved;
-  await vault.delete("self:OE_INTAKE_PAGE_SIGNING_KEY");
+  ok(typeof mintedValue === "string" && mintedValue.length > 0 && mintedValue !== KEY, "the minted signing key is a NEW value, durably stored under self:OE_INTAKE_PAGE_SIGNING_KEY");
+  await vault.write("self:OE_INTAKE_PAGE_SIGNING_KEY", KEY);
   resetSelfSecretCache();
 
   const savedKey = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;

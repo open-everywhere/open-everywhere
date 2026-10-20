@@ -36,6 +36,11 @@ export interface AdminRoleRule {
   readonly emailDomain?: string;
 }
 
+export interface AdminOidcSetting {
+  readonly issuer: string;
+  readonly audience: string;
+}
+
 export interface OktaAppSetting {
   readonly platform: string;
   readonly tenant?: string;
@@ -99,6 +104,7 @@ export interface AgentSettings {
   readonly control: {
     readonly githubAdmin: boolean;
     readonly adminRoleRules: readonly AdminRoleRule[];
+    readonly adminOidc: AdminOidcSetting;
   };
   readonly directory: {
     readonly provider: DirectoryProviderChoice;
@@ -325,6 +331,22 @@ const adminRoleRulesProblem = (rules: readonly AdminRoleRule[]): string | undefi
       return `rule ${i} names no matcher (issuer, subject, email or emailDomain), so it would match every verified identity`;
     }
   }
+  return undefined;
+};
+
+const adminOidcProblem = (v: AdminOidcSetting): string | undefined => {
+  if (typeof v !== "object" || v === null) return "must be { issuer, audience }";
+  if (typeof v.issuer !== "string" || typeof v.audience !== "string") return "issuer and audience must both be strings";
+  if (v.issuer === "" && v.audience === "") return undefined;
+  if (v.issuer === "" || v.audience === "") return "set BOTH issuer and audience, or leave both empty (off) — half a pair arms nothing";
+  let url: URL;
+  try {
+    url = new URL(v.issuer);
+  } catch {
+    return `issuer must be the provider's issuer URL, e.g. "https://accounts.google.com" (got "${v.issuer}")`;
+  }
+  if (url.protocol !== "https:") return "issuer must be an https: URL";
+  if (/\s/u.test(v.audience)) return "audience must be one value with no whitespace";
   return undefined;
 };
 
@@ -592,9 +614,17 @@ export const SETTINGS = {
       shipped: [] as readonly AdminRoleRule[],
       validate: adminRoleRulesProblem,
       summary:
-        "Which verified control-plane identity gets which roles (was the `OE_ADMIN_ROLE_RULES` JSON). Each rule names `roles` and at least one matcher — `issuer`, `subject`, `email` or `emailDomain` — and grants its roles to an identity that matches every matcher it names. The `email` and `emailDomain` matchers match a VERIFIED email only. Default-deny: empty (shipped) grants nothing, except that a configured `OE_ADMIN_STATIC_TOKEN` always carries the single-operator `admin` rule. A rule with no matcher fails the boot, because it would match every verified identity.",
+        "Which verified control-plane identity gets which roles (was the `OE_ADMIN_ROLE_RULES` JSON). Each rule names `roles` and at least one matcher — `issuer`, `subject`, `email` or `emailDomain` — and grants its roles to an identity that matches every matcher it names. The `email` and `emailDomain` matchers match a VERIFIED email only. Default-deny: empty (shipped) grants nothing, except that a configured `OE_ADMIN_STATIC_TOKEN` operator secret always carries the single-operator `admin` rule. A rule with no matcher fails the boot, because it would match every verified identity.",
       format: (v) => (v.length > 0 ? `${v.length} rule(s)` : "(none)"),
     } satisfies SettingSpec<readonly AdminRoleRule[]>,
+    adminOidc: {
+      path: "control.adminOidc",
+      shipped: { issuer: "", audience: "" } as AdminOidcSetting,
+      validate: adminOidcProblem,
+      summary:
+        "The OIDC identity provider of the admin control plane (was the `OE_ADMIN_OIDC_ISSUER` and `OE_ADMIN_OIDC_AUDIENCE` env vars, OPE-2650): `{ issuer, audience }`. Any standards OIDC provider works — Google, Auth0, Okta, Entra, WorkOS. Both empty (shipped) ⇒ the OIDC verifier is off. Both set ⇒ a token that issuer signed for that audience is a verified identity, and `control.adminRoleRules` decides which roles it gets — an identity no rule grants is denied. Half a pair fails the boot. The issuer must be an `https:` URL.",
+      format: (v) => (v.issuer === "" ? "(off)" : `${v.issuer} (audience ${v.audience})`),
+    } satisfies SettingSpec<AdminOidcSetting>,
   },
   directory: {
     provider: {
@@ -1454,6 +1484,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     control: {
       githubAdmin: resolve(SETTINGS.control.githubAdmin, o.control?.githubAdmin),
       adminRoleRules: resolve(SETTINGS.control.adminRoleRules, o.control?.adminRoleRules),
+      adminOidc: resolve(SETTINGS.control.adminOidc, o.control?.adminOidc),
     },
     directory: {
       provider: resolve(SETTINGS.directory.provider, o.directory?.provider),

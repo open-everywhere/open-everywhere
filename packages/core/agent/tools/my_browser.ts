@@ -197,7 +197,7 @@ export default defineTool({
 
     if (input.action === "watch") {
       const link = await issueWatchLink(owner);
-      if (link === undefined) throw new Error("this deployment can't make a private link to your browser (it has no page signing key, OE_INTAKE_PAGE_SIGNING_KEY, or no public URL)");
+      if (link === undefined) throw new Error("this deployment can't make a private link to your browser (its credential store is not armed, OE_CREDENTIAL_ENCRYPTION_KEY, so it has no page signing key, or it has no public URL)");
       await postSurfaceTextStrict(owner.platform, {
         channelId: owner.dmChannelId,
         text: `Here is your browser, live. Open it here (the link works once, for 10 minutes — don't forward it): ${link.url}`,

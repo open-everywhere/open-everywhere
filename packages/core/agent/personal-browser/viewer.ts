@@ -22,7 +22,7 @@ export interface ViewerDeps extends LifecycleDeps {
 
 export async function issueWatchLink(state: Pick<PersonalBrowserState, "org" | "person">, deps: ViewerDeps = {}): Promise<{ readonly url: string; readonly expiresAt: number } | undefined> {
   const env = deps.env ?? process.env;
-  const secret = pageTokenSigningKey(env);
+  const secret = await pageTokenSigningKey();
   const base = pageBaseUrl(env);
   if (secret === undefined || base === undefined) return undefined;
   const now = (deps.now ?? Date.now)();
@@ -55,7 +55,7 @@ function cookieValue(req: Request, name: string): string | undefined {
 }
 
 export async function handleViewGet(req: Request, deps: ViewerDeps = {}): Promise<Response> {
-  const secret = pageTokenSigningKey(deps.env ?? process.env);
+  const secret = await pageTokenSigningKey();
   if (secret === undefined) return notFound();
   const token = new URL(req.url).searchParams.get("t") ?? "";
   const now = (deps.now ?? Date.now)();
@@ -78,7 +78,7 @@ function sessionCookie(token: string, secure: boolean, maxAgeSeconds: number): s
 }
 
 export async function handleViewPost(req: Request, deps: ViewerDeps = {}): Promise<Response> {
-  const secret = pageTokenSigningKey(deps.env ?? process.env);
+  const secret = await pageTokenSigningKey();
   if (secret === undefined) return notFound();
   let token = "";
   try {
@@ -123,7 +123,7 @@ interface Session {
 }
 
 async function sessionOf(req: Request, deps: ViewerDeps): Promise<Session | undefined> {
-  const secret = pageTokenSigningKey(deps.env ?? process.env);
+  const secret = await pageTokenSigningKey();
   if (secret === undefined) return undefined;
   const token = cookieValue(req, BROWSER_SESSION_COOKIE);
   if (token === undefined) return undefined;

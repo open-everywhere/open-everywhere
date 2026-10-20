@@ -28,7 +28,6 @@ import {
   SELF_DISPATCH_PATH,
   SELF_DISPATCH_SIGNATURE_HEADER,
   SELF_DISPATCH_MAX_BODY_BYTES,
-  selfDispatchSecret,
   selfDispatchBaseUrl,
   selfDispatchConfigured,
   signSelfDispatchBody,
@@ -115,12 +114,8 @@ function goodPayload(over: Partial<Record<keyof UnifiedDispatchPayload | "issued
   };
 }
 
-console.log("1. env helpers (secret / base-URL precedence / configured):");
+console.log("1. env helpers (base-URL precedence / configured):");
 {
-  eq(selfDispatchSecret({} as NodeJS.ProcessEnv), undefined, "no secret env → undefined");
-  eq(selfDispatchSecret({ OE_SPAWN_DISPATCH_SECRET: "  " } as NodeJS.ProcessEnv), undefined, "blank secret → undefined");
-  eq(selfDispatchSecret({ OE_SPAWN_DISPATCH_SECRET: "s3cr3t" } as NodeJS.ProcessEnv), "s3cr3t", "set secret → value");
-
   eq(selfDispatchBaseUrl({} as NodeJS.ProcessEnv), undefined, "nothing set → no base URL");
   eq(
     selfDispatchBaseUrl({ OE_PUBLIC_BASE_URL: "https://oe.example/" } as NodeJS.ProcessEnv),

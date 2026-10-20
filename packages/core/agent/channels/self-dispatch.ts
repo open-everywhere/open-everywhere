@@ -12,7 +12,7 @@ import { isFrozenSurfaceBinding } from "../identity/frozen-surface-binding.inter
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
 
-const SPAWN_DISPATCH_SECRET_ENV = "OE_SPAWN_DISPATCH_SECRET";
+const SPAWN_DISPATCH_SECRET_NAME = "OE_SPAWN_DISPATCH_SECRET";
 
 export const SELF_DISPATCH_PATH = "/eve/v1/unified/dispatch";
 
@@ -35,11 +35,6 @@ export interface UnifiedDispatchPayload {
   readonly auth: { attributes?: Record<string, unknown> };
   readonly binding?: SurfaceBinding;
   readonly excludeTaskResultId?: string;
-}
-
-export function selfDispatchSecret(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const v = (env.OE_SPAWN_DISPATCH_SECRET ?? "").trim();
-  return v.length > 0 ? v : undefined;
 }
 
 export function selfDispatchBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -162,7 +157,7 @@ export async function handleSelfDispatch(
   }
   const rawBody = read.body;
 
-  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_ENV, { env });
+  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_NAME);
   if (!verifyWebhookSignature(secret, rawBody, req.headers.get(SELF_DISPATCH_SIGNATURE_HEADER))) {
     return json(401, { error: "unauthorized: missing or invalid dispatch signature" });
   }
@@ -260,7 +255,7 @@ export async function postSelfDispatch(
       "self-dispatch is not configured on this deployment — arm OE_CREDENTIAL_ENCRYPTION_KEY (and set OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
     );
   }
-  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_ENV, { env });
+  const secret = await getOrMintSelfSecret(SPAWN_DISPATCH_SECRET_NAME);
   const body = JSON.stringify({ ...payload, issuedAt: Date.now() });
   const url = `${base}${SELF_DISPATCH_PATH}`;
   const headers = { "content-type": "application/json", [SELF_DISPATCH_SIGNATURE_HEADER]: signSelfDispatchBody(secret, body) };
