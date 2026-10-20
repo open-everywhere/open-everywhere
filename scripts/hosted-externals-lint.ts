@@ -31,13 +31,19 @@ if (functionDirs.length === 0) {
 const failures: string[] = [];
 let checkedImports = 0;
 let checkedFiles = 0;
+let guardedImports = 0;
+const guardedNotes: string[] = [];
 
 for (const dir of functionDirs) {
   const scan = outputImportFailures(join(OUTPUT_DIR, dir), dir);
   failures.push(...scan.failures);
   checkedImports += scan.checkedImports;
   checkedFiles += scan.checkedFiles;
+  guardedImports += scan.guardedImports;
+  guardedNotes.push(...scan.guardedNotes);
 }
+
+for (const n of guardedNotes) console.log(`  note: ${n}`);
 
 if (failures.length > 0) {
   console.error("✗ unresolvable external(s) in hosted build output:\n");
@@ -51,5 +57,6 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `✓ ${checkedImports} bare import(s) in ${checkedFiles} module file(s) across ${functionDirs.length} hosted function(s) resolve from their own bundle`,
+  `✓ ${checkedImports} bare import(s) in ${checkedFiles} module file(s) across ${functionDirs.length} hosted function(s) resolve from their own bundle` +
+    (guardedImports > 0 ? `; ${guardedImports} guarded optional load(s) not judged` : ""),
 );

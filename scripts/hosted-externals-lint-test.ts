@@ -317,6 +317,64 @@ try {
     ok(broken.stderr.includes("chunks/server.mjs: cannot be parsed"), "(9) the finding names the file");
   }
 
+  {
+    const FUNC = ".vercel/output/functions/__server.func";
+    const one = (body: string) =>
+      runLint(scratchTree({ [`${FUNC}/index.mjs`]: 'export * from "./_libs/eve.mjs";\n', [`${FUNC}/_libs/eve.mjs`]: body }));
+    const EVE =
+      'import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n' +
+      "export function captureOptionalPeerTracerProxy() {\n" +
+      '  try {\n    let e = require("@opentelemetry/api"), t = e.trace.getTracerProvider();\n    return t;\n' +
+      "  } catch { return; }\n}\n";
+    const eve = one(EVE);
+    ok(eve.code === 0, "(10) 🔴 eve's try/catch-guarded require is green");
+    ok(
+      eve.stderr.includes('note: __server.func/_libs/eve.mjs: "@opentelemetry/api" is absent, but a catch guards its load.'),
+      "(10) the guarded load is printed as a note",
+    );
+    ok(eve.stderr.includes("1 guarded optional load(s) not judged"), "(10) the summary counts the guarded load");
+
+    const red = (label: string, body: string) => {
+      const r = one(body);
+      ok(r.code === 1, `(10) ${label} exits 1`);
+      ok(r.stderr.includes('"ghost-opt" is imported but not present'), `(10) ${label} names the package`);
+      ok(!r.stderr.includes("note:"), `(10) ${label} is a finding, not a guarded note`);
+    };
+    red("an unguarded require", 'module.exports = require("ghost-opt");\n');
+    red("a require in the catch", 'try { x(); } catch { require("ghost-opt"); }\n');
+    red("a require in the finally", 'try { x(); } catch {} finally { require("ghost-opt"); }\n');
+    red("a try with no catch", 'try { require("ghost-opt"); } finally {}\n');
+    red("a catch that rethrows", 'try { require("ghost-opt"); } catch (e) { if (e) throw e; }\n');
+    red("a callback defined in the try", 'try { setTimeout(() => require("ghost-opt")); } catch {}\n');
+    red("a function declared in the try", 'try { function h() { require("ghost-opt"); } } catch {}\n');
+    red("a function expression in the try", 'try { const h = function () { require("ghost-opt"); }; } catch {}\n');
+    red("a class body defined in the try", 'try { class A { m = require("ghost-opt"); } } catch {}\n');
+    red("a dynamic import not awaited", 'try { import("ghost-opt"); } catch {}\n');
+    red("the same package also loaded unguarded", 'try { require("ghost-opt"); } catch {}\nrequire("ghost-opt");\n');
+    red("an unguarded static import beside a guarded load", 'import "ghost-opt";\ntry { require("ghost-opt"); } catch {}\n');
+
+    const own = one(
+      'try { x(); } catch {}\nexport const f = () => { try { return require("ghost-opt"); } catch { return undefined; } };\n' +
+        'export async function g() { try { return await (import("ghost-lazy")); } catch { return undefined; } }\n' +
+        'export async function k() { try { return await import("ghost-plain"); } catch { return undefined; } }\n',
+    );
+    ok(own.code === 0, "(10) a function's own try/catch guards its require and its awaited imports");
+    ok(own.stderr.includes("3 guarded optional load(s) not judged"), "(10) all three guarded loads are counted");
+
+    const deferredThrow = one('try { require("ghost-opt"); } catch (e) { const f = () => { throw e; }; }\n');
+    ok(deferredThrow.code === 0, "(10) a throw in a nested function of the catch is not a rethrow");
+    ok(deferredThrow.stderr.includes('"ghost-opt" is absent, but a catch guards its load.'), "(10) its load is a note");
+
+    const present = runLint(
+      scratchTree({
+        [`${FUNC}/index.mjs`]: EVE,
+        [`${FUNC}/node_modules/@opentelemetry/api/package.json`]: "{}\n",
+      }),
+    );
+    ok(present.code === 0, "(10) control: a traced guarded load is green");
+    ok(!present.stderr.includes("note:"), "(10) a traced guarded load makes no note");
+  }
+
   console.log(`✓ hosted-externals source and output passes: ${passed} assertions`);
 } finally {
   for (const dir of scratchRoots) rmSync(dir, { recursive: true, force: true });
