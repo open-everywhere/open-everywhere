@@ -7,7 +7,7 @@ import {
   type FixtureFinding,
   type ProbeOutcome,
 } from "./fixture-doctor-lib.js";
-import { ENV, teamsRefreshSinkPath } from "./env.js";
+import { ENV, resolveTeamsSecondary, teamsRefreshSinkPath } from "./env.js";
 import { roomIdFor } from "./fixture-inventory-lib.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { NotionDriver } from "./notion-driver.js";
@@ -175,6 +175,27 @@ async function probeTeams(env: Env): Promise<ProbeOutcome> {
   });
 }
 
+async function probeTeamsSecondary(env: Env): Promise<ProbeOutcome> {
+  return safe("teams second-user token mint + channel fetch", async () => {
+    const secondary = resolveTeamsSecondary(env);
+    if (!secondary.ok) return outcome(false, secondary.missing.join("; "));
+    if (!env[ENV.teamsTenantId] || !env[ENV.teamsClientId] || !env[ENV.teamsTeamId] || !env[ENV.teamsChannelId] || !env[ENV.teamsBotAppId]) {
+      return outcome(false, "the base Teams family is not set — the second user rides its tenant, app, team, channel and bot id");
+    }
+    const driver = new TeamsDriver({
+      tenantId: env[ENV.teamsTenantId]!,
+      clientId: env[ENV.teamsClientId]!,
+      refreshToken: secondary.cfg.refreshToken,
+      teamId: env[ENV.teamsTeamId]!,
+      channelId: env[ENV.teamsChannelId]!,
+      refreshTokenFile: secondary.cfg.refreshTokenFile,
+      botAppId: env[ENV.teamsBotAppId]!,
+    });
+    const info = await driver.channelInfo();
+    return outcome(true, `second user's Graph token minted; channel "${info.displayName || info.id}" reachable`);
+  });
+}
+
 async function githubApi(token: string, path: string): Promise<{ status: number; json: Record<string, unknown> }> {
   const res = await fetch(`https://api.github.com${path}`, {
     headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" },
@@ -331,6 +352,8 @@ async function probe(classified: ClassifiedFixture, env: Env): Promise<{ probe?:
       return { probe: await probeDiscordBase(env) };
     case "teams":
       return { probe: await probeTeams(env) };
+    case "teams-secondary":
+      return { probe: await probeTeamsSecondary(env) };
     case "github":
       return { probe: await probeGithub(env) };
     case "github-pr":

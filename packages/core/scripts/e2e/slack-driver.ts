@@ -529,6 +529,15 @@ export class SlackDriver {
     );
   }
 
+  async react(verb: "add" | "remove", ts: string, name: string): Promise<{ readonly ok: boolean; readonly error?: string; readonly needed?: string }> {
+    const json = await this.apiRaw(verb === "add" ? "reactions.add" : "reactions.remove", { channel: this.cfg.channel, name, timestamp: ts });
+    return {
+      ok: json.ok === true,
+      ...(typeof json.error === "string" ? { error: json.error } : {}),
+      ...(typeof json.needed === "string" ? { needed: json.needed } : {}),
+    };
+  }
+
   async reactions(ts: string): Promise<readonly string[]> {
     const json = await this.api("reactions.get", { channel: this.cfg.channel, timestamp: ts });
     const message = (json.message ?? {}) as { reactions?: readonly { name?: string }[] };

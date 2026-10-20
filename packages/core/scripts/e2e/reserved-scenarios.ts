@@ -5,12 +5,15 @@ export interface ReservedScenario {
   readonly proves: string;
 }
 
-export const RESERVED_REACTION_SCENARIOS: Record<ReactionSurface, ReservedScenario> = {
+export const LANDED_REACTION_SCENARIOS = {
   slack: {
     id: "J-REACT-slack",
     proves:
-      "a member's reaction on the agent's own Slack reply writes one `reaction.feedback` row, and the agent's own status reaction on the same message writes none",
+      "a member's real reaction on the agent's own Slack reply writes one `reaction.feedback` row, its removal writes the removed row, and a reaction on the member's own message (where the agent's status reaction also sits) writes none",
   },
+} as const satisfies Partial<Record<ReactionSurface, ReservedScenario>>;
+
+export const RESERVED_REACTION_SCENARIOS: Record<Exclude<ReactionSurface, keyof typeof LANDED_REACTION_SCENARIOS>, ReservedScenario> = {
   discord: {
     id: "J-REACT-discord",
     proves:

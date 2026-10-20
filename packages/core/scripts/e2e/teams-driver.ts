@@ -403,6 +403,26 @@ export class TeamsDriver {
     return toMessage(json);
   }
 
+  async postMentionWithPerson(person: { readonly id: string; readonly displayName: string }, text: string): Promise<TeamsMessage> {
+    const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages`, {
+      body: { contentType: "html", content: `<at id="0">Open Everywhere</at> <at id="1">${htmlEscape(person.displayName)}</at> ${htmlEscape(text)}` },
+      mentions: [
+        { id: 0, mentionText: "Open Everywhere", mentioned: { application: { id: this.cfg.botAppId, displayName: "Open Everywhere", applicationIdentityType: "bot" } } },
+        { id: 1, mentionText: person.displayName, mentioned: { user: { id: person.id, displayName: person.displayName, userIdentityType: "aadUser" } } },
+      ],
+    })) as GraphChatMessage;
+    return toMessage(json);
+  }
+
+  async displayName(): Promise<string | undefined> {
+    try {
+      const json = (await this.graph("GET", "/me?$select=displayName")) as { displayName?: string };
+      return json.displayName?.trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async postPlainRoot(text: string): Promise<TeamsMessage> {
     const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages`, {
       body: { contentType: "html", content: htmlEscape(text) },

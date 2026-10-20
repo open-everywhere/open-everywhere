@@ -293,6 +293,7 @@
     "test:chat-write-grant-domain-grain": "NODE_NO_WARNINGS=1 tsx scripts/chat-write-grant-domain-grain-test.ts",
     "test:resource-grant-transport-parity": "NODE_NO_WARNINGS=1 tsx scripts/resource-grant-transport-parity-test.ts",
     "test:e2e-driver-unit": "NODE_NO_WARNINGS=1 tsx scripts/e2e-driver-test.ts",
+    "test:e2e-react-cover-legs": "NODE_NO_WARNINGS=1 tsx scripts/e2e-react-cover-legs-test.ts",
     "lint:scenario-pins": "tsx scripts/scenario-pin-lint.ts",
     "test:scenario-pin-lint": "NODE_NO_WARNINGS=1 tsx scripts/scenario-pin-lint-test.ts",
     "test:core-dist-freshness": "NODE_NO_WARNINGS=1 tsx scripts/core-dist-freshness-test.ts",

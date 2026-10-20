@@ -28,6 +28,7 @@ import {
   resolveSynthetic,
   resolveSyntheticDm,
   resolveTeams,
+  resolveTeamsSecondary,
   resolveWebhook,
   resolveEmail,
   resolveControlWrite,
@@ -123,6 +124,7 @@ async function main(): Promise<void> {
   const slack = resolveSlack();
   const discord = resolveDiscord();
   const teams = resolveTeams();
+  const teamsSecondary = resolveTeamsSecondary();
   const synthetic = resolveSynthetic();
   const judge = resolveJudge();
   const readerJudge = resolveReaderJudge();
@@ -192,6 +194,11 @@ async function main(): Promise<void> {
   const prApiDriver = pr.ok ? new PrApi(pr.cfg) : undefined;
   const discordDriver = paceMaybe(discord.ok ? new DiscordDriver(discord.cfg) : undefined, "discord", pacing);
   const teamsDriver = paceMaybe(teams.ok ? new TeamsDriver(teams.cfg) : undefined, "teams", pacing);
+  const teamsSecondaryDriver = paceMaybe(
+    teams.ok && teamsSecondary.ok ? new TeamsDriver({ ...teams.cfg, refreshToken: teamsSecondary.cfg.refreshToken, refreshTokenFile: teamsSecondary.cfg.refreshTokenFile }) : undefined,
+    "teams",
+    pacing,
+  );
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
@@ -539,6 +546,7 @@ async function main(): Promise<void> {
       slack: slackDriver,
       discord: discordDriver,
       teams: teamsDriver,
+      teamsSecondary: teamsSecondaryDriver,
       synthetic: syntheticSlack,
       slackPrivate: slackPrivateDriver,
       slackB: slackBDriver,

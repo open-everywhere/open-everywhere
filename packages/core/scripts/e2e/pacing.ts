@@ -151,7 +151,7 @@ export function renderPacingLine(stats: PacingStats, opts?: { readonly floorMs?:
 export const PACED_DRIVER_METHODS: Readonly<Record<string, readonly string[]>> = {
   SlackDriver: ["post", "uploadImage", "update"],
   DiscordDriver: ["post"],
-  TeamsDriver: ["postDm", "postMention", "postPlainRoot", "postReply", "postMentionReply"],
+  TeamsDriver: ["postDm", "postMention", "postMentionWithPerson", "postPlainRoot", "postReply", "postMentionReply"],
   GithubDriver: ["comment"],
   LinearDriver: ["comment", "assign"],
   NotionDriver: ["createBlockDiscussion", "replyToDiscussion"],

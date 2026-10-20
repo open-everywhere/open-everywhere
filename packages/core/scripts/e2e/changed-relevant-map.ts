@@ -29,7 +29,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "teams-provider",
     globs: ["packages/providers/teams/**"],
-    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams", "S-CARD-teams", "S-CARD-teams-dm", "J-NAMEDROP-teams", "S-OE-CMD-teams", "S-INTRO-teams"],
+    scenarios: ["J-TEAMS", "J-TEAMS-DM", "J-ENGAGED-teams", "S-DELEGATED-teams", "S-AMBIENT-teams", "S-SIBLING-teams", "S-SUSPENDED-teams", "S-LINK-teams", "S-CARD-teams", "S-CARD-teams-dm", "J-NAMEDROP-teams", "S-OE-CMD-teams", "S-INTRO-teams", "S-COVER-teams"],
     why: "The three surface: \"teams\" scenarios — the channel, the 1:1 DM, and the ambient engagement seam (OPE-1500: @mention engages, a plain follow-up wakes, stand_down stops it). J-TEAMS is also the smoke-lane's non-Slack half (scenarios.ts smoke: true); the other two are not — J-TEAMS-DM self-skips until the driver's Chat.* Graph scope is consented (OPE-972), and J-ENGAGED-teams self-skips when the tenant has not consented to the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the plain follow-up it asserts on.",
   },
   {
@@ -287,8 +287,14 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "cover",
     globs: ["packages/core/agent/cover/**", "packages/core/agent/commands/cover.ts", "packages/core/agent/schedules/cover-recap.ts"],
-    scenarios: ["S-COVER"],
-    why: "S-COVER (OPE-2513) is the only live leg on out-of-office cover: `/oe cover on` from the DM, a mention in the base channel answered with the host's cover label, `/oe cover off`, and the recap row.",
+    scenarios: ["S-COVER", "S-COVER-teams"],
+    why: "S-COVER (OPE-2513) and S-COVER-teams (OPE-2548) are the only live legs on out-of-office cover: `/oe cover on` from the DM, a mention in the base channel answered with the host's cover label, `/oe cover off`, and the recap row. S-COVER-teams drives it with two real Teams users, and its recap row is the one live read of the Teams team roster.",
+  },
+  {
+    area: "reaction-feedback",
+    globs: ["packages/core/agent/channels/reaction-ingest.ts", "packages/providers/slack/agent/channels/slack-events.ts"],
+    scenarios: ["J-REACT-slack"],
+    why: "J-REACT-slack (OPE-2271) is the only live leg on reaction feedback: a real 👍 on the agent's Slack reply, gated on the `reaction.feedback` row `reaction-ingest.ts` writes, and on the removed row after the 👍 comes off.",
   },
   {
     area: "personal-watch",

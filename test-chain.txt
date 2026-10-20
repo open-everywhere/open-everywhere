@@ -116,6 +116,7 @@ test:governance-dm
 test:resource-grant-transport-parity
 test:chat-write-grant-domain-grain
 test:e2e-driver-unit
+test:e2e-react-cover-legs
 lint:scenario-pins
 test:scenario-pin-lint
 test:core-dist-freshness

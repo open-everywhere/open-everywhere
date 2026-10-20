@@ -40,6 +40,8 @@ export const ENV = {
   teamsChannelId: "E2E_TEAMS_CHANNEL_ID",
   teamsBotAppId: "E2E_TEAMS_BOT_APP_ID",
   teamsRefreshTokenFile: "E2E_TEAMS_REFRESH_TOKEN_FILE",
+  teamsSecondaryRefreshToken: "E2E_TEAMS_SECONDARY_REFRESH_TOKEN",
+  teamsSecondaryRefreshTokenFile: "E2E_TEAMS_SECONDARY_REFRESH_TOKEN_FILE",
 
   githubDriverToken: "E2E_GITHUB_DRIVER_TOKEN",
   githubRepo: "E2E_GITHUB_REPO",
@@ -127,6 +129,7 @@ export type Capability =
   | "notion"
   | "slackSupervisor"
   | "teams"
+  | "teamsSecondary"
   | "github"
   | "linear"
   | "notionAmbient"
@@ -193,6 +196,11 @@ export interface SlackUser2Config {
 export interface SlackSecondaryConfig {
   readonly token: string;
   readonly userId: string;
+}
+
+export interface TeamsSecondaryConfig {
+  readonly refreshToken: string;
+  readonly refreshTokenFile: string;
 }
 
 export interface EmailFixtureConfig {
@@ -338,12 +346,38 @@ export function resolveTeams(env: Env = process.env, cwd: string = process.cwd()
   };
 }
 
+export function resolveTeamsSecondary(env: Env = process.env, cwd: string = process.cwd()): Resolved<TeamsSecondaryConfig> {
+  const { values, missing } = need(env, [ENV.teamsSecondaryRefreshToken]);
+  if (missing.length > 0) return { ok: false, missing };
+  let refreshTokenFile: string;
+  let baseFile: string;
+  try {
+    refreshTokenFile = teamsSecondaryRefreshSinkPath(env, cwd);
+    baseFile = teamsRefreshSinkPath(env, cwd);
+  } catch (err) {
+    return { ok: false, missing: [`an app root for ${ENV.teamsSecondaryRefreshTokenFile} — ${String(err instanceof Error ? err.message : err)}`] };
+  }
+  if (refreshTokenFile === baseFile) {
+    return { ok: false, missing: [`${ENV.teamsSecondaryRefreshTokenFile} names the base sidecar ${baseFile} — give the second user a file of its own`] };
+  }
+  return { ok: true, cfg: { refreshToken: values[0], refreshTokenFile } };
+}
+
 export const DEFAULT_TEAMS_REFRESH_SINK = ".env.e2e.teams-refresh";
 
 export const TEAMS_AUTH_NEXT_STEP = "E2E_ONLY=J-TEAMS npm run test:e2e-driver";
 
 export function teamsRefreshSinkPath(env: Env = process.env, cwd: string = process.cwd()): string {
-  const configured = env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK;
+  return sinkPathFor(env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK, env, cwd);
+}
+
+export const DEFAULT_TEAMS_SECONDARY_REFRESH_SINK = ".env.e2e.teams-secondary-refresh";
+
+export function teamsSecondaryRefreshSinkPath(env: Env = process.env, cwd: string = process.cwd()): string {
+  return sinkPathFor(env[ENV.teamsSecondaryRefreshTokenFile]?.trim() || DEFAULT_TEAMS_SECONDARY_REFRESH_SINK, env, cwd);
+}
+
+function sinkPathFor(configured: string, env: Env, cwd: string): string {
   if (isAbsolute(configured)) return configured;
   const resolved = resolvePath(resolveAppRoot({ env, cwd }), configured);
   const legacy = resolvePath(cwd, configured);
@@ -763,6 +797,7 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   const slack = resolveSlack(env);
   const discord = resolveDiscord(env);
   const teams = resolveTeams(env);
+  const teamsSecondary = resolveTeamsSecondary(env);
   const synthetic = resolveSynthetic(env);
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
@@ -796,6 +831,7 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
   if (teams.ok) available.add("teams");
+  if (teamsSecondary.ok) available.add("teamsSecondary");
   if (synthetic.ok) available.add("synthetic");
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
@@ -831,6 +867,7 @@ export function resolveCapabilities(env: Env = process.env, tracked: Readonly<Re
       slack: slack.ok ? [] : slack.missing,
       discord: discord.ok ? [] : discord.missing,
       teams: teams.ok ? [] : teams.missing,
+      teamsSecondary: teamsSecondary.ok ? [] : teamsSecondary.missing,
       synthetic: synthetic.ok ? [] : synthetic.missing,
       slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,

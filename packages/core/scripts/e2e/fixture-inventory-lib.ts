@@ -107,6 +107,7 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
   E2E_SLACK_SECONDARY_TOKEN: "credential",
   E2E_DISCORD_DRIVER_TOKEN: "credential",
   E2E_TEAMS_REFRESH_TOKEN: "credential",
+  E2E_TEAMS_SECONDARY_REFRESH_TOKEN: "credential",
   E2E_TEAMS_CLIENT_ID: "credential",
   E2E_TEAMS_TENANT_ID: "credential",
   E2E_GITHUB_DRIVER_TOKEN: "credential",
@@ -160,6 +161,7 @@ export const NON_ROOM_ENV: Readonly<Record<string, NonRoomReason>> = {
 
   E2E_TARGET_URL: "local",
   E2E_TEAMS_REFRESH_TOKEN_FILE: "local",
+  E2E_TEAMS_SECONDARY_REFRESH_TOKEN_FILE: "local",
   E2E_DISCORD_GRANT_THREAD_FILE: "local",
 
   E2E_GITHUB_ISSUE: "not-a-room",

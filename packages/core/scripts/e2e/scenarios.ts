@@ -15,6 +15,7 @@ import { detectNoApprovalClaims, NO_CARD_NOTE_OPENING } from "../../agent/channe
 import { DM_REFUSED_ACTION, DM_RESUME_ACTION, DM_STOP_ACTION, personAddress } from "../../agent/channels/dm-audience.js";
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
 import { replyCarriesSubstance } from "../../agent/channels/reply-post.js";
+import { REACTION_FEEDBACK_ACTION } from "../../agent/channels/reaction-ingest.js";
 import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/spawn-taint.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
@@ -338,6 +339,7 @@ export interface ScenarioContext {
   readonly slack?: SlackDriver;
   readonly discord?: DiscordDriver;
   readonly teams?: TeamsDriver;
+  readonly teamsSecondary?: TeamsDriver;
   readonly synthetic?: SyntheticSlack;
   readonly slackPrivate?: SlackDriver;
   readonly slackB?: SlackDriver;
@@ -6510,6 +6512,76 @@ export const SCENARIOS: readonly Scenario[] = [
   },
 
   {
+    id: "J-REACT-slack",
+    proves: ["REPLY-55"],
+    title: "A reaction on an answer is feedback (OPE-2271): a member's real 👍 on the agent's Slack reply writes one reaction.feedback row (added, positive), its removal writes the removed row, and a 👍 on the member's own message writes none",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: REPLY_WAIT + AUDIT_ROW_WAIT * 3 + 60_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) return ctx.fixtureMissing("J-REACT-slack gates on reaction.feedback audit rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      const slack = ctx.slack!;
+      const { userId } = await slack.identity();
+      const since = await presenceSince(ctx, "J-REACT-slack");
+      const token = factToken("react");
+      const anchor = await slack.post(slack.mention(fixtureLine(`(e2e J-REACT-slack) reply with one short line that ends with the word ${token}.`)));
+
+      const control = await slack.react("add", anchor.ts, "thumbsup");
+      if (!control.ok && control.error === "missing_scope") {
+        return ctx.fixtureMissing(
+          `J-REACT-slack: the driver token cannot react (reactions.add → missing_scope, needed ${control.needed ?? "reactions:write"}). ` +
+            "Add the `reactions:write` USER scope to the Slack app that issues E2E_SLACK_USER_TOKEN, re-authorize the driver account, and put the new token in E2E_SLACK_USER_TOKEN.",
+        );
+      }
+      let reactedOnReply: string | undefined;
+      try {
+        ctx.gate(control.ok, `J-REACT-slack: the driver's 👍 on its own message lands (reactions.add → ${control.error ?? "ok"})`);
+        const reply = await slack.awaitThreadReply(anchor.ts, { timeoutMs: REPLY_WAIT });
+        ctx.gate(slack.isBotMessage(reply), "J-REACT-slack: the reply the leg reacts on is the agent's own message");
+        const added = await slack.react("add", reply.ts, "thumbsup");
+        ctx.gate(added.ok, `J-REACT-slack: the driver's 👍 on the agent's reply lands (reactions.add → ${added.error ?? "ok"})`);
+        reactedOnReply = reply.ts;
+
+        const onReply = async (verb: string) =>
+          (await read({ sinceIso: since, platform: "slack", actions: [REACTION_FEEDBACK_ACTION], limit: 200 })).filter((r) => dS(r, "messageId") === reply.ts && dS(r, "verb") === verb);
+        const addedRows = await pollOptional(async () => {
+          const rows = await onReply("added");
+          return rows.length > 0 ? rows : undefined;
+        }, { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 2_000, maxDelayMs: 5_000, what: `J-REACT-slack: the reaction.feedback row (added) for the reply ${reply.ts}` });
+        ctx.gate(addedRows !== undefined, `J-REACT-slack: a real 👍 on the agent's reply wrote a ${REACTION_FEEDBACK_ACTION} row — none means Slack's reaction_added never reached the deployment, or the bot-author check missed the reply`);
+        ctx.gate(addedRows!.length === 1, `J-REACT-slack: exactly ONE added row for one 👍 (got ${addedRows!.length})`);
+        const row = addedRows![0]!;
+        ctx.gate(row.principalId === userId, `J-REACT-slack: the row names the person who reacted (${String(row.principalId)}), never the agent`);
+        ctx.gate(dS(row, "emojiClass") === "positive" && row.detail?.["onBotReply"] === true, `J-REACT-slack: the row buckets 👍 as positive on the bot's reply (emojiClass ${String(dS(row, "emojiClass"))})`);
+        ctx.gate(dS(row, "channelId") === slack.channelId, "J-REACT-slack: the row names the base channel");
+
+        const removed = await slack.react("remove", reply.ts, "thumbsup");
+        ctx.gate(removed.ok, `J-REACT-slack: the driver removes its 👍 (reactions.remove → ${removed.error ?? "ok"})`);
+        reactedOnReply = undefined;
+        const removedRows = await pollOptional(async () => {
+          const rows = await onReply("removed");
+          return rows.length > 0 ? rows : undefined;
+        }, { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 2_000, maxDelayMs: 5_000, what: `J-REACT-slack: the reaction.feedback row (removed) for the reply ${reply.ts}` });
+        ctx.gate(removedRows?.length === 1 && removedRows[0]!.principalId === userId, `J-REACT-slack: the removal wrote ONE removed row naming the person (got ${removedRows?.length ?? 0})`);
+
+        const window = ctx.auditWindowRead ? await ctx.auditWindowRead({ sinceIso: since, platform: "slack", actions: [REACTION_FEEDBACK_ACTION], limit: 200 }) : undefined;
+        ctx.gate(!(window?.capped || window?.scanTruncated), `J-REACT-slack: the control is measurable — the audit page was not cut (capped ${String(window?.capped)}, scanTruncated ${String(window?.scanTruncated)})`);
+        const rows = window?.entries ?? (await read({ sinceIso: since, platform: "slack", actions: [REACTION_FEEDBACK_ACTION], limit: 200 }));
+        const onAnchor = rows.filter((r) => dS(r, "messageId") === anchor.ts);
+        ctx.gate(onAnchor.length === 0, `J-REACT-slack: a 👍 on the member's own message (and the agent's own 👀 there) wrote NO ${REACTION_FEEDBACK_ACTION} row (got ${onAnchor.length})`);
+        const addedFinal = rows.filter((r) => dS(r, "messageId") === reply.ts && dS(r, "verb") === "added").length;
+        ctx.gate(addedFinal === 1, `J-REACT-slack: still exactly ONE added row for the reply at the end of the leg (got ${addedFinal})`);
+      } finally {
+        await slack.react("remove", anchor.ts, "thumbsup").catch(() => undefined);
+        if (reactedOnReply) await slack.react("remove", reactedOnReply, "thumbsup").catch(() => undefined);
+      }
+    },
+  },
+
+  {
     id: "S-REPLY-FOLLOWUPS",
     title: "Suggested follow-ups (OPE-2516): a DM answer carries the follow-up the person was promised as a button, and a signed press on it is answered in the same DM",
     requires: ["slack", "synthetic", "syntheticDm"],
@@ -7388,6 +7460,99 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(recapRow?.action === "cover.recap" && Number(recapRow.detail?.["questions"]) >= 1, `S-COVER: a cover.recap row shows at least one question (got ${recapRow?.action ?? "no row"})`);
       } finally {
         if (!turnedOff) await synthetic.slash("cover off", { teamId, channelId: ctx.dm!.channelId }).catch(() => undefined);
+      }
+    },
+  },
+
+  {
+    id: "S-COVER-teams",
+    title: "Out-of-office cover on Teams (OPE-2548): `oe cover on` in the driver's 1:1 chat, a second Teams user's @mention of the driver gets a reply with the host's cover label, `oe cover off`, and a recap row that the live team-roster read admitted",
+    requires: ["teams", "teamsSecondary"],
+    surface: "teams",
+    suite: "core",
+    timeoutMs: 1_980_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      if (!read) return ctx.fixtureMissing("S-COVER-teams gates on cover.* audit rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
+      const teams = ctx.teams!;
+      const asker = ctx.teamsSecondary!;
+      const { chatId } = await teams.resolveDmChat().catch((err: unknown) =>
+        ctx.fixtureMissing(`S-COVER-teams turns cover on from the driver's 1:1 chat: ${err instanceof Error ? err.message : String(err)} — grant the personal-scope install for the driver user (OPE-887).`),
+      );
+      const command = async (text: string): Promise<{ readonly sent: TeamsMessage; readonly answer: TeamsMessage }> => {
+        const sent = await teams.postDm(chatId, text).catch((err: unknown) => {
+          if (isMissingChatScopeError(err)) ctx.fixtureMissing(`S-COVER-teams: Graph refused the 1:1 chat post — grant the driver app Chat.ReadWrite (or ChatMessage.Send + Chat.Read). (${String(err)})`);
+          throw err;
+        });
+        const answer = await teams.awaitDmReply(chatId, { timeoutMs: REPLY_WAIT, ...(sent.createdDateTime ? { afterIso: sent.createdDateTime } : {}) });
+        return { sent, answer };
+      };
+
+      let turnedOff = false;
+      let onPosted = false;
+      try {
+        const onAt = await presenceSince(ctx, "S-COVER-teams on", 15_000);
+        onPosted = true;
+        const cover = await command("oe cover on");
+        const onText = cover.answer.text;
+        if (onText.startsWith("Turn cover on from your direct message") || onText.startsWith("Cover is for members")) {
+          return ctx.fixtureMissing(`S-COVER-teams: the driver's 1:1 chat did not bind as a member's own DM — answer head: "${onText.slice(0, 160)}"`);
+        }
+        ctx.gate(onText.startsWith("Done. Cover is on") || onText.startsWith("It was already on."), `S-COVER-teams: \`oe cover on\` turns cover on — answer head: "${onText.slice(0, 160)}"`);
+        const onRow = await pollOptional(
+          async () => (await read({ sinceIso: onAt, platform: "teams", actions: ["cover.set"], limit: 50 })).find((r) => r.detail?.["on"] === true && String(r.principalId ?? "").startsWith("teams/")),
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER-teams: the cover.set row (on)" },
+        );
+        ctx.gate(onRow !== undefined, "S-COVER-teams: a cover.set row names a Teams person, on:true");
+        const person = String(onRow!.principalId);
+        const ownRow = (r: AuditWireEntry): boolean => r.principalId === person;
+
+        const driverId = cover.sent.fromUserId;
+        if (!driverId) return ctx.fixtureMissing("S-COVER-teams: Graph returned the driver's 1:1 post with no from.user.id, so the leg cannot @mention the driver.");
+        const askAt = await presenceSince(ctx, "S-COVER-teams ask", 15_000);
+        const marker = factToken("cover-tm");
+        const root = await asker.postMentionWithPerson(
+          { id: driverId, displayName: (await teams.displayName()) ?? "the e2e driver" },
+          `is the e2e cover check ${marker} still scheduled? (answer from this channel only)`,
+        );
+        if (root.fromUserId === driverId) {
+          return ctx.fixtureMissing(`S-COVER-teams: ${ENV.teamsSecondaryRefreshToken} signs in as the driver user — a person's mention of themselves is no cover question. Mint it as a second member of the team.`);
+        }
+        const reply = await teams.awaitReply(root.id, { timeoutMs: FILE_REPLY_WAIT });
+        ctx.gate(reply.text.trimStart().startsWith("Cover for"), `S-COVER-teams: the reply starts with the host's cover label — reply head: "${reply.text.slice(0, 160)}"`);
+        const wakeRow = await pollOptional(
+          async () => (await read({ sinceIso: askAt, platform: "teams", actions: ["cover.wake"], limit: 50 })).find((r) => ownRow(r) && r.detail?.["recorded"] === true),
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER-teams: the cover.wake row" },
+        );
+        ctx.gate(wakeRow !== undefined, "S-COVER-teams: a cover.wake row names the driver, and the question entered the recap log");
+        const answered = await pollOptional(
+          async () => (await read({ sinceIso: askAt, platform: "teams", actions: ["cover.answered"], limit: 50 })).find(ownRow),
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-COVER-teams: the cover.answered row" },
+        );
+        ctx.gate(answered !== undefined && answered.detail?.["wakeId"] === wakeRow?.detail?.["wakeId"], "S-COVER-teams: a cover.answered row names the same wake");
+
+        const offAt = await presenceSince(ctx, "S-COVER-teams off", 15_000);
+        const off = await command("oe cover off");
+        turnedOff = off.answer.text.startsWith("Cover is off.");
+        ctx.gate(turnedOff, `S-COVER-teams: \`oe cover off\` turns cover off — answer head: "${off.answer.text.slice(0, 160)}"`);
+        const recapRow = await pollOptional(
+          async () => (await read({ sinceIso: offAt, platform: "teams", actions: ["cover.recap", "cover.recap_refused"], limit: 50 })).find(ownRow),
+          { timeoutMs: 660_000, initialDelayMs: 15_000, maxDelayMs: 30_000, what: "S-COVER-teams: the recap row (the cover-recap schedule runs every 5 minutes)" },
+        );
+        ctx.gate(recapRow?.action === "cover.recap", `S-COVER-teams: a cover.recap row lands for the driver (got ${recapRow?.action ?? "no row"}${recapRow?.detail?.["reason"] ? `, reason ${String(recapRow.detail["reason"])}` : ""})`);
+        ctx.gate(
+          Number(recapRow!.detail?.["questions"]) >= 1 && Number(recapRow!.detail?.["leftOut"]) === 0,
+          `S-COVER-teams: the live team-roster read confirmed the driver, so the recap shows the question (questions ${String(recapRow!.detail?.["questions"])}, leftOut ${String(recapRow!.detail?.["leftOut"])}). leftOut 1 means the Bot Connector roster read refused or failed, or the base channel is not a standard channel`,
+        );
+        ctx.gate(recapRow!.detail?.["sent"] === true, "S-COVER-teams: the tick dispatched the recap (sent:true)");
+        const offAnsweredAt = off.answer.createdDateTime;
+        ctx.gate(offAnsweredAt !== undefined, "S-COVER-teams: the off answer carries a createdDateTime — without it the recap wait has no lower bound and would read the off answer as the recap");
+        const recap = await teams.awaitDmReply(chatId, { timeoutMs: REPLY_WAIT, afterIso: offAnsweredAt! });
+        ctx.gate(recap.text.trim().length > 0, "S-COVER-teams: the recap message reached the driver's 1:1 chat");
+        ctx.log(`S-COVER-teams: the recap ${recap.text.includes(marker) ? "quotes" : "does not quote"} the run token ${marker}`);
+      } finally {
+        if (onPosted && !turnedOff) await teams.postDm(chatId, "oe cover off").catch(() => undefined);
       }
     },
   },

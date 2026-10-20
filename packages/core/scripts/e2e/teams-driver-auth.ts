@@ -1,4 +1,4 @@
-import { ENV, TEAMS_AUTH_NEXT_STEP, teamsRefreshSinkPath } from "./env.js";
+import { ENV, TEAMS_AUTH_NEXT_STEP, teamsRefreshSinkPath, teamsSecondaryRefreshSinkPath } from "./env.js";
 import { sleep } from "./poll.js";
 import { writeRefreshSidecar } from "./teams-driver.js";
 
@@ -129,9 +129,12 @@ async function main(): Promise<void> {
         `      ChannelMessage.Read.All + offline_access, admin-consented). See docs/deploy/surfaces/teams.md.`,
     );
   }
+  const secondary = process.argv.includes("--secondary");
+  const tokenVar = secondary ? ENV.teamsSecondaryRefreshToken : ENV.teamsRefreshToken;
   let sink: string;
   try {
-    sink = teamsRefreshSinkPath();
+    sink = secondary ? teamsSecondaryRefreshSinkPath() : teamsRefreshSinkPath();
+    if (secondary && sink === teamsRefreshSinkPath()) die(`✗ ${ENV.teamsSecondaryRefreshTokenFile} names the base sidecar ${sink} — give the second user a file of its own.`);
   } catch (err) {
     die(`✗ cannot place the refresh sidecar: ${String(err instanceof Error ? err.message : err)}`);
   }
@@ -139,12 +142,16 @@ async function main(): Promise<void> {
   console.log(`Requesting a device code for tenant ${tenantId}…`);
   const device = await requestDeviceCode(tenantId, clientId);
   console.log(`\n${device.message ?? `To sign in, open ${device.verification_uri} and enter the code ${device.user_code}`}\n`);
-  console.log("Waiting for you to complete sign-in in the browser…");
+  console.log(
+    secondary
+      ? "Waiting for you to complete sign-in in the browser — sign in as the SECOND test user, a member of the same team who is NOT the driver user…"
+      : "Waiting for you to complete sign-in in the browser…",
+  );
 
   const token = await pollForToken(tenantId, clientId, device);
   console.log("\n✓ signed in — refresh token minted.\n");
   console.log("Set this in your shell / CI secrets (NEVER commit it):\n");
-  console.log(`export ${ENV.teamsRefreshToken}='${token.refresh_token}'\n`);
+  console.log(`export ${tokenVar}='${token.refresh_token}'\n`);
 
   if (token.refresh_token) {
     writeRefreshSidecar(sink, token.refresh_token);
@@ -153,6 +160,10 @@ async function main(): Promise<void> {
 
   if (token.access_token) await listTeamsAndChannels(token.access_token);
 
+  if (secondary) {
+    console.log(`\nNext: set ${ENV.teamsSecondaryRefreshToken} beside the six base Teams vars and run: E2E_ONLY=S-COVER-teams npm run test:e2e-driver`);
+    return;
+  }
   console.log(
     `\nNext: set the six ${ENV.teamsTenantId.replace("_TENANT_ID", "_*")} vars (tenant, client, refresh, team, channel, bot app id) ` +
       `and run: ${TEAMS_AUTH_NEXT_STEP}`,

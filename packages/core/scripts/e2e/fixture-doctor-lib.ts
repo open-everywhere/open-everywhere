@@ -17,6 +17,7 @@ export type ProbeKind =
   | "slack-dm-channel"
   | "discord-base"
   | "teams"
+  | "teams-secondary"
   | "github"
   | "github-pr"
   | "github-repo"
@@ -320,6 +321,14 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
     scenarios:
       "J-TEAMS (channel @mention drive) + J-TEAMS-DM (1:1 chat drive — self-skips without the personal install or a Chat.* Graph scope, OPE-972)",
     probe: "teams",
+  },
+  {
+    id: "teamsSecondary",
+    label: "Teams second user (delegated refresh token for a second member of the team)",
+    required: [v(ENV.teamsSecondaryRefreshToken)],
+    optional: [ENV.teamsSecondaryRefreshTokenFile],
+    scenarios: "S-COVER-teams (OPE-2548) — the second user asks for the absent driver user in the base channel; rides the base Teams family's tenant, app, team, channel and bot id",
+    probe: "teams-secondary",
   },
   {
     id: "github",
