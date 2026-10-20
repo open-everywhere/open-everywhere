@@ -23,7 +23,7 @@ Two different principals send traffic through this proxy, and they get different
 
 | Principal | What it is | How the proxy knows it | Allow list it is held to |
 |---|---|---|---|
-| **The app** | the app process's own model call (the gateway provider in `packages/adapters/agent/model/gateway.ts`), and the meeting bot's non-gateway transcription routes | the request carries `Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>` | the **host plane**: the model gateway host (`ai-gateway.vercel.sh`, or the host of `models.targets.gateway.url`), plus the hosts of any non-gateway transcription route the app registers (OPE-2470). The app keeps one list and pushes it whole. |
+| **The app** | the app process's own model call (the gateway provider in `packages/adapters/agent/model/gateway.ts`), and the meeting bot's non-gateway transcription routes | the request carries `Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>` (the app's operator secret, the same value as the proxy's env var) | the **host plane**: the model gateway host (`ai-gateway.vercel.sh`, or the host of `models.targets.gateway.url`), plus the hosts of any non-gateway transcription route the app registers (OPE-2470). The app keeps one list and pushes it whole. |
 | **The session** | the agent's sandboxed shell, plus the app's other host-side calls made on the session's behalf (Slack posts, connector calls, `oeFetch`) | no credential | the **session policy** the app compiles and pushes for its source IP, default-deny |
 
 Under `justbash` both principals send from the **same source IP**, because the session runs
@@ -87,7 +87,7 @@ for both. That is a known limit of the per-source keying, not changed here.
 | `docker` | **No** — eve 0.71 provisions templates at build time and the build stage has no daemon, so every sandbox step refuses (`Prepared sandbox artifact … belongs to provider "just-bash", not "docker"`) | **No** — eve starts each session container on the Docker daemon's default network (a direct WAN route, no proxy env), and its docker options expose no network field | a per-session container; needs the daemon socket, so app compromise ≈ host |
 
 Because a docker session would be outside the proxy while the audit recorded "enforced", the app
-**refuses to boot** with the setting `sandbox.selfHostBackend: "docker"` and `OE_EGRESS_PROXY_URL` set. Without the
+**refuses to boot** with the setting `sandbox.selfHostBackend: "docker"` and the setting `egress.proxyUrl` set. Without the
 proxy, docker applies only the coarse `"deny-all"` (a session that reaches nothing boots with no
 network) and a session that needs a host allow-list aborts at `session.started` (fail-closed).
 
@@ -123,13 +123,22 @@ echo "OE_EGRESS_PROXY_TOKEN=$(openssl rand -hex 32)" >> .env   # REQUIRED — se
 docker compose up --build     # app (internal-only) + oe-egress-proxy (sole WAN route)
 ```
 
+Before the first `up`, declare the app's side of the wiring in `agent/settings/settings.ts`. Since
+OPE-2650 the app reads it from config in Git, not from env:
+
+```ts
+egress: { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" },
+```
+
 **`OE_EGRESS_PROXY_TOKEN` is mandatory, not optional.** Compose refuses to bring the stack up
 without it (`${OE_EGRESS_PROXY_TOKEN:?…}`) and the control service refuses to boot without it
 (fatal + exit 1). There is no token-less mode and no opt-out flag, because the control service
 listens on the same internal network the sandbox runs on: a token-less `POST /policy` lets any
 peer there — including a compromised agent — install itself an `allow-all` policy and defeat
 default-deny egress outright, or `DELETE` another source's policy. The same value goes to both
-the proxy and the app (compose passes it to both from the one `.env` entry).
+the proxy and the app (compose passes it to both from the one `.env` entry). The proxy reads it from
+its env. The app reads it as the operator secret `OE_EGRESS_PROXY_TOKEN`: the db credential store
+first (`oe secret set OE_EGRESS_PROXY_TOKEN`), else this env var, with a one-time notice.
 
 The compose file (`../../docker-compose.yml`) puts the app on an `internal: true` Docker
 network with **no WAN route** — its only path out is `oe-egress-proxy`. That topology is the
@@ -138,17 +147,22 @@ internet except through the proxy, whose default is deny.
 
 ### Env (set by compose; override in `.env`)
 
+The app's two proxy settings are not env. Declare them in `agent/settings/settings.ts`:
+
+| Setting | Meaning |
+|---|---|
+| `egress.proxyUrl` | control endpoint the app POSTs policy to (`"http://oe-egress-proxy:8080"`). It was `OE_EGRESS_PROXY_URL` until OPE-2650. |
+| `egress.denialLog` | Path to the proxy's **denial log** on the shared `oe-egress-log` volume (`"/var/log/oe-egress/denied.log"`). The app tails it and turns each denied host into an aggregated `egress.denied` audit row, which is what lets `permission_fit_report`'s widening loop see this plane at all (OPE-314). **Empty ⇒ the poller does not run.** Read-only on the app side — nothing here writes to the volume. It was `OE_EGRESS_DENIAL_LOG` until OPE-2650. |
+
 | Var | Where | Meaning |
 |---|---|---|
-| `OE_EGRESS_PROXY_URL` | app | control endpoint the app POSTs policy to (`http://oe-egress-proxy:8080`) |
 | `HTTP_PROXY`/`HTTPS_PROXY` | app | forward proxy (`http://oe-egress-proxy:3128`) |
 | `NODE_USE_ENV_PROXY=1` | app | **Node 24**: makes the built-in `fetch` honor `*_PROXY` on its **global** dispatcher (model/Slack calls route via the proxy). ⚠️ It has **no effect on a fetch that passes an explicit `dispatcher`** — an explicit one overrides the global outright. OE's own guarded host-side fetches do pass one (they pin the connection), so they read `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` **themselves** and dispatch through the proxy — see "Host-side fetches" below |
 | `OE_EGRESS_MITM` | proxy | `1` = Tier B (MITM); default `0` = Tier A |
-| `OE_EGRESS_PROXY_TOKEN` | both | **REQUIRED** shared secret gating `POST/DELETE /policy`. The app also presents it as `Proxy-Authorization` on its own model call, which is how the proxy tells the app from the session (see "Two principals"). Unset/empty ⇒ compose refuses to start the stack and the control service exits 1. Generate with `openssl rand -hex 32` |
-| `OE_EGRESS_CONTROL_PORT` | proxy | control-service port (default `8080`); the app's `OE_EGRESS_PROXY_URL` and the Squid helper must agree with it |
+| `OE_EGRESS_PROXY_TOKEN` | both | **REQUIRED** shared secret gating `POST/DELETE /policy`. The proxy reads this env var. The app reads the operator secret of the same name, and falls back to this env var when the db credential store holds no value. The app also presents it as `Proxy-Authorization` on its own model call, which is how the proxy tells the app from the session (see "Two principals"). Unset/empty ⇒ compose refuses to start the stack and the control service exits 1. Generate with `openssl rand -hex 32` |
+| `OE_EGRESS_CONTROL_PORT` | proxy | control-service port (default `8080`); the app's `egress.proxyUrl` and the Squid helper must agree with it |
 | `OE_EGRESS_CONTROL_HOST` | proxy | control-service bind address (default `0.0.0.0` — the app pushes policy cross-container, so it cannot be loopback-only) |
 | `OE_EGRESS_CONTROL_HOST_INTERNAL` | proxy | host the **in-container Squid helper** calls for `/acl` (default `127.0.0.1`). ⚠️ **Leave it loopback.** `/acl` returns the Tier B credential-injection headers and is refused for any non-loopback peer (403), so pointing this at a non-loopback address makes every ACL callout fail — which fails **closed**: all egress is denied and the proxy blacks out |
-| `OE_EGRESS_DENIAL_LOG` | app | Path to the proxy's **denial log** on the shared `oe-egress-log` volume (`/var/log/oe-egress/denied.log`). The app tails it and turns each denied host into an aggregated `egress.denied` audit row, which is what lets `permission_fit_report`'s widening loop see this plane at all (OPE-314). **Unset ⇒ the poller does not run.** Read-only on the app side — nothing here writes to the volume |
 | `AI_GATEWAY_API_KEY`, `SLACK_*` | app | operator-supplied creds |
 
 ### Host-side fetches (not the sandbox) — what routes through the proxy, and what does not
@@ -171,7 +185,7 @@ allow row records which held (`antiRebind: "ip-pin"` vs `"proxy-acl"`).
 
 **The unenforced-egress escape hatch is NOT needed** here — the proxy applies the compiled policy
 natively, so the session-start hook records `enforced:true` without it. You need the hatch only to
-run off-Vercel *without* a proxy (`OE_EGRESS_PROXY_URL` unset), and it is the `egress.allowUnenforced`
+run off-Vercel *without* a proxy (`egress.proxyUrl` empty), and it is the `egress.allowUnenforced`
 setting in `agent/settings/settings.ts`, declared by pull request. No environment variable reaches it.
 
 ### Tier B (MITM) extra steps
@@ -281,7 +295,7 @@ and the attempt is never observed — that half of the OPE-308 finding is unchan
    `{ host, count, policyFingerprint, windowMs }` and nothing else. The fingerprint matches the
    `egress.policy` row for the generation in force.
 3. Repeat the deny several times inside one interval → **one** row with `count: N`, not N rows.
-4. Kill the volume (or unset `OE_EGRESS_DENIAL_LOG`) → the app logs the "not readable" note
+4. Kill the volume (or empty `egress.denialLog`) → the app logs the "not readable" note
    **once** and keeps serving turns. The plane going dark must never be an outage.
 
 ## Unit-proven vs live-pending — summary

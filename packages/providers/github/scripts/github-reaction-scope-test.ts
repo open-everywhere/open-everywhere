@@ -1,3 +1,5 @@
+// proves: github.reaction_claim_unreadable, github.reaction_poll_budget
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +9,7 @@ const dir = join(tmpdir(), `open-everywhere-github-scope-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.OE_TELEMETRY = "off";
+process.env.DO_NOT_TRACK = "1";
 
 const { deploymentOrg, getOperationalStore, markThreadEngaged, readAudit, registerOperationalStore, resetOperationalStore } = await import(
   "@open-everywhere/core/agent/adapter-api.js"

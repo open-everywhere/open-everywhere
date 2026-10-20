@@ -16,6 +16,9 @@ export interface SovereigntySettings {
   };
   readonly auditExport: { readonly targets: readonly { readonly name: string; readonly format: string; readonly url: string }[] };
   readonly egress: { readonly enforce: boolean; readonly allowUnenforced: boolean };
+  readonly memory: { readonly provider: string };
+  readonly observability: { readonly logShip: { readonly url: string } };
+  readonly telemetry: { readonly enabled: boolean; readonly url: string };
   readonly sandbox: { readonly region: string };
 }
 
@@ -187,7 +190,7 @@ export function sovereigntyReport(input: SovereigntyInput): SovereigntyReport {
     op.floor !== "none" ? byHost(host, "the function's disk, which does not survive a cold start", "the server's disk") : op.id === "postgres" ? (db?.region ?? "unknown") : opOther;
   const opOperator = op.floor !== "none" ? byHost(host, VERCEL, YOU) : op.id === "postgres" ? (db?.operator ?? "unknown") : opOther;
 
-  const mem = resolveMemoryProviderId(env);
+  const mem = resolveMemoryProviderId(env, input.settings.memory.provider);
   const memWhere: Readonly<Record<string, [string, string, string]>> = {
     postgres: ["Postgres at DATABASE_URL", db?.region ?? "unknown", db?.operator ?? "unknown"],
     git: ["files under `.open-everywhere-memory` (or OE_MEMORY_DIR) on the server (the `git` floor)", byHost(host, "the function's disk", "the server's disk"), byHost(host, VERCEL, YOU)],
@@ -196,7 +199,7 @@ export function sovereigntyReport(input: SovereigntyInput): SovereigntyReport {
     notion: ["a Notion workspace", "Notion's region for that workspace", "Notion Labs (US)"],
   };
   const [mWhere, mRegion, mWho] = memWhere[mem] ?? [`the "${mem}" memory provider`, "unknown", "unknown"];
-  rows.push({ piece: "memory", where: mWhere, region: mRegion, compellable: mWho, control: "OE_MEMORY_PROVIDER, else DATABASE_URL selects postgres" });
+  rows.push({ piece: "memory", where: mWhere, region: mRegion, compellable: mWho, control: "memory.provider in agent/settings/settings.ts, else DATABASE_URL selects postgres" });
 
   const WORLD = "experimental.workflow.world in agent/agent.ts";
   const custom = input.customWorkflowWorld === true;
@@ -337,23 +340,24 @@ export function sovereigntyReport(input: SovereigntyInput): SovereigntyReport {
     control: "roster.config.ts providers; the messages stay on the platform under your workspace's terms",
   });
 
-  const logShip = env.OE_LOG_SHIP_URL?.trim() ? (urlHost(env.OE_LOG_SHIP_URL) ?? "an OE_LOG_SHIP_URL that does not parse as a URL") : undefined;
+  const shipUrl = input.settings.observability.logShip.url.trim();
+  const logShip = shipUrl ? (urlHost(shipUrl) ?? "an observability.logShip.url that does not parse as a URL") : undefined;
   rows.push({
     piece: "runtime logs",
-    where: `${byHost(host, "Vercel's runtime log store", "your container's log driver")}${logShip !== undefined ? `; shipped to ${logShip} (OE_LOG_SHIP_URL)` : ""}`,
+    where: `${byHost(host, "Vercel's runtime log store", "your container's log driver")}${logShip !== undefined ? `; shipped to ${logShip} (observability.logShip.url)` : ""}`,
     region: byHost(host, "Vercel's log store (no config states its region)", "where your log driver writes"),
     compellable: `${byHost(host, VERCEL, YOU)}${logShip !== undefined ? `; the operator of ${logShip}` : ""}`,
-    control: "OE_LOG_SHIP_URL ships a copy; unset ships nothing",
+    control: "observability.logShip.url ships a copy; empty ships nothing",
   });
 
-  const t = telemetrySwitches(env);
-  const tHost = urlHost(t.url) ?? "an OE_TELEMETRY_OTLP_URL that does not parse as a URL";
+  const t = telemetrySwitches(input.settings.telemetry, env);
+  const tHost = urlHost(t.url) ?? "a telemetry.url that does not parse as a URL";
   rows.push({
     piece: "telemetry",
     where: !t.enabled ? "nowhere: telemetry is OFF" : t.redirected ? `your collector at ${tHost}` : `the project's default collector at ${tHost}`,
     region: !t.enabled ? "none" : t.redirected ? `where ${tHost} runs` : "Vercel (the collector is a Vercel project)",
     compellable: !t.enabled ? "nobody: nothing is sent" : t.redirected ? `the operator of ${tHost}` : `${VERCEL} and Neon (US), which run the default collector for the project's maintainers`,
-    control: "OE_TELEMETRY=off or DO_NOT_TRACK=1 turns it off; OE_TELEMETRY_OTLP_URL redirects it. It never carries content (docs/deploy/telemetry.md)",
+    control: "telemetry.enabled: false or DO_NOT_TRACK=1 turns it off; telemetry.url redirects it. It never carries content (docs/deploy/telemetry.md)",
   });
 
   const eve = input.eveScripts;

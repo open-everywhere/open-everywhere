@@ -48,7 +48,7 @@
       "consequence": "The dev-only `justbash` backend shares the app process's filesystem, so a model holding `bash` reads the deployment's own files and environment. It is supported for development and for nothing else.",
       "routes": {
         "vercel": "Vercel Sandbox — selected automatically on Vercel.",
-        "docker": "NOT MET by the shipped image. The image carries a just-bash template only, so an app built into it declares `sandbox.selfHostBackend: \"justbash\"` in `agent/settings/settings.ts`, and justbash shares the app process's filesystem. The `docker` backend contains the filesystem but does not run in the image (OPE-2407), and its session containers sit outside the egress proxy, so the app refuses to boot on `docker` with `OE_EGRESS_PROXY_URL` set."
+        "docker": "NOT MET by the shipped image. The image carries a just-bash template only, so an app built into it declares `sandbox.selfHostBackend: \"justbash\"` in `agent/settings/settings.ts`, and justbash shares the app process's filesystem. The `docker` backend contains the filesystem but does not run in the image (OPE-2407), and its session containers sit outside the egress proxy, so the app refuses to boot on `docker` with `egress.proxyUrl` set."
       }
     },
     {
@@ -58,11 +58,8 @@
       "consequence": "Unenforced, the agent reaches any host and the credential the policy would have injected at the boundary is not withheld from the sandbox. A session that resolves a host allow-list ABORTS rather than run unfirewalled, unless the deployment declares `egress.allowUnenforced`.",
       "routes": {
         "vercel": "The Vercel Sandbox firewall applies the fine-grained policy natively.",
-        "docker": "The egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only. `OE_EGRESS_PROXY_URL` points the deployment at it; the session policy is pushed on every session. The app's own model call goes out on a separate host plane that names the model gateway, plus any non-gateway transcription route host the app registers for the meeting bot (OPE-2406, OPE-2470), on Tier A and Tier B alike (Tier B splices it, never decrypts it). Credential injection at the firewall needs Tier B (`OE_EGRESS_MITM=1`)."
-      },
-      "env": [
-        "OE_EGRESS_PROXY_URL"
-      ]
+        "docker": "The egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only. `egress.proxyUrl` in `agent/settings/settings.ts` points the deployment at it, and the push presents the operator secret `OE_EGRESS_PROXY_TOKEN`; the session policy is pushed on every session. The app's own model call goes out on a separate host plane that names the model gateway, plus any non-gateway transcription route host the app registers for the meeting bot (OPE-2406, OPE-2470), on Tier A and Tier B alike (Tier B splices it, never decrypts it). Credential injection at the firewall needs Tier B (`OE_EGRESS_MITM=1`)."
+      }
     },
     {
       "id": "model-route",

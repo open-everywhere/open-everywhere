@@ -129,9 +129,9 @@ function namedBacking(id: string): string {
   return (KNOWN_BACKINGS as readonly string[]).includes(id) ? id : "a backing this build does not carry";
 }
 
-function storeStatus(env: NodeJS.ProcessEnv, probed: ProbeAnswer | undefined): RequirementStatus {
+function storeStatus(env: NodeJS.ProcessEnv, memoryProvider: string, probed: ProbeAnswer | undefined): RequirementStatus {
   const op = resolveOperationalSelection(env);
-  const memory = resolveMemoryProviderId(env);
+  const memory = resolveMemoryProviderId(env, memoryProvider);
   const hosted = op.id === "postgres" && op.floor === "none";
   if (!hosted || memory !== "postgres") {
     const floor =
@@ -164,9 +164,9 @@ function sandboxStatus(kind: SandboxBackendKind): RequirementStatus {
   return { id: "sandbox-backend", met: "yes", detail: "docker — a contained, per-session filesystem" };
 }
 
-function egressStatus(env: NodeJS.ProcessEnv, vercelSandbox: boolean, allowUnenforced: boolean): RequirementStatus {
+function egressStatus(proxyUrl: string, vercelSandbox: boolean, allowUnenforced: boolean): RequirementStatus {
   if (vercelSandbox) return { id: "egress-control", met: "yes", detail: "the Vercel Sandbox firewall applies the compiled per-session policy" };
-  if ((env.OE_EGRESS_PROXY_URL ?? "").trim().length > 0) {
+  if (proxyUrl.trim().length > 0) {
     return { id: "egress-control", met: "yes", detail: "the compiled policy is pushed to the egress-proxy sidecar on every session" };
   }
   if (allowUnenforced) {
@@ -216,6 +216,8 @@ export interface StatusInputs {
   readonly version?: StatusVersions;
   readonly host?: string;
   readonly allowUnenforced?: boolean;
+  readonly egressProxyUrl?: string;
+  readonly memoryProvider?: string;
   readonly sandboxBackend?: SandboxBackendKind;
   readonly probes?: Partial<Record<ProbedRequirementId, StatusProbe>>;
   readonly surfaceReporters?: Readonly<Record<string, () => Promise<Partial<SurfaceStatus>>>>;
@@ -256,7 +258,8 @@ export async function deploymentStatus(inputs: StatusInputs = {}): Promise<Deplo
   const reporters = inputs.surfaceReporters ?? SURFACE_REPORTERS;
 
   const op = resolveOperationalSelection(env);
-  const hostedPostgres = op.id === "postgres" && op.floor === "none" && resolveMemoryProviderId(env) === "postgres";
+  const memoryProvider = inputs.memoryProvider ?? "";
+  const hostedPostgres = op.id === "postgres" && op.floor === "none" && resolveMemoryProviderId(env, memoryProvider) === "postgres";
   const [db, model] = await Promise.all([
     hostedPostgres ? runProbe(probes["postgres"]) : Promise.resolve(undefined),
     runProbe(probes["model-route"]),
@@ -265,9 +268,9 @@ export async function deploymentStatus(inputs: StatusInputs = {}): Promise<Deplo
   const requirements: RequirementStatus[] = [
     nodeStatus(inputs.nodeVersion ?? process.versions.node, inputs.nodeRange ?? CONTRACT_NODE_RANGE),
     publicUrlStatus(env),
-    storeStatus(env, db),
+    storeStatus(env, memoryProvider, db),
     sandboxStatus(sandboxBackend),
-    egressStatus(env, sandboxBackend === "vercel", inputs.allowUnenforced ?? false),
+    egressStatus(inputs.egressProxyUrl ?? "", sandboxBackend === "vercel", inputs.allowUnenforced ?? false),
     modelStatus(model),
     secretsStatus(env),
     workflowStorageStatus(onVercelHost),

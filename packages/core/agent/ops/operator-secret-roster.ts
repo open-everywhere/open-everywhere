@@ -9,6 +9,9 @@ const CORE_OPERATOR_SECRET_NAMES = [
   "OE_CONTROL_INJECT_TOKENS",
   "OE_CONTROL_OAUTH_SIGNING_SECRET",
   "OE_ADMIN_STATIC_TOKEN",
+  "OE_EGRESS_PROXY_TOKEN",
+  "OE_LOG_SHIP_TOKEN",
+  "OE_TELEMETRY_OTLP_HEADERS",
 ] as const;
 
 const ROSTER = processRegistryMap<true>("operator-secret-names.v1");

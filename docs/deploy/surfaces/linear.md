@@ -109,9 +109,10 @@ OE mints and caches the access token itself (Step 1.5b) — no `LINEAR_ACCESS_TO
 Optional, but relevant to the silo model:
 
 ```bash
-OE_MEMORY_PROVIDER=git          # memory backend — git | sqlite
 OE_MEMORY_DIR=/abs/path/to/store
 ```
+
+The memory backend (`git` | `sqlite`) is the `memory.provider` setting in `agent/settings/settings.ts`, not an env var.
 
 **Identity binds automatically.** You do **not** set workspace, surface, mode, or visibility by hand. The Linear channel reads the **organization**, **team**, **issue**, and **actor** straight off each inbound Agent Session webhook into the session auth context, and `bindLinear` derives workspace = the organization, surface = the team, mode = `channel`, plus visibility. The `deploymentIdentity.workspace` / `.surface` declaration in `agent/identity/surfaces.ts` is only the `eve dev` (no-surface HTTP) gap-filler — once Linear is wired it is ignored.
 

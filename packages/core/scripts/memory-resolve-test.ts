@@ -16,8 +16,8 @@ import { siloTier } from "../agent/memory/store.js";
 import type { SurfaceBinding, Trust } from "../agent/identity/binding.js";
 import type { SessionMode } from "../agent/access/resolver.js";
 import type { Partition } from "../agent/memory/partition.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
-delete process.env.OE_MEMORY_PROVIDER;
 delete process.env.DATABASE_URL;
 
 let passed = 0;
@@ -349,19 +349,23 @@ throwsWith(() => assertSilosValid([{ name: "empty" } as MemorySilo]), '"empty" h
 }
 
 {
-  const r = (env: NodeJS.ProcessEnv) => resolveMemoryProviderId(env);
+  const r = (env: NodeJS.ProcessEnv, selected?: string) => resolveMemoryProviderId(env, selected);
   ok(r({}) === MEMORY_PROVIDER_FLOOR, "backing: nothing set ⇒ the git floor");
   ok(r({ DATABASE_URL: "postgres://x/y" }) === "postgres", "backing: a bare DATABASE_URL ⇒ postgres, with no selector set");
   ok(r({ DATABASE_URL: "  " }) === MEMORY_PROVIDER_FLOOR, "backing: a blank DATABASE_URL is not a database");
-  ok(r({ OE_MEMORY_PROVIDER: "git", DATABASE_URL: "postgres://x/y" }) === "git", "backing: the selector WINS over the derived default");
-  ok(r({ OE_MEMORY_PROVIDER: "postgres" }) === "postgres", "backing: an explicit postgres selector needs no DATABASE_URL to be the answer");
-  ok(r({ OE_MEMORY_PROVIDER: " postgres " }) === "postgres", "backing: the selector is trimmed");
+  ok(r({ DATABASE_URL: "postgres://x/y" }, "git") === "git", "backing: the selector WINS over the derived default");
+  ok(r({}, "postgres") === "postgres", "backing: an explicit postgres selector needs no DATABASE_URL to be the answer");
+  ok(r({}, " postgres ") === "postgres", "backing: the selector is trimmed");
+  overrideSettingsForTest({ memory: { provider: "sqlite" } });
+  ok(r({ DATABASE_URL: "postgres://x/y" }) === "sqlite", "backing: the registered memory.provider is the default selector");
+  resetSettingsForTest();
+  ok(r({ OE_MEMORY_PROVIDER: "sqlite" }) === MEMORY_PROVIDER_FLOOR, "🔴 backing: a stale OE_MEMORY_PROVIDER in the env is not read (OPE-2650)");
 }
 
 {
-  const prior = { url: process.env.DATABASE_URL, selector: process.env.OE_MEMORY_PROVIDER };
+  const prior = { url: process.env.DATABASE_URL };
   try {
-    delete process.env.OE_MEMORY_PROVIDER;
+    resetSettingsForTest();
     process.env.DATABASE_URL = "postgres://u:p@h/db";
     resetProvider();
     let message = "";
@@ -371,8 +375,8 @@ throwsWith(() => assertSilosValid([{ name: "empty" } as MemorySilo]), '"empty" h
       message = err instanceof Error ? err.message : String(err);
     }
     ok(message.includes("DATABASE_URL"), "derived backing + no client: the throw names DATABASE_URL as the cause");
-    ok(!message.includes("OE_MEMORY_PROVIDER"), "…and NOT a selector the operator never set");
-    process.env.OE_MEMORY_PROVIDER = "postgres";
+    ok(!message.includes("memory.provider"), "…and NOT a selector the operator never set");
+    overrideSettingsForTest({ memory: { provider: "postgres" } });
     resetProvider();
     let explicitMessage = "";
     try {
@@ -380,12 +384,11 @@ throwsWith(() => assertSilosValid([{ name: "empty" } as MemorySilo]), '"empty" h
     } catch (err) {
       explicitMessage = err instanceof Error ? err.message : String(err);
     }
-    ok(explicitMessage.includes('OE_MEMORY_PROVIDER="postgres"'), "an EXPLICIT selector + no client: the throw names the selector");
+    ok(explicitMessage.includes('memory.provider is "postgres"'), "an EXPLICIT selector + no client: the throw names the selector");
   } finally {
     if (prior.url === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = prior.url;
-    if (prior.selector === undefined) delete process.env.OE_MEMORY_PROVIDER;
-    else process.env.OE_MEMORY_PROVIDER = prior.selector;
+    resetSettingsForTest();
     resetProvider();
   }
 }

@@ -1,3 +1,5 @@
+// proves: REPLY-55
+
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
@@ -11,7 +13,7 @@ const dir = join(tmpdir(), `open-everywhere-reaction-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.OE_TELEMETRY = "off";
+process.env.DO_NOT_TRACK = "1";
 
 const {
   classifyEmoji,

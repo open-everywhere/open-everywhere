@@ -8,7 +8,6 @@ const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-ask-watch-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_MEMORY_DIR = join(tmp, "memory");
 delete process.env.DATABASE_URL;
-delete process.env.OE_MEMORY_PROVIDER;
 
 const { overrideSettingsForTest } = await import("../agent/settings/settings.js");
 const { _setDeploymentIdentityForTest } = await import("../agent/identity/deployment-identity.js");

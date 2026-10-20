@@ -15,7 +15,8 @@ carries its own small bill (~$3–5/mo), and POSTs to Vercel, which serverless i
   connected, the token works, and **Message Content Intent** is on (message content is non-empty).
 
   🔴 **PROOF plus log shipping would export conversations, so the content drops out.** The relay
-  ships every console line to `OE_LOG_SHIP_URL` when that variable is set. A PROOF line carries the
+  ships every console line to `OE_LOG_SHIP_URL` when that variable is set. This is the relay's own
+  env var; the app ships its logs through the `observability.logShip` setting. A PROOF line carries the
   message text, so the two together would send raw Discord messages to your log sink, which keeps
   them long after the run. While `OE_LOG_SHIP_URL` is set, the PROOF line therefore reports
   `(content redacted — OE_LOG_SHIP_URL is set)` in place of the text. Everything else in the line

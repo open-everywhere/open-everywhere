@@ -5,6 +5,9 @@ import { ProxyAgent } from "undici";
 import { gatewayHost, gatewayModelBackend } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { hostPlaneFetch } from "@open-everywhere/core/agent/access/host-plane-egress.js";
 import { pushEgressPolicy } from "@open-everywhere/core/agent/access/self-host-egress.js";
+import { registerSettings } from "@open-everywhere/core/agent/settings/settings.js";
+
+registerSettings({ egress: { proxyUrl: process.env.OE_SMOKE_PROXY_URL ?? "" } });
 
 const SESSION_HOST = process.env.OE_SMOKE_SESSION_HOST || "example.com";
 const UNDECLARED_HOST = process.env.OE_SMOKE_UNDECLARED_HOST || "example.org";

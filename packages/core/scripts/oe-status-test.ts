@@ -29,10 +29,15 @@ const HEALTHY_ENV: NodeJS.ProcessEnv = {
   DATABASE_URL: "postgres://oe_runtime:pw@db.example.invalid/neondb",
   OE_CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
   OE_PUBLIC_BASE_URL: "https://oe.example.invalid",
-  OE_EGRESS_PROXY_URL: "http://127.0.0.1:8888",
 };
 
-const BASE = { nodeVersion: "24.21.0", nodeRange: "24.x", version: { app: "1.2.3", core: "0.1.2", eve: "0.54.3" }, host: "self-host" } as const;
+const BASE = {
+  nodeVersion: "24.21.0",
+  nodeRange: "24.x",
+  version: { app: "1.2.3", core: "0.1.2", eve: "0.54.3" },
+  host: "self-host",
+  egressProxyUrl: "http://127.0.0.1:8888",
+} as const;
 
 const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   const row = doc.requirements.find((r) => r.id === id);
@@ -133,14 +138,15 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   ok(req(justbash, "sandbox-backend").met === "no", "sandbox: justbash shares the app filesystem and reads no");
   const staleEnv = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_SANDBOX_BACKEND: "justbash" }, probes: {} });
   ok(req(staleEnv, "sandbox-backend").met === "yes", "sandbox: the retired OE_SANDBOX_BACKEND decides nothing — the default docker reads yes");
-  const vercelSandbox = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_EGRESS_PROXY_URL: "" }, sandboxBackend: "vercel", probes: {} });
+  const vercelSandbox = await deploymentStatus({ ...BASE, egressProxyUrl: "", env: HEALTHY_ENV, sandboxBackend: "vercel", probes: {} });
   ok(req(vercelSandbox, "sandbox-backend").met === "yes" && req(vercelSandbox, "egress-control").met === "yes", "sandbox: the Vercel Sandbox from a non-Vercel host (useVercelSandbox) reads yes, firewall included");
 
-  const noProxy = { ...HEALTHY_ENV, OE_EGRESS_PROXY_URL: "" };
-  const failClosed = await deploymentStatus({ ...BASE, env: noProxy, probes: {} });
+  const failClosed = await deploymentStatus({ ...BASE, egressProxyUrl: "", env: HEALTHY_ENV, probes: {} });
   ok(req(failClosed, "egress-control").met === "no", "egress: no proxy and no declaration reads no");
   ok(req(failClosed, "egress-control").detail.includes("fail-closed"), "egress: says the session aborts rather than run unfirewalled");
-  const declared = await deploymentStatus({ ...BASE, env: noProxy, allowUnenforced: true, probes: {} });
+  const declared = await deploymentStatus({ ...BASE, egressProxyUrl: "", env: HEALTHY_ENV, allowUnenforced: true, probes: {} });
+  const staleProxy = await deploymentStatus({ ...BASE, egressProxyUrl: "", env: { ...HEALTHY_ENV, OE_EGRESS_PROXY_URL: "http://127.0.0.1:8888" }, probes: {} });
+  ok(req(staleProxy, "egress-control").met === "no", "🔴 egress: a stale OE_EGRESS_PROXY_URL is not a proxy (OPE-2650)");
   ok(req(declared, "egress-control").met === "no", "egress: a DECLARED unenforced posture still reads no — it is not enforcement");
 
   const noKey = await deploymentStatus({ ...BASE, env: { ...HEALTHY_ENV, OE_CREDENTIAL_ENCRYPTION_KEY: "" }, probes: {} });
@@ -149,7 +155,7 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   ok(req(shortKey, "secrets").met === "no", "secrets: a key that does not decode to 32 bytes reads no");
   ok(req(shortKey, "secrets").detail.includes("32-byte"), "secrets: says WHY a malformed key is refused");
 
-  const onVercel = await deploymentStatus({ ...BASE, host: "vercel", env: { ...HEALTHY_ENV, OE_EGRESS_PROXY_URL: "" }, probes: {} });
+  const onVercel = await deploymentStatus({ ...BASE, host: "vercel", egressProxyUrl: "", env: HEALTHY_ENV, probes: {} });
   ok(req(onVercel, "sandbox-backend").met === "yes", "vercel: the Vercel Sandbox satisfies the sandbox requirement");
   ok(req(onVercel, "egress-control").met === "yes", "vercel: the platform firewall satisfies egress control");
   ok(req(onVercel, "workflow-storage").met === "yes", "vercel: Vercel Workflow satisfies durable run storage");
@@ -164,7 +170,7 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   const floor = await deploymentStatus({ ...BASE, env: {}, probes: {} });
   ok(req(floor, "postgres").met === "no", "store: no DATABASE_URL reads no");
   ok(req(floor, "postgres").detail.includes("PGlite"), "store: names the embedded floor it fell to");
-  const pointedAway = await deploymentStatus({ ...BASE, env: { DATABASE_URL: "postgres://x/y", OE_MEMORY_PROVIDER: "git" }, probes: {} });
+  const pointedAway = await deploymentStatus({ ...BASE, memoryProvider: "git", env: { DATABASE_URL: "postgres://x/y" }, probes: {} });
   ok(req(pointedAway, "postgres").met === "no", "store: a selector pointed away from postgres still overrides the default, and reads no");
 
   const reachable = await deploymentStatus({
@@ -262,14 +268,17 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
     OE_PUBLIC_BASE_URL: "https://acme-internal.example.invalid",
     AI_GATEWAY_API_KEY: `gw-${secret}`,
     SLACK_BOT_TOKEN: `xoxb-${secret}`,
-    OE_EGRESS_PROXY_URL: `http://proxy-internal.example.invalid:8888/${secret}`,
     VERCEL_PROJECT_PRODUCTION_URL: "acme-oe.vercel.app",
     OE_PLATFORM: `acme-${secret}-cluster`,
-    OE_MEMORY_PROVIDER: `postgres://oe_runtime:${secret}@db-prod.internal/neondb`,
     OE_OPERATIONAL_PROVIDER: `acme-${secret}-store`,
+  };
+  const settingsIn = {
+    memoryProvider: `postgres://oe_runtime:${secret}@db-prod.internal/neondb`,
+    egressProxyUrl: `http://proxy-internal.example.invalid:8888/${secret}`,
   };
   const doc = await deploymentStatus({
     ...BASE,
+    ...settingsIn,
     host: env.OE_PLATFORM,
     env,
     probes: { postgres: async () => ({ met: "yes", detail: "the store answered a read" }) },
@@ -280,6 +289,9 @@ const req = (doc: DeploymentStatus, id: string): RequirementStatus => {
   ok(!wire.includes(secret), "no seeded secret's bytes appear anywhere in the payload");
   for (const [name, value] of Object.entries(env)) {
     ok(!wire.includes(value!), `no env VALUE appears in the payload (${name})`);
+  }
+  for (const [name, value] of Object.entries(settingsIn)) {
+    ok(!wire.includes(value), `no settings VALUE appears in the payload (${name})`);
   }
   ok(!wire.includes("example.invalid"), "no hostname from any configured value appears in the payload");
   ok(!wire.includes("xoxb-"), "no credential prefix appears in the payload");

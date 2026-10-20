@@ -76,13 +76,13 @@ enums, coarse buckets, public model ids and the app version, with a random per-i
 user or session ids, or env values. The full list
 of events is `https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md`.
 
-To turn it off, `OE_TELEMETRY=off` (or `DO_NOT_TRACK=1`) must be set on the DEPLOYMENT: a value in
-`.env.local` reaches only a local run. On the Vercel route, at step 9:
-`printf off | npx vercel env add OE_TELEMETRY production`. On the Docker route, put it in the
-container's environment. Every boot prints a line that says whether telemetry is on.
+To turn it off, declare `telemetry: { enabled: false }` in `agent/settings/settings.ts`, commit it,
+and deploy: the setting ships with the app, on both routes. `DO_NOT_TRACK=1` in the deployment's
+own environment also turns it off. The `OE_TELEMETRY` variable is gone (0.9.0) and does nothing.
+The deployed app prints a line that says whether telemetry is on, before it sends anything.
 
 eve's own CLI telemetry is separate: Open Everywhere sets `EVE_TELEMETRY_DISABLED=1` where it
-starts eve (its npm scripts and `Dockerfile`), and `OE_TELEMETRY` does not change it. For an `eve`
+starts eve (its npm scripts and `Dockerfile`), and `telemetry.enabled` does not change it. For an `eve`
 command run by hand, or an app scaffolded before 0.8.0, read the eve section of the page above.
 
 ## Status, at every step
@@ -195,8 +195,9 @@ settings or the store.
 9. **Deployment env.** `.env.local` never ships, so the deployment reads only what you set ON it.
    The name is `OE_CREDENTIAL_ENCRYPTION_KEY`. The Slack pair is not on this list: step 5 stored it
    in the credential store with `secret_set`. The Neon integration already set `DATABASE_URL` there, and that one value resolves both stores — so
-   there is no `OE_OPERATIONAL_PROVIDER` or `OE_MEMORY_PROVIDER` to push. Add `OE_TELEMETRY` (value
-   `off`) only when the user chose to turn telemetry off (see the telemetry section above).
+   there is no `OE_OPERATIONAL_PROVIDER` to push, and `memory.provider` is a setting in Git. When the
+   user chose to turn telemetry off, commit `telemetry: { enabled: false }` before the deploy (see
+   the telemetry section above); there is no variable to push for it.
    Confirm each command first, and **never let a value reach your own output.**
    - **In a scaffolded app:** `npm run -s env:pipe -- <NAME> | npx vercel env add <NAME> production`.
      Always pipe `env:pipe` straight into `vercel env add`, as written. Never run it bare: your

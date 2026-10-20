@@ -10,7 +10,7 @@ const dir = join(tmpdir(), `open-everywhere-github-reaction-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.OE_TELEMETRY = "off";
+process.env.DO_NOT_TRACK = "1";
 
 const OWNER = "acme";
 const REPO = "widgets";

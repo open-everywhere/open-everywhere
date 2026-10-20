@@ -24,20 +24,22 @@ export function hostPlaneFetch(hosts: readonly string[], transport?: HostPlaneTr
   let pushed: Promise<void> | undefined;
   const ensurePushed = (): Promise<void> => {
     const proxyUrl = egressProxyUrl();
-    if (proxyUrl === undefined) return Promise.reject(new Error(`${TOOL}: OE_EGRESS_PROXY_URL is no longer set`));
-    pushed ??= postPolicy(send as unknown as FetchLike, proxyUrl, egressProxyToken(), { plane: "host", hostPlane: { allow: policy.allow } }).catch((err: unknown) => {
-      pushed = undefined;
-      throw err;
-    });
+    if (proxyUrl === undefined) return Promise.reject(new Error(`${TOOL}: egress.proxyUrl is no longer set`));
+    pushed ??= egressProxyToken()
+      .then((token) => postPolicy(send as unknown as FetchLike, proxyUrl, token, { plane: "host", hostPlane: { allow: policy.allow } }))
+      .catch((err: unknown) => {
+        pushed = undefined;
+        throw err;
+      });
     return pushed;
   };
   const agents = new Map<string, Dispatcher>();
-  const agentFor = (proxyUrl: string): Dispatcher => {
+  const agentFor = async (proxyUrl: string): Promise<Dispatcher> => {
     let agent = agents.get(proxyUrl);
     if (agent === undefined) {
-      const token = egressProxyToken();
+      const token = await egressProxyToken();
       agent = new ProxyAgent(token === undefined ? { uri: proxyUrl } : { uri: proxyUrl, token: `Bearer ${token}` });
-      agents.set(proxyUrl, agent);
+      if (token !== undefined) agents.set(proxyUrl, agent);
     }
     return agent;
   };
@@ -50,9 +52,10 @@ export function hostPlaneFetch(hosts: readonly string[], transport?: HostPlaneTr
     const route = resolveEgressRoute(url, process.env, TOOL);
     try {
       if (route.via === "direct") return await send(input, init);
-      return await send(input, { ...init, dispatcher: agentFor(route.proxyUrl) } as RequestInit);
+      return await send(input, { ...init, dispatcher: await agentFor(route.proxyUrl) } as RequestInit);
     } catch (err) {
       pushed = undefined;
+      agents.clear();
       throw err;
     }
   }) as typeof fetch;

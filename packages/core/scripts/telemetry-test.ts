@@ -26,6 +26,7 @@ import {
   __setLastHeartbeatForTest,
 } from "../agent/observability/telemetry.js";
 import { resetOperationalStore } from "../agent/operational/provider.js";
+import { overrideSettingsForTest, registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
 
 let n = 0;
@@ -37,6 +38,10 @@ const ok = (cond: boolean, label: string) => {
 const TELEMETRY_ENV = ["OE_TELEMETRY", "DO_NOT_TRACK", "OE_TELEMETRY_DEBUG", "OE_TELEMETRY_OTLP_URL", "OE_TELEMETRY_OTLP_HEADERS"];
 function clearTelemetryEnv(): void {
   for (const key of TELEMETRY_ENV) delete process.env[key];
+  resetSettingsForTest();
+}
+function tele(t: { enabled?: boolean; debug?: boolean; url?: string }): void {
+  overrideSettingsForTest({ telemetry: t });
 }
 
 function fakeFetch(status = 200) {
@@ -65,29 +70,35 @@ function throwingFetch(): typeof fetch {
   ok(telemetryStatusLine() === "on (default collector)", "nothing set -> default collector status line");
 
   clearTelemetryEnv();
-  process.env.OE_TELEMETRY_OTLP_URL = "https://example.test/v1/logs";
+  tele({ url: "https://example.test/v1/logs" });
   __resetTelemetryForTest();
   ok(telemetryEnabled(), "URL alone -> still enabled");
   ok(telemetryStatusLine() === "on (custom endpoint)", "URL alone -> custom endpoint status line");
 
   clearTelemetryEnv();
   process.env.DO_NOT_TRACK = "1";
-  process.env.OE_TELEMETRY_OTLP_URL = "https://example.test/v1/logs";
+  tele({ url: "https://example.test/v1/logs" });
   __resetTelemetryForTest();
   ok(!telemetryEnabled(), "DO_NOT_TRACK wins over a configured URL");
 
   clearTelemetryEnv();
-  process.env.OE_TELEMETRY = "off";
+  tele({ enabled: false });
   process.env.DO_NOT_TRACK = "0";
   __resetTelemetryForTest();
-  ok(!telemetryEnabled(), "OE_TELEMETRY=off disables even with DO_NOT_TRACK=0");
+  ok(!telemetryEnabled(), "telemetry.enabled: false disables even with DO_NOT_TRACK=0");
+
+  clearTelemetryEnv();
+  tele({ enabled: false, url: "https://example.test/v1/logs" });
+  __resetTelemetryForTest();
+  ok(!telemetryEnabled(), "telemetry.enabled: false wins over a configured URL (the full precedence order)");
+  ok(telemetryStatusLine() === "off", '"off" status line when disabled');
 
   clearTelemetryEnv();
   process.env.OE_TELEMETRY = "off";
   process.env.OE_TELEMETRY_OTLP_URL = "https://example.test/v1/logs";
   __resetTelemetryForTest();
-  ok(!telemetryEnabled(), "OE_TELEMETRY=off wins over a configured URL (the full precedence order)");
-  ok(telemetryStatusLine() === "off", '"off" status line when disabled');
+  ok(telemetryEnabled(), "🔴 a stale OE_TELEMETRY=off does not disable telemetry (the setting decides)");
+  ok(telemetryStatusLine() === "on (default collector)", "🔴 …and a stale OE_TELEMETRY_OTLP_URL is not a redirect");
 
   clearTelemetryEnv();
   __resetTelemetryForTest();
@@ -95,7 +106,7 @@ function throwingFetch(): typeof fetch {
 
 {
   clearTelemetryEnv();
-  process.env.OE_TELEMETRY_DEBUG = "1";
+  tele({ debug: true });
   const { calls, impl } = fakeFetch();
   __resetTelemetryForTest({ fetchImpl: impl });
   __setInstanceForTest({ id: "instance-debug", ephemeral: false });
@@ -519,6 +530,7 @@ function throwingFetch(): typeof fetch {
   process.env.OE_SQLITE_PATH = tmpPath;
   resetOperationalStore();
   _resetOperationalDbForTest();
+  registerSettings({});
 
   try {
     let { calls, impl } = fakeFetch();
@@ -750,6 +762,103 @@ function throwingFetch(): typeof fetch {
     clearTelemetryEnv();
     __resetTelemetryForTest();
   }
+}
+
+{
+  clearTelemetryEnv();
+  const lines: string[] = [];
+  const realLog = console.log;
+  console.log = ((...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  }) as typeof console.log;
+  const tmpPath = path.join(os.tmpdir(), `oe-telemetry-boot-${process.pid}-${Date.now()}.sqlite3`);
+  process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
+  process.env.OE_SQLITE_PATH = tmpPath;
+  resetOperationalStore();
+  _resetOperationalDbForTest();
+  try {
+    const disclosures = () => lines.filter((l) => l.includes("anonymous usage telemetry is"));
+    const { calls, impl } = fakeFetch();
+
+    resetSettingsForTest();
+    __resetTelemetryForTest({ fetchImpl: impl });
+    await initTelemetry();
+    ok(disclosures().length === 0, "🔴 boot: initTelemetry before the registration prints NO disclosure line (it would print the shipped ON)");
+    emitTelemetry("oe.feature.used", { "oe.feature": "agent_created", "oe.outcome": "ok" });
+    ok(disclosures().length === 0, "boot: an emit before the registration does not start the module either");
+    registerSettings({ telemetry: { enabled: false } });
+    __setInstanceForTest({ id: "boot-off", ephemeral: false });
+    emitTelemetry("oe.feature.used", { "oe.feature": "agent_created", "oe.outcome": "ok" });
+    ok(disclosures().length === 1 && disclosures()[0]!.includes("is OFF (telemetry.enabled / DO_NOT_TRACK)"), "🔴 the first emit after the registration prints the OFF line the deployment declared");
+    await flushTelemetry();
+    ok(calls.length === 0 && __queueLengthForTest() === 0, "…and nothing is queued or sent");
+    emitTelemetry("oe.feature.used", { "oe.feature": "agent_created", "oe.outcome": "ok" });
+    ok(disclosures().length === 1, "…and the line prints once per process, not once per emit");
+
+    lines.length = 0;
+    resetSettingsForTest();
+    __resetTelemetryForTest({ fetchImpl: impl });
+    await initTelemetry();
+    ok(disclosures().length === 0, "boot (on): still nothing before the registration");
+    registerSettings({});
+    maybeHeartbeat();
+    ok(disclosures().length === 1 && disclosures()[0]!.includes("is ON") && disclosures()[0]!.includes("telemetry.enabled: false or DO_NOT_TRACK=1 disables"), "the first heartbeat after the registration prints the ON line, naming the setting");
+
+    lines.length = 0;
+    __resetTelemetryForTest({ fetchImpl: impl });
+    emitTelemetry("oe.feature.used", { "oe.feature": "agent_created", "oe.outcome": "ok" });
+    ok(disclosures().length === 0, "a module that initTelemetry never armed prints nothing (scripts and tests stay quiet)");
+  } finally {
+    console.log = realLog;
+    delete process.env.OE_OPERATIONAL_PROVIDER;
+    delete process.env.OE_SQLITE_PATH;
+    resetOperationalStore();
+    _resetOperationalDbForTest();
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+    }
+    clearTelemetryEnv();
+    __resetTelemetryForTest();
+  }
+}
+
+{
+  clearTelemetryEnv();
+  process.env.OE_TELEMETRY_OTLP_HEADERS = "authorization=Bearer acme-collector-token,x-tenant=acme";
+  const record = () => emitTelemetry("oe.feature.used", { "oe.feature": "agent_created", "oe.outcome": "ok" });
+
+  const toDefault = fakeFetch();
+  __resetTelemetryForTest({ fetchImpl: toDefault.impl });
+  __setInstanceForTest({ id: "instance-headers", ephemeral: false });
+  record();
+  await flushTelemetry();
+  ok(toDefault.calls.length === 1 && toDefault.calls[0]!.url === DEFAULT_TELEMETRY_URL, "default collector: the batch goes to the default URL");
+  ok(toDefault.calls[0]!.headers.authorization === undefined && toDefault.calls[0]!.headers["x-tenant"] === undefined, "🔴 default collector: the operator's collector headers are NEVER sent there");
+
+  tele({ url: "https://otel.acme.example/v1/logs" });
+  const toRedirect = fakeFetch();
+  __resetTelemetryForTest({ fetchImpl: toRedirect.impl });
+  __setInstanceForTest({ id: "instance-headers", ephemeral: false });
+  record();
+  await flushTelemetry();
+  ok(toRedirect.calls.length === 1 && toRedirect.calls[0]!.url === "https://otel.acme.example/v1/logs", "redirect: the batch goes to the operator's collector");
+  ok(toRedirect.calls[0]!.headers.authorization === "Bearer acme-collector-token" && toRedirect.calls[0]!.headers["x-tenant"] === "acme", "redirect: the headers from the operator secret ride the request");
+
+  delete process.env.OE_TELEMETRY_OTLP_HEADERS;
+  const later = fakeFetch();
+  __resetTelemetryForTest({ fetchImpl: later.impl });
+  __setInstanceForTest({ id: "instance-headers", ephemeral: false });
+  record();
+  await flushTelemetry();
+  ok(later.calls.length === 1 && later.calls[0]!.headers.authorization === undefined, "redirect, no secret yet: no auth header");
+  process.env.OE_TELEMETRY_OTLP_HEADERS = "authorization=Bearer later-token";
+  record();
+  await flushTelemetry();
+  ok(later.calls.length === 2 && later.calls[1]!.headers.authorization === "Bearer later-token", "🔴 a secret that appears later reaches the NEXT flush");
+
+  clearTelemetryEnv();
+  __resetTelemetryForTest();
 }
 
 console.log(`✓ ${n} telemetry assertions passed`);

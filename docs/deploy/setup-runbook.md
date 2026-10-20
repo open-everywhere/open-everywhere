@@ -285,8 +285,8 @@ Neither selector below is required on a hosted deploy; each one overrides the de
   (PGlite)** floor (zero-wiring, same dialect as prod); unset **with** a `DATABASE_URL` resolves to
   hosted `postgres`. Name `postgres` to pin it, or `sqlite` for the deprecated legacy floor — which
   boot nags about, and which is now reachable only by naming it.
-- `OE_MEMORY_PROVIDER` — unset with no `DATABASE_URL` is `git` (single-operator dev); unset with a
-  `DATABASE_URL` is `postgres`. Name `sqlite` for real `DELETE` erasure + `org_id` partitioning, or
+- `memory.provider` (a setting in `agent/settings/settings.ts`, was `OE_MEMORY_PROVIDER`) — empty
+  with no `DATABASE_URL` is `git` (single-operator dev); empty with a `DATABASE_URL` is `postgres`. Name `sqlite` for real `DELETE` erasure + `org_id` partitioning, or
   `postgres` to pin the hosted backing.
 
 For Postgres, register the client once at startup and initialise the schema (tables + RLS

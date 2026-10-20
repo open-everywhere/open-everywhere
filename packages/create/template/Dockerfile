@@ -1,11 +1,6 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 
-# eve collects its own CLI usage telemetry, ON by default. Each `eve` command posts the command name,
-# the eve version, the platform, a random installation id and a salted hash of the git remote URL or
-# of the working directory to telemetry.vercel.com. This image turns it OFF:
-# `EVE_TELEMETRY_DISABLED=1` is eve's switch, and both stages set it. Open Everywhere's own telemetry
-# has its own switch, `OE_TELEMETRY` (see README.md § Telemetry).
 ENV EVE_TELEMETRY_DISABLED=1
 
 RUN apk add --no-cache git

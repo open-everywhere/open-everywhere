@@ -70,7 +70,7 @@ export function resolveOperationalSelection(env) {
 A bare `DATABASE_URL` used to resolve to the deprecated `sqlite` floor. A deployment that had
 connected Neon and set no selector therefore ran on a local file while believing it was on
 Postgres. The memory backing follows the same rule in
-`packages/core/agent/memory/backing-selection.ts`: `OE_MEMORY_PROVIDER` wins, else a present
+`packages/core/agent/memory/backing-selection.ts`: the `memory.provider` setting wins, else a present
 `DATABASE_URL` selects `postgres`, else the `git` floor.
 
 The embedded floor is armed at boot by `registerOperationalPgliteLazy()`, called from

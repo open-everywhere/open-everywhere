@@ -8,6 +8,7 @@ PROXY_IMAGE="${OE_SMOKE_PROXY_IMAGE:-open-everywhere-egress:docker-smoke}"
 NAME="oe-docker-smoke-$$"
 PROXY="$NAME-proxy"
 APP="$NAME-app"
+EGRESS_IMAGE="$IMAGE-egress"
 NET_INT="$NAME-int"
 NET_WAN="$NAME-wan"
 BOOT_TIMEOUT=180
@@ -32,7 +33,8 @@ cleanup() {
   set +e
   "$DOCKER" rm -f "$NAME" "$PROXY" "$APP" >/dev/null 2>&1
   "$DOCKER" network rm "$NET_INT" "$NET_WAN" >/dev/null 2>&1
-  if [ "${KEEP_IMAGE:-0}" != "1" ]; then "$DOCKER" rmi -f "$IMAGE" "$PROXY_IMAGE" >/dev/null 2>&1; fi
+  if [ "${KEEP_IMAGE:-0}" != "1" ]; then "$DOCKER" rmi -f "$EGRESS_IMAGE" "$IMAGE" "$PROXY_IMAGE" >/dev/null 2>&1; fi
+  [ -n "${PATCH_CTX:-}" ] && rm -rf "$PATCH_CTX"
 }
 trap cleanup EXIT
 
@@ -60,9 +62,8 @@ fi
 echo "-- LEG 1: booting $NAME on the backend the app declares, no proxy --"
 "$DOCKER" run -d --name "$NAME" \
   -p "${PORT}:3000" \
-  -e OE_MEMORY_PROVIDER=sqlite \
   -e OE_OPERATIONAL_PROVIDER=sqlite \
-  -e OE_TELEMETRY=off \
+  -e DO_NOT_TRACK=1 \
   -e PORT=3000 \
   "$IMAGE" >/dev/null
 wait_for_log "$NAME" "server listening" || true
@@ -106,19 +107,26 @@ TOKEN=$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toS
 "$DOCKER" network connect "$NET_WAN" "$PROXY"
 wait_for_log "$PROXY" "Accepting HTTP Socket connections" || true
 
+PATCH_CTX="$(mktemp -d)"
+cp "$ROOT/scripts/docker-smoke-settings-patch.mjs" "$PATCH_CTX/"
+printf 'FROM %s\nCOPY docker-smoke-settings-patch.mjs /tmp/\nRUN node /tmp/docker-smoke-settings-patch.mjs agent/settings/settings.ts "http://%s:8080" && npm run build\n' \
+  "$IMAGE" "$PROXY" > "$PATCH_CTX/Dockerfile"
+echo "-- building $EGRESS_IMAGE ($IMAGE with egress.proxyUrl = http://$PROXY:8080) --"
+"$DOCKER" build -t "$EGRESS_IMAGE" "$PATCH_CTX"
+
 APP_ENV=(
-  -e OE_MEMORY_PROVIDER=sqlite -e OE_OPERATIONAL_PROVIDER=sqlite -e OE_TELEMETRY=off -e PORT=3000
+  -e OE_OPERATIONAL_PROVIDER=sqlite -e DO_NOT_TRACK=1 -e PORT=3000
   -e NODE_USE_ENV_PROXY=1
   -e HTTP_PROXY="http://$PROXY:3128" -e HTTPS_PROXY="http://$PROXY:3128"
   -e NO_PROXY="$PROXY,localhost,127.0.0.1"
-  -e OE_EGRESS_PROXY_URL="http://$PROXY:8080" -e OE_EGRESS_PROXY_TOKEN="$TOKEN"
+  -e OE_EGRESS_PROXY_TOKEN="$TOKEN" -e OE_SMOKE_PROXY_URL="http://$PROXY:8080"
 )
 [ -n "${AI_GATEWAY_API_KEY:-}" ] && APP_ENV+=(-e AI_GATEWAY_API_KEY)
 for k in OE_SMOKE_MODEL OE_SMOKE_SESSION_HOST OE_SMOKE_UNDECLARED_HOST OE_SMOKE_CREDENTIAL_UNDECLARED_HOST; do
   [ -n "${!k:-}" ] && APP_ENV+=(-e "$k")
 done
 
-"$DOCKER" run -d --name "$APP" --network "$NET_INT" "${APP_ENV[@]}" "$IMAGE" >/dev/null
+"$DOCKER" run -d --name "$APP" --network "$NET_INT" "${APP_ENV[@]}" "$EGRESS_IMAGE" >/dev/null
 wait_for_log "$APP" "server listening" || true
 app_logs=$("$DOCKER" logs "$APP" 2>&1 || true)
 
@@ -127,6 +135,7 @@ if [ "$("$DOCKER" inspect -f '{{.State.Running}}' "$APP" 2>/dev/null)" = "true" 
   "$DOCKER" cp "$ROOT/scripts/docker-smoke-egress-probe.mjs" "$APP:/app/scripts/docker-smoke-egress-probe.mjs"
   probe=$("$DOCKER" exec -w /app "$APP" node /app/scripts/docker-smoke-egress-probe.mjs 2>&1 | grep -E '^(PROBE|NOTE) ' || true)
 fi
+
 
 proxy_logs=$("$DOCKER" logs "$PROXY" 2>&1 || true)
 denied=$("$DOCKER" exec "$PROXY" cat /var/log/oe-egress/denied.log 2>/dev/null || true)

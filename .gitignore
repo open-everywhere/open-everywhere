@@ -26,7 +26,7 @@ node_modules/
 *.pglite.lock
 
 # SQLite DB + WAL sidecars — backs BOTH the memory provider
-# (OE_MEMORY_PROVIDER=sqlite) AND the operational stores (spend / routines /
+# (`memory.provider: "sqlite"`) AND the operational stores (spend / routines /
 # audit; sqlite is the default). The default file lives under .open-everywhere-memory/;
 # this backstops a repointed OE_SQLITE_PATH so a local DB never gets committed.
 *.sqlite3

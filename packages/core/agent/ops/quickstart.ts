@@ -35,9 +35,9 @@ export interface PreflightOptions {
   readonly adminOidc?: AdminOidcSetting;
 }
 
-const DEPLOY_STORE_ENV = {
+const DEPLOY_STORE_SELECTORS = {
   OE_OPERATIONAL_PROVIDER: "postgres",
-  OE_MEMORY_PROVIDER: "postgres",
+  "memory.provider": "postgres",
 } as const;
 
 function operationalStoreDetail(env: NodeJS.ProcessEnv): string {
@@ -96,13 +96,14 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
         : `Vercel → AI Gateway → API Keys, then the person runs \`${secretSetCommand(GATEWAY_KEY_NAME)}\` in their own terminal, value on stdin (for a local run only, \`${envSetCommand(GATEWAY_KEY_NAME)}\` also works: the env var is the operator secret's on-ramp)`,
   });
 
-  const memProvider = resolveMemoryProviderId(env);
+  const memorySelector = getSettings().memory.provider;
+  const memProvider = resolveMemoryProviderId(env, memorySelector);
   const op = resolveOperationalSelection(env);
   const derivedFrom = (explicit: string | undefined) => !set(explicit?.trim()) && set(env.DATABASE_URL);
   checks.push({
     name: "memory provider",
     status: "info",
-    detail: derivedFrom(env.OE_MEMORY_PROVIDER) ? `${memProvider} — derived from DATABASE_URL` : memProvider,
+    detail: derivedFrom(memorySelector) ? `${memProvider} — derived from DATABASE_URL` : memProvider,
   });
   checks.push({ name: "operational provider", status: "info", detail: operationalStoreDetail(env) });
 
@@ -110,20 +111,20 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
   if (deploying) {
     const consequence: Record<string, string> = {
       OE_OPERATIONAL_PROVIDER: "core throws at the first operational-store use (audit, spend, approvals)",
-      OE_MEMORY_PROVIDER: "core throws at the first DM or personal memory call",
+      "memory.provider": "core throws at the first DM or personal memory call",
     };
-    const resolved: readonly [keyof typeof DEPLOY_STORE_ENV, boolean, string, string | undefined][] = [
+    const resolved: readonly [keyof typeof DEPLOY_STORE_SELECTORS, boolean, string, string | undefined][] = [
       ["OE_OPERATIONAL_PROVIDER", op.id === "postgres" && op.floor === "none", operationalStoreDetail(env), env.OE_OPERATIONAL_PROVIDER],
-      ["OE_MEMORY_PROVIDER", memProvider === "postgres", memProvider, env.OE_MEMORY_PROVIDER],
+      ["memory.provider", memProvider === "postgres", memProvider, memorySelector],
     ];
     for (const [name, ok, detail, explicit] of resolved) {
       checks.push({
-        name: `deploy store: ${name.replace("OE_", "").replace("_PROVIDER", "").toLowerCase()} = postgres`,
+        name: `deploy store: ${name === "memory.provider" ? "memory" : "operational"} = postgres`,
         status: ok ? "ok" : "missing",
         detail: ok
           ? derivedFrom(explicit)
             ? "postgres — derived from DATABASE_URL (no selector needed)"
-            : `postgres — set explicitly as ${name}`
+            : `postgres — set explicitly as ${name === "memory.provider" ? "memory.provider in agent/settings/settings.ts" : name}`
           : `resolves to ${detail} — ${consequence[name]}`,
         fix: ok
           ? undefined
@@ -197,7 +198,6 @@ export function preflight(env: NodeJS.ProcessEnv = process.env, options: Preflig
 
 export const ENV_CONFIG_NAMES = [
   "OE_OPERATIONAL_PROVIDER",
-  "OE_MEMORY_PROVIDER",
   "OE_PUBLIC_BASE_URL",
 ] as const;
 

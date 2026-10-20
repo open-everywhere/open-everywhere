@@ -15,6 +15,7 @@ import { statusItemLine, statusSeed, upsertStatusItem } from "../agent/status/st
 import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
 
 let n = 0;
@@ -69,7 +70,7 @@ const statusProvider: MemoryProvider = {
   async deleteTier() {},
 };
 registerProvider(statusProvider);
-process.env.OE_MEMORY_PROVIDER = statusProvider.id;
+overrideSettingsForTest({ memory: { provider: statusProvider.id } });
 resetProvider();
 
 class FakeSandbox {

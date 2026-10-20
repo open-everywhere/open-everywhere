@@ -81,9 +81,6 @@ allow("per-run-seam", [
 ]);
 
 allow("pending-migration", [
-  ["OE_EGRESS_PROXY_TOKEN", "OPE-2650: → operator secret (the app side; the proxy container keeps its own env). The bearer token for the self-host egress proxy."],
-  ["OE_LOG_SHIP_TOKEN", "OPE-2650: → operator secret. The bearer token for the log endpoint."],
-  ["OE_TELEMETRY_OTLP_HEADERS", "OPE-2650: → operator secret. OTLP request headers — the value carries the collector's auth token."],
 
   ["DISCORD_APPLICATION_ID", "OPE-2650: → setting `discord.applicationId`. Which Discord application this deployment is; public."],
   ["DISCORD_PUBLIC_KEY", "OPE-2650: → setting `discord.publicKey`. Discord's interaction PUBLIC key, which the webhook signature check verifies against — public by design, so Git can hold it."],
@@ -108,19 +105,6 @@ allow("pending-migration", [
 
   ["OE_AWS_REGION", "OPE-2650: → setting `aws.region`. The operator's default AWS region."],
   ["OE_AWS_SSO_REGION", "OPE-2650: → setting `aws.ssoRegion`. The Identity Center region."],
-  ["OE_EGRESS_PROXY_URL", "OPE-2650: → setting `egress.proxyUrl`. The self-host egress proxy origin."],
-  ["OE_EGRESS_SOURCE_IP", "OPE-2650: → setting `egress.sourceIp`. The fixed source IP this deployment egresses from."],
-  ["OE_EGRESS_DENIAL_LOG", "OPE-2650: → setting `egress.denialLog`. Where the self-host egress proxy writes its denial log."],
-  ["OE_MEMORY_PROVIDER", "OPE-2650: → setting `memory.provider`. Which memory backing to register at boot."],
-  ["OE_MEMORY_GIT_BRANCH", "OPE-2650: → setting `memory.gitBranch`. Which branch the git memory backing commits to."],
-  ["OE_NOTION_SECRET_BROKER", "OPE-2650: → setting `memory.notionTokenSecret` (the Notion memory token becomes a named operator secret, so the broker indirection goes)."],
-  ["OE_NOTION_SECRET_REF", "OPE-2650: → setting `memory.notionTokenSecret`, the name of the operator secret that holds the Notion memory token."],
-  ["OE_LOG_SHIP_URL", "OPE-2650: → setting `observability.logShip.url`. The log endpoint this deployment ships to."],
-  ["OE_LOG_SHIP_TOKEN_HEADER", "OPE-2650: → setting `observability.logShip.tokenHeader`. Which header that endpoint expects the token in."],
-  ["OE_LOG_SERVICE", "OPE-2650: → setting `observability.logShip.service`. The service name this deployment ships its logs under."],
-  ["OE_TELEMETRY", "OPE-1153, OPE-2650: → setting `telemetry.enabled`. Turns anonymous usage telemetry on or off (DO_NOT_TRACK stays the ambient opt-out)."],
-  ["OE_TELEMETRY_DEBUG", "OPE-1153, OPE-2650: → setting `telemetry.debug`. Turns telemetry debug output on or off."],
-  ["OE_TELEMETRY_OTLP_URL", "OPE-2650: → setting `telemetry.url`. The telemetry collector endpoint (a full redirect)."],
 ]);
 
 export const ENV_READ_ALLOWLIST: EnvAllowlist = ALLOWLIST;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { decideStoreWiring, registerDefaultAdapters, type StoreWiring } from "../agent/register-defaults.js";
 import { pinSuiteStore } from "../../core/scripts/_suite-store.js";
-import { registeredBootNoticeNames } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, registeredBootNoticeNames, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 
 pinSuiteStore("default-adapters");
 
@@ -58,10 +58,17 @@ eq(
   { operational: { id: "sqlite", floor: "sqlite" }, neon: true, pgliteFloor: false },
   "sqlite operational store with DATABASE_URL: memory still selects postgres, so Neon registers",
 );
+overrideSettingsForTest({ memory: { provider: "sqlite" } });
 eq(
-  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", OE_MEMORY_PROVIDER: "sqlite", DATABASE_URL: URL }, false, false),
+  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", DATABASE_URL: URL }, false, false),
   { operational: { id: "sqlite", floor: "sqlite" }, neon: false, pgliteFloor: false },
   "both stores named away from postgres: Neon stays shut even with DATABASE_URL",
+);
+resetSettingsForTest();
+eq(
+  decideStoreWiring({ OE_OPERATIONAL_PROVIDER: "sqlite", OE_MEMORY_PROVIDER: "sqlite", DATABASE_URL: URL }, false, false),
+  { operational: { id: "sqlite", floor: "sqlite" }, neon: true, pgliteFloor: false },
+  "🔴 a stale OE_MEMORY_PROVIDER is not read: memory still selects postgres, so Neon registers (OPE-2650)",
 );
 
 {

@@ -427,7 +427,7 @@ The recap uses the deployment's `utility` model route.
 - It needs the **docker** sandbox backend (`sandbox.selfHostBackend: "docker"`) and the daemon socket. The
   shipped Dockerfile runs the **just-bash** backend, which cannot run a box: on it, `meeting_join` refuses
   with that reason.
-- The docker backend refuses to boot behind the egress proxy (`OE_EGRESS_PROXY_URL`), because its
+- The docker backend refuses to boot behind the egress proxy (`egress.proxyUrl`), because its
   containers sit outside the proxy. A meeting box is the same: it reaches the meeting platform directly, on
   the daemon's default network.
 - The bot must reach the deployment's public URL (`OE_PUBLIC_BASE_URL`) from that network.

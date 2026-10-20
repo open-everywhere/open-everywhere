@@ -217,7 +217,15 @@ export async function gatherSovereigntyInput(appRoot: string, env: NodeJS.Proces
   const s = getSettings();
   return {
     env,
-    settings: { models: s.models, auditExport: s.auditExport, egress: s.egress, sandbox: { region: s.sandbox.region } },
+    settings: {
+      models: s.models,
+      auditExport: s.auditExport,
+      egress: s.egress,
+      sandbox: { region: s.sandbox.region },
+      memory: { provider: s.memory.provider },
+      observability: { logShip: { url: s.observability.logShip.url } },
+      telemetry: { enabled: s.telemetry.enabled, url: s.telemetry.url },
+    },
     ...(host !== undefined ? { host } : {}),
     vercelLinked: existsSync(join(appRoot, ".vercel", "project.json")),
     vercelRegions: vercelRegions(appRoot),

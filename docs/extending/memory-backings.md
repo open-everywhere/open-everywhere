@@ -178,8 +178,8 @@ app-principal by construction, minted per repo.
    `registerConnectorMemory(...)` beside it — that is what makes the prefetch invariant apply,
    and what puts the backing in the roster's contribution view. If it is a first-party store
    the deployment itself owns, skip it: there is no grant to check.
-4. Reference it by `id` from a silo's `provider`, or select the singleton with
-   `OE_MEMORY_PROVIDER`.
+4. Reference it by `id` from a silo's `provider`, or select the singleton with the
+   `memory.provider` setting.
 
 Connector-owned backings live in their **provider package** (`packages/providers/<name>/`); the
 Neon client lives in `@open-everywhere/adapters`. Either way core stays vendor-SDK-free and

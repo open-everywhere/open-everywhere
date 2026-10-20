@@ -20,7 +20,7 @@ function throwsWith(fn: () => unknown, needle: string, label: string): void {
   ok(msg.includes(needle), `${label} (got: ${msg || "no throw"})`);
 }
 
-for (const k of ["DATABASE_URL", "OE_MEMORY_PROVIDER", "OE_OPERATIONAL_PROVIDER", "OE_ALLOW_EPHEMERAL_MEMORY", "OE_ALLOW_EPHEMERAL_OPERATIONAL", "VERCEL"]) {
+for (const k of ["DATABASE_URL", "OE_OPERATIONAL_PROVIDER", "OE_ALLOW_EPHEMERAL_MEMORY", "OE_ALLOW_EPHEMERAL_OPERATIONAL", "VERCEL"]) {
   delete process.env[k];
 }
 resetSettingsForTest();
@@ -66,3 +66,5 @@ resetSettingsForTest();
 }
 
 console.log(`✓ store-floor-settings: ${n} assertions passed (both Vercel floors refuse by default, open only through their storage.* setting, and ignore the retired env vars)`);
+
+// proves: SET-084, SET-085

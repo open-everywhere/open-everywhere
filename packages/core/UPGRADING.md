@@ -97,7 +97,7 @@ npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 
 ## 0.9.0 — not released yet
 
-🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the sets landed so far: the access-request wiring, the deprecated `OE_AI_GATEWAY_URL`, the surface credentials (which become operator secrets), and the control plane with the self-minted keys. OPE-2649 moves the Okta directory configuration out of the environment: the selector and the org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and the API token is the operator secret `OKTA_API_TOKEN`. A deployment that never armed the Okta directory adapter needs no step for it.
+🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the sets landed so far: the access-request wiring, the deprecated `OE_AI_GATEWAY_URL`, the surface credentials (which become operator secrets), the control plane with the self-minted keys, and the egress, memory, log-shipping and telemetry wiring. OPE-2649 moves the Okta directory configuration out of the environment: the selector and the org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and the API token is the operator secret `OKTA_API_TOKEN`. A deployment that never armed the Okta directory adapter needs no step for it.
 
 eve peer: `0.71.0`
 
@@ -115,6 +115,12 @@ eve peer: `0.71.0`
 - `OE_GITHUB_APP_PRIVATE_KEY` is gone (OPE-2650): the source-control plane and the GitHub conversation surface read ONE private key, the operator secret `GITHUB_APP_PRIVATE_KEY`. A deployment that holds the key only as `OE_GITHUB_APP_PRIVATE_KEY` stops minting GitHub tokens at this deploy. The plane now counts as configured on `OE_GITHUB_APP_ID` and `OE_GITHUB_APP_SLUG` alone, and a mint with no stored key refuses with `oe secret set GITHUB_APP_PRIVATE_KEY` in its message.
 - 🔴 The source-control plane and the GitHub conversation surface must be ONE GitHub App since 0.9.0 (OPE-2650). They share one private key, `GITHUB_APP_PRIVATE_KEY`, and one key cannot sign for two app ids. A deployment whose `OE_GITHUB_APP_ID` and `GITHUB_APP_ID` name DIFFERENT Apps loses one plane at this deploy: whichever App the stored key does not belong to gets a 401 on every token mint. Consolidate to one App (point both ids at it) BEFORE you deploy 0.9.0.
 - API (OPE-2650): the credential reads became async. In core: `githubTokenSet`, `personalTokenValue`, `githubCredentialConfigured`, `personalTokenFor` and `appMissingError` (`scm/credential.ts`) return promises; `GitHubAppConfig.privateKeyPem` may be a resolver function; `AgentSetupFacts.github.tokenSet` is a `SetupVerdict` (the seat block says `"unknown"`). In the bundles: `staticLinearToken`, `linearCredentialsConfigured`, `linearEventsReach` and `githubEventsReach` return promises; `linearWebhookSecretForOrg` takes the primary secret as its second argument; `relayGate` takes the relay secret as a required third argument; `slackSurfaceStatus` takes `SlackCredentialDeps`; `slackSecretEnvPresent` is `slackOperatorSecretPresent` (async); a resolved Slack secret's `source` is `"operator"` or `"store"`. The ops-MCP light door no longer registers the Discord credential probe: `registerDiscordProvider` does.
+- The self-host egress wiring reads no environment variable (OPE-2650). `OE_EGRESS_PROXY_URL`, `OE_EGRESS_SOURCE_IP` and `OE_EGRESS_DENIAL_LOG` are the settings `egress.proxyUrl`, `egress.sourceIp` and `egress.denialLog`. A docker-compose deployment that does not declare `egress.proxyUrl` runs with no proxy: the boot log says egress is NOT enforceable, and every session that needs a host allow-list aborts (fail-closed). Without `egress.denialLog`, proxy denials reach no audit row. `selfHostEgressBootLog` takes the proxy URL, not an env, `egressProxyToken` is async, and `startEgressDenialPoller` takes `{ path }`, not `{ env }`.
+- The memory backing reads no environment variable (OPE-2650). `OE_MEMORY_PROVIDER` and `OE_MEMORY_GIT_BRANCH` are the settings `memory.provider` and `memory.gitBranch`. 🔴 The repository's `docker-compose.yml` set `OE_MEMORY_PROVIDER=sqlite` beside a Postgres `DATABASE_URL`: with no `memory.provider`, that stack's memory now resolves to Postgres, and the memory in the old sqlite file is NOT copied. `resolveMemoryProviderId` takes the selector as a second argument (default: the registered setting).
+- The org-default Notion memory token resolves from the db credential store only (OPE-2650). `OE_NOTION_SECRET_REF` is the setting `memory.notionTokenSecret` (shipped `db:notion:memory`), and `OE_NOTION_SECRET_BROKER` is gone: the broker is always `db`, never `env`. A deployment that pointed the pair at an env var loses Notion memory until the token is stored. `registerNotionMemory` takes one optional argument, the store name.
+- Log shipping reads no environment variable (OPE-2650). `OE_LOG_SHIP_URL`, `OE_LOG_SHIP_TOKEN_HEADER` and `OE_LOG_SERVICE` are the setting `observability.logShip` (`{ url, tokenHeader?, service? }`). A deployment that does not declare it ships nothing. The token is the operator secret `OE_LOG_SHIP_TOKEN`.
+- Telemetry reads no switch from the environment (OPE-2650). `OE_TELEMETRY`, `OE_TELEMETRY_DEBUG` and `OE_TELEMETRY_OTLP_URL` are the settings `telemetry.enabled`, `telemetry.debug` and `telemetry.url`. 🔴 A deployment that set `OE_TELEMETRY=off` and declares nothing SENDS telemetry after this deploy. `DO_NOT_TRACK=1` still turns it off. The disclosure line now prints at the first emit after the app registers its settings, not at the instrumentation `setup`. The collector headers are the operator secret `OE_TELEMETRY_OTLP_HEADERS`, and they go to a `telemetry.url` collector only, never to the default collector. `telemetrySwitches` takes the `telemetry` settings first and the env second.
+- `OE_EGRESS_PROXY_TOKEN`, `OE_LOG_SHIP_TOKEN` and `OE_TELEMETRY_OTLP_HEADERS` are operator secrets for the app (OPE-2650). The app reads the db credential store first, then an environment variable of the same name as the migration on-ramp, with a one-time notice. The egress proxy container still reads `OE_EGRESS_PROXY_TOKEN` from its own environment.
 
 **Config migrations**
 
@@ -127,6 +133,11 @@ eve peer: `0.71.0`
 - If the deployment sets `OE_INTAKE_PAGE_SIGNING_KEY`, `OE_SPAWN_DISPATCH_SECRET` or `OE_TRANSCRIPT_RELAY_SECRET`, unset it. There is nothing to copy: each mints itself in the encrypted vault (OPE-2650). (apply by hand)
 - Store each surface credential this deployment sets as an env var with `oe secret set <NAME>` (value on stdin), or `oe secret set --from-file <file>` for a batch, or the ops MCP `secret_set` tool. The names are the fifteen in the breaking line above. After the next deploy, delete the env vars from the env store. Until you do, the env var is the on-ramp and nothing breaks (OPE-2650). (apply by hand)
 - If the deployment sets `OE_GITHUB_APP_PRIVATE_KEY`, store the same PEM with `oe secret set GITHUB_APP_PRIVATE_KEY` BEFORE the deploy, then delete `OE_GITHUB_APP_PRIVATE_KEY` (OPE-2650). (apply by hand)
+- If the deployment sets `OE_EGRESS_PROXY_URL`, `OE_EGRESS_SOURCE_IP` or `OE_EGRESS_DENIAL_LOG`, copy each value into `egress: { proxyUrl, sourceIp, denialLog }` in `agent/settings/settings.ts`, deploy, then unset the variables. The compose stack's values are `proxyUrl: "http://oe-egress-proxy:8080"` and `denialLog: "/var/log/oe-egress/denied.log"` (OPE-2650). (apply by hand)
+- If the deployment sets `OE_MEMORY_PROVIDER` or `OE_MEMORY_GIT_BRANCH`, copy each value into `memory: { provider, gitBranch }` in `agent/settings/settings.ts`. A docker-compose stack that kept memory in sqlite declares `memory: { provider: "sqlite" }` (OPE-2650). (apply by hand)
+- If the deployment sets `OE_NOTION_SECRET_REF` (with `OE_NOTION_SECRET_BROKER` at its default `db`), copy the ref into `memory: { notionTokenSecret: "<ref>" }`. If the broker was `env`, store the token with `oe secret set db:notion:memory` (value on stdin) instead. Then unset both variables (OPE-2650). (apply by hand)
+- If the deployment sets `OE_LOG_SHIP_URL`, `OE_LOG_SHIP_TOKEN_HEADER` or `OE_LOG_SERVICE`, copy the values into `observability: { logShip: { url, tokenHeader, service } }` in `agent/settings/settings.ts` (OPE-2650). (apply by hand)
+- If the deployment sets `OE_TELEMETRY=off`, declare `telemetry: { enabled: false }` in `agent/settings/settings.ts` in the SAME deploy, or it starts sending. Move `OE_TELEMETRY_DEBUG=1` to `telemetry: { debug: true }` and `OE_TELEMETRY_OTLP_URL` to `telemetry: { url }` (OPE-2650). (apply by hand)
 
 **Environment**
 
@@ -148,6 +159,19 @@ eve peer: `0.71.0`
 - remove `OE_SPAWN_DISPATCH_SECRET`
 - remove `OE_TRANSCRIPT_RELAY_SECRET`
 - remove `OE_GITHUB_APP_PRIVATE_KEY`
+- remove `OE_EGRESS_PROXY_URL`
+- remove `OE_EGRESS_SOURCE_IP`
+- remove `OE_EGRESS_DENIAL_LOG`
+- remove `OE_MEMORY_PROVIDER`
+- remove `OE_MEMORY_GIT_BRANCH`
+- remove `OE_NOTION_SECRET_REF`
+- remove `OE_NOTION_SECRET_BROKER`
+- remove `OE_LOG_SHIP_URL`
+- remove `OE_LOG_SHIP_TOKEN_HEADER`
+- remove `OE_LOG_SERVICE`
+- remove `OE_TELEMETRY`
+- remove `OE_TELEMETRY_DEBUG`
+- remove `OE_TELEMETRY_OTLP_URL`
 
 **Manual steps**
 
@@ -155,6 +179,7 @@ eve peer: `0.71.0`
 - A deployment that armed the Okta directory adapter (OPE-2649): store the Okta API token under its fixed name with `oe secret set OKTA_API_TOKEN` (value on stdin) BEFORE you deploy 0.9.0. The token was the value behind `OE_DIRECTORY_OKTA_TOKEN_REF`. Then delete `OE_DIRECTORY_PROVIDER`, `OE_DIRECTORY_OKTA_ORG_URL`, `OE_DIRECTORY_OKTA_TOKEN_REF` and `OE_DIRECTORY_OKTA_TOKEN_BROKER` from the host. If the old broker was `env`, also delete the environment variable that `OE_DIRECTORY_OKTA_TOKEN_REF` named: the adapter never reads it, and it holds an admin credential in plaintext. If the old ref was a `db` ref and nothing else uses it, delete that row with `oe secret rm <old ref>`.
 - If `OE_GITHUB_APP_ID` and `GITHUB_APP_ID` name two different GitHub Apps, consolidate them to ONE App before you deploy 0.9.0: both planes now sign with the one key `GITHUB_APP_PRIVATE_KEY`.
 - BEFORE you deploy 0.9.0 with a GitHub App, store its private key as the operator secret GITHUB_APP_PRIVATE_KEY (`oe secret set GITHUB_APP_PRIVATE_KEY`): OE_GITHUB_APP_PRIVATE_KEY is no longer read. Then store every other surface credential the deployment holds in env (`oe secret set --from-file` takes a whole env file), deploy, and delete those env vars.
+- Move the three secrets that stay readable from env into the db credential store: `oe secret set OE_EGRESS_PROXY_TOKEN`, `oe secret set OE_LOG_SHIP_TOKEN` and `oe secret set OE_TELEMETRY_OTLP_HEADERS` (value on stdin), for each one this deployment sets. Until then the app reads the env var and prints a one-time notice. On docker-compose the proxy container keeps `OE_EGRESS_PROXY_TOKEN` in `.env` either way (OPE-2650).
 
 ## 0.8.1 — 2026-10-19
 

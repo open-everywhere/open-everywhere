@@ -9,7 +9,8 @@ function ok(cond: boolean, label: string): void {
 }
 
 try {
-  process.env.OE_EGRESS_PROXY_URL = "http://egress-proxy.invalid:9000";
+  const { overrideSettingsForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+  overrideSettingsForTest({ egress: { proxyUrl: "http://egress-proxy.invalid:9000" } });
   for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "OE_AI_GATEWAY_URL", "VERCEL"]) delete process.env[k];
   const pushes: string[][] = [];
   const sends: string[] = [];

@@ -48,7 +48,7 @@ async function refusal(label: string, policy: unknown, ctx: NetworkPolicyContext
   const { ctx, applied } = doubleCtx();
   const message = await refusal("carries:none", ALLOW_LIST, ctx);
   ok(message.includes("justbash"), "carries:none: the refusal NAMES the configured backend — an operator reading it knows which one to change");
-  ok(message.includes("OE_EGRESS_PROXY_URL"), "carries:none: …and names the one way to enforce egress on that backend");
+  ok(message.includes("egress.proxyUrl"), "carries:none: …and names the one way to enforce egress on that backend (the `egress.proxyUrl` setting since OPE-2650)");
   eq(applied.length, 0, "carries:none: nothing was applied");
   const coarse = await refusal("carries:none, deny-all", "deny-all", ctx);
   ok(coarse.includes("justbash"), "carries:none: even `deny-all` refuses — the backend has no method to call, so there is nothing to fall back to");

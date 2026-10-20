@@ -35,6 +35,7 @@ import { registerDeploymentIdentity, deploymentOrg, seg, _resetDeploymentIdentit
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { pinSuiteStore } from "./_suite-store.js";
+import { overrideSettingsForTest } from "../agent/settings/settings.js";
 
 delete process.env.DATABASE_URL;
 
@@ -170,10 +171,10 @@ const ok = (label: string, cond: boolean) => {
   ok("preflight warns that the default backings are process-local", durability !== undefined);
   ok("the durability warning names the consequence, not just the setting", /loses|process-local/.test(durability?.detail ?? ""));
   ok("the durability warning carries a fix", /DATABASE_URL/.test(durability?.fix ?? ""));
-  ok("…and the fix no longer names either store selector", !/OE_MEMORY_PROVIDER|OE_OPERATIONAL_PROVIDER/.test(durability?.fix ?? ""));
+  ok("…and the fix no longer names either store selector", !/memory\.provider|OE_MEMORY_PROVIDER|OE_OPERATIONAL_PROVIDER/.test(durability?.fix ?? ""));
   ok("durability is advice, not a blocker — a purely local run is supported", durability?.status === "info" && defaults.ready === true);
 
-  const durable = preflight({ AI_GATEWAY_API_KEY: "k", OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" });
+  const durable = preflight({ AI_GATEWAY_API_KEY: "k", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" });
   ok("no durability warning once postgres backings are selected", durable.checks.every((c) => c.name !== "state durability"));
 }
 
@@ -729,14 +730,20 @@ const ok = (label: string, cond: boolean) => {
   ok("vercel: an absent credential key blocks", bare.checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
   ok("docker: an absent credential key blocks too", preflight({}, { target: "docker" }).checks.find((c) => c.name.includes(CREDENTIAL_KEY_ENV_NAME))?.status === "missing");
   ok("vercel: the bare env is not ready", bare.ready === false);
-  const pinnedEnv = { OE_OPERATIONAL_PROVIDER: "postgres", OE_MEMORY_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
+  const pinnedEnv = { OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db", [CREDENTIAL_KEY_ENV_NAME]: goodKey };
+  overrideSettingsForTest({ memory: { provider: "postgres" } });
   ok("vercel: the full deploy env is ready with no gateway key (negative control)", preflight(pinnedEnv, { ...pins, target: "vercel" }).ready === true);
   for (const store of ["operational", "memory"]) {
     const line = preflight(pinnedEnv, { ...pins, target: "vercel" }).checks.find((c) => c.name === `deploy store: ${store} = postgres`);
-    ok(`vercel: an explicit ${store} pin reads as set explicitly, not derived`, line?.status === "ok" && /set explicitly as OE_/.test(line.detail));
+    const pinnedAs = store === "memory" ? /set explicitly as memory\.provider/ : /set explicitly as OE_OPERATIONAL_PROVIDER/;
+    ok(`vercel: an explicit ${store} pin reads as set explicitly, not derived`, line?.status === "ok" && pinnedAs.test(line.detail));
   }
   ok("local: the same env without a gateway key is NOT ready (the target is what changed)", preflight(pinnedEnv, pins).ready === false);
-  ok("vercel: a selector set to another value still blocks", preflight({ ...pinnedEnv, OE_MEMORY_PROVIDER: "git" }, { target: "vercel" }).ready === false);
+  overrideSettingsForTest({ memory: { provider: "git" } });
+  ok("vercel: a selector set to another value still blocks", preflight(pinnedEnv, { target: "vercel" }).ready === false);
+  overrideSettingsForTest({ memory: { provider: "" } });
+  const stalePin = preflight({ ...pinnedEnv, OE_MEMORY_PROVIDER: "git" }, { ...pins, target: "vercel" }).checks.find((c) => c.name === "deploy store: memory = postgres");
+  ok("🔴 vercel: a stale OE_MEMORY_PROVIDER=git is not read (memory still derives postgres)", stalePin?.status === "ok" && /derived from DATABASE_URL/.test(stalePin.detail));
 }
 
 {
@@ -812,7 +819,7 @@ const ok = (label: string, cond: boolean) => {
     ok(`🔴 scaffold_env refuses a value for the secret ${name}`, r.isError || r.body.ok === false);
     ok(`…and writes nothing (${name})`, !existsSync(file) || !readFileSync(file, "utf-8").includes(SENTINEL));
   }
-  const fixEnvs: NodeJS.ProcessEnv[] = [{}, { DATABASE_URL: "postgres://u:p@h/db" }, { OE_OPERATIONAL_PROVIDER: "postgres" }, { OE_MEMORY_PROVIDER: "git", DATABASE_URL: "postgres://u:p@h/db" }];
+  const fixEnvs: NodeJS.ProcessEnv[] = [{}, { DATABASE_URL: "postgres://u:p@h/db" }, { OE_OPERATIONAL_PROVIDER: "postgres" }, { OE_OPERATIONAL_PROVIDER: "sqlite", DATABASE_URL: "postgres://u:p@h/db" }];
   const examined = new Set<string>();
   for (const target of ["local", "vercel", "docker"] as const) {
     for (const env of fixEnvs) {

@@ -1,6 +1,11 @@
 import { readBindingBridge, bridgedContext } from "../identity/binding-bridge.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { emitTelemetry } from "./telemetry.js";
+import { getSettings, settingsRegistered } from "../settings/settings.js";
+import { operatorSecret } from "../credentials/operator-secrets.js";
+
+const LOG_SHIP_TOKEN_SECRET = "OE_LOG_SHIP_TOKEN";
+const DEFAULT_SERVICE = "open-everywhere";
 
 function surfaceKeyForLog(): string | undefined {
   try {
@@ -30,7 +35,6 @@ export interface LogRecord {
 interface ShipConfig {
   url: string;
   tokenHeader: string;
-  token?: string;
   service: string;
   batchMax: number;
   flushMs: number;
@@ -63,26 +67,38 @@ const LOG_SHIP_BATCH_MAX = 20;
 const LOG_SHIP_FLUSH_MS = 1000;
 let tuning: { batchMax: number; flushMs: number } = { batchMax: LOG_SHIP_BATCH_MAX, flushMs: LOG_SHIP_FLUSH_MS };
 
-function readConfig(): ShipConfig | null {
+function readConfig(): ShipConfig | null | undefined {
   if (config !== undefined) return config;
-  const url = process.env.OE_LOG_SHIP_URL?.trim();
+  if (!settingsRegistered()) return undefined;
+  const ship = getSettings().observability.logShip;
+  const url = ship.url.trim();
   if (!url) {
     config = null;
+    queue = [];
     return config;
   }
   config = {
     url,
-    tokenHeader: process.env.OE_LOG_SHIP_TOKEN_HEADER?.trim() || "authorization",
-    token: process.env.OE_LOG_SHIP_TOKEN || undefined,
-    service: process.env.OE_LOG_SERVICE?.trim() || "open-everywhere",
+    tokenHeader: ship.tokenHeader?.trim() || "authorization",
+    service: ship.service?.trim() || DEFAULT_SERVICE,
     batchMax: tuning.batchMax,
     flushMs: tuning.flushMs,
   };
+  for (const r of queue) if (r.service === DEFAULT_SERVICE) r.service = config.service;
   return config;
 }
 
+async function resolveShipToken(): Promise<string | undefined> {
+  try {
+    return await operatorSecret(LOG_SHIP_TOKEN_SECRET);
+  } catch (err) {
+    warnOnce(`token unreadable (${err instanceof Error ? err.message : String(err)}) — shipping without it`);
+    return undefined;
+  }
+}
+
 export function logShipEnabled(): boolean {
-  return readConfig() !== null;
+  return readConfig() != null;
 }
 
 export function shapeError(err: unknown): { name: string; message: string; stack?: string } {
@@ -114,7 +130,7 @@ export function buildRecord(
     ...opts.fields,
     ts: new Date().toISOString(),
     level,
-    service: opts.service ?? readConfig()?.service ?? "open-everywhere",
+    service: opts.service ?? readConfig()?.service ?? DEFAULT_SERVICE,
     env: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "local",
     component,
     message,
@@ -147,13 +163,14 @@ export function parseConsoleArgs(args: unknown[]): { component: string; message:
 
 export function enqueue(record: LogRecord): void {
   const cfg = readConfig();
-  if (!cfg) return;
+  if (cfg === null) return;
   try {
     queue.push(record);
     if (queue.length > QUEUE_HARD_CAP) {
       queue.splice(0, queue.length - QUEUE_HARD_CAP);
       droppedRecords++;
     }
+    if (cfg === undefined) return;
     if (queue.length >= cfg.batchMax) {
       void flushLogShip();
       return;
@@ -177,7 +194,8 @@ export async function flushLogShip(): Promise<void> {
   queue = [];
   try {
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (cfg.token) headers[cfg.tokenHeader] = cfg.token;
+    const token = await resolveShipToken();
+    if (token) headers[cfg.tokenHeader] = token;
     const res = await fetchImpl(cfg.url, {
       method: "POST",
       headers,
@@ -219,11 +237,12 @@ export function oeLogger(component: string): OeLogger {
 }
 
 export function installConsoleCapture(): void {
-  if (capturedConsole || !logShipEnabled()) return;
+  if (capturedConsole || readConfig() === null) return;
   capturedConsole = { log: console.log, warn: console.warn, error: console.error };
   const wrap = (level: LogLevel, original: (...args: unknown[]) => void) =>
     ((...args: unknown[]) => {
       try {
+        if (readConfig() === null) return original(...args);
         const { component, message, err } = parseConsoleArgs(args);
         enqueue(buildRecord(level, component, message, err === undefined ? {} : { err }));
       } catch {

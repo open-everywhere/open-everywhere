@@ -1,3 +1,5 @@
+// proves: egress.denied
+
 import {
   isDenialTag,
   normaliseDenialHost,
@@ -16,6 +18,7 @@ import {
   type EgressAttribution,
 } from "../agent/access/egress-denial-poller.js";
 import type { AuditInput } from "../agent/audit/audit.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -111,9 +114,18 @@ const SECRET = "SEEDED-EGRESS-TOKEN-9f3a";
 }
 
 {
-  ok(egressDenialLogPath({} as NodeJS.ProcessEnv) === undefined, "no OE_EGRESS_DENIAL_LOG ⇒ no poller (every Vercel deployment, and any self-host run without the volume)");
-  ok(egressDenialLogPath({ OE_EGRESS_DENIAL_LOG: "  " } as NodeJS.ProcessEnv) === undefined, "a blank value is unset, not a path");
-  ok(egressDenialLogPath({ OE_EGRESS_DENIAL_LOG: "/var/log/oe-egress/denied.log" } as NodeJS.ProcessEnv) === "/var/log/oe-egress/denied.log", "…and a real path is taken");
+  ok(egressDenialLogPath("") === undefined, "an empty egress.denialLog ⇒ no poller (every Vercel deployment, and any self-host run without the volume)");
+  ok(egressDenialLogPath("  ") === undefined, "a blank value is unset, not a path");
+  ok(egressDenialLogPath("/var/log/oe-egress/denied.log") === "/var/log/oe-egress/denied.log", "…and a real path is taken");
+  resetSettingsForTest();
+  const savedLog = process.env.OE_EGRESS_DENIAL_LOG;
+  process.env.OE_EGRESS_DENIAL_LOG = "/var/log/oe-egress/denied.log";
+  ok(egressDenialLogPath() === undefined, "🔴 the retired OE_EGRESS_DENIAL_LOG variable is not read (OPE-2650)");
+  overrideSettingsForTest({ egress: { denialLog: "/var/log/oe-egress/denied.log" } });
+  ok(egressDenialLogPath() === "/var/log/oe-egress/denied.log", "…and the registered setting is the default argument");
+  resetSettingsForTest();
+  if (savedLog === undefined) delete process.env.OE_EGRESS_DENIAL_LOG;
+  else process.env.OE_EGRESS_DENIAL_LOG = savedLog;
   ok(DENIAL_POLL_MS === 60_000, "the poll interval is a one-minute code constant (OPE-2411), not an env read");
 }
 
@@ -266,3 +278,7 @@ function harness(options: {
 }
 
 console.log(`✓ egress denial log/poller (OPE-314): ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-egress-denial-log, AP-MOD-core-access-egress-denial-poller
+
+// proves: SET-097

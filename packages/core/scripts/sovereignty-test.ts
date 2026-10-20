@@ -16,6 +16,7 @@ import {
 } from "../agent/ops/sovereignty.js";
 import { appEnv, declaredSubagentModels, eveScriptTelemetry, gatherSovereigntyInput, namesWorkflowWorld, originRemoteHost, registersBareModelRoutes } from "../agent/ops/sovereignty-facts.js";
 import { telemetrySwitches } from "../agent/observability/telemetry.js";
+import { getSettings } from "../agent/settings/settings.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
 import { runSovereigntyCommand } from "./oe-sovereignty.js";
 import { pinSuiteStore } from "./_suite-store.js";
@@ -37,6 +38,9 @@ const SHIPPED: SovereigntySettings = {
   auditExport: { targets: [] },
   egress: { enforce: true, allowUnenforced: false },
   sandbox: { region: "" },
+  memory: { provider: "" },
+  observability: { logShip: { url: "" } },
+  telemetry: { enabled: true, url: "" },
 };
 
 function report(over: Partial<SovereigntyInput> & { env?: NodeJS.ProcessEnv; settings?: SovereigntySettings }) {
@@ -80,13 +84,15 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
   ok("no DATABASE_URL: the operational store is the PGlite floor", row(r, "audit").where.includes("PGlite"));
   ok("no DATABASE_URL: memory is the git floor", row(r, "memory").where.includes(".open-everywhere-memory"));
   ok("self-hosted: the floor's holder is you", row(r, "memory").compellable.startsWith("you"));
-  const pinned = report({ host: "docker", env: { DATABASE_URL: NEON_URL, OE_MEMORY_PROVIDER: "notion" } });
+  const pinned = report({ host: "docker", env: { DATABASE_URL: NEON_URL }, settings: { ...SHIPPED, memory: { provider: "notion" } } });
   const custom = report({ host: "docker", env: { DATABASE_URL: NEON_URL, OE_OPERATIONAL_PROVIDER: "acme-store" } });
   ok("🔴 a custom operational provider never borrows the DATABASE_URL region", !row(custom, "audit").region.includes("eu-central-1") && row(custom, "audit").region.includes('"acme-store" provider'));
   const vCustom = report({ host: "vercel", env: { OE_OPERATIONAL_PROVIDER: "acme-store" } });
   ok("🔴 on Vercel a custom store's credentials row names no DATABASE_URL", !row(vCustom, "credentials").compellable.includes("DATABASE_URL"));
   ok("…and a floor's names the function disk", row(report({ host: "vercel" }), "credentials").compellable.includes("function disk"));
-  ok("OE_MEMORY_PROVIDER wins over DATABASE_URL, as at runtime", row(pinned, "memory").compellable === "Notion Labs (US)");
+  ok("memory.provider wins over DATABASE_URL, as at runtime", row(pinned, "memory").compellable === "Notion Labs (US)");
+  const stale = report({ host: "docker", env: { DATABASE_URL: NEON_URL, OE_MEMORY_PROVIDER: "notion" } });
+  ok("🔴 a stale OE_MEMORY_PROVIDER moves nothing: DATABASE_URL still selects postgres", row(stale, "memory").where === "Postgres at DATABASE_URL");
 }
 
 {
@@ -116,17 +122,21 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
 }
 
 {
+  const tele = (t: { enabled?: boolean; url?: string }, env: NodeJS.ProcessEnv = {}) =>
+    report({ env, settings: { ...SHIPPED, telemetry: { ...SHIPPED.telemetry, ...t } } });
   ok("telemetry ships to the default collector by default", row(report({}), "telemetry").where.includes("oe-telemetry.vercel.app"));
-  ok("OE_TELEMETRY=off sends nothing", row(report({ env: { OE_TELEMETRY: "off" } }), "telemetry").where.startsWith("nowhere"));
+  ok("telemetry.enabled: false sends nothing", row(tele({ enabled: false }), "telemetry").where.startsWith("nowhere"));
   ok("DO_NOT_TRACK=1 sends nothing", row(report({ env: { DO_NOT_TRACK: "1" } }), "telemetry").compellable.startsWith("nobody"));
-  const unparsed = report({ env: { OE_TELEMETRY_OTLP_URL: "otel.acme.example/v1/logs?token=abc123" } });
+  ok("🔴 a stale OE_TELEMETRY=off is not reported as off", row(report({ env: { OE_TELEMETRY: "off" } }), "telemetry").where.includes("oe-telemetry.vercel.app"));
+  ok("🔴 a stale OE_TELEMETRY_OTLP_URL is not reported as a redirect", !row(report({ env: { OE_TELEMETRY_OTLP_URL: "https://x.example/v1/logs" } }), "telemetry").where.includes("x.example"));
+  const unparsed = tele({ url: "otel.acme.example/v1/logs?token=abc123" });
   ok("🔴 a redirect that does not parse never prints the raw value", !JSON.stringify(unparsed).includes("abc123") && row(unparsed, "telemetry").where.includes("does not parse"));
-  const emptyHost = report({ env: { OE_TELEMETRY_OTLP_URL: "localhost:4318/v1/logs?token=abc123" } });
+  const emptyHost = tele({ url: "localhost:4318/v1/logs?token=abc123" });
   ok("🔴 a redirect with an empty hostname never prints the raw value", !JSON.stringify(emptyHost).includes("abc123"));
-  const redirected = report({ env: { OE_TELEMETRY_OTLP_URL: "https://otel.acme.example/v1/logs?token=abc123" } });
+  const redirected = tele({ url: "https://otel.acme.example/v1/logs?token=abc123" });
   ok("a redirect names the collector's host", row(redirected, "telemetry").where === "your collector at otel.acme.example");
   ok("a redirect never prints the URL's path or query", !JSON.stringify(redirected).includes("abc123"));
-  ok("OE_TELEMETRY=off beats a redirect", row(report({ env: { OE_TELEMETRY: "off", OE_TELEMETRY_OTLP_URL: "https://x.example/v1/logs" } }), "telemetry").where.startsWith("nowhere"));
+  ok("telemetry.enabled: false beats a redirect", row(tele({ enabled: false, url: "https://x.example/v1/logs" }), "telemetry").where.startsWith("nowhere"));
 }
 
 {
@@ -249,9 +259,11 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
   ok("an audit export target is named with its host", row(sinks, "audit").where.includes("splunk (splunk-hec, hec.acme.example)"));
   ok("chat platforms name their operators", row(report({ chatPlatforms: ["slack", "teams"] }), "chat surface").compellable === "Slack (Salesforce, US); Microsoft (US)");
   ok("a github.com remote names GitHub", row(report({ configRemoteHost: "github.com" }), "config").compellable === "GitHub (Microsoft, US)");
-  ok("a set OE_LOG_SHIP_URL that does not parse still says logs are shipped", row(report({ env: { OE_LOG_SHIP_URL: "in.logs.example/x?t=1" } }), "runtime logs").where.includes("does not parse"));
-  ok("no OE_LOG_SHIP_URL: nothing is shipped", !row(report({}), "runtime logs").where.includes("shipped to"));
-  ok("log shipping names its host", row(report({ env: { OE_LOG_SHIP_URL: "https://in.logs.example/ingest" } }), "runtime logs").where.includes("in.logs.example"));
+  const ship = (url: string) => report({ settings: { ...SHIPPED, observability: { logShip: { url } } } });
+  ok("a set observability.logShip.url that does not parse still says logs are shipped", row(ship("in.logs.example/x?t=1"), "runtime logs").where.includes("does not parse"));
+  ok("no observability.logShip.url: nothing is shipped", !row(report({}), "runtime logs").where.includes("shipped to"));
+  ok("log shipping names its host", row(ship("https://in.logs.example/ingest"), "runtime logs").where.includes("in.logs.example"));
+  ok("🔴 a stale OE_LOG_SHIP_URL ships nothing (OPE-2650)", !row(report({ env: { OE_LOG_SHIP_URL: "https://in.logs.example/ingest" } }), "runtime logs").where.includes("shipped to"));
   const dry = report({ settings: { ...SHIPPED, egress: { enforce: false, allowUnenforced: false } } });
   ok("egress dry-run is named on the row and in the limits", row(dry, "other outbound calls").where.includes("DRY-RUN") && dry.limits.some((l) => l.includes("not enforced")));
   ok("originRemoteHost reads an scp-style remote", originRemoteHost('[remote "origin"]\n\turl = git@github.com:acme/app.git\n') === "github.com");
@@ -335,7 +347,7 @@ const io = () => {
   const err: string[] = [];
   return { out, err, io: { out: (t: string) => out.push(t), err: (l: string) => err.push(l) } };
 };
-const ENV = { DATABASE_URL: NEON_URL, OE_TELEMETRY: "off" };
+const ENV = { DATABASE_URL: NEON_URL, DO_NOT_TRACK: "1" };
 
 {
   const c = io();
@@ -346,7 +358,7 @@ const ENV = { DATABASE_URL: NEON_URL, OE_TELEMETRY: "off" };
   ok("oe sovereignty reads the app's own settings (its stack)", text.includes('stack "american-closed"'));
   ok("oe sovereignty reads the app's stacks file (a role id)", /primary [a-z0-9-]+\/[a-z0-9.-]+/u.test(text));
   ok("oe sovereignty reads the roster (slack is selected)", text.includes("Slack (Salesforce, US)"));
-  const expectOff = !telemetrySwitches(appEnv(REPO, ENV)).enabled;
+  const expectOff = !telemetrySwitches(getSettings().telemetry, appEnv(REPO, ENV)).enabled;
   ok("oe sovereignty honours the env it reads", text.includes("nowhere: telemetry is OFF") === expectOff);
   ok("oe sovereignty reads the app's transcription role", text.includes("■ transcription\n  where:       primary "));
   ok("oe sovereignty reads the app's declared subagent and its target (OPE-2566)", text.includes("subagent fresh_eyes_review via gateway") && text.includes("any other via gateway"));
@@ -387,7 +399,7 @@ writeFileSync(join(broken, "agent", "settings", "settings.ts"), 'throw new Error
 {
   ok("sovereignty is a declared ops tool", (OPS_TOOL_NAMES as readonly string[]).includes("sovereignty"));
   const outerProject = process.env.CLAUDE_PROJECT_DIR;
-  const AMBIENT = ["DATABASE_URL", "OE_MEMORY_PROVIDER", "OE_OPERATIONAL_PROVIDER"] as const;
+  const AMBIENT = ["DATABASE_URL", "OE_OPERATIONAL_PROVIDER"] as const;
   const outerAmbient = Object.fromEntries(AMBIENT.map((k) => [k, process.env[k]]));
   const call = async (projectDir: string, args: Record<string, unknown>) => {
     process.env.CLAUDE_PROJECT_DIR = projectDir;

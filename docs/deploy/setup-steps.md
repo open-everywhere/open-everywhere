@@ -231,7 +231,7 @@ Build before you deploy — a broken build must never be promoted.
 
 **Docker route.**
 
-- Deploy is a SEPARATE, explicit step: on your server, put the contract's environment in `.env` (with `OE_EGRESS_PROXY_TOKEN`), then run `docker compose up --build`. The app's `Dockerfile` builds the image, and `docker-compose.yml` puts it behind the egress proxy with Postgres. This stack runs the `justbash` sandbox backend: the agent's shell shares the app process's filesystem and environment. That is development grade, and it does not meet the contract's `sandbox-backend` requirement. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md.
+- Deploy is a SEPARATE, explicit step: on your server, put the contract's environment in `.env` (with `OE_EGRESS_PROXY_TOKEN`), declare `egress: { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" }` in `agent/settings/settings.ts`, then run `docker compose up --build`. The app's `Dockerfile` builds the image, and `docker-compose.yml` puts it behind the egress proxy with Postgres. This stack runs the `justbash` sandbox backend: the agent's shell shares the app process's filesystem and environment. That is development grade, and it does not meet the contract's `sandbox-backend` requirement. See https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/contract.md.
 
 ### 9. Final verification
 

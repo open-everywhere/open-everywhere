@@ -41,9 +41,9 @@ step also reads the deployment's own verdicts, so values set only in the Vercel 
 The deployed app sends **anonymous usage telemetry, ON by default**: event names, enums, coarse
 buckets, public model ids and the app version. Each event carries a random per-install id
 (`service.instance.id`). It never sends message or memory content, org names, workspace, channel,
-user or session ids, or env values. **To turn it off, set `OE_TELEMETRY=off`** (or `DO_NOT_TRACK=1`) on the deployment:
-the Vercel project's environment or the container's. `.env.local` alone does not do it, because it
-never ships. Every event and attribute is listed in the
+user or session ids, or env values. **To turn it off, declare `telemetry: { enabled: false }`** in `agent/settings/settings.ts`
+and deploy. Or set `DO_NOT_TRACK=1` on the deployment: the Vercel project's environment or the
+container's. `.env.local` alone does not do it, because it never ships. Every event and attribute is listed in the
 [telemetry disclosure](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md).
 The `@open-everywhere/create` CLI sends none.
 

@@ -152,8 +152,8 @@ The connection string carries the database password, so it is a secret. Ask the 
 `scaffold_env { "secretNames": ["DATABASE_URL"] }`: the reply reports `present: true`.
 
 That one value is the whole step. A present `DATABASE_URL` selects `postgres` for the operational
-store AND the memory backing (OPE-2230), so `OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` are
-no longer part of the hosted setup. Set either one only to override the derived default.
+store AND the memory backing (OPE-2230), so `OE_OPERATIONAL_PROVIDER` and the `memory.provider`
+setting are no longer part of the hosted setup. Set either one only to override the derived default.
 
 `preflight` then adds an **append-only role posture** line. It reads `single-role` on a plain Neon
 setup, which is safe but leaves the owner-DDL escape open. Hardening it is the two-role split in

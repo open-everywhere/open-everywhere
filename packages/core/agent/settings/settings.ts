@@ -50,6 +50,12 @@ export interface OktaAppSetting {
 
 export type AuditExportFormat = "otlp" | "json" | "splunk-hec";
 
+export interface LogShipSetting {
+  readonly url: string;
+  readonly tokenHeader?: string;
+  readonly service?: string;
+}
+
 export interface AuditExportTarget {
   readonly name: string;
   readonly format: AuditExportFormat;
@@ -134,6 +140,9 @@ export interface AgentSettings {
   readonly egress: {
     readonly enforce: boolean;
     readonly allowUnenforced: boolean;
+    readonly proxyUrl: string;
+    readonly sourceIp: string;
+    readonly denialLog: string;
   };
   readonly externalPolicy: {
     readonly authorGrain: ExternalAuthorGrain;
@@ -161,6 +170,12 @@ export interface AgentSettings {
     readonly dreamCandidateCap: number;
     readonly skillProposalPr: boolean;
     readonly syncTiming: boolean;
+    readonly provider: string;
+    readonly gitBranch: string;
+    readonly notionTokenSecret: string;
+  };
+  readonly observability: {
+    readonly logShip: LogShipSetting;
   };
   readonly policyPages: {
     readonly privacy: string;
@@ -232,6 +247,11 @@ export interface AgentSettings {
   readonly teams: {
     readonly serviceHosts: readonly string[];
   };
+  readonly telemetry: {
+    readonly enabled: boolean;
+    readonly debug: boolean;
+    readonly url: string;
+  };
   readonly tools: {
     readonly maxResultChars: number;
   };
@@ -296,6 +316,39 @@ const positiveInt = (value: number): string | undefined =>
 
 const nonNegativeInt = (value: number): string | undefined =>
   Number.isInteger(value) && value >= 0 ? undefined : "must be a whole number of days, 0 or more";
+
+const httpUrlOrEmpty = (v: string): string | undefined => {
+  if (v === "") return undefined;
+  try {
+    const u = new URL(v);
+    return u.protocol === "https:" || u.protocol === "http:" ? undefined : 'must be an http(s) URL, or "" for unset';
+  } catch {
+    return 'must be an http(s) URL, or "" for unset';
+  }
+};
+
+const branchName = (v: string): string | undefined =>
+  typeof v === "string" && /^[A-Za-z0-9_./-]+$/u.test(v) && !v.includes("..") ? undefined : "must be one branch name";
+
+const ipOrEmpty = (v: string): string | undefined =>
+  v === "" || /^(?:\d{1,3}\.){3}\d{1,3}$/u.test(v) || (/^[0-9A-Fa-f:.]+$/u.test(v) && v.includes(":"))
+    ? undefined
+    : 'must be one IP address, or "" for unset';
+
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
+
+const logShipProblem = (v: LogShipSetting): string | undefined => {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return "must be an object { url, tokenHeader?, service? }";
+  for (const key of Object.keys(v)) {
+    if (key !== "url" && key !== "tokenHeader" && key !== "service") return `unknown field "${key}" — the fields are url, tokenHeader and service`;
+  }
+  if (typeof v.url !== "string") return "url must be a string";
+  const url = httpUrlOrEmpty(v.url);
+  if (url !== undefined) return `url ${url}`;
+  if (v.tokenHeader !== undefined && (typeof v.tokenHeader !== "string" || !HEADER_NAME.test(v.tokenHeader))) return "tokenHeader must be one HTTP header name";
+  if (v.service !== undefined && (typeof v.service !== "string" || v.service.trim() === "")) return "service must be a non-empty string";
+  return undefined;
+};
 
 const positiveNumber = (value: number): string | undefined =>
   Number.isFinite(value) && value > 0 ? undefined : "must be a positive number";
@@ -535,7 +588,7 @@ export const SETTINGS = {
       shipped: [] as readonly AuditExportTarget[],
       validate: auditExportTargetsProblem,
       summary:
-        "The SIEMs the audit log streams to (OPE-2437). Empty (shipped) exports nothing. Each entry is `{ name, format, url, tokenSecret?, tokenHeader?, tokenScheme?, orgs? }`. `format` is `\"otlp\"` (OTLP/HTTP JSON logs, POSTed to the collector's `/v1/logs` URL), `\"json\"` (one JSON array per batch — Datadog, Microsoft Sentinel's Logs Ingestion API, any HTTPS intake) or `\"splunk-hec\"` (Splunk HTTP Event Collector envelopes). `tokenSecret` NAMES a secret in the DB-backed store (`oe secret set <name>`) in env style (`SPLUNK_HEC_TOKEN`) and never holds a value; it resolves from the store ONLY, never from an environment variable of the same name, so a config line cannot send an infrastructure secret to the SIEM; it is sent as `<tokenScheme> <value>` in `tokenHeader` (defaults: `authorization`, and `Splunk` for HEC or `Bearer` otherwise). The `audit-export` schedule ships every row after the target's cursor, oldest first, each with its `seq`, `prevSha` and recomputed `sha`, so the receiver can verify the hash chain. Delivery is AT-LEAST-ONCE: the cursor advances only after a 2xx, so a failed or interrupted batch is sent again and a receiver deduplicates on `(org, seq)`. The rows carry `detail` in full, so the SIEM holds what an org admin can read on the control plane. `url` must be `https:` (an `http:` loopback collector is accepted). A rename re-sends the log from the start, because the name keys the cursor.",
+        "The SIEMs the audit log streams to (OPE-2437). Empty (shipped) exports nothing. Each entry is `{ name, format, url, tokenSecret?, tokenHeader?, tokenScheme?, orgs? }`. `format` is `\"otlp\"` (OTLP/HTTP JSON logs, POSTed to the collector's `/v1/logs` URL), `\"json\"` (one JSON array per batch — Datadog, Microsoft Sentinel's Logs Ingestion API, any HTTPS intake) or `\"splunk-hec\"` (Splunk HTTP Event Collector envelopes). `tokenSecret` NAMES a secret in the DB-backed store (`oe secret set <name>`) in env style (`SPLUNK_HEC_TOKEN`) and never holds a value; it resolves from the store ONLY, never from an environment variable of the same name, so a config line cannot reach an env-held secret such as `DATABASE_URL` (it CAN name any stored operator secret, so review the name in the pull request); it is sent as `<tokenScheme> <value>` in `tokenHeader` (defaults: `authorization`, and `Splunk` for HEC or `Bearer` otherwise). The `audit-export` schedule ships every row after the target's cursor, oldest first, each with its `seq`, `prevSha` and recomputed `sha`, so the receiver can verify the hash chain. Delivery is AT-LEAST-ONCE: the cursor advances only after a 2xx, so a failed or interrupted batch is sent again and a receiver deduplicates on `(org, seq)`. The rows carry `detail` in full, so the SIEM holds what an org admin can read on the control plane. `url` must be `https:` (an `http:` loopback collector is accepted). A rename re-sends the log from the start, because the name keys the cursor.",
       format: (v) => (v.length === 0 ? "[] (no export)" : v.map((t) => `${t.name} (${t.format})`).join(", ")),
     } satisfies SettingSpec<readonly AuditExportTarget[]>,
   },
@@ -760,6 +813,30 @@ export const SETTINGS = {
       summary:
         "Let a session CONTINUE when the sandbox backend cannot apply fine-grained network policy. Off, an unenforceable policy aborts the session instead of running it unfirewalled. Dev and self-host-without-a-proxy only — a deployment that needs it says so in `agent/settings/settings.ts`, where the choice is reviewable.",
     } satisfies SettingSpec<boolean>,
+    proxyUrl: {
+      path: "egress.proxyUrl",
+      shipped: "",
+      validate: httpUrlOrEmpty,
+      summary:
+        "The self-host egress proxy's CONTROL origin, which every session's compiled policy is pushed to (was `OE_EGRESS_PROXY_URL`, OPE-2650). The compose topology's value is `http://oe-egress-proxy:8080`. Set, and with the agent's shell off the Vercel Sandbox, every session's policy goes to the proxy, the push presents the operator secret `OE_EGRESS_PROXY_TOKEN`, and a failed push aborts the session. Empty (shipped) ⇒ no proxy: on a self-host, a session that needs a host allow-list aborts unless `egress.allowUnenforced` is on. Inert on the Vercel Sandbox. `sandbox.selfHostBackend: \"docker\"` with this set refuses to boot. See docs/deploy/platforms/self-host-egress.md.",
+      format: (v) => (v === "" ? "(unset)" : v),
+    } satisfies SettingSpec<string>,
+    sourceIp: {
+      path: "egress.sourceIp",
+      shipped: "",
+      validate: ipOrEmpty,
+      summary:
+        "The source IP the self-host egress proxy keys this deployment's pushed policy on (was `OE_EGRESS_SOURCE_IP`, OPE-2650). Empty (shipped) ⇒ the proxy keys the policy by the push's own remote address, which is right whenever the app pushes from the address it also sends from. Inert without `egress.proxyUrl`.",
+      format: (v) => (v === "" ? "(unset)" : v),
+    } satisfies SettingSpec<string>,
+    denialLog: {
+      path: "egress.denialLog",
+      shipped: "",
+      validate: (v: string) => (v === "" || (v.startsWith("/") && !v.includes("\0")) ? undefined : 'must be an absolute path, or "" for unset'),
+      summary:
+        "The path of the egress proxy's denial log, as the APP container sees it on the shared volume (was `OE_EGRESS_DENIAL_LOG`, OPE-2650). The compose topology's value is `/var/log/oe-egress/denied.log`. Set, the app tails the log and writes one `egress.denied` audit row per host and policy generation. Empty (shipped) ⇒ the poller does not run, and proxy denials reach no audit row. See docs/deploy/platforms/self-host-egress.md.",
+      format: (v) => (v === "" ? "(unset)" : v),
+    } satisfies SettingSpec<string>,
   },
   externalPolicy: {
     authorGrain: {
@@ -894,6 +971,37 @@ export const SETTINGS = {
       summary:
         "A measurement mode (was `OE_MEMORY_SYNC_TIMING=1`): write one `memory.sync_timing` audit row per session, with each read silo's load, sync and lock time, so a session's boot time can be attributed and not only bounded. Off (shipped), the memory hook allocates nothing, reads no clock and adds no await. On costs a durable row per session and one store insert inside the boot window, so arm it while you investigate where boot time goes, then disarm it. The row holds names, counts, sizes and durations only — never content.",
     } satisfies SettingSpec<boolean>,
+    provider: {
+      path: "memory.provider",
+      shipped: "",
+      validate: (v: string) => (v === "" || /^[a-z][a-z0-9-]*$/u.test(v) ? undefined : 'must be a backing id ("git", "sqlite", "postgres"), or "" to let DATABASE_URL decide'),
+      summary:
+        "Which durable memory backing this deployment uses: `git`, `sqlite` or `postgres` (was `OE_MEMORY_PROVIDER`, OPE-2650). Empty (shipped) ⇒ `DATABASE_URL` decides: set, it selects `postgres`; unset, the `git` floor. Name `postgres` only with a registered Postgres client, or the first DM or personal memory call throws. The compose topology without Postgres declares `sqlite`.",
+      format: (v) => (v === "" ? "(DATABASE_URL decides)" : v),
+    } satisfies SettingSpec<string>,
+    gitBranch: {
+      path: "memory.gitBranch",
+      shipped: "main",
+      validate: branchName,
+      summary: "The branch the GitHub memory backing reads and commits to in each silo's repository (was `OE_MEMORY_GIT_BRANCH`, OPE-2650).",
+    } satisfies SettingSpec<string>,
+    notionTokenSecret: {
+      path: "memory.notionTokenSecret",
+      shipped: "db:notion:memory",
+      validate: (v: string) => (typeof v === "string" && v !== "" && !/\s/u.test(v) ? undefined : "must be one credential-store name, with no whitespace"),
+      summary:
+        "The db credential-store NAME of the org-default Notion memory token (was `OE_NOTION_SECRET_REF`, OPE-2650). Store the token with `oe secret set <name>`. 🔴 It resolves from the db credential store ONLY, never from an environment variable, so it cannot reach an env-held secret such as `DATABASE_URL`. It CAN name any stored operator secret, and the org-default Notion read sends that value to Notion, so review the name in the pull request. `OE_NOTION_SECRET_BROKER` is gone with it. A domain that binds its own Notion `memory` credential resolves that credential instead.",
+    } satisfies SettingSpec<string>,
+  },
+  observability: {
+    logShip: {
+      path: "observability.logShip",
+      shipped: { url: "" } as LogShipSetting,
+      validate: logShipProblem,
+      summary:
+        "Where this deployment ships its structured logs: `{ url, tokenHeader?, service? }` (was `OE_LOG_SHIP_URL`, `OE_LOG_SHIP_TOKEN_HEADER` and `OE_LOG_SERVICE`, OPE-2650). `url` is the full ingest URL of any endpoint that takes a JSON array (Axiom, Better Stack, a local collector). `tokenHeader` (default `authorization`) names the header that carries the operator secret `OE_LOG_SHIP_TOKEN`, stored with `oe secret set OE_LOG_SHIP_TOKEN`. `service` (default `open-everywhere`) stamps every record. An empty `url` (shipped) ⇒ nothing ships and console output is unchanged. See docs/deploy/observability.md.",
+      format: (v) => (v.url === "" ? "(off)" : v.url),
+    } satisfies SettingSpec<LogShipSetting>,
   },
   policyPages: {
     privacy: {
@@ -1041,7 +1149,7 @@ export const SETTINGS = {
       shipped: "docker",
       validate: (v) => (v === "docker" || v === "justbash" ? undefined : 'must be "docker" or "justbash"'),
       summary:
-        "Which backend runs the agent's shell on a NON-Vercel host (was `OE_SANDBOX_BACKEND`). `docker` (shipped) CONTAINS the shell in a per-session container with its own filesystem; it needs the daemon socket, and its session containers sit outside the egress proxy, so `docker` with `OE_EGRESS_PROXY_URL` set refuses to boot. `justbash` runs in-process and the agent's shell SHARES THE APP PROCESS'S FILESYSTEM — development and testing grade, with a loud boot warning. The Docker image carries a just-bash template only, so an app built into that image declares `justbash`. A Vercel host always runs the Vercel Sandbox, so this setting is inert there. Read at BOOT; eve also provisions the sandbox template at BUILD time on the backend this resolves.",
+        "Which backend runs the agent's shell on a NON-Vercel host (was `OE_SANDBOX_BACKEND`). `docker` (shipped) CONTAINS the shell in a per-session container with its own filesystem; it needs the daemon socket, and its session containers sit outside the egress proxy, so `docker` with `egress.proxyUrl` set refuses to boot. `justbash` runs in-process and the agent's shell SHARES THE APP PROCESS'S FILESYSTEM — development and testing grade, with a loud boot warning. The Docker image carries a just-bash template only, so an app built into that image declares `justbash`. A Vercel host always runs the Vercel Sandbox, so this setting is inert there. Read at BOOT; eve also provisions the sandbox template at BUILD time on the backend this resolves.",
     } satisfies SettingSpec<SandboxBackendChoice>,
     useVercelSandbox: {
       path: "sandbox.useVercelSandbox",
@@ -1233,6 +1341,27 @@ export const SETTINGS = {
       format: (v) => (v.length > 0 ? v.join(", ") : "(the global-cloud default only)"),
     } satisfies SettingSpec<readonly string[]>,
   },
+  telemetry: {
+    enabled: {
+      path: "telemetry.enabled",
+      shipped: true,
+      summary:
+        "Whether this deployment sends anonymous usage telemetry (was `OE_TELEMETRY`, OPE-2650). On (shipped), the disclosure line prints before anything is sent, and the very first boot sends nothing. `false` ⇒ nothing is sent and no instance id is minted. The ambient `DO_NOT_TRACK=1` environment variable also turns it off, whatever this says. Read at the first emit after the app registers its settings, never at the instrumentation `setup`. See docs/deploy/telemetry.md.",
+    } satisfies SettingSpec<boolean>,
+    debug: {
+      path: "telemetry.debug",
+      shipped: false,
+      summary: "Log each telemetry payload to the console INSTEAD of sending it (was `OE_TELEMETRY_DEBUG=1`, OPE-2650). For an operator who wants to read exactly what would leave.",
+    } satisfies SettingSpec<boolean>,
+    url: {
+      path: "telemetry.url",
+      shipped: "",
+      validate: httpUrlOrEmpty,
+      summary:
+        "A FULL redirect of the telemetry to the operator's own OTLP/JSON logs collector (was `OE_TELEMETRY_OTLP_URL`, OPE-2650). Every record goes there, and nothing goes to the default collector. Request headers for that collector (an auth token) are the operator secret `OE_TELEMETRY_OTLP_HEADERS`, as comma-separated `key=value` pairs. Empty (shipped) ⇒ the default collector.",
+      format: (v) => (v === "" ? "(the default collector)" : v),
+    } satisfies SettingSpec<string>,
+  },
   tools: {
     maxResultChars: {
       path: "tools.maxResultChars",
@@ -1418,6 +1547,10 @@ export function registerSettings(overrides: AgentSettingsOverrides): void {
   registeredSlot.set(overrides);
 }
 
+export function settingsRegistered(): boolean {
+  return registeredSlot.get() != null;
+}
+
 export function resetSettingsForTest(): void {
   registeredSlot.set(null);
 }
@@ -1514,6 +1647,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     egress: {
       enforce: resolve(SETTINGS.egress.enforce, o.egress?.enforce),
       allowUnenforced: resolve(SETTINGS.egress.allowUnenforced, o.egress?.allowUnenforced),
+      proxyUrl: resolve(SETTINGS.egress.proxyUrl, o.egress?.proxyUrl),
+      sourceIp: resolve(SETTINGS.egress.sourceIp, o.egress?.sourceIp),
+      denialLog: resolve(SETTINGS.egress.denialLog, o.egress?.denialLog),
     },
     externalPolicy: {
       authorGrain: resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain),
@@ -1541,6 +1677,12 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       dreamCandidateCap: resolve(SETTINGS.memory.dreamCandidateCap, o.memory?.dreamCandidateCap),
       skillProposalPr: resolve(SETTINGS.memory.skillProposalPr, o.memory?.skillProposalPr),
       syncTiming: resolve(SETTINGS.memory.syncTiming, o.memory?.syncTiming),
+      provider: resolve(SETTINGS.memory.provider, o.memory?.provider),
+      gitBranch: resolve(SETTINGS.memory.gitBranch, o.memory?.gitBranch),
+      notionTokenSecret: resolve(SETTINGS.memory.notionTokenSecret, o.memory?.notionTokenSecret),
+    },
+    observability: {
+      logShip: resolve(SETTINGS.observability.logShip, o.observability?.logShip),
     },
     policyPages: {
       privacy: resolve(SETTINGS.policyPages.privacy, o.policyPages?.privacy),
@@ -1611,6 +1753,11 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     },
     teams: {
       serviceHosts: resolve(SETTINGS.teams.serviceHosts, o.teams?.serviceHosts),
+    },
+    telemetry: {
+      enabled: resolve(SETTINGS.telemetry.enabled, o.telemetry?.enabled),
+      debug: resolve(SETTINGS.telemetry.debug, o.telemetry?.debug),
+      url: resolve(SETTINGS.telemetry.url, o.telemetry?.url),
     },
     tools: {
       maxResultChars: resolve(SETTINGS.tools.maxResultChars, o.tools?.maxResultChars),

@@ -1,3 +1,5 @@
+// proves: MEM-45
+
 import {
   GitHubContents,
   siloTier,
@@ -10,6 +12,7 @@ import {
   type MemorySilo,
   type DomainMemoryGrants,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { makeGitHubProvider, githubMemoryContainerProblem, declareGitHubMemoryCapability, registerGitHubMemory } from "../agent/memory/memory.js";
 
 type HttpFetch = NonNullable<ConstructorParameters<typeof GitHubContents>[0]>;
@@ -277,6 +280,33 @@ ok(!repoFiles("acme/brain").has("memory/default/@silos/txn/MEMORY.md"), "delete 
   await registered!.tierVersion!(p, tier, silo);
   ok(permissions?.contents === "write" && permissions?.metadata === "read", "registration mint: the actual warm-token closure asks for contents:write + metadata:read");
   ok(permissions?.pull_requests === undefined && permissions?.issues === undefined, "registration mint: 🔴 the actual warm-token closure asks for NO pull-request or issue authority");
+}
+
+// proves: SET-099
+{
+  const refs: string[] = [];
+  const recording: HttpFetch = async (url, init) => {
+    const ref = new URL(url).searchParams.get("ref");
+    if (ref !== null) refs.push(ref);
+    else if (init?.body) refs.push(String((JSON.parse(String(init.body)) as { branch?: string }).branch));
+    return fakeFetch(url, init);
+  };
+  const byBranch = makeGitHubProvider({
+    contents: new GitHubContents(recording, "https://api.github.com"),
+    mintToken: async () => "fake-token",
+    committer: () => ({ name: "open-everywhere[bot]", email: "bot@users.noreply.github.com" }),
+  });
+  const branchSilo: MemorySilo = { name: "branchy", provider: "github", container: "acme/branchy", path: "memory" };
+  await byBranch.readTier(p, siloTier("branchy"), branchSilo);
+  ok(refs.length > 0 && refs.every((r) => r === "main"), `memory.gitBranch: the shipped branch is main (saw ${JSON.stringify(refs)})`);
+  refs.length = 0;
+  process.env.OE_MEMORY_GIT_BRANCH = "stale-env-branch";
+  overrideSettingsForTest({ memory: { gitBranch: "memory-store" } });
+  await byBranch.ensureTier(p, siloTier("branchy"), branchSilo);
+  ok(refs.length > 0 && refs.every((r) => r === "memory-store"), `🔴 memory.gitBranch: the registered setting reaches an ALREADY-BUILT provider's reads and writes (saw ${JSON.stringify(refs)})`);
+  ok(!refs.includes("stale-env-branch"), "🔴 …and the retired OE_MEMORY_GIT_BRANCH variable is not read");
+  delete process.env.OE_MEMORY_GIT_BRANCH;
+  resetSettingsForTest();
 }
 
 console.log(`✓ github-memory: ${passed} assertions passed (Contents API client + github backing + the OPE-390 prefetch invariant, offline fake)`);

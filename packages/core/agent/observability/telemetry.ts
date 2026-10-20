@@ -5,6 +5,8 @@ import { getProvider as getMemoryProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { getSettings, settingsRegistered } from "../settings/settings.js";
+import { operatorSecret } from "../credentials/operator-secrets.js";
 
 export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "oe.instance.first_boot": Object.freeze([]),
@@ -122,17 +124,12 @@ interface TelemetryConfig {
   readonly enabled: boolean;
   readonly debug: boolean;
   readonly url: string;
-  readonly headers: Readonly<Record<string, string>>;
   readonly redirected: boolean;
 }
 
 export const DEFAULT_TELEMETRY_URL = "https://oe-telemetry.vercel.app/v1/logs";
 
-function isOffValue(raw: string | undefined): boolean {
-  if (!raw) return false;
-  const v = raw.trim().toLowerCase();
-  return v === "off" || v === "0" || v === "false";
-}
+const TELEMETRY_HEADERS_SECRET = "OE_TELEMETRY_OTLP_HEADERS";
 
 function isDntTruthy(raw: string | undefined): boolean {
   if (!raw) return false;
@@ -153,27 +150,27 @@ function parseHeaders(raw: string | undefined): Record<string, string> {
   return out;
 }
 
-let config: TelemetryConfig | undefined;
-
-export function telemetrySwitches(env: NodeJS.ProcessEnv): { readonly enabled: boolean; readonly url: string; readonly redirected: boolean } {
-  const enabled = !isOffValue(env.OE_TELEMETRY) && !isDntTruthy(env.DO_NOT_TRACK);
-  const redirectUrl = env.OE_TELEMETRY_OTLP_URL?.trim();
+export function telemetrySwitches(
+  settings: { readonly enabled: boolean; readonly url: string },
+  env: NodeJS.ProcessEnv = process.env,
+): { readonly enabled: boolean; readonly url: string; readonly redirected: boolean } {
+  const enabled = settings.enabled && !isDntTruthy(env.DO_NOT_TRACK);
+  const redirectUrl = settings.url.trim();
   return { enabled, url: redirectUrl || DEFAULT_TELEMETRY_URL, redirected: Boolean(redirectUrl) };
 }
 
 function readTelemetryConfig(): TelemetryConfig {
-  if (config !== undefined) return config;
-  const switches = telemetrySwitches(process.env);
-  config = {
-    ...switches,
-    debug: process.env.OE_TELEMETRY_DEBUG === "1",
-    headers: parseHeaders(process.env.OE_TELEMETRY_OTLP_HEADERS),
-  };
-  return config;
+  const t = getSettings().telemetry;
+  return { ...telemetrySwitches(t, process.env), debug: t.debug };
 }
 
-function resetTelemetryConfigCache(): void {
-  config = undefined;
+async function redirectHeaders(): Promise<Record<string, string>> {
+  try {
+    return parseHeaders(await operatorSecret(TELEMETRY_HEADERS_SECRET));
+  } catch (err) {
+    warnOnce(`collector headers unreadable (${err instanceof Error ? err.message : String(err)}) — sending without them`);
+    return {};
+  }
 }
 
 export function telemetryEnabled(): boolean {
@@ -195,7 +192,8 @@ interface InstanceInfo {
 }
 
 let cachedInstance: InstanceInfo | null = null;
-let initStarted = false;
+let initRequested = false;
+let started = false;
 
 let ephemeralState: { id: string; pending: boolean } | null = null;
 
@@ -212,9 +210,9 @@ function warnOnce(reason: string): void {
 
 const BOOT_LINE_ON =
   "[open-everywhere:telemetry] anonymous usage telemetry is ON — see docs/deploy/telemetry.md; " +
-  "OE_TELEMETRY=off or DO_NOT_TRACK=1 disables";
+  "telemetry.enabled: false or DO_NOT_TRACK=1 disables";
 const BOOT_LINE_OFF =
-  "[open-everywhere:telemetry] anonymous usage telemetry is OFF (OE_TELEMETRY / DO_NOT_TRACK) — see docs/deploy/telemetry.md";
+  "[open-everywhere:telemetry] anonymous usage telemetry is OFF (telemetry.enabled / DO_NOT_TRACK) — see docs/deploy/telemetry.md";
 
 function printBootDisclosureLine(): void {
   rawLog(telemetryEnabled() ? BOOT_LINE_ON : BOOT_LINE_OFF);
@@ -276,11 +274,16 @@ async function resolveInstanceAndMaybeEmitFirstBoot(): Promise<void> {
 }
 
 export async function initTelemetry(): Promise<void> {
+  initRequested = true;
+  await startTelemetry();
+}
+
+function startTelemetry(): Promise<void> {
+  if (!initRequested || started || !settingsRegistered()) return Promise.resolve();
+  started = true;
   printBootDisclosureLine();
-  if (initStarted) return;
-  initStarted = true;
-  if (!telemetryEnabled()) return;
-  await resolveInstanceAndMaybeEmitFirstBoot();
+  if (!telemetryEnabled()) return Promise.resolve();
+  return resolveInstanceAndMaybeEmitFirstBoot().catch(() => {});
 }
 
 const HEARTBEAT_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -349,6 +352,7 @@ function operationalProviderId(): string {
 let pendingHeartbeat: Promise<void> | undefined;
 
 export function maybeHeartbeat(now: number = Date.now()): void {
+  void startTelemetry();
   if (!cachedInstance) return;
   if (now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
   lastHeartbeatAt = now;
@@ -458,6 +462,7 @@ function buildOtlpPayload(records: readonly QueuedTelemetryRecord[]): Record<str
 
 export function emitTelemetry(eventName: string, attrs: TelemetryAttrs = {}): void {
   try {
+    void startTelemetry();
     const allowed = EVENT_SCHEMA[eventName];
     if (!allowed) {
       warnOnce(`unknown event "${eventName}" — dropped (outside the closed vocabulary)`);
@@ -519,7 +524,7 @@ export async function flushTelemetry(): Promise<void> {
   const batch = queue;
   queue = [];
   try {
-    const headers: Record<string, string> = { "content-type": "application/json", ...cfg.headers };
+    const headers: Record<string, string> = { "content-type": "application/json", ...(cfg.redirected ? await redirectHeaders() : {}) };
     const res = await fetchImpl(cfg.url, { method: "POST", headers, body: JSON.stringify(buildOtlpPayload(batch)) });
     if (!res.ok) {
       droppedCount += batch.length;
@@ -532,7 +537,6 @@ export async function flushTelemetry(): Promise<void> {
 }
 
 export function __resetTelemetryForTest(overrides: { fetchImpl?: typeof fetch } = {}): void {
-  resetTelemetryConfigCache();
   queue = [];
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -542,7 +546,8 @@ export function __resetTelemetryForTest(overrides: { fetchImpl?: typeof fetch } 
   warnedReasons.clear();
   fetchImpl = overrides.fetchImpl ?? ((...args) => fetch(...args));
   cachedInstance = null;
-  initStarted = false;
+  initRequested = false;
+  started = false;
   ephemeralState = null;
   lastHeartbeatAt = 0;
   pendingHeartbeat = undefined;

@@ -230,7 +230,7 @@ backings exist today:
 
 | Provider | Class | Role |
 | --- | --- | --- |
-| `git` | first-party (core) | The default when the deployment sets no `OE_MEMORY_PROVIDER` **and** no `DATABASE_URL`: a local git store. With a `DATABASE_URL` present the default is `postgres` (OPE-2230). |
+| `git` | first-party (core) | The default when the deployment sets no `memory.provider` **and** no `DATABASE_URL`: a local git store. With a `DATABASE_URL` present the default is `postgres` (OPE-2230). |
 | `postgres` (Neon) / `sqlite` | first-party (core) | The DB backings; DM/personal memory always lands here. |
 | `github` | connector-owned (github bundle) | A repo subtree via the GitHub Contents API (reuses the source-control plane). |
 | `notion` | connector-owned (notion bundle) | A Notion page subtree, materialised to Markdown (a read-only hot-cache by default; append-only write-back when the silo's author opts in). |

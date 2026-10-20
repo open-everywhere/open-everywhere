@@ -88,7 +88,7 @@ or one invocation and wrong to commit). `settings-lever` stays declared and empt
 schema reads no environment. Everything else is a setting in Git or an operator secret in the db
 store.
 
-`pending-migration` is the honest backlog: **38 names**, and since OPE-2650 it is also the sweep's
+`pending-migration` is the honest backlog: **22 names**, and since OPE-2650 it is also the sweep's
 plan. Every name that is not a survivor sits there with its TARGET, either a setting path or
 "operator secret".
 The list is **shrink-only**: once a name moves, its entry must go, or the lint reds. The suite pins
@@ -102,13 +102,16 @@ app's own `loadAccessRequests` fields) and the deprecated `OE_AI_GATEWAY_URL` (n
 GitHub and Linear tokens and signing secrets, the gateway key and the inline AWS token) to operator
 secrets read through `operatorSecret`, with the env var of the same name kept as the on-ramp. The
 fourth moved the control plane: its four credentials became operator secrets, the `OE_ADMIN_OIDC_*`
-pair became the `control.adminOidc` setting, and the three self-minted keys stopped reading env. The [configuration
+pair became the `control.adminOidc` setting, and the three self-minted keys stopped reading env. The fifth deleted sixteen
+more: the egress proxy wiring, the memory selectors, log shipping and telemetry. Thirteen became
+`egress.*`, `memory.*`, `observability.logShip` and `telemetry.*` settings. Three became operator
+secrets. The [configuration
 reference](../deploy/configuration-reference.md#moved-to-config-ope-2650) maps each deleted variable
 to the line that replaces it.
 
 Before OPE-2650 the backlog held three names: `OE_TELEMETRY` and `OE_TELEMETRY_DEBUG` (left in env
 by an earlier rule) and `OE_PRINCIPAL` (the local principal stand-in). The telemetry
-pair now carries a settings target. `OE_PRINCIPAL` is a `per-run-seam`: a committed value would ship
+pair moved in OPE-2650's fifth pull request, to `telemetry.enabled` and `telemetry.debug`. `OE_PRINCIPAL` is a `per-run-seam`: a committed value would ship
 to production. The first family to move off the backlog was the three webhook-verification walls,
 now the `webhooks.allowUnverified*` settings. OPE-2411 moved the rest in two parts. Part 1 made
 thirteen pure tunables into code constants with no setting at all (the DM seat's rotation

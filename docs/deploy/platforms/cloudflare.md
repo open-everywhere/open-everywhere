@@ -18,7 +18,7 @@ memory backing you would naturally co-locate with them.
 | Scheduler | Workers Cron Triggers → the routine dispatcher | **Roadmap** |
 
 Platform-independent seams are unchanged: the [memory backing](../../extending/memory-backings.md)
-(selected by `OE_MEMORY_PROVIDER`; no platform adapter is involved off Vercel), the [model gateway](../../extending/models-and-gateway.md),
+(selected by the `memory.provider` setting; no platform adapter is involved off Vercel), the [model gateway](../../extending/models-and-gateway.md),
 [surfaces](../../extending/surfaces.md), and the [GitHub App](../../capabilities/source-control.md)
 work the same here.
 
@@ -33,7 +33,7 @@ work the same here.
   that proxy fronts only the development-grade `justbash` backend; the `docker()` backend's
   session containers sit outside it (OPE-2407).
 - A registered operational-store client and memory provider. A present `DATABASE_URL` selects
-  `postgres` for both; `OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` override it — see
+  `postgres` for both; `OE_OPERATIONAL_PROVIDER` and the `memory.provider` setting override it — see
   [Database](../../extending/database.md).
 - A [credential broker](../../extending/credential-brokers.md) implementing `getSecret(ref)`.
 - A cron source that pings the routine dispatcher on a cadence — see

@@ -46,7 +46,7 @@ vercel deploy --prod --scope <your-team>
 
 ## 6. Point the emitter at it
 
-In the main Open Everywhere deploy, `OE_TELEMETRY_OTLP_URL` defaults to
+In the main Open Everywhere deploy, an empty `telemetry.url` setting (the shipped value) sends to
 `https://oe-telemetry.vercel.app/v1/logs` (see
 `packages/core/agent/observability/telemetry.ts`'s `DEFAULT_TELEMETRY_URL`) — if
 this project's Vercel deployment gets a different domain, update that constant (and

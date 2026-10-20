@@ -91,7 +91,8 @@ This CLI starts on Node 18 or newer, so `--check` can report an old Node. The ap
 Node 24, so a scaffold on an older Node exits non-zero and writes nothing.
 
 The scaffolded app sends anonymous usage telemetry when it runs, ON by default. Its `README.md`
-says how to turn it off (`OE_TELEMETRY=off` on the deployment), and the full disclosure is
+says how to turn it off (`telemetry: { enabled: false }` in `agent/settings/settings.ts`, or
+`DO_NOT_TRACK=1` on the deployment), and the full disclosure is
 [Telemetry](https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md).
 This CLI itself sends none.
 

@@ -8,7 +8,7 @@ const dir = join(tmpdir(), `open-everywhere-teams-reaction-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.OE_TELEMETRY = "off";
+process.env.DO_NOT_TRACK = "1";
 
 const { REACTION_FEEDBACK_ACTION, classifyEmoji, deploymentOrg, readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { parseTeamsReaction, routeTeamsStopReaction, TEAMS_STOP_REACTION } = await import("../agent/channels/teams-stop.js");

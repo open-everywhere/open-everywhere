@@ -136,7 +136,7 @@ function main(): void {
       "store-bootstrap": 5,
       platform: 23,
       "per-run-seam": 4,
-      "pending-migration": 38,
+      "pending-migration": 22,
     };
     for (const [klass, n] of Object.entries(expected)) {
       ok(
@@ -144,13 +144,14 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 74, `the allowlist holds 74 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 58, `the allowlist holds 58 names (found ${ENV_READ_ALLOWLIST.size})`);
     const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
     ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
     const OPERATOR_SECRET_NAMES = [
       "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DISCORD_BOT_TOKEN", "OE_RELAY_SECRET", "GITHUB_APP_PRIVATE_KEY",
       "GITHUB_WEBHOOK_SECRET", "GITHUB_TOKEN", "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY",
       "LINEAR_API_TOKEN", "LINEAR_CLIENT_SECRET", "LINEAR_WEBHOOK_SECRET", "AI_GATEWAY_API_KEY", "OE_AWS_WEB_IDENTITY_TOKEN",
+      "OE_EGRESS_PROXY_TOKEN", "OE_LOG_SHIP_TOKEN", "OE_TELEMETRY_OTLP_HEADERS",
     ];
     const backOnTheList = OPERATOR_SECRET_NAMES.filter((name) => ENV_READ_ALLOWLIST.has(name));
     ok(backOnTheList.length === 0, `no operator secret is an allowlisted env read (found: ${backOnTheList.join(", ") || "none"})`);

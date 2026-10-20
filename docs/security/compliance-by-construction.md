@@ -42,7 +42,7 @@ apply a fine-grained policy, and on any backend running the policy in dry-run
   resolves `networkAccess: "full"` adds a `"*"` catch-all and the deny stops meaning anything (the
   default is `none`, `access/network-access.ts`). And the policy is *enforced* only where a firewall
   applies it. That is the Vercel Sandbox natively. Off Vercel, it is the egress-proxy sidecar, which
-  the deployment arms by setting `OE_EGRESS_PROXY_URL`. The proxy fronts the `justbash` backend,
+  the deployment arms with the `egress.proxyUrl` setting. The proxy fronts the `justbash` backend,
   whose egress leaves through the app process. It cannot front the `docker` backend: eve starts each
   session container on the Docker daemon's default network, outside the proxy, so the app refuses to
   boot on `docker` with the proxy set (`packages/core/agent/access/self-host-egress.ts`, OPE-2407).

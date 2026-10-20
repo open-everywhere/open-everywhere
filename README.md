@@ -141,10 +141,11 @@ The full manual lives in **[docs/](./docs/README.md)**. Starting points:
 
 ## Telemetry
 
-A running app sends anonymous usage telemetry by default. Turn it off with `OE_TELEMETRY=off` or
-`DO_NOT_TRACK=1`. The events never carry message content, memory, DM data, or a workspace, channel or user id.
+A running app sends anonymous usage telemetry by default. Turn it off with the setting
+`telemetry: { enabled: false }` in `agent/settings/settings.ts`, or with `DO_NOT_TRACK=1` on the
+deployment. The events never carry message content, memory, DM data, or a workspace, channel or user id.
 [docs/deploy/telemetry.md](./docs/deploy/telemetry.md) discloses every event, and
-`OE_TELEMETRY_DEBUG=1` prints each payload instead of sending it.
+the setting `telemetry.debug: true` prints each payload instead of sending it.
 eve's own CLI telemetry is off: every npm script that runs `eve`, and the Dockerfile, set
 `EVE_TELEMETRY_DISABLED=1`. The same page lists every outbound call the app makes by default.
 

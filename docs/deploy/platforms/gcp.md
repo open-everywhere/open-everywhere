@@ -18,7 +18,7 @@ memory backing you would naturally co-locate with them.
 | Scheduler | Cloud Scheduler → the routine dispatcher | **Roadmap** |
 
 Platform-independent seams are unchanged: the [memory backing](../../extending/memory-backings.md)
-(selected by `OE_MEMORY_PROVIDER`; no platform adapter is involved off Vercel), the [model gateway](../../extending/models-and-gateway.md),
+(selected by the `memory.provider` setting; no platform adapter is involved off Vercel), the [model gateway](../../extending/models-and-gateway.md),
 [surfaces](../../extending/surfaces.md), and the [GitHub App](../../capabilities/source-control.md).
 
 ## What you'd supply

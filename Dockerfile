@@ -1,12 +1,6 @@
 FROM node:24-alpine AS build
 WORKDIR /app
 
-# eve collects its own CLI usage telemetry, ON by default. Each `eve` command posts the command name,
-# the eve version, the platform, a random installation id and a salted hash of the git remote URL or
-# of the working directory to telemetry.vercel.com (docs/deploy/telemetry.md lists every key).
-# Open Everywhere turns it OFF (OPE-2526). `EVE_TELEMETRY_DISABLED=1` is eve's switch, both stages set
-# it, and `npm run lint:eve-telemetry` pins it. Open Everywhere's own telemetry has its own switch,
-# `OE_TELEMETRY` (docs/deploy/telemetry.md).
 ENV EVE_TELEMETRY_DISABLED=1
 
 RUN apk add --no-cache git
@@ -42,18 +36,6 @@ ENV NODE_ENV=production
 ENV EVE_TELEMETRY_DISABLED=1
 RUN apk add --no-cache git openssh-client ca-certificates docker-cli
 
-# 🔴 THE IMAGE RUNS justbash (OPE-2407), because it is the only template this image carries (see the
-# build step), and the app declares it (`sandbox.selfHostBackend`). What each backend gives here:
-#   justbash (default) — runs. Its egress leaves through this app process, so behind the egress
-#     proxy (docker-compose.yml) every session request is held to the session's allow list. It
-#     shares the app process's filesystem: dev and testing grade isolation, with a boot warning.
-#   docker — does NOT run here. Every sandbox step refuses: "Prepared sandbox artifact … belongs
-#     to provider just-bash, not docker". It would also sit outside the egress proxy (eve starts
-#     the session container on the daemon's default network), so with OE_EGRESS_PROXY_URL set the
-#     app refuses to boot on it.
-
-# Copy the built app + installed deps. (Kept simple: copy the whole tree — the build
-# stage already produced node_modules and .output. Trim later with a prune step if needed.)
 COPY --from=build /app /app
 
 ENV PORT=3000

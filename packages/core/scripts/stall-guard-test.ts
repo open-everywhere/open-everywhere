@@ -21,6 +21,9 @@ import {
   __queueLengthForTest,
   __setInstanceForTest,
 } from "../agent/observability/telemetry.js";
+import { pinSuiteStore } from "./_suite-store.js";
+
+pinSuiteStore("stall-guard");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

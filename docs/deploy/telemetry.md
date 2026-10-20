@@ -4,9 +4,10 @@ Open Everywhere ships **anonymous usage telemetry, default ON**. This page is th
 canonical disclosure: every event, every attribute, the full never-collected list,
 retention, and how to turn it off, redirect it, or rotate your instance's id. If
 you're a DPO/security reviewer evaluating a deploy, this page — plus
-`OE_TELEMETRY_DEBUG=1` (below) — is everything you need.
+the `telemetry.debug` setting (below) — is everything you need.
 
-**Opt out with one env var: `OE_TELEMETRY=off` (or `DO_NOT_TRACK=1`) — full stop, forever.**
+**Opt out with one line: `telemetry: { enabled: false }` in `agent/settings/settings.ts` (or the
+`DO_NOT_TRACK=1` env var) — full stop, forever.**
 
 ## Every default outbound call
 
@@ -16,7 +17,7 @@ it. The source was read on 2026-10-14 (OPE-2526).
 
 | Call | Host | When | Default | How to turn it off |
 |---|---|---|---|---|
-| Open Everywhere usage telemetry (this page) | `oe-telemetry.vercel.app` | Boot, turns, and a heartbeat at most once every 6 hours | **On** | `OE_TELEMETRY=off` or `DO_NOT_TRACK=1`. `OE_TELEMETRY_OTLP_URL` sends it to your own collector instead. |
+| Open Everywhere usage telemetry (this page) | `oe-telemetry.vercel.app` | The first turn after boot, turns, and a heartbeat at most once every 6 hours | **On** | `telemetry.enabled: false` or `DO_NOT_TRACK=1`. `telemetry.url` sends it to your own collector instead. |
 | eve CLI telemetry | `telemetry.vercel.com` | Each `eve` command (`dev`, `build`, `start`, `info`, …) | **Off in Open Everywhere** | Open Everywhere sets `EVE_TELEMETRY_DISABLED=1` (below). |
 | Model calls | `ai-gateway.vercel.sh` | Each model step | On: this is the product's function | `models.targets.<name>.url` moves it to your own gateway (`OE_AI_GATEWAY_URL` was deleted in 0.9.0, OPE-2650). Nothing turns it off. |
 | eve's model catalog at build | `ai-gateway.vercel.sh/v1/models/catalog` | `eve build`, and `eve dev` or `eve start` when they compile, unless `.eve/cache/model-catalog.json` is at most 5 minutes old | On | No switch. A failed fetch falls back to a stale cache, and `npm run seed:model-catalog` writes one. |
@@ -60,7 +61,7 @@ The script prefix is POSIX shell syntax. On Windows, use WSL or set npm's `scrip
 shell. An app scaffolded before 0.8.0 has no prefix: `packages/core/UPGRADING.md` gives the manual
 step.
 
-`OE_TELEMETRY` does not change eve's switch: the two are separate. `npm run lint:eve-telemetry`
+`telemetry.enabled` does not change eve's switch: the two are separate. `npm run lint:eve-telemetry`
 pins every script, Dockerfile stage and source file that starts eve. It also runs the installed eve
 with `EVE_TELEMETRY_DEBUG=1` and proves that the switch still stops the payload. So an eve upgrade
 that renames the switch fails the test. When you run `eve` by hand, set `EVE_TELEMETRY_DISABLED=1`
@@ -117,7 +118,7 @@ though some OTel semantic conventions suggest them.
 | Event | Attributes | Why each attribute cannot leak |
 |---|---|---|
 | `oe.instance.first_boot` | *(resource attributes only)* | Fires once per instance id — it IS the install event. Deferred to the boot **after** the one that mints the id (see "First-boot grace window" below) — the very first boot sends nothing at all. |
-| `oe.instance.heartbeat` | `oe.surfaces` (sorted list of surface **types** with credentials configured — from: `slack`, `discord`, `teams`, `github`, `linear`, `webhooks`) · `oe.memory_provider` (`git`\|`sqlite`\|`postgres`\|`github`\|`notion`) · `oe.operational_provider` (`sqlite`\|`postgres`) · `oe.model.primary` / `oe.model.utility` (public AI-Gateway model-id strings, e.g. `deepseek/deepseek-v4-flash-0731`) · `oe.domains.bucket` (`0`\|`1`\|`2-5`\|`6+`) · `oe.telemetry.dropped` (count of telemetry records **this instance** has dropped) | Surface *types* are product vocabulary — never a workspace/channel id. Providers are enums. Model ids are public catalog strings (a config choice, not user data). The domain count is bucketed so it can never fingerprint your org's exact structure. The dropped-count is purely self-referential health. Sent at most once per 6h per **process**, lazily on turn activity or cold boot. The throttle is an in-memory variable (`lastHeartbeatAt` in `packages/core/agent/observability/telemetry.ts`), so it bounds one process and not the instance: a serverless deploy runs many concurrent lambdas and recycles them often, and each cold boot starts a fresh 6h window. The collector dedupes on (`instance_id`, 6h window). So the **stored** record is at most one per instance per 6h window, while the sender may emit more than that. |
+| `oe.instance.heartbeat` | `oe.surfaces` (sorted list of surface **types** with credentials configured — from: `slack`, `discord`, `teams`, `github`, `linear`, `webhooks`) · `oe.memory_provider` (`git`\|`sqlite`\|`postgres`\|`github`\|`notion`) · `oe.operational_provider` (`sqlite`\|`postgres`) · `oe.model.primary` / `oe.model.utility` (public AI-Gateway model-id strings, e.g. `deepseek/deepseek-v4-flash-0731`) · `oe.domains.bucket` (`0`\|`1`\|`2-5`\|`6+`) · `oe.telemetry.dropped` (count of telemetry records **this instance** has dropped) | Surface *types* are product vocabulary — never a workspace/channel id. Providers are enums. Model ids are public catalog strings (a config choice, not user data). The domain count is bucketed so it can never fingerprint your org's exact structure. The dropped-count is purely self-referential health. Sent at most once per 6h per **process**, lazily on turn activity, from the first turn after boot. The throttle is an in-memory variable (`lastHeartbeatAt` in `packages/core/agent/observability/telemetry.ts`), so it bounds one process and not the instance: a serverless deploy runs many concurrent lambdas and recycles them often, and each cold boot starts a fresh 6h window. The collector dedupes on (`instance_id`, 6h window). So the **stored** record is at most one per instance per 6h window, while the sender may emit more than that. |
 | `oe.turn.completed` | `oe.surface` (type enum: `slack`\|`teams`\|`discord`\|`linear`\|`webhook`\|`local`) · `oe.kind` (`channel`\|`dm`\|`mpim`\|`routine`\|`webhook`) · `gen_ai.request.model` (the routed model id) · `oe.tokens.bucket` (`<1k`\|`1-10k`\|`10-100k`\|`100k-1M`\|`>1M`, the turn's total) · `oe.steps.bucket` (`1`\|`2-5`\|`6-20`\|`>20`) · `oe.latency.bucket` (`<5s`\|`5-15s`\|`15-60s`\|`1-5m`\|`>5m`) | Every field is an enum or a log-scale bucket. No surface key, session id, or principal id — and no precise count. The buckets are deliberately too coarse to correlate to one specific conversation, even with collector-side timing. |
 | `oe.turn.first_output` | `oe.surface` · `oe.kind` · `oe.latency.bucket` (`<5s`\|`5-15s`\|`15-60s`\|`1-5m`\|`>5m`, from the turn's start to the END of its FIRST completed step) | One row per turn. A separate event rather than an attribute on `oe.turn.completed`, because a turn that HANGS emits no completion row and that is the case worth watching. 🔴 The window **includes that step's tool execution**, so it is an **upper bound** on time-to-first-output, not a floor — a turn whose first act is a long `bash` reports the whole wait. It says nothing about usefulness: nothing reads what the step produced. Same three enum/bucket labels — no surface key, session id, or principal id. See [On-call conventions](../capabilities/on-call-conventions.md). |
 | `oe.turn.failed` | `oe.surface` · `oe.error.code` (Eve's failure **code** only — never the message) | Failure codes are a bounded platform vocabulary. Messages are excluded *by type*, because a message can embed your org's content. |
@@ -170,7 +171,8 @@ The exact failure this design avoids: shipping data in the **same run** that fir
 discloses telemetry to you (.NET's most-cited flaw; Homebrew's 2016 flame, fixed in
 24 hours). So:
 
-- **The disclosure line prints before anything is ever transmitted, every boot.**
+- **The disclosure line prints before anything is ever transmitted.** Each process prints it
+  once, at its first telemetry event after the app registers its settings.
 - On the **very first boot** — the one that mints your instance's anonymous id —
   **zero bytes are sent.** No `first_boot`, no heartbeat, nothing.
 - `oe.instance.first_boot` fires on the **next** boot (or, if your operational store
@@ -182,13 +184,23 @@ before your deployment ever sends a byte.
 
 ## The boot line
 
-Every boot prints, before anything is transmitted:
+Each process prints this line once, at its first telemetry event (usually the first turn after
+boot), before anything is transmitted. A process that emits no event prints nothing:
 
 ```
-[open-everywhere:telemetry] anonymous usage telemetry is ON — see docs/deploy/telemetry.md; OE_TELEMETRY=off or DO_NOT_TRACK=1 disables
+[open-everywhere:telemetry] anonymous usage telemetry is ON — see docs/deploy/telemetry.md; telemetry.enabled: false or DO_NOT_TRACK=1 disables
 ```
 
-(or, when disabled: `anonymous usage telemetry is OFF (OE_TELEMETRY / DO_NOT_TRACK)`).
+When telemetry is disabled, it prints:
+
+```
+[open-everywhere:telemetry] anonymous usage telemetry is OFF (telemetry.enabled / DO_NOT_TRACK) — see docs/deploy/telemetry.md
+```
+
+The line prints at the first emit after the app registers its settings, not at the instrumentation
+`setup`. The `setup` runs before the app registers its settings, so a read there would see the
+shipped default (`telemetry.enabled: true`). The late read lets a deployment's
+`telemetry.enabled: false` always win.
 
 ## Where the setup path discloses it
 
@@ -198,8 +210,8 @@ turn it off, in four files the setup path reads (OPE-2399):
 - `README.md` — a "Telemetry" section.
 - `AGENTS.md` — tells the coding agent to tell the person before the first deploy.
 - The `quickstart-open-everywhere` skill — a section the agent follows before the first deploy. It
-  asks the person to choose, and sets `OE_TELEMETRY=off` on the deployment when they opt out.
-- `.env.example` — a commented `# OE_TELEMETRY=off` line.
+  asks the person to choose, and turns telemetry off when they opt out.
+- `.env.example` — a commented line about the opt-out.
 
 An agent-led setup that follows the skill therefore shows the person the disclosure before the first
 deploy.
@@ -219,7 +231,7 @@ lowerCamelCase field names, int64s as **decimal strings** — OTLP spec 1.10.0) 
         "attributes": [
           { "key": "service.name", "value": { "stringValue": "open-everywhere" } },
           { "key": "service.version", "value": { "stringValue": "0.4.0" } },
-          { "key": "service.instance.id", "value": { "stringValue": "00000000-0000-4000-8000-000000000002" } },
+          { "key": "service.instance.id", "value": { "stringValue": "b3f1c2a0-6e9d-4a7a-8b2e-1e9f9a2d4c11" } },
           { "key": "deployment.environment.name", "value": { "stringValue": "production" } },
           { "key": "oe.host", "value": { "stringValue": "vercel" } },
           { "key": "oe.node.major", "value": { "intValue": "24" } }
@@ -285,10 +297,8 @@ Slack probe reads both homes of the bot token, env first and then the store, so 
 `/setup` configured reports `slack`. `flushTelemetry` waits for a pending heartbeat before it posts.
 
 `telemetryStatusLine` renders the status line the slash command shows.
-`resetTelemetryConfigCache` drops the memoized config so the next read re-derives it from the
-current env. It is module-private: its one caller outside tests was the install wizard's "redirect
-to your own collector" answer, which went with the wizard (see above), and nothing else mutates
-`OE_TELEMETRY_OTLP_URL` after the first emit.
+The module does not memoize the switches. Each read resolves `getSettings()` again, because a memo
+taken before the app registers its settings would pin the shipped default.
 
 ### The turn clock
 
@@ -319,16 +329,24 @@ payload, not just a promise on this page.
 
 ## Config
 
-| Var | Default | Behaviour |
+Three switches are settings in `agent/settings/settings.ts` (OPE-2650). The app reads them at the
+first emit after it registers its settings.
+
+| Setting | Shipped | Behaviour |
 |---|---|---|
-| `OE_TELEMETRY` | `on` | `off` / `0` / `false` disables everything. Checked first — wins over every other setting. |
-| `DO_NOT_TRACK` | — | Any truthy value disables everything (honored as a courtesy — the same convention Dagger, Turborepo, Scarf, and netdata respect). Checked second. |
-| `OE_TELEMETRY_DEBUG` | — | `1` prints every would-be payload to the console **without sending it** — inspect exactly what would go out before you decide whether to opt out. Costs nothing to check. |
-| `OE_TELEMETRY_OTLP_URL` | Our default collector | Any OTLP/HTTP logs endpoint. **Setting this redirects 100% of the payload — nothing is ever teed to the default collector.** Point it at your own Grafana/Axiom/collector and the identical payload lands there instead. |
-| `OE_TELEMETRY_OTLP_HEADERS` | — | `Name=value,Name2=value2` — auth headers for a redirected, authed collector (mirrors `OTEL_EXPORTER_OTLP_HEADERS`). |
+| `telemetry.enabled` | `true` | `false` disables everything: nothing is sent and no instance id is minted. Checked first — wins over every other switch. It was `OE_TELEMETRY` until OPE-2650. |
+| `telemetry.debug` | `false` | `true` prints every would-be payload to the console **without sending it** — inspect exactly what would go out before you decide whether to opt out. Costs nothing to check. It was `OE_TELEMETRY_DEBUG` until OPE-2650. |
+| `telemetry.url` | `""` (our default collector) | Any OTLP/HTTP logs endpoint. **Setting this redirects 100% of the payload — nothing is ever teed to the default collector.** Point it at your own Grafana/Axiom/collector and the identical payload lands there instead. It was `OE_TELEMETRY_OTLP_URL` until OPE-2650. |
+
+The rest are env vars or an operator secret:
+
+| Name | Default | Behaviour |
+|---|---|---|
+| `DO_NOT_TRACK` | — | Env var. Any truthy value disables everything (honored as a courtesy — the same convention Dagger, Turborepo, Scarf, and netdata respect). Checked second. |
+| `OE_TELEMETRY_OTLP_HEADERS` | — | Operator secret, `oe secret set OE_TELEMETRY_OTLP_HEADERS`. `Name=value,Name2=value2` — auth headers for a `telemetry.url` collector (mirrors `OTEL_EXPORTER_OTLP_HEADERS`). The app sends them only to that redirect collector, never to the default collector. `getOperatorSecret` still falls back to an env var of the same name, with a one-time warning. |
 | `EVE_TELEMETRY_DISABLED` | `1`, set by Open Everywhere | eve's switch for its own CLI telemetry, not Open Everywhere's. See [eve's CLI telemetry is off](#eves-cli-telemetry-is-off). |
 
-Precedence: `OE_TELEMETRY=off` > `DO_NOT_TRACK` > the redirect URL. Same never-throw,
+Precedence: `telemetry.enabled: false` > `DO_NOT_TRACK` > the redirect URL. Same never-throw,
 never-block contract as the rest of Open Everywhere's observability seams (see
 [Observability](./observability.md)): telemetry is a bounded, drop-oldest, fire-and-
 forget queue — it can never fail or slow down a turn.

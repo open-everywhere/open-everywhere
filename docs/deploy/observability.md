@@ -134,13 +134,17 @@ binds. Size an ingress budget against the 6 s, not the 20 s.
 > trail itself to a SIEM, with its hash-chain fields, configure [SIEM export](./siem-export.md) in
 > `agent/settings/settings.ts` instead.
 
-## Signal 1 — durable structured logs (`OE_LOG_SHIP_URL`)
+## Signal 1 — durable structured logs (`observability.logShip`)
 
-Set `OE_LOG_SHIP_URL` and every console line **also** ships as a structured JSON
+Set `observability.logShip.url` in `agent/settings/settings.ts` and every console line **also** ships as a structured JSON
 record — batched, fire-and-forget, POSTed as a JSON array to your endpoint. The
 console output itself is untouched (platform logs keep working), shipping never blocks
 a turn, transport failures are swallowed (bounded queue, drop-oldest), and the batch is
 flushed at turn/session end so records leave the instance before serverless suspend.
+
+The instrumentation `setup` installs the console capture before the app registers its settings. A
+record logged in that gap waits in the bounded queue. The first read after the registration decides
+its fate: a set `url` ships it with the rest, and an empty `url` drops it.
 
 Each record carries: `ts`, `level` (`info`/`warn`/`error`), `service`, `env`,
 `component` (parsed from the `[open-everywhere:x]` prefix), `message`, `surfaceKey`
@@ -152,18 +156,26 @@ recorded via an observe-only process monitor (crash semantics unchanged).
 Works out of the box with any backend that accepts a JSON array over HTTP with a
 static auth header — Axiom, Better Stack, or your own collector:
 
-```bash
-# Axiom
-OE_LOG_SHIP_URL=https://api.axiom.co/v1/datasets/<dataset>/ingest
-OE_LOG_SHIP_TOKEN="Bearer xaat-…"
+```ts
+// agent/settings/settings.ts — Axiom
+observability: { logShip: { url: "https://api.axiom.co/v1/datasets/<dataset>/ingest" } },
 
-# Better Stack (telemetry source)
-OE_LOG_SHIP_URL=https://<your-ingesting-host>/
-OE_LOG_SHIP_TOKEN="Bearer <source-token>"
+// agent/settings/settings.ts — Better Stack (telemetry source)
+observability: { logShip: { url: "https://<your-ingesting-host>/" } },
 ```
 
-Knobs (all optional): `OE_LOG_SHIP_TOKEN_HEADER` (default `authorization`) and
-`OE_LOG_SERVICE` — see the [configuration reference](./configuration-reference.md#observability).
+The token is the operator secret `OE_LOG_SHIP_TOKEN`, never config in Git:
+
+```bash
+oe secret set OE_LOG_SHIP_TOKEN    # value: "Bearer xaat-…" (Axiom) or "Bearer <source-token>" (Better Stack)
+```
+
+`getOperatorSecret` still falls back to an `OE_LOG_SHIP_TOKEN` env var, with a one-time warning,
+when the db credential store holds no value.
+
+Knobs (all optional): `observability.logShip.tokenHeader` (default `authorization`) and
+`observability.logShip.service` (default `open-everywhere`) — see the
+[configuration reference](./configuration-reference.md#observability).
 The batch size (20 records) and the flush interval (1 second) are code constants, not knobs
 (OPE-2411).
 
@@ -180,7 +192,7 @@ log.error("delivery failed", err, { surfaceKey, messageId });
 
 ### Inside the shipper
 
-`logShipEnabled` answers whether the ship URL armed the path at all. Nothing below runs when it did
+`logShipEnabled` answers whether the `observability.logShip.url` setting armed the path at all. Nothing below runs when it did
 not.
 
 **A record is labelled with the session's own surface, best-effort.** `surfaceKeyForLog` reads the
@@ -266,8 +278,9 @@ notification).
 
 1. Create an Axiom account, one dataset (e.g. `open-everywhere`), and an API token
    with ingest permission on it.
-2. Set the four env vars from the snippets above (both `OE_LOG_SHIP_*` and
-   `OTEL_EXPORTER_OTLP_*`) on your deployment.
+2. Declare `observability.logShip.url` in `agent/settings/settings.ts` and store the token with
+   `oe secret set OE_LOG_SHIP_TOKEN` (the snippets above). Set the two `OTEL_EXPORTER_OTLP_*` env
+   vars on your deployment.
 3. Add a monitor: `['open-everywhere'] | where level == "error"` → notify.
 
 Prefer Grafana Cloud (best free alerting: Slack/webhook notifiers, 500 rules) or
@@ -276,8 +289,9 @@ endpoint and headers.
 
 ## The Discord relay
 
-The always-on Gateway relay (`deploy/discord-relay/`) honours the same
-`OE_LOG_SHIP_URL` / `OE_LOG_SHIP_TOKEN` / `OE_LOG_SHIP_TOKEN_HEADER` env vars, shipping
+The always-on Gateway relay (`deploy/discord-relay/`) is a separate process. It reads its own
+`OE_LOG_SHIP_URL` / `OE_LOG_SHIP_TOKEN` / `OE_LOG_SHIP_TOKEN_HEADER` env vars (the app uses the
+`observability.logShip` setting and the operator secret instead), shipping
 its `[oe-discord-relay]` lines to the same backend with `service: "oe-discord-relay"`
 — so a relay disconnect and the deploy-side ingest failure it causes are visible in
 one place. For liveness (the relay dying entirely can't log itself), point any

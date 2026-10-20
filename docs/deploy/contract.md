@@ -78,7 +78,7 @@ store — the audit chain, the spend ledger, approvals and break-glass connector
 the durable memory backing.
 
 `DATABASE_URL` is the **only** value needed. It selects `postgres` for both stores on its own;
-`OE_OPERATIONAL_PROVIDER` and `OE_MEMORY_PROVIDER` still override it, and neither is required.
+`OE_OPERATIONAL_PROVIDER` and the `memory.provider` setting still override it, and neither is required.
 
 On a multi-instance host a local store is per-instance. A break-glass revocation then writes to one
 instance while the others read their own empty copy, the spend ledger resets on every cold start,
@@ -108,7 +108,7 @@ reads the deployment's own files and environment. Use it for development and not
   filesystem, but it does not run in the image (the image builds its template on `justbash`,
   OPE-2407), and its session containers start on the Docker daemon's default network, outside the
   egress proxy. So the app refuses to boot with `sandbox.selfHostBackend: "docker"` and
-  `OE_EGRESS_PROXY_URL` set. What each backend gives:
+  `egress.proxyUrl` set. What each backend gives:
 
   | Backend | Runs in the image | Session egress behind the proxy | Filesystem |
   | --- | --- | --- | --- |
@@ -129,7 +129,7 @@ rather than run unfirewalled, unless the deployment declares `egress: { allowUne
 
 - **Vercel:** the Vercel Sandbox firewall applies the fine-grained policy natively.
 - **Docker:** the egress-proxy sidecar (`docker-compose.yml`), with the `justbash` backend only.
-  `OE_EGRESS_PROXY_URL` points the deployment at it, and the session policy is pushed on every
+  `egress.proxyUrl` in `agent/settings/settings.ts` points the deployment at it, and the session policy is pushed on every
   session. The proxy holds two principals apart. The **session** (no credential) is held to its
   compiled policy, default-deny. The **app's own model call** carries the proxy token as
   `Proxy-Authorization` and is held to a separate **host plane** that names the model gateway, plus any non-gateway transcription route host

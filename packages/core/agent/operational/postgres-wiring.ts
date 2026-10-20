@@ -17,7 +17,7 @@ export function postgresWiringRefusal(env: NodeJS.ProcessEnv, registered: Postgr
   const what = `the ${missing.join(" and the ")} ${missing.length > 1 ? "are" : "is"} Postgres`;
   if (!env.DATABASE_URL?.trim()) {
     return (
-      `open-everywhere refuses to boot: an OE_*_PROVIDER variable selects Postgres, so ${what}, but DATABASE_URL is unset ` +
+      `open-everywhere refuses to boot: a store selector (OE_OPERATIONAL_PROVIDER or the memory.provider setting) names Postgres, so ${what}, but DATABASE_URL is unset ` +
       "and no Postgres client is registered — set DATABASE_URL, or remove the selector that names postgres."
     );
   }

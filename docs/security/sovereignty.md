@@ -40,7 +40,7 @@ operates in, not only that one. This page does not give legal advice.
 | Piece | On Vercel | Self-hosted (Docker) | Who could be compelled | What decides it |
 | --- | --- | --- | --- | --- |
 | **Compute** (the functions and the sandbox) | Vercel functions and the Vercel Sandbox | your container host | Vercel Inc. (US) / you | the deploy route; `sandbox.region` pins the Vercel Sandbox region (`packages/core/agent/settings/settings.ts`) |
-| **Memory** | Postgres at `DATABASE_URL` | Postgres at `DATABASE_URL` | the database's operator (for example Neon, US) | `OE_MEMORY_PROVIDER`, else `DATABASE_URL` selects `postgres` (`packages/core/agent/memory/backing-selection.ts`) |
+| **Memory** | Postgres at `DATABASE_URL` | Postgres at `DATABASE_URL` | the database's operator (for example Neon, US) | `memory.provider`, else `DATABASE_URL` selects `postgres` (`packages/core/agent/memory/backing-selection.ts`) |
 | **Transcripts** (every message and model step) | Vercel Workflow, eve's durable session store | `.eve/.workflow-data` on the server's disk | Vercel Inc. (US) / you | the host: eve keeps the session event stream in its workflow world ([deployment contract](../deploy/contract.md)), unless `experimental.workflow.world` in `agent/agent.ts` names another world, such as Postgres |
 | **Tool-call logs** (each call's arguments and result) | the same event stream, plus one audit row per consequential act | the same | Vercel Inc. (US) and the database's operator / you and the database's operator | the session event stream (`packages/core/agent/control/read-route.ts`, the transcript route) and the audit log |
 | **Run state** (in-flight turns, routines) | Vercel Workflow | `.eve/.workflow-data` | Vercel Inc. (US) / you | the host, unless `experimental.workflow.world` in `agent/agent.ts` names another world |
@@ -51,8 +51,8 @@ operates in, not only that one. This page does not give legal advice.
 | **Model route** | the upstream provider the gateway picks for each call | the same | that provider | `models.stack` (`agent/model/stacks.ts`), `models.dataPolicy` (`packages/core/agent/model/data-policy.ts`) and `models.targets` `providers.only` |
 | **Transcription** (voice clips and meeting audio) | the stack's transcription role: the gateway, or a direct route | the same | the gateway's provider; DeepInfra (US) for a `deepinfra` route; your server for a `self-hosted` route | the transcription role in `agent/model/stacks.ts` (`packages/adapters/agent/model/transcription-routes.ts`); `voiceClips.enabled: false` keeps voice clips in the deployment |
 | **Chat surface** | the chat platform (Slack, Teams, Discord, …) | the same | the platform's operator (for example Salesforce, Microsoft) | the roster's `providers` (`roster.config.ts`) |
-| **Runtime logs** | Vercel's log store | your container's log driver | Vercel Inc. (US) / you | `OE_LOG_SHIP_URL` ships a copy (`packages/core/agent/observability/ship.ts`) |
-| **Telemetry** | `oe-telemetry.vercel.app`, unless off or redirected | the same | Vercel Inc. and Neon (US), for the Open Everywhere maintainers | `OE_TELEMETRY=off` or `DO_NOT_TRACK=1`; `OE_TELEMETRY_OTLP_URL` ([Telemetry](../deploy/telemetry.md)) |
+| **Runtime logs** | Vercel's log store | your container's log driver | Vercel Inc. (US) / you | `observability.logShip` ships a copy (`packages/core/agent/observability/ship.ts`) |
+| **Telemetry** | `oe-telemetry.vercel.app`, unless off or redirected | the same | Vercel Inc. and Neon (US), for the Open Everywhere maintainers | `telemetry.enabled: false` or `DO_NOT_TRACK=1`; `telemetry.url` ([Telemetry](../deploy/telemetry.md)) |
 | **Other outbound calls** | the model catalog during `eve build`; eve's CLI telemetry, off in the scripts Open Everywhere ships (an app scaffolded before 0.8.0: see `packages/core/UPGRADING.md`; `oe sovereignty` reads yours) | the same | Vercel Inc. (US) | [Every default outbound call](../deploy/telemetry.md#every-default-outbound-call) |
 
 Four rows need a closer reading:
@@ -178,7 +178,7 @@ apply to it.
 ### Nothing phones home without your switch
 
 [Every default outbound call](../deploy/telemetry.md#every-default-outbound-call) lists each call to a
-host you did not configure. Usage telemetry is on by default and carries no content; `OE_TELEMETRY=off`
+host you did not configure. Usage telemetry is on by default and carries no content; `telemetry.enabled: false`
 turns it off. eve's own CLI telemetry is off in every script Open Everywhere ships
 (`npm run lint:eve-telemetry`). The model calls themselves go to the targets in `models.targets`, and
 a direct transcription route goes to its own host. Nothing turns those calls off: they are the

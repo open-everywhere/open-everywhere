@@ -6,7 +6,6 @@ import { join } from "node:path";
 const dir = join(tmpdir(), `open-everywhere-memory-admin-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_MEMORY_PROVIDER;
 _setDeploymentIdentityForTest({ org: "acme" });
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";

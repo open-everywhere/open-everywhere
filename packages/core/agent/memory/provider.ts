@@ -90,14 +90,14 @@ export function getProvider(): MemoryProvider {
   if (!provider) {
     if (id === "postgres") {
       throw new Error(
-        (process.env.OE_MEMORY_PROVIDER?.trim()
-          ? 'OE_MEMORY_PROVIDER="postgres"'
+        (getSettings().memory.provider.trim()
+          ? 'memory.provider is "postgres"'
           : "DATABASE_URL is set, so postgres is the selected memory backing (memory/backing-selection.ts)") +
           " but no client is registered — call registerPostgres(client) at startup (see docs/setup.md).",
       );
     }
     throw new Error(
-      `unknown OE_MEMORY_PROVIDER "${id}" (have: ${Object.keys(REGISTRY).join(", ")})`,
+      `unknown memory.provider "${id}" (have: ${Object.keys(REGISTRY).join(", ")})`,
     );
   }
   active = provider;

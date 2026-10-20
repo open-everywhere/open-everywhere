@@ -10,7 +10,6 @@ const ok = (cond: boolean, label: string) => {
 
 _setDeploymentIdentityForTest({ org: "acme-org", workspace: "ws1", surface: "c1" });
 overrideSettingsForTest({ identity: { blanketTrust: "internal" } });
-delete process.env.OE_MEMORY_PROVIDER;
 
 await import("./_register-test-config.js");
 

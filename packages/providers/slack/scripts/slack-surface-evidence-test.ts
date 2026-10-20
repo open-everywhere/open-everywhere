@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 process.env.OE_SQLITE_PATH = ":memory:";
 delete process.env.DATABASE_URL;
 delete process.env.OE_OPERATIONAL_PROVIDER;
-process.env.OE_TELEMETRY = "off";
+process.env.DO_NOT_TRACK = "1";
 
 const { _resetSurfaceEventStampMemoForTest, getOperationalStore, surfaceEventVerifiedAt, deploymentOrg } = await import(
   "@open-everywhere/core/agent/adapter-api.js"

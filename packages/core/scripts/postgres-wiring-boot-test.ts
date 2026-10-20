@@ -8,6 +8,7 @@ import { resolveOperationalSelection } from "../agent/operational/selection.js";
 import { resolveMemoryProviderId } from "../agent/memory/backing-selection.js";
 import { registerPostgres } from "../agent/memory/provider.js";
 import { registerOperationalPostgres } from "../agent/operational/provider.js";
+import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -21,7 +22,8 @@ const APP_INFO = { version: "1.0.0", primaryModel: "p", utilityModel: "u", deplo
 const NEON_ENV: NodeJS.ProcessEnv = { DATABASE_URL: "postgres://app@db.invalid/app" };
 
 function neonOnlyEnv(): void {
-  for (const name of ["OE_MEMORY_PROVIDER", "OE_OPERATIONAL_PROVIDER", "OE_ALLOW_EPHEMERAL_OPERATIONAL", "VERCEL"]) delete process.env[name];
+  for (const name of ["OE_OPERATIONAL_PROVIDER", "OE_ALLOW_EPHEMERAL_OPERATIONAL", "VERCEL"]) delete process.env[name];
+  resetSettingsForTest();
   process.env.DATABASE_URL = NEON_ENV.DATABASE_URL;
 }
 
@@ -60,15 +62,24 @@ const noQueries = { query: async () => ({ rows: [] }) };
 {
   const none = { memory: false, operational: false };
   ok(postgresWiringRefusal({}, none) === undefined, "no DATABASE_URL and no selector: the PGlite floor and git memory need no client");
-  ok(postgresWiringRefusal({ DATABASE_URL: "postgres://x", OE_OPERATIONAL_PROVIDER: "sqlite", OE_MEMORY_PROVIDER: "git" }, none) === undefined, "both selectors pinned off Postgres: nothing to refuse");
+  const withMemory = <T>(provider: string, fn: () => T): T => {
+    overrideSettingsForTest({ memory: { provider } });
+    try {
+      return fn();
+    } finally {
+      resetSettingsForTest();
+    }
+  };
+  ok(withMemory("git", () => postgresWiringRefusal({ DATABASE_URL: "postgres://x", OE_OPERATIONAL_PROVIDER: "sqlite" }, none)) === undefined, "both selectors pinned off Postgres: nothing to refuse");
   ok(postgresWiringRefusal({ DATABASE_URL: "postgres://x" }, { memory: true, operational: true }) === undefined, "🔴 NEGATIVE CONTROL: both clients registered, no refusal");
-  const opOnly = postgresWiringRefusal({ DATABASE_URL: "postgres://x", OE_MEMORY_PROVIDER: "git" }, none) ?? "";
+  const opOnly = withMemory("git", () => postgresWiringRefusal({ DATABASE_URL: "postgres://x" }, none)) ?? "";
   ok(opOnly.includes("the operational store is Postgres") && !opOnly.includes("memory"), "only the unwired store is named");
   const memOnly = postgresWiringRefusal({ DATABASE_URL: "postgres://x" }, { memory: false, operational: true }) ?? "";
   ok(memOnly.includes("the memory backing is Postgres") && !memOnly.includes("operational"), "a missing memory client alone refuses too");
-  const noUrl = postgresWiringRefusal({ OE_MEMORY_PROVIDER: "postgres" }, none) ?? "";
+  const noUrl = withMemory("postgres", () => postgresWiringRefusal({}, none)) ?? "";
   ok(noUrl.includes("DATABASE_URL is unset") && noUrl.includes("set DATABASE_URL") && !noUrl.includes("register-adapters"), "a hand selector with no DATABASE_URL names the missing variable, not a stale file");
-  ok(postgresWiringRefusal({ OE_OPERATIONAL_PROVIDER: "postgres", OE_MEMORY_PROVIDER: "git" }, { memory: false, operational: true }) === undefined, "an explicit selector with a registered client passes");
+  ok(withMemory("git", () => postgresWiringRefusal({ OE_OPERATIONAL_PROVIDER: "postgres" }, { memory: false, operational: true })) === undefined, "an explicit selector with a registered client passes");
+  ok((postgresWiringRefusal({ DATABASE_URL: "postgres://x", OE_MEMORY_PROVIDER: "git" }, { memory: false, operational: true }) ?? "").includes("the memory backing is Postgres"), "🔴 a stale OE_MEMORY_PROVIDER=git is not read: the unwired memory backing still refuses");
 }
 
 for (const rel of ["packages/create/template/agent/agent.ts", "agent/agent.ts"]) {

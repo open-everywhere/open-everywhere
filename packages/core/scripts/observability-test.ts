@@ -13,6 +13,10 @@ import {
   __queueLengthForTest,
   type LogRecord,
 } from "../agent/observability/ship.js";
+import { overrideSettingsForTest, resetSettingsForTest, type LogShipSetting } from "../agent/settings/settings.js";
+import { pinSuiteStore } from "./_suite-store.js";
+
+pinSuiteStore("observability");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -28,6 +32,10 @@ const SHIP_ENV = [
 ];
 function clearShipEnv(): void {
   for (const key of SHIP_ENV) delete process.env[key];
+  overrideSettingsForTest({ observability: { logShip: { url: "" } } });
+}
+function ship(cfg: LogShipSetting): void {
+  overrideSettingsForTest({ observability: { logShip: cfg } });
 }
 
 function fakeFetch(status = 200) {
@@ -50,7 +58,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const { calls, impl } = fakeFetch();
   __resetLogShipForTest({ fetchImpl: impl });
 
-  ok(!logShipEnabled(), "no OE_LOG_SHIP_URL → shipping disabled");
+  ok(!logShipEnabled(), "an empty observability.logShip.url → shipping disabled");
   enqueue(buildRecord("info", "test", "hello"));
   ok(__queueLengthForTest() === 0, "enqueue is a no-op when disabled");
 
@@ -61,12 +69,19 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   oeLogger("gating").info("still fine to call the structured API");
   await flushLogShip();
   ok(calls.length === 0, "nothing is ever fetched when disabled");
+
+  process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
+  __resetLogShipForTest({ fetchImpl: impl });
+  ok(!logShipEnabled(), "🔴 a stale OE_LOG_SHIP_URL in the environment does not enable shipping");
+  enqueue(buildRecord("info", "test", "hello"));
+  await flushLogShip();
+  ok(calls.length === 0 && __queueLengthForTest() === 0, "…and nothing is queued or fetched");
+  clearShipEnv();
 }
 
 {
   clearShipEnv();
-  process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
-  process.env.OE_LOG_SERVICE = "oe-test";
+  ship({ url: "https://ingest.example.test/v1", service: "oe-test" });
   __resetLogShipForTest();
 
   const rec = buildRecord("warn", "shape", "the message", {
@@ -75,7 +90,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   ok(rec.level === "warn" && rec.component === "shape" && rec.message === "the message", "reserved keys win over caller fields");
   ok(rec.requestId === "r-1", "caller fields ride along");
   ok(rec.surfaceKey === "slack/T1/C1", "explicit surfaceKey field is honoured");
-  ok(rec.service === "oe-test", "service stamp comes from OE_LOG_SERVICE");
+  ok(rec.service === "oe-test", "service stamp comes from observability.logShip.service");
   ok(typeof rec.env === "string" && rec.env.length > 0, "env stamp present");
   ok(!Number.isNaN(Date.parse(rec.ts)), "ts is a parseable ISO timestamp");
 
@@ -105,9 +120,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 {
   clearShipEnv();
-  process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
+  ship({ url: "https://ingest.example.test/v1", tokenHeader: "X-Custom-Auth" });
   process.env.OE_LOG_SHIP_TOKEN = "Bearer xaat-123";
-  process.env.OE_LOG_SHIP_TOKEN_HEADER = "X-Custom-Auth";
   const { calls, impl } = fakeFetch();
   __resetLogShipForTest({ fetchImpl: impl, batchMax: 3, flushMs: 20 });
 
@@ -119,7 +133,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   ok(calls.length === 1, "hitting batchMax flushes immediately");
   ok(calls[0].body.length === 3 && calls[0].body[2].message === "three", "batch ships as a JSON array in order");
   ok(calls[0].headers["content-type"] === "application/json", "content-type set");
-  ok(calls[0].headers["X-Custom-Auth"] === "Bearer xaat-123", "configured token header name/value applied");
+  ok(calls[0].headers["X-Custom-Auth"] === "Bearer xaat-123", "configured token header name (setting) and value (operator secret) applied");
   ok(calls[0].url === "https://ingest.example.test/v1", "ships to the configured URL");
 
   enqueue(buildRecord("info", "batch", "four"));
@@ -131,7 +145,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 {
   clearShipEnv();
-  process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
+  ship({ url: "https://ingest.example.test/v1" });
   const rejecting = (async () => {
     throw new Error("ECONNREFUSED");
   }) as unknown as typeof fetch;
@@ -158,7 +172,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 {
   clearShipEnv();
-  process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
+  ship({ url: "https://ingest.example.test/v1" });
   const { calls, impl } = fakeFetch();
   __resetLogShipForTest({ fetchImpl: impl, flushMs: 5000 });
 
@@ -185,7 +199,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     console.log = realLog;
   }
 
-  process.env.OE_LOG_SHIP_URL = "https://ingest.example.test/v1";
+  ship({ url: "https://ingest.example.test/v1" });
   const second = fakeFetch();
   __resetLogShipForTest({ fetchImpl: second.impl });
   installConsoleCapture();
@@ -204,4 +218,66 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   }
 }
 
-console.log(`\n✓ observability: ${n} assertions passed (env gating + record shaping + console parse + batching/headers + failure swallowing + capture/no-double-ship)\n`);
+{
+  clearShipEnv();
+  ship({ url: "https://ingest.example.test/v1" });
+  const { calls, impl } = fakeFetch();
+  __resetLogShipForTest({ fetchImpl: impl });
+  enqueue(buildRecord("info", "token", "before the secret exists"));
+  await flushLogShip();
+  ok(calls.length === 1 && calls[0]!.headers.authorization === undefined, "no secret anywhere: the batch ships with no auth header");
+  process.env.OE_LOG_SHIP_TOKEN = "Bearer later-token";
+  enqueue(buildRecord("info", "token", "after the secret exists"));
+  await flushLogShip();
+  ok(calls.length === 2 && calls[1]!.headers.authorization === "Bearer later-token", "🔴 a secret that appears later reaches the NEXT flush (no process-lifetime memo)");
+  clearShipEnv();
+  __resetLogShipForTest();
+}
+
+{
+  clearShipEnv();
+  const { calls, impl } = fakeFetch();
+  resetSettingsForTest();
+  __resetLogShipForTest({ fetchImpl: impl, batchMax: 3, flushMs: 5000 });
+  const realLog = console.log;
+  const printed: string[] = [];
+  console.log = ((...args: unknown[]) => {
+    printed.push(args.map(String).join(" "));
+  }) as typeof console.log;
+  try {
+    installConsoleCapture();
+    ok(console.log !== realLog && printed.length === 0, "🔴 pending: the capture installs before the settings register");
+    console.log("[open-everywhere:boot] first line");
+    console.log("[open-everywhere:boot] second line");
+    ok(printed.length === 2, "pending: the console still prints every line");
+    ok(__queueLengthForTest() === 2, "pending: each line waits in the bounded queue");
+    await flushLogShip();
+    ok(calls.length === 0, "🔴 pending: NOTHING is sent before the registration decides");
+
+    ship({ url: "https://ingest.example.test/v1", service: "acme-oe" });
+    console.log("[open-everywhere:boot] third line");
+    await sleep(5);
+    ok(calls.length === 1 && calls[0].body.length === 3, "🔴 registered with a URL: the lines logged before the registration ship");
+    ok(calls[0].body.every((r) => r.service === "acme-oe"), "…carrying the registered service stamp, not the default");
+  } finally {
+    __resetLogShipForTest();
+    console.log = realLog;
+  }
+
+  const quiet = fakeFetch();
+  resetSettingsForTest();
+  __resetLogShipForTest({ fetchImpl: quiet.impl });
+  enqueue(buildRecord("info", "boot", "before registration"));
+  ok(__queueLengthForTest() === 1, "pending: a record waits");
+  clearShipEnv();
+  ok(!logShipEnabled(), "registered with no URL: shipping is off");
+  ok(__queueLengthForTest() === 0, "…and the waiting record is dropped, never sent");
+  await flushLogShip();
+  ok(quiet.calls.length === 0, "…and nothing is fetched");
+  __resetLogShipForTest();
+  resetSettingsForTest();
+}
+
+console.log(`\n✓ observability: ${n} assertions passed (config gating + record shaping + console parse + batching/headers + failure swallowing + capture/no-double-ship + boot-order pending)\n`);
+
+// proves: SET-101

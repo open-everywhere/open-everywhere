@@ -10,7 +10,9 @@ import {
   type MemoryAccess,
   type Partition,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { overrideSettingsForTest, providerById, resetSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import {
+  registerNotionMemory,
   makeNotionProvider,
   notionMemoryDeps,
   resolveNotionMemoryCredential,
@@ -179,6 +181,53 @@ function recordingFetch(): { fetchFn: HttpFetch; auth: string[] } {
     "a bound domain naming an UNDECLARED credential fails the read",
   );
   ok(auth.length === 0, "🔴 negative control: the failed read sent NOTHING — the org token never reached the wire");
+}
+
+// proves: SET-100
+{
+  const { fetchFn, auth } = recordingFetch();
+  const provider = makeNotionProvider(notionMemoryDeps(undefined, BROKER, fetchFn));
+  const silo = { name: "sup-brain", provider: "notion", container: "page-sup", readOnly: true };
+  await provider.readTier(P, siloTier("sup-brain"), silo, UNBOUND);
+  ok(auth.length > 0 && auth.every((h) => h === `Bearer ${ORG_TOKEN}`), "memory.notionTokenSecret: the shipped name db:notion:memory resolves the org token");
+  const { fetchFn: fetch2, auth: auth2 } = recordingFetch();
+  const provider2 = makeNotionProvider(notionMemoryDeps(undefined, BROKER, fetch2));
+  process.env.OE_NOTION_SECRET_REF = ORG_REF;
+  overrideSettingsForTest({ memory: { notionTokenSecret: "db:notion:payments-memory" } });
+  await provider2.readTier(P, siloTier("sup-brain"), { ...silo, container: "page-sup-2" }, UNBOUND);
+  ok(auth2.length > 0 && auth2.every((h) => h === `Bearer ${PAY_TOKEN}`), "🔴 memory.notionTokenSecret: the registered name decides which stored token the org default reads");
+  ok(!auth2.some((h) => h.includes(ORG_TOKEN)), "🔴 …and the retired OE_NOTION_SECRET_REF variable is not read");
+  delete process.env.OE_NOTION_SECRET_REF;
+  resetSettingsForTest();
+}
+
+{
+  const asked: string[] = [];
+  const realFetch = globalThis.fetch;
+  const wire: string[] = [];
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    wire.push(String((init?.headers as Record<string, string> | undefined)?.authorization ?? ""));
+    return new Response(JSON.stringify({ results: [], has_more: false, next_cursor: null }), { status: 200 });
+  }) as typeof fetch;
+  registerBroker("db", {
+    async getSecret(ref) {
+      asked.push(ref);
+      return ORG_TOKEN;
+    },
+  });
+  process.env.NOTION_MEMORY_ENV_PROBE = "ntn_env_held_value";
+  overrideSettingsForTest({ memory: { notionTokenSecret: "NOTION_MEMORY_ENV_PROBE" } });
+  try {
+    registerNotionMemory();
+    await providerById("notion").readTier(P, siloTier("sup-brain"), { name: "sup-brain", provider: "notion", container: "page-reg", readOnly: true }, UNBOUND);
+    ok(asked.length > 0 && asked.every((r) => r === "NOTION_MEMORY_ENV_PROBE"), `🔴 registerNotionMemory resolves the setting's name through the "db" broker (asked ${JSON.stringify(asked)})`);
+    ok(wire.length > 0 && wire.every((h) => h === `Bearer ${ORG_TOKEN}`), "…and the wire carries the stored value");
+    ok(!wire.some((h) => h.includes("ntn_env_held_value")), "🔴 …and NEVER the env var of the same name");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.NOTION_MEMORY_ENV_PROBE;
+    resetSettingsForTest();
+  }
 }
 
 console.log(`✓ notion-memory-credential: ${passed} assertions passed`);

@@ -44,8 +44,8 @@ claim true and the gate that proves it. The full map is
   A backend that is not AI Gateway-compatible needs its own model adapter, which is a code change.
   [The three questions](../security/sovereignty.md#the-three-questions-buyers-ask)
 - **"Will a vendor train on our data?"** No Open Everywhere vendor receives your data. The
-  anonymous usage telemetry is on by default, carries no content, and `OE_TELEMETRY=off` turns it
-  off. The model provider receives each prompt it serves. Your data policy states the terms that a
+  anonymous usage telemetry is on by default, carries no content, and `telemetry.enabled: false` turns
+  it off. The model provider receives each prompt it serves. Your data policy states the terms that a
   provider must accept to serve a call. [Telemetry](../deploy/telemetry.md)
 - **"Is it sovereign?"** It is as sovereign as where you host it and which providers you pick. Run
   `npx oe sovereignty`. For each piece of your data, it prints where the data lives, in which

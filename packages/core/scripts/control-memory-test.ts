@@ -7,7 +7,6 @@ import { removeTempDir } from "./_temp-dir.js";
 const dir = join(tmpdir(), `open-everywhere-control-memory-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-delete process.env.OE_MEMORY_PROVIDER;
 _setDeploymentIdentityForTest({ org: "acme" });
 
 const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");

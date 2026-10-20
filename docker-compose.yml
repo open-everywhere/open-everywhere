@@ -70,17 +70,24 @@ services:
       # app's own model call to its host-plane list (OPE-2406). justbash shares this app process's
       # filesystem → dev/testing grade isolation. An app that declares `docker` REFUSES TO BOOT here:
       # eve starts docker session containers on the daemon's default network, outside this proxy.
-      OE_EGRESS_PROXY_URL: "http://oe-egress-proxy:8080"    # control endpoint for policy push
+      # 🔴 THE APP'S EGRESS WIRING IS SETTINGS, NOT ENV (0.9.0, OPE-2650). Declare it in
+      # agent/settings/settings.ts, or the app runs without the proxy and a session that needs a host
+      # aborts (fail-closed):
+      #   egress: { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" }
+      # The token below is the operator secret OE_EGRESS_PROXY_TOKEN. The app reads it from this
+      # environment as the secret's migration on-ramp (with a one-time notice), or from the db
+      # credential store after `oe secret set OE_EGRESS_PROXY_TOKEN`. The proxy reads its own copy above.
       OE_EGRESS_PROXY_TOKEN: "${OE_EGRESS_PROXY_TOKEN:?set OE_EGRESS_PROXY_TOKEN in .env — the app's policy push is rejected without it (same value as the proxy)}"
-      # OPE-314: tail the proxy's denial log so a blocked host becomes an `egress.denied` audit row
-      # and `permission_fit_report` can propose widening it. No new port, no new credential — the
-      # app only ever READS this volume. Unset it to turn the poller off; a missing/unreadable file
-      # degrades to nothing (the plane goes dark, as it is on the Vercel tier) and says so once.
-      OE_EGRESS_DENIAL_LOG: "${OE_EGRESS_DENIAL_LOG:-/var/log/oe-egress/denied.log}"
+      # OPE-314: `egress.denialLog` (above) tails the proxy's denial log so a blocked host becomes an
+      # `egress.denied` audit row and `permission_fit_report` can propose widening it. No new port, no
+      # new credential — the app only ever READS this volume. A missing/unreadable file degrades to
+      # nothing (the plane goes dark, as it is on the Vercel tier) and says so once.
       # Tier B: the app must trust the MITM CA for git/npm/curl (no-op under Tier A).
       NODE_EXTRA_CA_CERTS: "/opt/oe-egress/ca/oe-egress-ca.crt"
       GIT_SSL_CAINFO: "/opt/oe-egress/ca/oe-egress-ca.crt"
-      OE_MEMORY_PROVIDER: "${OE_MEMORY_PROVIDER:-sqlite}"
+      # The memory backing is the `memory.provider` setting (0.9.0). With DATABASE_URL below and no
+      # setting, memory lives in the `postgres` sidecar. To keep a sqlite memory store, declare
+      # `memory: { provider: "sqlite" }` in agent/settings/settings.ts.
       # ── Operational store: a REAL Postgres SERVER (the `postgres` sidecar below), not the
       #    in-process embedded-Postgres (PGlite) floor. Rationale (OPE-113 spike): a server
       #    Postgres is far LIGHTER in RAM than in-process WASM (~137MB server-side vs ~660MB RSS

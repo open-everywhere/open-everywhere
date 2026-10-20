@@ -18,13 +18,18 @@ export default defineChannel({
   routes: [
     GET(OE_STATUS_PATH, async () => {
       let allowUnenforced = false;
+      let egressProxyUrl = "";
+      let memoryProvider = "";
       let sandboxBackend: SandboxBackendKind | undefined;
       try {
-        allowUnenforced = getSettings().egress.allowUnenforced;
+        const settings = getSettings();
+        allowUnenforced = settings.egress.allowUnenforced;
+        egressProxyUrl = settings.egress.proxyUrl;
+        memoryProvider = settings.memory.provider;
         sandboxBackend = resolveSandboxBackend();
       } catch {
       }
-      const doc = await cachedDeploymentStatus({ allowUnenforced, sandboxBackend });
+      const doc = await cachedDeploymentStatus({ allowUnenforced, egressProxyUrl, memoryProvider, sandboxBackend });
       return new Response(`${JSON.stringify(doc, null, 2)}\n`, {
         status: 200,
         headers: {

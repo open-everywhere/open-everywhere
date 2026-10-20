@@ -131,6 +131,9 @@ Flags:
 - `--pglite-dir <dir>` — migrate **into an embedded Postgres data dir** instead of hosted Postgres.
   Takes the same single-writer lock the runtime floor takes, so it refuses a dir a live instance
   holds. `DATABASE_URL` isn't needed with this flag.
+- `--memory-provider <id>` — the deployment's `memory.provider`: `git`, `sqlite` or `postgres`
+  (default `git`). Set it to the value the deployment uses. With `sqlite`, the script copies the
+  memory store too.
 - `--force-empty-check-off` — allow migrating **into a non-empty target**. By default the
   migration **refuses a non-empty target** so you can't accidentally merge into or clobber a live
   database; pass this only when you deliberately intend to add to an existing one.
@@ -148,14 +151,15 @@ What it does, in order:
 4. **Re-verifies the audit hash chain on the target** and prints a per-table `source → target`
    row-count summary.
 
-If your **memory backing** is also on sqlite (`OE_MEMORY_PROVIDER=sqlite`), its tables are copied
-too. If memory is **git** (the default), the script says so and skips it — git history is already
+If your **memory backing** is also on sqlite (`memory.provider: "sqlite"`), its tables are copied
+too. Pass `--memory-provider sqlite`: the script does not read the setting itself, and without the
+flag it treats memory as `git`. If memory is **git** (the default), the script says so and skips it — git history is already
 off-DB and portable. If memory is already Postgres, likewise nothing to do.
 
 After it prints `✓ migration complete`, point the deployment at the target with `DATABASE_URL` —
 that one value selects `postgres` for the operational store and the memory backing (OPE-2230).
 Register the client at startup, and the boot warning goes away. Setting `OE_OPERATIONAL_PROVIDER=postgres`
-and `OE_MEMORY_PROVIDER=postgres` explicitly still works, and is no longer required.
+and `memory.provider: "postgres"` explicitly still works, and is no longer required.
 
 ## ⚠️ Upgrading into the derived default: your memory backing may MOVE
 
@@ -163,15 +167,16 @@ Read this before upgrading a deployment that already holds a `DATABASE_URL`.
 
 Since OPE-2230 a present `DATABASE_URL` selects `postgres` for the memory backing as well as the
 operational store. A deployment that held a connection string and **never set
-`OE_MEMORY_PROVIDER`** was on the `git` floor before the upgrade and is on Postgres after it.
+`OE_MEMORY_PROVIDER`** (now the `memory.provider` setting) was on the `git` floor before the upgrade and is on Postgres after it.
 Nothing errors. Every unpinned tier — surface tiers, onboarding markers, any silo that does not pin
 its own `provider:` — then reads an **empty** Postgres store, and the agent reads as though it has
 forgotten what it learned. The git store is untouched; it is simply no longer read.
 
 Two ways out, and pick one **before** you deploy the upgrade:
 
-- **Keep the git store.** Set `OE_MEMORY_PROVIDER=git` explicitly. The selector still wins over the
-  derived default, so this pins exactly today's behaviour.
+- **Keep the git store.** Declare `memory.provider: "git"` in `agent/settings/settings.ts`. The
+  setting wins over the derived default, so this pins exactly today's behaviour. Since OPE-2650 an
+  `OE_MEMORY_PROVIDER` env var does nothing.
 - **Move the memory.** Migrate it first, then let the default take effect. `migrate-operational`
   copies sqlite memory tables; a `git` backing is already off-DB, so moving it is a deliberate
   re-seed rather than a row copy — plan it as one.

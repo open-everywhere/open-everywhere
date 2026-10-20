@@ -1,3 +1,5 @@
+// proves: MEM-07
+
 import { resolveMemoryPlan, siloAccess, type MemoryResolveConfig } from "../agent/memory/resolve.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { defineMemorySilo, type MemorySilo } from "../agent/memory/silo.js";
@@ -5,8 +7,6 @@ import { domainCredentialId } from "../agent/access/domain-credentials.js";
 import type { SurfaceBinding, Trust } from "../agent/identity/binding.js";
 import type { SessionMode } from "../agent/access/resolver.js";
 import type { Partition } from "../agent/memory/partition.js";
-
-delete process.env.OE_MEMORY_PROVIDER;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

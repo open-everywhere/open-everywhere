@@ -246,9 +246,10 @@ when nothing is stored under that name.
 Optional, but relevant to the silo model:
 
 ```bash
-OE_MEMORY_PROVIDER=git          # memory backend — git | sqlite
 OE_MEMORY_DIR=/abs/path/to/store
 ```
+
+The memory backend (`git` | `sqlite`) is the `memory.provider` setting in `agent/settings/settings.ts`, not an env var.
 
 **Identity binds automatically.** You do **not** set workspace, surface, mode, or visibility by hand. The Discord channel reads the guild/channel/user ids and the channel `type` straight off each inbound interaction into the session auth context (`buildDiscordAuth`), and `bindDiscord` derives workspace = the guild, surface = the channel, plus mode and visibility. The `deploymentIdentity.workspace` / `.surface` declaration in `agent/identity/surfaces.ts` is only the `eve dev` gap-filler — once Discord is wired it is ignored.
 

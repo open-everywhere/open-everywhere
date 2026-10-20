@@ -24,8 +24,9 @@ Setup is yours to drive, with the user's consent at every command. Use the
 - **Tell the user about telemetry before the first deploy.** The deployed app sends anonymous usage
   telemetry, and it is ON by default: event names, enums, coarse buckets, public model ids and the
   app version, with a random per-install id (`service.instance.id`). It never sends message or
-  memory content, org names, workspace, channel, user or session ids, or env values. To turn it off, they set `OE_TELEMETRY=off` (or
-  `DO_NOT_TRACK=1`) on the deployment itself. The full list of events is
+  memory content, org names, workspace, channel, user or session ids, or env values. To turn it off, they declare
+  `telemetry: { enabled: false }` in `agent/settings/settings.ts` and deploy, or set `DO_NOT_TRACK=1`
+  on the deployment itself. The full list of events is
   `https://github.com/open-everywhere/open-everywhere/blob/main/docs/deploy/telemetry.md`. Ask which
   they want, and do not decide for them.
 - `npx @open-everywhere/create --check --json` is the status report: every step, with `satisfied`,

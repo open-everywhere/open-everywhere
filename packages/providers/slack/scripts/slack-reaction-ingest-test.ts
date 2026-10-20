@@ -9,7 +9,7 @@ const dir = join(tmpdir(), `open-everywhere-slack-reaction-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
-process.env.OE_TELEMETRY = "off";
+process.env.DO_NOT_TRACK = "1";
 
 const { REACTION_FEEDBACK_ACTION } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");

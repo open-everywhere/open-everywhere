@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   }
   const sourcePath = arg("source") ?? sqliteOperationalDbPath();
   const forceEmptyCheckOff = flag("force-empty-check-off");
-  const memoryProvider = process.env.OE_MEMORY_PROVIDER ?? "git";
+  const memoryProvider = arg("memory-provider") ?? "git";
   const targetLabel = pgliteDir ? `embedded-Postgres (pglite): ${pgliteDir}` : "hosted Postgres (DATABASE_URL)";
 
   console.log("=== migrate-operational (sqlite → postgres) ===");

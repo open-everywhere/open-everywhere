@@ -64,11 +64,16 @@ services:
       # the session's allow list. justbash shares this process's filesystem: development-grade
       # isolation. The app refuses to boot here on `"docker"`: eve starts docker session containers
       # on the daemon's default network, outside this proxy.
-      OE_EGRESS_PROXY_URL: "http://oe-egress-proxy:8080"    # the control endpoint for the policy push
+      # 🔴 THE APP'S EGRESS WIRING IS SETTINGS, NOT ENV (0.9.0, OPE-2650). Declare it in
+      # agent/settings/settings.ts, or the app runs without the proxy and a session that needs a host
+      # aborts (fail-closed):
+      #   egress: { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" }
+      # The token below is the operator secret OE_EGRESS_PROXY_TOKEN. The app reads it from this
+      # environment as the secret's migration on-ramp (with a one-time notice), or from the db
+      # credential store after `oe secret set OE_EGRESS_PROXY_TOKEN`. The proxy reads its own copy above.
       OE_EGRESS_PROXY_TOKEN: "${OE_EGRESS_PROXY_TOKEN:?set OE_EGRESS_PROXY_TOKEN in .env — the app's policy push is rejected without it (same value as the proxy)}"
-      # The proxy's denial log: a refused host becomes an `egress.denied` audit row. Unset it to turn
-      # the reader off.
-      OE_EGRESS_DENIAL_LOG: "${OE_EGRESS_DENIAL_LOG:-/var/log/oe-egress/denied.log}"
+      # `egress.denialLog` (above) reads the proxy's denial log: a refused host becomes an
+      # `egress.denied` audit row. Leave it out of the settings to turn the reader off.
       # Tier B: trust the MITM CA for git, npm and curl (no effect on Tier A).
       NODE_EXTRA_CA_CERTS: "/opt/oe-egress/ca/oe-egress-ca.crt"
       GIT_SSL_CAINFO: "/opt/oe-egress/ca/oe-egress-ca.crt"

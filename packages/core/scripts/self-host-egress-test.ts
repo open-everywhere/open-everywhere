@@ -4,6 +4,7 @@ import {
   onVercel,
   egressProxyUrl,
   postPolicy,
+  pushEgressPolicy,
   selfHostEgressBootLog,
   DOCKER_BEHIND_PROXY_FATAL,
   type FetchLike,
@@ -16,6 +17,9 @@ import { ProxyAgent } from "undici";
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { defineSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import { resolveSelfHostBackendKind, type SelfHostBackendKind } from "../agent/sandbox/backend-select.js";
+import { pinSuiteStore } from "./_suite-store.js";
+
+pinSuiteStore("self-host-egress");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -40,21 +44,40 @@ function withEnv(patch: Record<string, string | undefined>, fn: () => void): voi
   }
 }
 
+function withProxy<T>(url: string, fn: () => T): T {
+  overrideSettingsForTest({ egress: { proxyUrl: url } });
+  try {
+    return fn();
+  } finally {
+    overrideSettingsForTest({ egress: { proxyUrl: "" } });
+  }
+}
+
 {
-  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: "http://proxy:8080" }, () => {
-    ok(!onVercel(), "onVercel() false when VERCEL unset");
-    ok(egressProxyUrl() === "http://proxy:8080", "egressProxyUrl reads OE_EGRESS_PROXY_URL");
-    ok(useSelfHostEgress(), "off Vercel + proxy URL → self-host push path");
-  });
-  withEnv({ VERCEL: "1", OE_EGRESS_PROXY_URL: "http://proxy:8080" }, () => {
-    ok(onVercel(), "onVercel() true when VERCEL set");
-    ok(!useSelfHostEgress(), "ON Vercel → NEVER the self-host push path (use setNetworkPolicy)");
-  });
-  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: undefined }, () => {
+  withEnv({ VERCEL: undefined }, () =>
+    withProxy("http://proxy:8080", () => {
+      ok(!onVercel(), "onVercel() false when VERCEL unset");
+      ok(egressProxyUrl() === "http://proxy:8080", "egressProxyUrl reads the egress.proxyUrl setting");
+      ok(useSelfHostEgress(), "off Vercel + proxy URL → self-host push path");
+    }),
+  );
+  withEnv({ VERCEL: "1" }, () =>
+    withProxy("http://proxy:8080", () => {
+      ok(onVercel(), "onVercel() true when VERCEL set");
+      ok(!useSelfHostEgress(), "ON Vercel → NEVER the self-host push path (use setNetworkPolicy)");
+    }),
+  );
+  withEnv({ VERCEL: undefined }, () => {
     ok(!useSelfHostEgress(), "off Vercel but NO proxy URL → legacy setNetworkPolicy path");
   });
-  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: "   " }, () => {
-    ok(!useSelfHostEgress(), "blank proxy URL is treated as unset");
+  withEnv({ VERCEL: undefined }, () =>
+    withProxy("   ", () => {
+      ok(!useSelfHostEgress(), "blank proxy URL is treated as unset");
+    }),
+  );
+  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: "http://proxy:8080" }, () => {
+    ok(egressProxyUrl() === undefined, "🔴 OE_EGRESS_PROXY_URL in the environment is not read (OPE-2650)");
+    ok(!useSelfHostEgress(), "…so it does not switch on the self-host push path");
   });
 }
 
@@ -126,21 +149,20 @@ function withBackend<T>(kind: SelfHostBackendKind, fn: () => T): T {
 }
 
 {
-  const enforced = withBackend("justbash", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv));
+  const enforced = withBackend("justbash", () => selfHostEgressBootLog("http://proxy:8080"));
   ok(enforced.warn === undefined, "proxy configured → no boot warning");
   ok(enforced.info.includes("ENFORCED"), "proxy configured → info says egress ENFORCED");
 
   overrideSettingsForTest({ egress: { allowUnenforced: true } });
-  const unenforced = selfHostEgressBootLog({} as NodeJS.ProcessEnv);
+  const unenforced = selfHostEgressBootLog("");
   ok(unenforced.warn !== undefined && unenforced.warn.includes("UNENFORCED"), "no proxy + hatch → loud UNENFORCED warn");
   ok(unenforced.info.includes("unenforced"), "no proxy + hatch → info says unenforced");
-  ok(
-    selfHostEgressBootLog({ OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv).warn?.includes("ABORT") !== true,
-    "…and the hatch is read from the SETTINGS, so the reading above was not an accident of the env argument",
-  );
   resetSettingsForTest();
 
-  const willAbort = selfHostEgressBootLog({ OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv);
+  let willAbort = selfHostEgressBootLog("");
+  withEnv({ OE_ALLOW_UNENFORCED_EGRESS: "1", OE_EGRESS_PROXY_URL: "http://proxy:8080" }, () => {
+    willAbort = selfHostEgressBootLog();
+  });
   ok(willAbort.warn !== undefined && willAbort.warn.includes("ABORT"), "no proxy, no hatch → warn that sessions will ABORT");
   ok(willAbort.info.includes("none"), "no proxy, no hatch → info says posture = none");
 
@@ -157,10 +179,12 @@ function withBackend<T>(kind: SelfHostBackendKind, fn: () => T): T {
     "OPE-1122: …and it states the docker case explicitly, so a reader is not left to infer the exception",
   );
 
-  const blankProxy = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "   " } as NodeJS.ProcessEnv);
-  ok(blankProxy.warn !== undefined, "blank OE_EGRESS_PROXY_URL is treated as no proxy");
+  const blankProxy = withProxy("   ", () => selfHostEgressBootLog());
+  ok(blankProxy.warn !== undefined, "a blank egress.proxyUrl is treated as no proxy");
 
-  const both = withBackend("justbash", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080", OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv));
+  overrideSettingsForTest({ egress: { allowUnenforced: true } });
+  const both = withBackend("justbash", () => withProxy("http://proxy:8080", () => selfHostEgressBootLog()));
+  resetSettingsForTest();
   ok(both.warn === undefined && both.info.includes("ENFORCED"), "proxy + hatch → still ENFORCED (proxy wins, no warn)");
 }
 
@@ -184,24 +208,27 @@ function withBackend<T>(kind: SelfHostBackendKind, fn: () => T): T {
     ok(threw, `OPE-955 tripwire: '${candidate}' is NOT wired, so selfHostEgressBootLog's backend-blind ABORT claim still holds. If this is red, that backend may enforce natively — make the boot log warn about PARTIAL enforcement (credential injection is a measured gap, OPE-917/OPE-954), never go silent.`);
   }
 
-  const underDocker = withBackend("docker", () => selfHostEgressBootLog({} as NodeJS.ProcessEnv));
-  const underJustbash = withBackend("justbash", () => selfHostEgressBootLog({} as NodeJS.ProcessEnv));
+  const underDocker = withBackend("docker", () => selfHostEgressBootLog(""));
+  const underJustbash = withBackend("justbash", () => selfHostEgressBootLog(""));
   ok(underDocker.warn !== undefined && underDocker.warn === underJustbash.warn, "the no-proxy ABORT warn is identical across backends (selfHostEgressBootLog reads no backend kind)");
   ok(underDocker.warn !== undefined && underDocker.warn.includes("ABORT"), "…and it is the ABORT warn, not some other posture line (a content pin on the assertion above)");
 }
 
 {
-  const dockerProxy = withBackend("docker", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv));
-  ok(dockerProxy.fatal === DOCKER_BEHIND_PROXY_FATAL, "🔴 docker + OE_EGRESS_PROXY_URL → the boot log carries the fatal refusal");
+  const dockerProxy = withBackend("docker", () => selfHostEgressBootLog("http://proxy:8080"));
+  ok(dockerProxy.fatal === DOCKER_BEHIND_PROXY_FATAL, "🔴 docker + egress.proxyUrl → the boot log carries the fatal refusal");
   resetSettingsForTest();
-  const defaultProxy = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv);
+  const defaultProxy = selfHostEgressBootLog("http://proxy:8080");
   ok(defaultProxy.fatal === DOCKER_BEHIND_PROXY_FATAL, "…and so does the SHIPPED default backend (docker) behind the proxy");
-  const staleEnv = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080", OE_SANDBOX_BACKEND: "justbash" } as NodeJS.ProcessEnv);
+  let staleEnv = defaultProxy;
+  withEnv({ OE_SANDBOX_BACKEND: "justbash" }, () => {
+    staleEnv = withProxy("http://proxy:8080", () => selfHostEgressBootLog());
+  });
   ok(staleEnv.fatal === DOCKER_BEHIND_PROXY_FATAL, "🔴 …and the retired OE_SANDBOX_BACKEND=justbash cannot talk it out of the refusal (OPE-2411)");
   ok(!dockerProxy.info.includes("ENFORCED"), "…and no ENFORCED line is printed for it");
-  const jbProxy = withBackend("justbash", () => selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv));
+  const jbProxy = withBackend("justbash", () => selfHostEgressBootLog("http://proxy:8080"));
   ok(jbProxy.fatal === undefined && jbProxy.info.includes("ENFORCED"), "justbash + proxy → ENFORCED, no refusal");
-  const dockerBare = withBackend("docker", () => selfHostEgressBootLog({} as NodeJS.ProcessEnv));
+  const dockerBare = withBackend("docker", () => selfHostEgressBootLog(""));
   ok(dockerBare.fatal === undefined, "docker WITHOUT a proxy boots (the coarse deny-all path, unchanged)");
 }
 
@@ -223,9 +250,9 @@ async function withEnvAsync(patch: Record<string, string | undefined>, fn: () =>
 }
 
 const GW = "ai-gateway.vercel.sh";
+const PROXY_URL = "http://oe-egress-proxy:8080";
 const PROXY_TIER = {
   VERCEL: undefined,
-  OE_EGRESS_PROXY_URL: "http://oe-egress-proxy:8080",
   OE_EGRESS_PROXY_TOKEN: "tok-123",
   HTTPS_PROXY: "http://oe-egress-proxy:3128",
   https_proxy: undefined,
@@ -251,9 +278,10 @@ function recorder(policyStatus = 200): { seen: Seen[]; transport: (input: string
 }
 
 await (async () => {
-  await withEnvAsync({ ...PROXY_TIER, OE_EGRESS_PROXY_URL: undefined }, async () => {
-    ok(hostPlaneFetch([GW]) === undefined, "host plane: no OE_EGRESS_PROXY_URL → undefined (default transport, byte-identical)");
+  await withEnvAsync({ ...PROXY_TIER }, async () => {
+    ok(hostPlaneFetch([GW]) === undefined, "host plane: no egress.proxyUrl → undefined (default transport, byte-identical)");
   });
+  overrideSettingsForTest({ egress: { proxyUrl: PROXY_URL } });
   await withEnvAsync({ ...PROXY_TIER, VERCEL: "1" }, async () => {
     ok(hostPlaneFetch([GW]) === undefined, "host plane: on Vercel → undefined");
   });
@@ -316,6 +344,19 @@ await (async () => {
       }
       ok(r.seen.length === 2 && r.seen[1].url.endsWith("/policy"), "the next call pushes again");
     }
+    await withEnvAsync({ OE_EGRESS_PROXY_TOKEN: undefined }, async () => {
+      const r = recorder();
+      const f = hostPlaneFetch([GW], r.transport)!;
+      await f(`https://${GW}/v1/models`);
+      await f(`https://${GW}/v1/models`);
+      const d = (i: number) => (r.seen[i]!.init as { dispatcher?: unknown }).dispatcher;
+      ok(r.seen.length === 3 && d(1) instanceof ProxyAgent && d(2) instanceof ProxyAgent, "no token: two successful calls, each through a ProxyAgent");
+      ok(d(1) !== d(2), "🔴 no token: the tokenless agent is NOT reused, so a token stored later reaches the next call");
+      process.env.OE_EGRESS_PROXY_TOKEN = "tok-kept";
+      await f(`https://${GW}/v1/models`);
+      await f(`https://${GW}/v1/models`);
+      ok(d(3) === d(4), "negative control: a credentialed agent IS kept across calls");
+    });
     await withEnvAsync({ NO_PROXY: `oe-egress-proxy,${GW}` }, async () => {
       const r = recorder();
       const f = hostPlaneFetch([GW], r.transport)!;
@@ -359,10 +400,58 @@ await (async () => {
       } catch {
       }
       ok(seenAuth.length === 2 && seenAuth[1] === undefined, "🔴 …and the session-side host fetch (assertSafeFetchUrl's ProxyAgent) carries NO credential");
+      delete process.env.OE_EGRESS_PROXY_TOKEN;
+      const late = hostPlaneFetch([GW], pushOnly)!;
+      const before = seenAuth.length;
+      try {
+        await late(`https://${GW}/v1/models`);
+      } catch {
+      }
+      ok(seenAuth.length === before + 1 && seenAuth[before] === undefined, "no token yet: the app's CONNECT reaches the proxy and carries no credential");
+      process.env.OE_EGRESS_PROXY_TOKEN = "tok-later";
+      try {
+        await late(`https://${GW}/v1/models`);
+      } catch {
+      }
+      ok(seenAuth.length === before + 2 && seenAuth[before + 1] === "Bearer tok-later", "🔴 a token that appears later reaches the NEXT call on the same host-plane fetch");
     });
   } finally {
     proxy.close();
+    overrideSettingsForTest({ egress: { proxyUrl: "" } });
   }
 })();
+
+{
+  const realFetch = globalThis.fetch;
+  const seen: { url: string; auth?: string; body: Record<string, unknown> }[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    seen.push({
+      url: String(input),
+      auth: (init?.headers as Record<string, string> | undefined)?.authorization,
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch;
+  const saved = { token: process.env.OE_EGRESS_PROXY_TOKEN, ip: process.env.OE_EGRESS_SOURCE_IP };
+  try {
+    process.env.OE_EGRESS_PROXY_TOKEN = "tok-push";
+    process.env.OE_EGRESS_SOURCE_IP = "198.51.100.99";
+    overrideSettingsForTest({ egress: { proxyUrl: "http://proxy.invalid:8080", sourceIp: "203.0.113.7" } });
+    await pushEgressPolicy({ allow: ["example.com"] } as unknown as SandboxNetworkPolicy);
+    ok(seen.length === 1 && seen[0]!.url === "http://proxy.invalid:8080/policy", "the push goes to the egress.proxyUrl setting's /policy");
+    ok(seen[0]!.body.sourceIp === "203.0.113.7", "🔴 the push keys on the egress.sourceIp setting");
+    ok(seen[0]!.auth === "Bearer tok-push", "the push presents the operator secret OE_EGRESS_PROXY_TOKEN (its env on-ramp here)");
+    overrideSettingsForTest({ egress: { sourceIp: "" } });
+    await pushEgressPolicy({ allow: ["example.com"] } as unknown as SandboxNetworkPolicy);
+    ok(seen[1]!.body.sourceIp === undefined, "🔴 an empty egress.sourceIp sends no key, and the retired OE_EGRESS_SOURCE_IP is not read");
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const [k, v] of [["OE_EGRESS_PROXY_TOKEN", saved.token], ["OE_EGRESS_SOURCE_IP", saved.ip]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    resetSettingsForTest();
+  }
+}
 
 console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture + OPE-955 backend tripwire + docker-behind-proxy refusal + host plane)\n`);

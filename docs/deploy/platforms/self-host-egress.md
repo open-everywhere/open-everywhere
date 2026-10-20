@@ -28,7 +28,7 @@ contained filesystem and enforced egress yet (OPE-2407).
 | Backend | Runs in the shipped image | Session egress behind the proxy | Filesystem |
 | --- | --- | --- | --- |
 | `justbash` (what an app in the image declares) | Yes | Yes | shared with the app process |
-| `docker()` (the code's default off Vercel) | No: the image carries a just-bash template only | No: the app refuses to boot on `docker` with `OE_EGRESS_PROXY_URL` set | a per-session container |
+| `docker()` (the code's default off Vercel) | No: the image carries a just-bash template only | No: the app refuses to boot on `docker` with `egress.proxyUrl` set | a per-session container |
 
 > [!WARNING]
 > **`justbash` shares the app process's filesystem — dev/testing ONLY.** The `justbash()`
@@ -47,7 +47,7 @@ contained filesystem and enforced egress yet (OPE-2407).
   joins the daemon's default bridge network (a direct WAN route, no proxy env), and eve's docker
   options expose no network field. With the proxy wired, the policy would go to the proxy and never
   reach the container, while the audit recorded "enforced". So the app **refuses to boot** with
-  `sandbox.selfHostBackend: "docker"` and `OE_EGRESS_PROXY_URL` set. Without the proxy, docker applies only
+  `sandbox.selfHostBackend: "docker"` and `egress.proxyUrl` set. Without the proxy, docker applies only
   the coarse `"deny-all"`, and a session that needs a host allow-list aborts at `session.started`.
   The shipped image cannot run it either: eve 0.71 provisions sandbox templates at build time, and
   the build stage has no daemon, so the image carries a just-bash template only.
@@ -63,7 +63,7 @@ Docker image must declare `"justbash"` too.
 
 Under `justbash` the app process and the session send from the same source IP, so the proxy cannot
 tell them apart by address. The app's model call therefore carries the proxy token as
-`Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>`, and the proxy decides it against a separate
+`Proxy-Authorization: Bearer <OE_EGRESS_PROXY_TOKEN>` (the operator secret), and the proxy decides it against a separate
 **host plane** that names the model gateway host (`ai-gateway.vercel.sh`, or the host of
 `models.targets.gateway.url`), plus the hosts of any non-gateway transcription route the app registers for the
 meeting bot (`api.deepinfra.com`, a self-hosted speech server; OPE-2470). The app keeps one host list
@@ -101,6 +101,13 @@ cp .env.example .env    # AI_GATEWAY_API_KEY, SLACK_* … (leave `egress.allowUn
 docker compose up --build
 ```
 
+Before the first `up`, declare the proxy wiring in `agent/settings/settings.ts`. Since OPE-2650 it is
+config in Git, not env:
+
+```ts
+egress: { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" },
+```
+
 `docker-compose.yml` wires four services — `app` (internal-only, no WAN), `oe-egress-proxy` (the
 sole WAN route), a `postgres` sidecar (the docker-tier operational-store default) and
 `neon-wsproxy` (the WebSocket bridge the Neon driver needs to reach it) — plus a memory volume.
@@ -108,17 +115,23 @@ The Discord relay is a commented option. The one "am I on Vercel?" seam is `plat
 (`packages/core/agent/access/platform.ts`): Vercel's own `VERCEL` env, else `self-host`. No
 operator override exists (`OE_PLATFORM` was one until OPE-2411). Off Vercel, and with
 `sandbox.useVercelSandbox` off, the app selects both the self-host sandbox backend and the
-self-host egress push. `OE_EGRESS_PROXY_URL` then decides the posture: set ⇒ enforced; unset ⇒ fail-closed
+self-host egress push. The `egress.proxyUrl` setting then decides the posture: set ⇒ enforced; empty ⇒ fail-closed
 (any session resolving a host allow-list aborts at `session.started`) — **unless**
 `egress.allowUnenforced: true` is declared, which runs the agent with no network firewall at all
 and a loud boot warning.
 
-### The two proxy variables
+### The proxy setting and the proxy secret
 
-| Variable | What it does |
-| --- | --- |
-| `OE_EGRESS_PROXY_URL` | The proxy control endpoint the app pushes each compiled policy to, and **the thing that arms this tier**. `docker-compose.yml` sets it for you. |
-| `OE_EGRESS_PROXY_TOKEN` | The bearer token the push carries. |
+| Name | Kind | What it does |
+| --- | --- | --- |
+| `egress.proxyUrl` | setting, in `agent/settings/settings.ts` | The proxy control endpoint the app pushes each compiled policy to, and **the thing that arms this tier**. The compose topology's value is `"http://oe-egress-proxy:8080"`. It was the `OE_EGRESS_PROXY_URL` env var until OPE-2650. |
+| `OE_EGRESS_PROXY_TOKEN` | operator secret, `oe secret set OE_EGRESS_PROXY_TOKEN` | The bearer token the push carries. The proxy container reads the same value from its own `OE_EGRESS_PROXY_TOKEN` env var. |
+
+`docker-compose.yml` passes the `.env` value of `OE_EGRESS_PROXY_TOKEN` to the app as well as to the
+proxy. When the db credential store holds no value, `getOperatorSecret` falls back to that env var
+and logs a one-time notice. So a compose deployment works without `oe secret set`. The db credential
+store is not a sandbox boundary. Under `justbash` the agent's shell shares the app process, so do not
+count the store as protection of this token from the shell.
 
 `useSelfHostEgress()` is true only **off the Vercel Sandbox and with the URL set**; every other case keeps the
 sandbox backend's own network-policy call. With the URL unset, a session that resolves a host
@@ -128,7 +141,7 @@ allow-list aborts unless `egress.allowUnenforced` is declared.
 control service rejects it, the push throws, and the session aborts — so a missing token is a refused
 session rather than an unauthenticated policy write. Generate one with `openssl rand -hex 32`.
 
-Both variables are read in one module (`packages/core/agent/access/self-host-egress.ts`), and the push
+The app reads both in one module (`packages/core/agent/access/self-host-egress.ts`), and the push
 throws a named error when the URL is unset, so a mis-wired deployment fails at the push rather than
 quietly running with no policy.
 
@@ -154,12 +167,11 @@ the first `/`, `?` or `#`, strips `user:pass@` userinfo and the port, and drops 
 not then match a strict hostname. This matters most under Tier B, where Squid has *decrypted* the
 request and the conventional log format would carry the full URL.
 
-There is **no new port and no new credential** — the app only ever reads a file. Two knobs, both
-set by `docker-compose.yml`:
+There is **no new port and no new credential** — the app only ever reads a file. One knob:
 
-| Var | Meaning |
+| Setting | Meaning |
 |---|---|
-| `OE_EGRESS_DENIAL_LOG` | Path to the denial log (`/var/log/oe-egress/denied.log`). **Unset ⇒ the poller does not run**, which is the Vercel case and any self-host run without the volume. |
+| `egress.denialLog` | Path to the denial log as the app container sees it. The compose topology's value is `"/var/log/oe-egress/denied.log"`. **Empty (shipped) ⇒ the poller does not run**, which is the Vercel case and any self-host run without the volume. It was the `OE_EGRESS_DENIAL_LOG` env var until OPE-2650. |
 
 The poll interval is one minute, a code constant (OPE-2411). The app writes one row per host per
 interval, with a count, so a crash-looping worker writes one row a minute, not a thousand.

@@ -3,10 +3,11 @@ import { routeOf, type SetupRoute, type SetupStep, type StepContext } from "../e
 import { resolveOperationalSelection } from "@open-everywhere/core/agent/operational/selection.js";
 import { resolveMemoryProviderId } from "@open-everywhere/core/agent/memory/backing-selection.js";
 import { OWNER_URL_ENV, RUNTIME_ROLE_NAME } from "@open-everywhere/core/agent/ops/two-role.js";
+import { readAppMemoryProvider } from "../app-memory.js";
 
-function postgresResolution(env: NodeJS.ProcessEnv): { operational: boolean; memory: boolean } {
+function postgresResolution(env: NodeJS.ProcessEnv, memoryProvider: string): { operational: boolean; memory: boolean } {
   const op = resolveOperationalSelection(env);
-  return { operational: op.id === "postgres" && op.floor === "none", memory: resolveMemoryProviderId(env) === "postgres" };
+  return { operational: op.id === "postgres" && op.floor === "none", memory: resolveMemoryProviderId(env, memoryProvider) === "postgres" };
 }
 
 function nextFor(route: SetupRoute): string {
@@ -20,10 +21,11 @@ function nextFor(route: SetupRoute): string {
 export const databaseStep: SetupStep = {
   id: "database",
   title: "Database (Postgres)",
-  check(ctx: StepContext) {
+  async check(ctx: StepContext) {
     const env = mergedEnv(ctx.cwd, ctx.env) as NodeJS.ProcessEnv;
     const route = routeOf(ctx);
-    const resolved = postgresResolution(env);
+    const memoryProvider = await readAppMemoryProvider(ctx.cwd);
+    const resolved = postgresResolution(env, memoryProvider);
     if (isSet(env.DATABASE_URL) && resolved.operational && resolved.memory) {
       return {
         satisfied: true,
@@ -34,7 +36,7 @@ export const databaseStep: SetupStep = {
     }
     const pointedAway = [
       ...(resolved.operational || !isSet(env.OE_OPERATIONAL_PROVIDER) ? [] : ["OE_OPERATIONAL_PROVIDER"]),
-      ...(resolved.memory || !isSet(env.OE_MEMORY_PROVIDER) ? [] : ["OE_MEMORY_PROVIDER"]),
+      ...(resolved.memory || memoryProvider === "" ? [] : ["memory.provider in agent/settings/settings.ts"]),
     ];
     return {
       satisfied: false,

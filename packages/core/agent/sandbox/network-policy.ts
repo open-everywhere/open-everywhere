@@ -44,7 +44,7 @@ export async function applySessionNetworkPolicy(ctx: NetworkPolicyContext, polic
     throw new Error(
       `[open-everywhere:egress] the configured sandbox backend (${firewall.backend}) fixes its network policy when the ` +
         "sandbox is created and exposes no setNetworkPolicy, so this session's compiled policy cannot be applied. " +
-        "Wire OE_EGRESS_PROXY_URL to enforce egress off Vercel, or run a backend whose sandbox carries a policy. " +
+        "Wire the egress proxy (`egress.proxyUrl`) to enforce egress off Vercel, or run a backend whose sandbox carries a policy. " +
         "Refusing to continue unenforced.",
     );
   }
@@ -53,7 +53,7 @@ export async function applySessionNetworkPolicy(ctx: NetworkPolicyContext, polic
       throw new Error(
         "[open-everywhere:egress] the configured sandbox backend applies only the coarse \"allow-all\" and \"deny-all\" " +
           "policies, and this session compiled a host allow-list. Applying it would enforce NOTHING from it. " +
-          "Wire OE_EGRESS_PROXY_URL to enforce the allow-list off Vercel. Refusing to continue unenforced.",
+          "Wire the egress proxy (`egress.proxyUrl`) to enforce the allow-list off Vercel. Refusing to continue unenforced.",
       );
     }
     const sandbox = await ctx.getSandbox(firewall.environment);

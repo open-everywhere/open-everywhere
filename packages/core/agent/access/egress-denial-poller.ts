@@ -1,6 +1,7 @@
 import { open, stat } from "node:fs/promises";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { planTailRead, reduceDenialLog, type DenialScan } from "./egress-denial-log.js";
+import { getSettings } from "../settings/settings.js";
 
 const EGRESS_DENIED_ACTION = "egress.denied";
 
@@ -32,8 +33,8 @@ export function resetEgressAttribution(): void {
   attribution = undefined;
 }
 
-export function egressDenialLogPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const raw = env.OE_EGRESS_DENIAL_LOG?.trim();
+export function egressDenialLogPath(configured: string = getSettings().egress.denialLog): string | undefined {
+  const raw = configured.trim();
   return raw ? raw : undefined;
 }
 
@@ -63,7 +64,7 @@ export async function pollEgressDenials(deps: DenialPollDeps, lastOffset: number
   if (size === undefined) {
     deps.warnOnce(
       "no-file",
-      "[open-everywhere:egress] denial log not readable — egress denials will not reach the audit log (the plane stays as dark as it is on the Vercel tier). Check OE_EGRESS_DENIAL_LOG and the shared volume.",
+      "[open-everywhere:egress] denial log not readable — egress denials will not reach the audit log (the plane stays as dark as it is on the Vercel tier). Check egress.denialLog and the shared volume.",
     );
     return { offset: lastOffset, rowsWritten: 0, skipped: "no-file" };
   }
@@ -131,9 +132,8 @@ export interface DenialPoller {
   stop(): void;
 }
 
-export function startEgressDenialPoller(options?: { readonly env?: NodeJS.ProcessEnv }): DenialPoller | undefined {
-  const env = options?.env ?? process.env;
-  const path = egressDenialLogPath(env);
+export function startEgressDenialPoller(options?: { readonly path?: string }): DenialPoller | undefined {
+  const path = egressDenialLogPath(options?.path);
   if (path === undefined) return undefined;
   const intervalMs = DENIAL_POLL_MS;
 

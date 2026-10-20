@@ -685,9 +685,10 @@ still work as the on-ramp: the deployment reads one only when nothing is stored 
 Optional, but relevant to the silo model:
 
 ```bash
-OE_MEMORY_PROVIDER=git          # memory backend — git | sqlite
 OE_MEMORY_DIR=/abs/path/to/store
 ```
+
+The memory backend (`git` | `sqlite`) is the `memory.provider` setting in `agent/settings/settings.ts`, not an env var.
 
 **Identity binds automatically.** You do **not** set workspace, surface, mode, or visibility by hand. The Slack channel reads `team_id`, `channel_id`, `channel_type`, and `is_private` straight off each inbound event into the session auth context, and `bindSlack` derives workspace = the Slack workspace, surface = the channel, plus mode and visibility. The `deploymentIdentity.workspace` / `.surface` declaration in `agent/identity/surfaces.ts` is only the `eve dev` (no-surface HTTP) gap-filler — once Slack is wired it is ignored.
 

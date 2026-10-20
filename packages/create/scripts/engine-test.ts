@@ -81,15 +81,26 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
       const res = await databaseStep.check({ cwd: unlinked, env: {}, route });
       ok(!res.satisfied, `databaseStep: the ${route} route with no database is NOT satisfied`);
       ok(/Missing from \.env\.local and this shell: DATABASE_URL/.test(res.detail), `databaseStep (${route}): …and it names the one missing variable`);
-      ok(!/OE_OPERATIONAL_PROVIDER=postgres|OE_MEMORY_PROVIDER=postgres/.test(res.detail), `databaseStep (${route}): …and demands neither store selector`);
+      ok(!/OE_OPERATIONAL_PROVIDER=postgres|memory\.provider/.test(res.detail), `databaseStep (${route}): …and demands neither store selector`);
       ok(typeof res.next === "string" && res.next.length > 0, `databaseStep (${route}): …and carries a next action`);
     }
     for (const route of SETUP_ROUTES) {
       const derived = await databaseStep.check({ cwd: unlinked, env: { DATABASE_URL: "postgres://u:p@h/db" }, route });
       ok(derived.satisfied, `databaseStep: a bare DATABASE_URL satisfies the ${route} route (no selector needed)`);
       ok(/selects postgres for both stores/.test(derived.detail), `databaseStep (${route}): …and the detail says why`);
-      const away = await databaseStep.check({ cwd: unlinked, env: { DATABASE_URL: "postgres://u:p@h/db", OE_MEMORY_PROVIDER: "git" }, route });
-      ok(!away.satisfied && /points away from postgres: OE_MEMORY_PROVIDER/.test(away.detail), `databaseStep (${route}): a selector pointed away from postgres blocks, and is named`);
+      const away = await databaseStep.check({ cwd: unlinked, env: { DATABASE_URL: "postgres://u:p@h/db", OE_OPERATIONAL_PROVIDER: "sqlite" }, route });
+      ok(!away.satisfied && /points away from postgres: OE_OPERATIONAL_PROVIDER/.test(away.detail), `databaseStep (${route}): a selector pointed away from postgres blocks, and is named`);
+      const stale = await databaseStep.check({ cwd: unlinked, env: { DATABASE_URL: "postgres://u:p@h/db", OE_MEMORY_PROVIDER: "git" }, route });
+      ok(stale.satisfied, `databaseStep (${route}): a stale OE_MEMORY_PROVIDER in the env is not read (OPE-2650)`);
+    }
+    const pinned = scratch();
+    try {
+      mkdirSync(join(pinned, "agent", "settings"), { recursive: true });
+      writeFileSync(join(pinned, "agent", "settings", "settings.ts"), 'export const SETTINGS_OVERRIDES = { memory: { provider: "git" } };\n');
+      const memAway = await databaseStep.check({ cwd: pinned, env: { DATABASE_URL: "postgres://u:p@h/db" }, route: "vercel" });
+      ok(!memAway.satisfied && /points away from postgres: memory\.provider in agent\/settings\/settings\.ts/.test(memAway.detail), "databaseStep: the app's memory.provider pointed away from postgres blocks, and is named");
+    } finally {
+      rmSync(pinned, { recursive: true, force: true });
     }
     ok(/Marketplace/.test((await databaseStep.check({ cwd: unlinked, env: {} })).next ?? ""), "databaseStep: the vercel route's next action names the Vercel Marketplace Neon integration");
     const dockerNext = (await databaseStep.check({ cwd: unlinked, env: {}, route: "docker" })).next ?? "";
@@ -120,7 +131,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
 
   const full = scratch("prj_abc123");
   try {
-    const env = { OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" };
+    const env = { OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" };
     for (const route of SETUP_ROUTES) {
       ok((await databaseStep.check({ cwd: full, env, route })).satisfied, `databaseStep: postgres + DATABASE_URL satisfies the ${route} route`);
     }
@@ -363,7 +374,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
     ok(!envDocker.satisfied && /AI_GATEWAY_API_KEY/.test(envDocker.detail) && /deploy store: operational = postgres/.test(envDocker.detail), "envChecklist: the docker route asks for the stores AND a model route");
     ok(envDocker.detail.includes(missNote("docker")), "envChecklist: a docker miss carries the container-environment note");
 
-    const LOADED_ENV = { DATABASE_URL: "postgres://u:p@h/db", AI_GATEWAY_API_KEY: "k", OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", SLACK_BOT_TOKEN: "x" };
+    const LOADED_ENV = { DATABASE_URL: "postgres://u:p@h/db", AI_GATEWAY_API_KEY: "k", OE_OPERATIONAL_PROVIDER: "postgres", SLACK_BOT_TOKEN: "x" };
     for (const s of SETUP_STEPS) {
       const a = JSON.stringify(s.guide({ cwd: dir, env: {} }));
       ok(a === JSON.stringify(s.guide({ cwd: join(dir, "nowhere"), env: {} })), `step ${s.id}: guide() does not depend on cwd (the reference page is generated from it)`);
@@ -371,7 +382,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
       ok(!a.includes(process.versions.node), `step ${s.id}: guide() embeds no live Node version — the page would differ per machine`);
     }
 
-    ok(!/OE_OPERATIONAL_PROVIDER|OE_MEMORY_PROVIDER/.test(envVercel.detail), "envChecklist: the route's miss names neither store selector");
+    ok(!/OE_OPERATIONAL_PROVIDER|memory\.provider/.test(envVercel.detail), "envChecklist: the route's miss names neither store selector");
 
     ok(!nodeVerdict("20.11.0", ">=24").ok && nodeVerdict("24.19.0", ">=24").ok, "prerequisites: Node is judged against the engines range");
     ok(!nodeVerdict("24.19.0", undefined).ok, "prerequisites: an unreadable range is never a pass");
@@ -558,7 +569,7 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   ok(/there is no plan\s+tool/.test(skill), "skill: says so outright, so a reader does not go looking for one");
   ok(/target: "vercel"/.test(skill) && /target: "docker"/.test(skill), "skill: passes the route as the preflight target");
   const envStep = skill.slice(skill.indexOf("9. **Deployment env.**"), skill.indexOf("10. **Deploy.**"));
-  for (const name of ["OE_CREDENTIAL_ENCRYPTION_KEY", "OE_OPERATIONAL_PROVIDER", "OE_MEMORY_PROVIDER"]) {
+  for (const name of ["OE_CREDENTIAL_ENCRYPTION_KEY", "OE_OPERATIONAL_PROVIDER", "memory.provider"]) {
     ok(envStep.includes(name), `skill: the Vercel route's deployment-env step names ${name}`);
   }
   const slackStepText = skill.slice(skill.indexOf("5. **Slack app.**"), skill.indexOf("6. **Vouch the workspace.**"));
@@ -574,12 +585,13 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   }
   const envExample = readFileSync(join(templateDir, ".env.example"), "utf8");
   const disclosesOn = (text: string): boolean => /\bON\b/.test(text) || /on by default/i.test(text);
-  ok(!disclosesOn("turn it off on the deployment, OE_TELEMETRY=off"), "telemetry disclosure check: a text that never says ON fails it (negative control)");
+  ok(!disclosesOn("turn it off on the deployment, telemetry: { enabled: false }"), "telemetry disclosure check: a text that never says ON fails it (negative control)");
   for (const [name, text] of [["README.md", readme], [".env.example", envExample], ["AGENTS.md", agents], ["the setup skill", skill]] as const) {
-    ok(disclosesOn(text) && /OE_TELEMETRY=off/.test(text), `${name}: discloses that runtime telemetry is ON and names OE_TELEMETRY=off`);
+    ok(disclosesOn(text) && /telemetry: \{ enabled: false \}/.test(text), `${name}: discloses that runtime telemetry is ON and names the telemetry.enabled opt-out`);
+    ok(!/OE_TELEMETRY=off|vercel env add OE_TELEMETRY/.test(text), `${name}: names no retired OE_TELEMETRY opt-out`);
     ok(/service\.instance\.id/.test(text) && !/never[^.]*\bids, names\b/.test(text), `${name}: names the per-install id, and claims no blanket "never ids"`);
   }
-  ok(/^# OE_TELEMETRY=off$/m.test(envExample), ".env.example: carries OE_TELEMETRY=off as a commented line, so a copy does not turn it off by accident");
+  ok(/DO_NOT_TRACK=1/.test(envExample), ".env.example: names the DO_NOT_TRACK=1 ambient opt-out beside the setting");
   ok(/before the first deploy/i.test(skill) && /Do not decide for them/.test(skill), "skill: the agent tells the person before the first deploy and lets them choose");
   ok(readme.includes("scripts/goldens/roster-plan.txt") && agents.includes("scripts/goldens/roster-plan.txt"), "README and AGENTS.md: explain scripts/goldens/roster-plan.txt");
   ok(/Neon\s+Auth/.test(skill) && /NEON_AUTH_BASE_URL/.test(skill), "skill: the Vercel route's database step says Neon Auth is not used");

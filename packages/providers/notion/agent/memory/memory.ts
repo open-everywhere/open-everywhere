@@ -18,6 +18,7 @@ import {
   type CredentialEndpointRules,
   withRetryAfterLoose,
   type RetryPolicy,
+  getSettings,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
@@ -358,21 +359,19 @@ export async function resolveNotionMemoryCredential(
   return { token, endpoints: cred.endpoints };
 }
 
-export function notionMemoryDeps(secretRef: string, broker: string, fetchFn?: HttpFetch): NotionMemoryDeps {
+export function notionMemoryDeps(secretRef: string | undefined, broker: string, fetchFn?: HttpFetch): NotionMemoryDeps {
   return {
     credentialFor: (access) => domainCredentialId(access?.domain, NOTION_PROVIDER, NOTION_MEMORY_CREDENTIAL),
     client: async (_silo, credentialId) => {
-      const { token, endpoints } = await resolveNotionMemoryCredential(credentialId, broker, secretRef);
+      const ref = secretRef ?? getSettings().memory.notionTokenSecret;
+      const { token, endpoints } = await resolveNotionMemoryCredential(credentialId, broker, ref);
       return new NotionClient(token, fetchFn, API, endpoints);
     },
   };
 }
 
-export function registerNotionMemory(
-  secretRef = process.env.OE_NOTION_SECRET_REF ?? "db:notion:memory",
-  broker = process.env.OE_NOTION_SECRET_BROKER ?? "db",
-): void {
-  registerProvider(makeNotionProvider(notionMemoryDeps(secretRef, broker)));
+export function registerNotionMemory(secretRef?: string): void {
+  registerProvider(makeNotionProvider(notionMemoryDeps(secretRef, "db")));
   registerConnectorMemory({
     provider: "notion",
     connector: "notion",

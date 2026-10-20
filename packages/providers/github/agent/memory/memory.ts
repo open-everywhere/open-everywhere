@@ -18,9 +18,8 @@ import {
   getGitHubApp,
   MEMORY_WRITE_PERMISSIONS,
   warmCredential,
+  getSettings,
 } from "@open-everywhere/core/agent/adapter-api.js";
-
-const DEFAULT_BRANCH = process.env.OE_MEMORY_GIT_BRANCH || "main";
 
 export interface GitHubMemoryDeps {
   readonly contents: GitHubContents;
@@ -41,17 +40,17 @@ function repoPath(silo: MemorySilo, p: Partition, tier: Tier): string {
 }
 
 export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
-  const branch = deps.branch ?? DEFAULT_BRANCH;
+  const branchOf = (): string => deps.branch ?? getSettings().memory.gitBranch;
 
   async function read(p: Partition, tier: Tier, siloArg?: MemorySilo): Promise<MemoryFiles> {
     const silo = requireSilo(siloArg);
     const repo = silo.container!;
     const dir = repoPath(silo, p, tier);
     const token = await deps.mintToken(repo);
-    const shas = await deps.contents.listFiles(repo, dir, branch, token, makeSelector(normalizeSelection(silo)));
+    const shas = await deps.contents.listFiles(repo, dir, branchOf(), token, makeSelector(normalizeSelection(silo)));
     const out: MemoryFiles = {};
     for (const rel of Object.keys(shas)) {
-      const file = await deps.contents.getFile(repo, `${dir}/${rel}`, branch, token);
+      const file = await deps.contents.getFile(repo, `${dir}/${rel}`, branchOf(), token);
       if (file) out[rel] = file.content;
     }
     return out;
@@ -67,10 +66,10 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
     let changed = false;
     for (const [rel, content] of Object.entries(files)) {
       const path = `${dir}/${rel}`;
-      const existing = await deps.contents.getFile(repo, path, branch, token);
+      const existing = await deps.contents.getFile(repo, path, branchOf(), token);
       if (existing && existing.content === content) continue;
       changed = true;
-      last = await deps.contents.putFile(repo, path, content, message, branch, token, committer, existing?.sha);
+      last = await deps.contents.putFile(repo, path, content, message, branchOf(), token, committer, existing?.sha);
     }
     return changed ? last : null;
   }
@@ -91,7 +90,7 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       const repo = silo.container!;
       const dir = repoPath(silo, p, tier);
       const token = await deps.mintToken(repo);
-      const shas = await deps.contents.listFiles(repo, dir, branch, token, makeSelector(normalizeSelection(silo)));
+      const shas = await deps.contents.listFiles(repo, dir, branchOf(), token, makeSelector(normalizeSelection(silo)));
       const entries = Object.entries(shas).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
       if (entries.length === 0) return null;
       const h = createHash("sha1");
@@ -103,10 +102,10 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       const repo = silo.container!;
       const path = `${repoPath(silo, p, tier)}/${relPath}`;
       const token = await deps.mintToken(repo);
-      const existing = await deps.contents.getFile(repo, path, branch, token);
+      const existing = await deps.contents.getFile(repo, path, branchOf(), token);
       if (!existing) return null;
       const committer = deps.committer();
-      return deps.contents.deleteFile(repo, path, existing.sha, `delete ${relPath} from ${tier.kind} memory`, branch, token, committer);
+      return deps.contents.deleteFile(repo, path, existing.sha, `delete ${relPath} from ${tier.kind} memory`, branchOf(), token, committer);
     },
     deleteTier: async (p, tier, siloArg) => {
       const silo = requireSilo(siloArg);
@@ -114,9 +113,9 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       const dir = repoPath(silo, p, tier);
       const token = await deps.mintToken(repo);
       const committer = deps.committer();
-      const shas = await deps.contents.listFiles(repo, dir, branch, token, makeSelector(normalizeSelection(silo)));
+      const shas = await deps.contents.listFiles(repo, dir, branchOf(), token, makeSelector(normalizeSelection(silo)));
       for (const [rel, sha] of Object.entries(shas)) {
-        await deps.contents.deleteFile(repo, `${dir}/${rel}`, sha, `delete ${tier.kind} memory`, branch, token, committer);
+        await deps.contents.deleteFile(repo, `${dir}/${rel}`, sha, `delete ${tier.kind} memory`, branchOf(), token, committer);
       }
     },
   };
