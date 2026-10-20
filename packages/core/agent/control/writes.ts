@@ -763,7 +763,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             ok: true,
             org: a.org,
             provider: null,
-            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and wire the adapter at boot to arm directory sync.",
+            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and the Okta variables in the deployment's env, or in the env block of the local `npm run control` entry, to arm directory sync.",
           });
         }
         await appendAudit({
@@ -842,7 +842,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             ok: true,
             org: a.org,
             provider: null,
-            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER (with directory.mode: \"observe\") and wire the adapter at boot to preview a directory.",
+            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and the Okta variables in the deployment's env, or in the env block of the local `npm run control` entry (with directory.mode: \"observe\"), to preview a directory.",
           });
         }
         return jsonResult({ ok: true, ...preview });
@@ -870,7 +870,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             ok: true,
             org: a.org,
             provider: null,
-            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and wire the adapter at boot to arm directory group sync. Person-groups declared by hand in agent/identity/groups.ts work regardless.",
+            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and the Okta variables in the deployment's env, or in the env block of the local `npm run control` entry, to arm directory group sync. Person-groups declared by hand in agent/identity/groups.ts work regardless.",
           });
         }
         if (a.deliver && directoryMode() === "observe") return errorResult(directoryObserveRefusal("directory_groups_plan with deliver: true"));

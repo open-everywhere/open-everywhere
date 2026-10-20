@@ -1,6 +1,7 @@
 import type { Connection, CredentialAuthorizationDetail, CredentialType, CustomHeader } from "./bundle.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { processRegistryMap } from "../lib/process-registry.js";
 
 export class CredentialError extends Error {}
 
@@ -40,25 +41,25 @@ export const envBroker: CredentialBroker = {
 
 export const ENV_BROKER = "env";
 
-const BROKERS: Record<string, CredentialBroker> = Object.create(null) as Record<string, CredentialBroker>;
+const BROKERS = processRegistryMap<CredentialBroker>("credential-brokers.v1");
 
 export function registerBroker(name: string, broker: CredentialBroker): void {
-  BROKERS[name] = broker;
+  BROKERS.set(name, broker);
 }
 
 registerBroker(ENV_BROKER, envBroker);
 
 export function resetBrokers(): void {
-  for (const k of Object.keys(BROKERS)) delete BROKERS[k];
+  BROKERS.clear();
   registerBroker(ENV_BROKER, envBroker);
 }
 
 export function registeredBrokerNames(): readonly string[] {
-  return Object.keys(BROKERS);
+  return [...BROKERS.keys()];
 }
 
 export function brokerFor(name: string): CredentialBroker {
-  const broker = BROKERS[name];
+  const broker = BROKERS.get(name);
   if (!broker) {
     throw new CredentialError(
       `credential home broker "${name}" is not registered — register it at startup ` +
@@ -89,7 +90,7 @@ export async function getSecretWithLifetimeVia(
         `(\`broker: "env" | "db" | ...\`); there is no selected default. Stamp the credential's broker.`,
     );
   }
-  if (BROKERS[broker] === undefined) await auditUnresolved(broker, ref, "broker-not-registered");
+  if (!BROKERS.has(broker)) await auditUnresolved(broker, ref, "broker-not-registered");
   const resolved = brokerFor(broker);
   if (resolved.getSecretWithLifetime) return resolved.getSecretWithLifetime(ref, authorizationDetails);
   return { value: await resolved.getSecret(ref, authorizationDetails) };

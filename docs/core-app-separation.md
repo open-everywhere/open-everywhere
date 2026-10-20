@@ -66,11 +66,14 @@ through `packages/core/agent/scaffold/app-root.ts` (see [below](#scripts-that-re
 not by a relative climb. A product module under `packages/core/agent` that climbed into `agent/`
 would break the split just as badly and no suite would say so. Keep the rule by review there.
 
-**One run-time reach from core into adapters, pinned (OPE-2560).** `oe erase` must end a person's
-credentials and saved browser profile, and the purge hooks and the box backend that do it live in
-adapters. `packages/core/scripts/operator-store-connect.ts` (`connectOperatorHolders`) loads
-`@open-everywhere/adapters/agent/operator-holders.js` with a name-as-variable dynamic import, the
-recipe `neonClient` uses for the Postgres driver. It is not a dependency: core declares no adapters
+**One run-time reach from core into adapters, pinned (OPE-2560, OPE-2647).** `oe erase` must end a
+person's credentials and saved browser profile, and the purge hooks and the box backend that do it
+live in adapters. The local control entry (`npm run control`) must arm the identity-directory
+adapter, which also lives in adapters. Both go through one function in
+`packages/core/scripts/operator-store-connect.ts`, `importAdaptersModule`. It loads
+`@open-everywhere/adapters/agent/<subpath>` with a name-as-variable dynamic import, the recipe
+`neonClient` uses for the Postgres driver. `connectOperatorHolders` loads `operator-holders.js`, and
+`connectOperatorDirectory` loads `directory/register.js`. It is not a dependency: core declares no adapters
 dependency, nothing under `packages/core/agent` reaches it, `scripts/` is never traced into a hosted
 function, and a missing package makes the command stop before it changes anything. Section 1 does not
 see a variable specifier, so it pins this one by its string instead: that file is the only core file

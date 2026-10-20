@@ -4066,6 +4066,7 @@
     "test:control-auth": "tsx scripts/control-auth-test.ts",
     "test:control-write": "tsx scripts/control-write-test.ts",
     "test:control-mcp-store": "tsx scripts/control-mcp-store-test.ts",
+    "test:control-mcp-directory": "tsx scripts/control-mcp-directory-test.ts",
     "test:operator-read-store": "tsx scripts/operator-read-store-test.ts",
     "test:control-approvals": "NODE_NO_WARNINGS=1 tsx scripts/control-approvals-test.ts",
     "test:control-audit-scope": "NODE_NO_WARNINGS=1 tsx scripts/control-audit-scope-test.ts",

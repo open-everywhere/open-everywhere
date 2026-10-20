@@ -1,10 +1,12 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildControlServer } from "../agent/control/server.js";
 import { deploymentOrg } from "../agent/identity/deployment-identity.js";
-import { connectOperatorStoreForCli } from "./operator-store-connect.js";
+import { connectOperatorDirectory, connectOperatorStoreForCli } from "./operator-store-connect.js";
 import { resolveTranscriptSource } from "./control-transcript-source.js";
 
 const target = await connectOperatorStoreForCli();
+
+const directory = await connectOperatorDirectory();
 
 const transcripts = resolveTranscriptSource();
 
@@ -23,3 +25,10 @@ process.stderr.write(
     ? `  session_transcript reads from ${transcripts.baseUrl}\n`
     : `  session_transcript is unconfigured — set ${transcripts.missing.join(" and ")}\n`,
 );
+if (directory.selector !== "") {
+  process.stderr.write(
+    directory.provider
+      ? `  directory verbs read from the ${directory.provider} adapter\n`
+      : `  directory verbs are unarmed — OE_DIRECTORY_PROVIDER="${directory.selector}" names no adapter this build ships\n`,
+  );
+}

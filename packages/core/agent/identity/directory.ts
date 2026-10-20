@@ -1,3 +1,5 @@
+import { processRegistrySlot } from "../lib/process-registry.js";
+
 export type DirectoryGrade = "attested" | "asserted" | "email-match";
 
 export interface DirectoryAccount {
@@ -49,16 +51,16 @@ export interface DirectoryInspection {
   readonly requests?: number;
 }
 
-let registered: DirectoryProvider | undefined;
+const SLOT = processRegistrySlot<DirectoryProvider>("directory-provider.v1");
 
 export function registerDirectoryProvider(provider: DirectoryProvider): void {
-  registered = provider;
+  SLOT.set(provider);
 }
 
 export function directoryProvider(): DirectoryProvider | undefined {
-  return registered;
+  return SLOT.get() ?? undefined;
 }
 
 export function resetDirectoryProvider(): void {
-  registered = undefined;
+  SLOT.set(null);
 }

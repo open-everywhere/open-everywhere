@@ -201,6 +201,7 @@ test:control-oauth
 test:control-read
 test:control-write
 test:control-mcp-store
+test:control-mcp-directory
 test:e2e-control-write-driver
 test:operator-read-store
 test:control-approvals

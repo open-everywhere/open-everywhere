@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { CREDENTIAL_KEY_ENV, registerDbCredentialBroker } from "../agent/credentials/db-broker.js";
 import { SECRET_STORE_ENV_KEYS } from "../agent/credentials/operator-secrets.js";
+import { importAppModule, resolveAppRoot } from "../agent/scaffold/app-root.js";
+import { registerSettings, type AgentSettingsOverrides } from "../agent/settings/settings.js";
 import { registerDeploymentIdentity } from "../agent/identity/deployment-identity.js";
 import { registerOperationalPgliteLazy } from "../agent/operational/pglite-client.js";
 import { initOperationalSchema, type PgClient } from "../agent/operational/postgres.js";
@@ -113,18 +116,63 @@ export interface OperatorHoldersTarget {
 }
 
 export async function connectOperatorHolders(boxBackend: OperatorBoxBackend | undefined): Promise<OperatorHoldersTarget> {
-  const pkg = "@open-everywhere/adapters/agent/operator-holders.js";
   type Mod = { registerOperatorHolders(opts: { boxBackend?: OperatorBoxBackend }): OperatorHoldersTarget };
-  let mod: Mod;
+  const mod = await importAdaptersModule<Mod>(
+    "operator-holders.js",
+    "cannot load the credential-purge hooks and the box backend",
+    "Run `oe erase` from the app's root, after `npm install`.",
+  );
+  return mod.registerOperatorHolders(boxBackend === undefined ? {} : { boxBackend });
+}
+
+type AdaptersReach = "operator-holders.js" | "directory/register.js";
+
+async function importAdaptersModule<T>(subpath: AdaptersReach, what: string, hint: string): Promise<T> {
+  const pkg = "@open-everywhere/adapters/agent/" + subpath;
   try {
-    mod = (await import(pkg)) as Mod;
+    return (await import(pkg)) as T;
   } catch (err) {
     throw new Error(
-      `cannot load the credential-purge hooks and the box backend: @open-everywhere/adapters is not installed where this runs (${String(err instanceof Error ? err.message : err)}). ` +
-        "Run `oe erase` from the app's root, after `npm install`.",
+      `${what}: @open-everywhere/adapters is not installed where this runs (${String(err instanceof Error ? err.message : err)}). ${hint}`,
     );
   }
-  return mod.registerOperatorHolders(boxBackend === undefined ? {} : { boxBackend });
+}
+
+export interface OperatorDirectoryTarget {
+  readonly provider: string | null;
+  readonly selector: string;
+}
+
+export async function connectOperatorDirectory(env: NodeJS.ProcessEnv = process.env): Promise<OperatorDirectoryTarget> {
+  const selector = (env.OE_DIRECTORY_PROVIDER ?? "").trim();
+  if (selector === "") return { provider: null, selector };
+  let overrides: AgentSettingsOverrides | undefined;
+  try {
+    ({ SETTINGS_OVERRIDES: overrides } = await importAppModule<{ SETTINGS_OVERRIDES?: AgentSettingsOverrides }>(
+      "agent/settings/settings.ts",
+      resolveAppRoot({ env }),
+    ));
+  } catch (err) {
+    throw new Error(
+      `OE_DIRECTORY_PROVIDER is set, but the app's agent/settings/settings.ts did not load (${String(err instanceof Error ? err.message : err)}). ` +
+        "The directory verbs need the app's own directory.mode and directory.groupAllowlist, so the adapter is not armed on the shipped defaults. " +
+        "Run from inside the app, or set OE_APP_ROOT to its absolute path.",
+    );
+  }
+  if (typeof overrides !== "object" || overrides === null) {
+    throw new Error(
+      "OE_DIRECTORY_PROVIDER is set, but the app's agent/settings/settings.ts loaded and exports no SETTINGS_OVERRIDES object. " +
+        "The directory verbs need the app's own directory.mode and directory.groupAllowlist, so the adapter is not armed on the shipped defaults.",
+    );
+  }
+  registerSettings(overrides);
+  if (env[CREDENTIAL_KEY_ENV]) registerDbCredentialBroker();
+  const mod = await importAdaptersModule<{ registerDirectoryAdapter(): string | null }>(
+    "directory/register.js",
+    "cannot load the directory adapter",
+    "Run the control entry from the app's root, after `npm install`.",
+  );
+  return { provider: mod.registerDirectoryAdapter(), selector };
 }
 
 export function resetOperatorStoreConnection(): void {
