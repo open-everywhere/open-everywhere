@@ -1,3 +1,5 @@
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("seat-prompt");
 import {
   GRANTS_SECTION,
   SEAT_PROMPT_SLOTS,
@@ -698,6 +700,9 @@ function ok(cond: boolean, label: string): void {
     !seat.includes("however they put it — take it at face value and call `stand_down`. There is no\nmagic word"),
     "🔴 §14/CONTROL: the old ONE-verb rule for the whole word is gone — it is now the middle branch, not the whole answer",
   );
+  ok(/It stops THIS\s+conversation by default\./.test(seat), "🔴 §14 OPE-2634: the persona says the brake stops THIS conversation by default");
+  ok(/never a reason to halt the deployment/.test(seat.replace(/\s+/g, " ")), "🔴 §14 OPE-2634: …and that something the seat READ is never a reason to halt the deployment");
+  ok(!/reaches the whole\s+DEPLOYMENT by default/.test(seat), "🔴 §14 OPE-2634 NEGATIVE CONTROL: the deployment-by-default sentence is gone");
 }
 
 {

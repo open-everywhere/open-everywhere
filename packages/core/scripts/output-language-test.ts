@@ -1,3 +1,5 @@
+import { pinSuiteStore } from "./_suite-store.js";
+pinSuiteStore("output-language");
 import { defineDomain, assertDomainsValid, type Domain } from "../agent/memory/domain.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineSettings, languageTagProblem, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";

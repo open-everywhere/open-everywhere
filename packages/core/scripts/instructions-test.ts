@@ -1,6 +1,10 @@
+import { pinSuiteStore } from "./_suite-store.js";
+process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
+pinSuiteStore("instructions");
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, readdirSync } from "node:fs";
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
+import { HALT_CLEAR_SEAT_LINE } from "../agent/access/halt.js";
 import { clearPendingCancelNoteAfter, setPendingCancelNote } from "../agent/channels/cancel-note.js";
 import dynamicInstructions, { renderSurfaceGuide, renderScopeMarkdown, renderReadingAWake, renderSupervisorPersona, REPLY_STYLE_RUBRIC, canReceiveJudgedWake } from "../agent/instructions/access.js";
 import { registerConfig } from "../agent/access/config.js";
@@ -289,13 +293,13 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   const crossMd = await renderScopeMarkdown({
     channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:oe-sup:g1" },
     session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
-  } as BindableContext);
+  } as BindableContext, { liveHalt: false });
   ok(!crossMd.includes(NOISE), "(a) existing single-channel CROSS-surface window (degenerate token) renders today's block — NO per-surface scope leak (the trap avoided)");
 
   const soloMd = await renderScopeMarkdown({
     channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:win:slack/T_S/C_SOLO:oe-sup:g1" },
     session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
-  } as BindableContext);
+  } as BindableContext, { liveHalt: false });
   ok(soloMd.includes(NOISE), "(b) solo-MODE window (windowId !== domain) renders the sole source's per-surface scope (noise doctrine)");
   const crossMdWithSoloFraming = crossMd
     .replace(
@@ -596,7 +600,10 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     const def = await handler!(undefined, ctx as unknown as ResolveCtx);
     ok(def !== null && typeof def === "object", `${event}: the resolver returns an instructions definition`);
     ok("content" in def!, `${event}: the definition uses the typed \`content\` key`);
-    ok(def!.content === (await renderScopeMarkdown(ctx)), `${event}: \`content\` is byte-identical to renderScopeMarkdown(ctx) — the migration changed no prompt bytes`);
+    const liveHalt = event === "turn.started";
+    ok(def!.content === (await renderScopeMarkdown(ctx, { liveHalt })), `${event}: \`content\` is byte-identical to renderScopeMarkdown(ctx, { liveHalt: ${liveHalt} }) — the migration changed no prompt bytes`);
+    ok(def!.content!.includes(HALT_CLEAR_SEAT_LINE) === liveHalt, `🔴 ${event}: the clear line is ${liveHalt ? "PRESENT — the turn render is where the seat reads the live halt state" : "ABSENT — eve keeps the session render for the whole session, so a halt fact there goes stale"} (OPE-2635)`);
+    ok(!def!.content!.includes("**Consequential work is paused right now"), `${event}: an empty store renders no halted paragraph (OPE-2635)`);
     ok((def!.content ?? "").length > 0, `${event}: the rendered block is non-empty (the byte assertion above is not comparing two empty strings)`);
     ok(("markdown" in def!) === false, `${event}: the deprecated \`markdown\` key is absent`);
     ok(def!.role === "system", `${event}: the role is "system" (ephemeral prompt text), not "user" (durable history)`);

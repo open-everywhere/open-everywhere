@@ -7332,7 +7332,7 @@ export const SCENARIOS: readonly Scenario[] = [
               clearOwnedOrgHalt: (handle) => control.clearOwnedOrgHalt(handle),
             });
             if (cleanup.orgWide.status === "cleared") {
-              ctx.observe(`S-HALT cleanup cleared this run's own ORG-WIDE halt (${cleanup.orgWide.via} road) — the seat set the default org scope, not the asked surface scope`);
+              ctx.observe(`S-HALT cleanup cleared this run's own ORG-WIDE halt (${cleanup.orgWide.via} road) — the seat passed scope org, not the asked surface scope`);
             } else if (cleanup.orgWide.status === "residue") {
               const o = cleanup.orgWide;
               ctx.observe(

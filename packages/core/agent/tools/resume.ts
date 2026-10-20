@@ -18,9 +18,8 @@ export default defineTool({
   inputSchema: z.object({
     scope: z
       .enum(["org", "surface"])
-      .default("org")
       .describe(
-        'Which halt to lift — the same two addresses `halt` sets. "org" (the default) lifts the deployment-wide halt; "surface" lifts only this conversation\'s own. Lifting one never lifts the other: if both are set, both must be resumed.',
+        'Which halt to lift — the same two addresses `halt` sets. There is no default: name the width your instructions give for the pause. "org" lifts the deployment-wide halt; "surface" lifts only this conversation\'s own. Lifting one never lifts the other: if both are set, both must be resumed.',
       ),
   }),
   outputSchema: z.object({
@@ -35,7 +34,7 @@ export default defineTool({
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
     const proposeScopeKey = await proposalScopeKey(ctx, p);
-    const scope = input.scope ?? "org";
+    const scope = input.scope;
     const address = chatHaltAddress(scope, proposeScopeKey);
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {

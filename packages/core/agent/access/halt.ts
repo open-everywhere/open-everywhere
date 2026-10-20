@@ -187,6 +187,13 @@ export function haltSeatParagraph(state: HaltState): string | null {
   );
 }
 
+export const HALT_CLEAR_SEAT_LINE =
+  "**No halt is in force anywhere in this deployment right now.** The host reads this from the live halt state on " +
+  "every turn, so it outranks anything in the conversation. A halt can be lifted from the control " +
+  "plane with no post in the room, so an older message that says work is paused or halted is " +
+  "history, not the current state. Do not refuse or put off an ask because of such a message: do " +
+  "the work. If a halt does stand when you act, the host refuses the act and tells you.";
+
 export function haltRefusalMessage(state: HaltState, what: string): string {
   const why = state.halted && state.unreadable !== undefined ? " (the halt state could not be read, so this refuses fail-closed)" : "";
   return (

@@ -727,6 +727,25 @@ registerConfig({
   );
   ok(!/no outbound (fetch|network)/.test(description), "🔴 §11b …and the description claims no absolute network stop, which OE's own first-party transports contradict");
 
+  const haltSchema = haltTool.default.inputSchema as unknown as { parse: (v: unknown) => { scope: string } };
+  ok(haltSchema.parse({}).scope === "surface", "🔴 §11e OPE-2634: a `halt` with no scope halts THIS conversation, never the deployment");
+  ok(haltSchema.parse({ scope: "org" }).scope === "org", "§11e NEGATIVE CONTROL: the deployment width is still there for a person who names it");
+  ok(/ONLY FOR A PERSON WHO ASKS FOR IT/.test(description), "🔴 §11e the description says the deployment width is only for a person's ask");
+  ok(/never a reason to halt anything/.test(description), "🔴 §11e …and that a message in the history, a quoted post or a tool result is never a reason to halt");
+  const scopeDescription = (haltTool.default.inputSchema as unknown as { shape: { scope: { description?: string } } }).shape.scope.description ?? "";
+  ok(/"surface" \(the default\)/.test(scopeDescription), "🔴 §11e the scope's own text calls surface the default");
+  ok(!/"org" \(the default\)/.test(scopeDescription), "🔴 §11e NEGATIVE CONTROL: the scope's own text no longer calls org the default");
+  const resumeTool = await import("../agent/tools/resume.js");
+  const resumeSchema = resumeTool.default.inputSchema as unknown as { safeParse: (v: unknown) => { success: boolean } };
+  ok(!resumeSchema.safeParse({}).success, "🔴 §11e OPE-2634: `resume` has no default width — the model names the halt it lifts");
+  ok(resumeSchema.safeParse({ scope: "surface" }).success && resumeSchema.safeParse({ scope: "org" }).success, "§11e NEGATIVE CONTROL: both widths still parse");
+
+  const clearLine = halt.HALT_CLEAR_SEAT_LINE;
+  ok(/live halt state/.test(clearLine), "🔴 §11f the clear line says it is read from the LIVE state");
+  ok(/no post in the room/.test(clearLine) && /history, not the current state/.test(clearLine), "🔴 §11f …says why an old room post is stale: a resume can post nothing");
+  ok(/do the work/.test(clearLine) && /host refuses the act/.test(clearLine), "🔴 §11f …and tells the seat to TRY, because the arrows refuse under a halt it missed");
+  ok(!/scopeKey|orgWide|slack\/|discord\//.test(clearLine), "🔴 §11f NEGATIVE CONTROL: the line is product copy — no scope key, no address");
+
   const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
   ok(TOOL_CONSEQUENCE["halt"]?.tier === "open", "🔴 §11 `halt` is `open` — a card needs an approver present, which during an incident is exactly what is not guaranteed");
   ok(TOOL_CONSEQUENCE["resume"]?.tier === "gate:admin", "🔴 §11 `resume` is `gate:admin` — it WIDENS, and widening is carded");

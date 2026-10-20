@@ -27,7 +27,8 @@ import { declaredOpsForReach } from "../hooks/fire-toolset.js";
 import { renderDeclaredReachBlock } from "../routines/watch.js";
 import { firstConversationBlock } from "../onboarding/first-routine.js";
 import { askWatchSeatBlock } from "../routines/ask-watch.js";
-import { NOT_HALTED, haltScopeForCtx, haltSeatParagraph, resolveHalt } from "../access/halt.js";
+import { HALT_CLEAR_SEAT_LINE, haltScopeForCtx, haltSeatParagraph, resolveHalt } from "../access/halt.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { partialHaltPrefix, resolveTurnHaltReach } from "../channels/halt-per-wake.js";
 import { markDeliveryArm } from "../channels/reply-signal.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -548,10 +549,9 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   });
 }
 
-export async function renderScopeMarkdown(ctx: BindableContext): Promise<string> {
+export async function renderScopeMarkdown(ctx: BindableContext, opts: { readonly liveHalt?: boolean } = {}): Promise<string> {
   const scope = await (isUnifiedWindowContext(ctx) ? renderUnifiedScope(ctx) : renderPerSurfaceScope(ctx));
   const cancelNote = renderPendingCancelNote();
-  const turnState = await resolveHalt(haltScopeForCtx(ctx)).catch(() => NOT_HALTED);
   const org = ((): string => {
     try {
       return resolvePartition(ctx).org;
@@ -559,8 +559,18 @@ export async function renderScopeMarkdown(ctx: BindableContext): Promise<string>
       return deploymentOrg();
     }
   })();
-  const reach = await resolveTurnHaltReach(ctx, turnState, org);
-  const haltNote = reach.kind === "none" ? null : [partialHaltPrefix(reach), haltSeatParagraph(reach.state)].filter((n) => n !== null && n.length > 0).join("\n\n");
+  let haltNote: string | null = null;
+  if (opts.liveHalt !== false) {
+    const orgHalts = await (async () => getOperationalStore().activeHalts(org))().catch(() => undefined);
+    const rowsDeps = orgHalts === undefined ? {} : { rows: async () => orgHalts };
+    const turnState = await resolveHalt(haltScopeForCtx(ctx), rowsDeps).catch(() => undefined);
+    const reach = turnState === undefined ? undefined : await resolveTurnHaltReach(ctx, turnState, org, rowsDeps);
+    if (reach !== undefined && reach.kind !== "none") {
+      haltNote = [partialHaltPrefix(reach), haltSeatParagraph(reach.state)].filter((n) => n !== null && n.length > 0).join("\n\n");
+    } else if (reach !== undefined && orgHalts !== undefined && !orgHalts.some((r) => r.org === org)) {
+      haltNote = HALT_CLEAR_SEAT_LINE;
+    }
+  }
   const declaredReach = renderDeclaredReachBlock(declaredOpsForReach());
   const firstConversation = await (async (): Promise<string> => {
     try {
@@ -577,18 +587,18 @@ export async function renderScopeMarkdown(ctx: BindableContext): Promise<string>
       return "";
     }
   })();
-  const appended = [cancelNote, haltNote, declaredReach, askWatch, firstConversation].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
+  const appended = [haltNote, cancelNote, declaredReach, askWatch, firstConversation].filter((n): n is string => n !== null && n !== undefined && n.length > 0);
   if (appended.length === 0) return scope;
   return [...(scope.length > 0 ? [scope] : []), ...appended].join("\n\n");
 }
 
-async function resolve(ctx: BindableContext) {
-  return defineInstructions({ content: await renderScopeMarkdown(ctx), role: "system" });
+async function resolve(ctx: BindableContext, opts: { readonly liveHalt?: boolean } = {}) {
+  return defineInstructions({ content: await renderScopeMarkdown(ctx, opts), role: "system" });
 }
 
 export default defineDynamic({
   events: {
-    "session.started": (_event, ctx) => resolve(ctx),
+    "session.started": (_event, ctx) => resolve(ctx, { liveHalt: false }),
     "turn.started": (_event, ctx) => resolve(ctx),
   },
 });
