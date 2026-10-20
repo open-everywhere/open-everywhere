@@ -1,7 +1,6 @@
 import {
   cancelAnchoredTurn,
   resolvePartition,
-  STATUS_REACTION,
   swallowRoomOp,
   turnAnchorKey,
   turnChannelKey,
@@ -9,8 +8,13 @@ import {
   type CancelResult,
   type SurfaceSessionPinner,
   type SurfaceSessionSetter,
+  type SurfaceSessionStatus,
+  type SurfaceSessionStepper,
+  type SurfaceTurnEnd,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { bindableForSlackIds, slackForm, type SlackEventEnvelope } from "./slack-events.js";
+import { type StepAction } from "./slack-step-label.js";
+import { setSlackStatusReaction, setSlackThreadStatus, SLACK_WORKING_STATUS, slackStepStatus, type SlackSignRequest } from "./slack-working-signs.js";
 
 export const AGENT_SESSION_STOPPED_EVENT = "agent_session_stopped";
 
@@ -19,8 +23,6 @@ export const SLACK_SESSION_TITLE_MAX = 60;
 export type SlackSessionStatus = "processing" | "active" | "suspended";
 
 const AGENT_SESSION_TS_ATTRIBUTE = "agent_session_ts";
-
-const SESSION_PIN_ATTRIBUTE = "oe_session_pin";
 
 export type SlackFormCall = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -86,60 +88,87 @@ export const slackSurfaceSessionPin: SurfaceSessionPinner = (attributes) => {
   if (!session) return undefined;
   return {
     id: `${session.channelId}:${session.threadTs}`,
-    attributes: { channel_id: session.channelId, channel_type: "im", [AGENT_SESSION_TS_ATTRIBUTE]: session.threadTs, [SESSION_PIN_ATTRIBUTE]: "1" },
+    attributes: { channel_id: session.channelId, channel_type: "im", [AGENT_SESSION_TS_ATTRIBUTE]: session.threadTs },
   };
 };
 
-export const SLACK_DM_WORKING_STATUS = "Working...";
+export const SLACK_DM_WORKING_STATUS = SLACK_WORKING_STATUS;
 
-const WORKING_REACTION = STATUS_REACTION.working;
+const WORKING_SIGNS_TS_ATTRIBUTE = "working_signs_ts";
 
 const SIGN_SETUP_FIX: Readonly<Record<string, string>> = {
-  "reactions.add": "the 👀 needs the reactions:write bot scope",
-  "reactions.remove": "the 👀 needs the reactions:write bot scope",
+  "reactions.add": "the 👀 and the 🛑 need the reactions:write bot scope",
+  "reactions.remove": "the 👀 and the 🛑 need the reactions:write bot scope",
   "assistant.threads.setStatus": "the DM status line needs the assistant:write bot scope and the agent view (features.agent_view)",
 };
 const SIGN_SETUP_ERRORS = new Set(["missing_scope", "feature_disabled", "not_allowed_token_type", "not_allowed", "access_denied"]);
 const SIGN_NO_OP_ERRORS = new Set(["already_reacted", "no_reaction"]);
 const warnedSignErrors = new Set<string>();
 
-async function sendSign(form: SlackFormCall, method: string, body: URLSearchParams): Promise<void> {
-  let error: string;
-  try {
-    const res = await form(method, body.toString());
-    if (res?.ok === true) return;
-    error = String(res?.error ?? "no answer");
-  } catch (err) {
-    error = String(err);
-  }
-  if (SIGN_NO_OP_ERRORS.has(error)) return;
-  const key = `${method}:${error}`;
-  if (warnedSignErrors.has(key)) return;
-  warnedSignErrors.add(key);
-  const fix = SIGN_SETUP_ERRORS.has(error)
-    ? `${SIGN_SETUP_FIX[method] ?? "this sign needs a manifest scope"}. Fix: paste the app manifest again (App Manifest → Save Changes) and reinstall if Slack asks`
-    : "the sign is best-effort and the turn goes on";
-  console.warn(`[open-everywhere:slack-session] ${method} failed (${error}) — ${fix}. Logged once per process.`);
+function formSignRequest(form: SlackFormCall): SlackSignRequest {
+  return async (method, params) => {
+    let error: string;
+    try {
+      const res = await form(method, new URLSearchParams({ ...params }).toString());
+      if (res?.ok === true) return;
+      error = String(res?.error ?? "no answer");
+    } catch (err) {
+      error = String(err);
+    }
+    if (SIGN_NO_OP_ERRORS.has(error)) return;
+    const key = `${method}:${error}`;
+    if (warnedSignErrors.has(key)) return;
+    warnedSignErrors.add(key);
+    const fix = SIGN_SETUP_ERRORS.has(error)
+      ? `${SIGN_SETUP_FIX[method] ?? "this sign needs a manifest scope"}. Fix: paste the app manifest again (App Manifest → Save Changes) and reinstall if Slack asks`
+      : "the sign is best-effort and the turn goes on";
+    console.warn(`[open-everywhere:slack-session] ${method} failed (${error}) — ${fix}. Logged once per process.`);
+  };
 }
 
 export function _resetSignWarningsForTest(): void {
   warnedSignErrors.clear();
 }
 
-async function setSlackDmWorkingSigns(session: { readonly channelId: string; readonly threadTs: string }, working: boolean, form: SlackFormCall = slackForm): Promise<void> {
-  if (swallowRoomOp(`a slack DM working sign ${working ? "add" : "remove"}`)) return;
-  const reaction = new URLSearchParams({ channel: session.channelId, name: WORKING_REACTION, timestamp: session.threadTs });
-  const status = new URLSearchParams({ channel_id: session.channelId, thread_ts: session.threadTs, status: working ? SLACK_DM_WORKING_STATUS : "" });
-  await Promise.all([sendSign(form, working ? "reactions.add" : "reactions.remove", reaction), sendSign(form, "assistant.threads.setStatus", status)]);
+export function slackWorkingSignsOf(attributes: Readonly<Record<string, unknown>>): { readonly channelId: string; readonly threadTs: string; readonly teamId?: string } | undefined {
+  if (attributes.channel_type !== "im" && attributes.channel_type !== "mpim") return undefined;
+  const channelId = attributes.channel_id;
+  const stamped = attributes[WORKING_SIGNS_TS_ATTRIBUTE];
+  if (typeof channelId !== "string" || channelId.length === 0 || typeof stamped !== "string" || stamped.length === 0) return undefined;
+  return { channelId, threadTs: stamped, ...(typeof attributes.team_id === "string" ? { teamId: attributes.team_id } : {}) };
+}
+
+async function setSlackDmWorkingSigns(root: { readonly channelId: string; readonly threadTs: string }, status: SurfaceSessionStatus, end: SurfaceTurnEnd | undefined, request: SlackSignRequest): Promise<void> {
+  const working = status === "processing";
+  if (swallowRoomOp(`a slack DM working sign (${working ? "start" : end?.failed === true ? "failed" : "end"})`)) return;
+  await Promise.all([
+    setSlackStatusReaction(request, { channel: root.channelId, timestamp: root.threadTs }, working ? "working" : end?.failed === true ? "blocked" : "none"),
+    setSlackThreadStatus(request, root, working ? SLACK_WORKING_STATUS : ""),
+  ]);
 }
 
 export function slackSurfaceSessionSetter(form: SlackFormCall = slackForm): SurfaceSessionSetter {
-  return async (attributes, status) => {
+  const request = formSignRequest(form);
+  return async (attributes, status, end) => {
     const session = slackAgentSessionOf(attributes);
-    if (!session) return undefined;
-    const fromTurn = attributes[SESSION_PIN_ATTRIBUTE] === undefined;
-    await Promise.all([setSlackSessionStatus({ ...session, status }, form), ...(fromTurn ? [setSlackDmWorkingSigns(session, status === "processing", form)] : [])]);
-    return `${session.channelId}:${session.threadTs}`;
+    const signs = slackWorkingSignsOf(attributes);
+    const named = session ?? signs;
+    if (!named) return undefined;
+    await Promise.all([
+      ...(session ? [setSlackSessionStatus({ ...session, status }, form)] : []),
+      ...(signs ? [setSlackDmWorkingSigns(signs, status, end, request)] : []),
+    ]);
+    return `${named.channelId}:${named.threadTs}`;
+  };
+}
+
+export function slackSurfaceSessionStepper(form: SlackFormCall = slackForm): SurfaceSessionStepper {
+  const request = formSignRequest(form);
+  return async (attributes, actions) => {
+    const signs = slackWorkingSignsOf(attributes);
+    if (!signs) return;
+    if (swallowRoomOp("a slack DM step label")) return;
+    await setSlackThreadStatus(request, signs, slackStepStatus(actions as readonly StepAction[], { channelId: signs.channelId, teamId: signs.teamId ?? null }));
   };
 }
 

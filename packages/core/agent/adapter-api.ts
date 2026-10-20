@@ -599,7 +599,7 @@ export type { AttachSessionForCancel, CancelAnchoredTurnInput, CancelResult, Can
 export { turnAnchorKey, turnChannelKey, TURN_ANCHOR_TTL_MS } from "./channels/turn-registry.js";
 
 export { registerSurfaceSessionState } from "./channels/surface-session-state.js";
-export type { SurfaceSessionPinner, SurfaceSessionSetter, SurfaceSessionStatus } from "./channels/surface-session-state.js";
+export type { SurfaceSessionPinner, SurfaceSessionSetter, SurfaceSessionStatus, SurfaceSessionStepper, SurfaceTurnEnd } from "./channels/surface-session-state.js";
 
 export {
   registerCardPoster,

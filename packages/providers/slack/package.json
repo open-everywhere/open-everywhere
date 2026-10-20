@@ -176,6 +176,10 @@
       "types": "./dist/agent/channels/slack-webhook-verifier.d.ts",
       "default": "./dist/agent/channels/slack-webhook-verifier.js"
     },
+    "./agent/channels/slack-working-signs.js": {
+      "types": "./dist/agent/channels/slack-working-signs.d.ts",
+      "default": "./dist/agent/channels/slack-working-signs.js"
+    },
     "./agent/channels/slack.js": {
       "types": "./dist/agent/channels/slack.d.ts",
       "default": "./dist/agent/channels/slack.js"

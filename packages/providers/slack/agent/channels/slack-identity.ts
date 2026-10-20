@@ -29,6 +29,7 @@ export interface SlackIdentityInput {
   readonly trustChecked?: boolean;
   readonly dmPartnerTrust?: "internal" | "external";
   readonly agentSessionTs?: string;
+  readonly workingSignsTs?: string;
 }
 
 export function buildSlackAuth(input: SlackIdentityInput): OpenEverywhereSlackAuth {
@@ -45,6 +46,7 @@ export function buildSlackAuth(input: SlackIdentityInput): OpenEverywhereSlackAu
   if (typeof input.trustChecked === "boolean") attributes.trust_checked = String(input.trustChecked);
   if (input.dmPartnerTrust) attributes.dm_partner_trust = input.dmPartnerTrust;
   if (input.agentSessionTs) attributes.agent_session_ts = input.agentSessionTs;
+  if (input.workingSignsTs) attributes.working_signs_ts = input.workingSignsTs;
   const isDmFamily = input.channelType === "im" || input.channelType === "mpim" || (input.channelType === undefined && input.channelId.startsWith("D"));
   Object.assign(attributes, rootDmGrainAttrs(isDmFamily));
   return { authenticator: "slack", principalId: input.userId, principalType: "slack-user", attributes };

@@ -729,10 +729,12 @@ its own solo seat, even with `ambientSupervisor` on at `org`. See
      reaction via the `react` tool — a bare emoji ack (e.g. 👍) instead of a low-content reply in a
      busy thread. It's a genuine alternative response, not a status indicator, and is audited like
      any other tool call.
-4. Test a DM: open a direct message with the bot and send a plain message (no `@mention` needed in a DM). The DM surface's memory is isolated and `private`. While the turn works, the bot shows the same two signs a mention gets:
-   - **👀 on your message.** A message inside a DM thread gets it on the thread's first message, as in a channel. It goes away when the turn ends, unless the turn fails for good: then the 👀 stays until the next turn of that conversation ends. A DM reply stays flat, as described above.
-   - **The status line** `Working...` under your message, removed when the turn ends. A turn that fails for good leaves it until Slack expires it. A DM turn shows no live step labels: those come from the Slack channel's own handlers, and a DM runs on the DM seat instead.
-   - **If a sign is missing**, the app lacks a scope or the agent view. The 👀 needs `reactions:write`. The status line needs `assistant:write` and the agent view (`features.agent_view`). All three come from the manifest: paste it again (App Manifest → Save Changes) and reinstall if Slack asks. The deployment logs the refused call once per process, with this fix in the line: search the logs for `[open-everywhere:slack-session]`.
+4. Test a DM: open a direct message with the bot and send a plain message (no `@mention` needed in a DM). The DM surface's memory is isolated and `private`. While the turn works, the bot shows the same signs a mention gets. A group DM with the bot shows them too.
+   - **👀 on your message.** A message inside a DM thread gets it on the thread's first message, as in a channel. It goes away when the turn ends. A DM reply stays flat, as described above.
+   - **The status line** under your message: `Working...` at the start, then a live step label while a tool runs (`Reading the thread…`), from the same code-owned table a mention uses. It goes away when the turn ends.
+   - **🛑 when the turn fails for good.** The 👀 goes, 🛑 goes on your message, and the status line clears. In a 1:1 DM the agent session also leaves `processing`, so Slack takes its Stop button off the dead turn. The next turn on the same message takes the 🛑 off again.
+   - **A group DM** has no agent session, so it has no Stop button and no session state. It shows every other sign.
+   - **If a sign is missing**, the app lacks a scope or the agent view. The 👀 and the 🛑 need `reactions:write`. The status line needs `assistant:write` and the agent view (`features.agent_view`). All three come from the manifest: paste it again (App Manifest → Save Changes) and reinstall if Slack asks. The deployment logs the refused call once per process, with this fix in the line: search the logs for `[open-everywhere:slack-session]`.
 
 ### What it can read on Slack
 

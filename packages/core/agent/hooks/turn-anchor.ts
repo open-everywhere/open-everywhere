@@ -16,7 +16,7 @@ import { seedTailWindow, tailWindowFor } from "../channels/session-tail-record.j
 import { domainKeyOf } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { uningressedTurn } from "../access/task-wake-signal.js";
-import { markSurfaceSession, parkedSurfaceStatus, pinSurfaceSession, surfaceTurnOf } from "../channels/surface-session-state.js";
+import { markSurfaceSession, parkedSurfaceStatus, pinSurfaceSession, stepSurfaceSession, surfaceTurnOf, type SurfaceTurnEnd } from "../channels/surface-session-state.js";
 import { conversationHasWaitingJob } from "../channels/work-surface-wait.js";
 import { resetSessionAttention, sessionNeedsPerson } from "../status/attention.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
@@ -427,12 +427,12 @@ async function startTurnSession(ctx: HookContext): Promise<void> {
   }
 }
 
-async function parkTurnSession(ctx: HookContext): Promise<void> {
+async function parkTurnSession(ctx: HookContext, end?: SurfaceTurnEnd): Promise<void> {
   const turn = surfaceTurnOf(ctx);
   if (!turn) return;
   const needsPerson = sessionNeedsPerson();
   const status = parkedSurfaceStatus(needsPerson || (await conversationHasWaitingJob(pinSurfaceSession(turn))));
-  const parkedId = await markSurfaceSession(turn.platform, turn.attributes, status);
+  const parkedId = await markSurfaceSession(turn.platform, turn.attributes, status, end);
   let started: { readonly platform: string; readonly id: string; readonly attributes: Readonly<Record<string, unknown>> } | null = null;
   try {
     started = startedSurfaceSession.get();
@@ -443,7 +443,12 @@ async function parkTurnSession(ctx: HookContext): Promise<void> {
   if (started === null) return;
   if (started.platform === turn.platform && started.id === parkedId) return;
   const startedStatus = parkedSurfaceStatus(needsPerson || (await conversationHasWaitingJob(pinSurfaceSession({ platform: started.platform, attributes: started.attributes }))));
-  await markSurfaceSession(started.platform, started.attributes, startedStatus);
+  await markSurfaceSession(started.platform, started.attributes, startedStatus, end);
+}
+
+async function stepTurnSession(ctx: HookContext, actions: readonly unknown[]): Promise<void> {
+  const turn = surfaceTurnOf(ctx);
+  if (turn) await stepSurfaceSession(turn, actions);
 }
 
 export default defineHook({
@@ -461,7 +466,7 @@ export default defineHook({
         console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
       }
     },
-    "actions.requested": async (event, ctx) => {
+    "actions.requested": async (event, ctx: HookContext) => {
       try {
         if (!turnAnchorRecordable(ctx as unknown as BindableContext)) return;
         if (isWorkSessionContext(ctx as unknown as BindableContext)) return;
@@ -469,6 +474,7 @@ export default defineHook({
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] actions.requested failed: ${String(err)}`);
       }
+      await stepTurnSession(ctx, event.data.actions);
     },
     "action.result": async (event) => {
       try {
@@ -530,7 +536,8 @@ export default defineHook({
         console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
       }
     },
-    "session.failed": async () => {
+    "session.failed": async (_event, ctx: HookContext) => {
+      await parkTurnSession(ctx, { failed: true });
       try {
         await drainDueIgnoredStops();
       } catch (err) {

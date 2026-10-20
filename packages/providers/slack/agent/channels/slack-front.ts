@@ -778,6 +778,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       dmKind: "im" | "mpim",
       driverAdmitted = false,
       agentSessionTypedText?: string,
+      showsWorkingSigns = false,
     ): Promise<void> => {
       const opensAgentSession = agentSessionTypedText !== undefined;
       if (slackFrontTenantFenceDeclined(ev, `dm-${dmKind}`, "scheduleDmWake")) return;
@@ -819,6 +820,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           isPrivate: true,
           ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
           ...(opensAgentSession && !isGroup ? { agentSessionTs: ev.threadTs ?? ev.ts } : {}),
+          ...(showsWorkingSigns && (ev.threadTs ?? ev.ts) ? { workingSignsTs: ev.threadTs ?? ev.ts } : {}),
           ...(roomFacts?.extShared === undefined ? {} : { isExternal: roomFacts.extShared }),
           ...(roomFacts?.trustChecked === undefined ? {} : { trustChecked: roomFacts.trustChecked }),
         }),
@@ -960,7 +962,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
           const heard = await hearVoice(dev);
-          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted, decision.dmKind === "im" ? dev.authoredText : undefined));
+          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted, decision.dmKind === "im" ? dev.authoredText : undefined, true));
           console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );
@@ -1068,7 +1070,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           args.waitUntil(
             fifo.enqueue(dmFifoKey(mev.channelId), async () => {
               const heard = mev.botId ? mev : await hearVoice(mev);
-              await deliverWithStrandRetry(() => scheduleDmWake({ ...heard, channelType: "mpim" }, "mpim"));
+              await deliverWithStrandRetry(() => scheduleDmWake({ ...heard, channelType: "mpim" }, "mpim", false, undefined, true));
             }),
           );
           return OK();
@@ -1184,7 +1186,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       );
       args.waitUntil(
         fifo.enqueue(dmFifoKey(click.channelId), async () => {
-          await deliverWithStrandRetry(() => scheduleDmWake(sev, "im", false, click.threadTs === undefined ? undefined : click.text));
+          await deliverWithStrandRetry(() => scheduleDmWake(sev, "im", false, click.threadTs === undefined ? undefined : click.text, click.threadTs !== undefined));
           console.log(`[open-everywhere:slack-front] follow-up press in ${click.channelId}: woke the DM window`);
         }),
       );

@@ -8,6 +8,8 @@ import {
   slackAgentSessionOf,
   slackSurfaceSessionPin,
   slackSurfaceSessionSetter,
+  slackSurfaceSessionStepper,
+  slackWorkingSignsOf,
   slackSessionStatusForm,
   slackSessionTitle,
   SLACK_DM_WORKING_STATUS,
@@ -155,13 +157,16 @@ console.log("§5 the state setter");
   const register = readFileSync(new URL("../agent/register.ts", import.meta.url), "utf8");
   const body = /export function registerSlackProvider\(\)[\s\S]*?\n\}/.exec(register)?.[0] ?? "";
   ok(body.length > 0, "scan sanity: registerSlackProvider's body is found");
-  ok(/registerSurfaceSessionState\("slack", slackSurfaceSessionSetter\(\), slackSurfaceSessionPin\)/.test(body), "registerSlackProvider registers the Slack session setter AND its pinner with core");
+  ok(
+    /registerSurfaceSessionState\("slack", slackSurfaceSessionSetter\(\), slackSurfaceSessionPin, slackSurfaceSessionStepper\(\)\)/.test(body),
+    "registerSlackProvider registers the Slack session setter, its pinner AND its stepper with core",
+  );
 
   const pin = slackSurfaceSessionPin({ team_id: "T1", channel_id: "D0PARK", channel_type: "im", user_id: "U7", agent_session_ts: "9.9", oe_wake: "w-1" });
   eq(
     pin,
-    { id: "D0PARK:9.9", attributes: { channel_id: "D0PARK", channel_type: "im", agent_session_ts: "9.9", oe_session_pin: "1" } },
-    "the pin is the setter's id, three ids and the pin mark: no wake stamp, no person id",
+    { id: "D0PARK:9.9", attributes: { channel_id: "D0PARK", channel_type: "im", agent_session_ts: "9.9" } },
+    "the pin is the setter's id and three ids: no wake stamp, no person id, no sign stamp",
   );
   eq(await slackSurfaceSessionSetter(recorder)(pin!.attributes, "suspended"), pin!.id, "the pinned bag names the same session to the setter");
   eq(slackSurfaceSessionPin({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }), undefined, "a channel thread pins nothing");
@@ -177,7 +182,7 @@ console.log("§6 the working signs (OPE-2629): the 👀 and the status line on a
     return { ok: true };
   };
   const setter = slackSurfaceSessionSetter(recorder);
-  const dm = { team_id: "T1", channel_id: "D0EYES", channel_type: "im", user_id: "U7", agent_session_ts: "1700159720.000200" };
+  const dm = { team_id: "T1", channel_id: "D0EYES", channel_type: "im", user_id: "U7", agent_session_ts: "1700159720.000200", working_signs_ts: "1700159720.000200" };
   const signs = () =>
     sent
       .filter((c) => c.method !== "agents.sessions.setStatus")
@@ -188,9 +193,10 @@ console.log("§6 the working signs (OPE-2629): the 👀 and the status line on a
     signs(),
     [
       ["reactions.add", "D0EYES", "1700159720.000200", "eyes"],
+      ["reactions.remove", "D0EYES", "1700159720.000200", "octagonal_sign"],
       ["assistant.threads.setStatus", "D0EYES", "1700159720.000200", SLACK_DM_WORKING_STATUS],
     ],
-    "a DM turn's start adds 👀 on the session root (the message itself when top-level) and shows the status line there",
+    "a DM turn's start adds 👀 on the session root (the message itself when top-level), takes any old 🛑 off, and shows the status line there",
   );
   sent.length = 0;
   await setter(dm, "active");
@@ -198,18 +204,26 @@ console.log("§6 the working signs (OPE-2629): the 👀 and the status line on a
     signs(),
     [
       ["reactions.remove", "D0EYES", "1700159720.000200", "eyes"],
+      ["reactions.remove", "D0EYES", "1700159720.000200", "octagonal_sign"],
       ["assistant.threads.setStatus", "D0EYES", "1700159720.000200", ""],
     ],
     "the park removes the 👀 and clears the status line: absence is the done signal",
   );
   sent.length = 0;
   await setter(dm, "suspended");
-  eq(signs().map((s) => [s[0], s[3]]), [["reactions.remove", "eyes"], ["assistant.threads.setStatus", ""]], "a park that waits on the person clears the signs too: the turn no longer works");
+  eq(
+    signs().map((s) => [s[0], s[3]]),
+    [["reactions.remove", "eyes"], ["reactions.remove", "octagonal_sign"], ["assistant.threads.setStatus", ""]],
+    "a park that waits on the person clears the signs too: the turn no longer works",
+  );
 
   sent.length = 0;
-  await setter({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }, "processing");
+  await setter({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9", working_signs_ts: "9.9" }, "processing");
   await setter({ channel_id: "G0GROUP", channel_type: "mpim", agent_session_ts: "9.9" }, "processing");
-  eq(sent.length, 0, "a channel thread and a group DM get no DM sign and no session call");
+  eq(sent.length, 0, "a channel thread (even one that carried the stamp) and an unstamped group DM get no DM sign and no session call");
+  await setter({ channel_id: "D0EYES", channel_type: "im", agent_session_ts: "1700159720.000200" }, "processing");
+  eq(sent.map((c) => c.method), ["agents.sessions.setStatus"], "an unstamped 1:1 delivery sets the session state and sends no sign");
+  sent.length = 0;
 
   const warned: string[] = [];
   const realWarn = console.warn;
@@ -231,7 +245,7 @@ console.log("§6 the working signs (OPE-2629): the 👀 and the status line on a
   sent.length = 0;
   const pinned = slackSurfaceSessionPin(dm)!;
   eq(await setter(pinned.attributes, "suspended"), pinned.id, "a pinned bag still names the session");
-  eq(sent.map((c) => c.method), ["agents.sessions.setStatus"], "a job's settlement (a pinned bag) sets the session state and sends no 👀 or status-line call");
+  eq(sent.map((c) => c.method), ["agents.sessions.setStatus"], "a job's settlement (a pinned bag) sets the session state and sends no 👀 or status-line call: the pin carries no sign stamp");
   sent.length = 0;
   await setter(pinned.attributes, "active");
   eq(sent.map((c) => c.method), ["agents.sessions.setStatus"], "a job that moves on (a pinned bag) sends no sign call either");
@@ -247,6 +261,95 @@ console.log("§6 the working signs (OPE-2629): the 👀 and the status line on a
 
   const scopes = (JSON.parse(slackAppManifestTemplate()) as { oauth_config: { scopes: { bot: string[] } } }).oauth_config.scopes.bot;
   ok(scopes.includes("reactions:write") && scopes.includes("assistant:write"), "the manifest grants reactions:write and assistant:write");
+  _resetSignWarningsForTest();
+}
+
+console.log("§7 the working signs' gaps (OPE-2632): 🛑 on a failed turn, step labels, a group DM");
+{
+  _resetSignWarningsForTest();
+  const sent: { method: string; body: URLSearchParams }[] = [];
+  const recorder = async (method: string, body: string) => {
+    sent.push({ method, body: new URLSearchParams(body) });
+    return { ok: true };
+  };
+  const setter = slackSurfaceSessionSetter(recorder);
+  const stepper = slackSurfaceSessionStepper(recorder);
+  const ROOT = "1700159720.000300";
+  const dm = { team_id: "T1", channel_id: "D0FAIL", channel_type: "im", user_id: "U7", agent_session_ts: ROOT, working_signs_ts: ROOT };
+  const calls = () => sent.map((c) => [c.method, c.body.get("name") ?? c.body.get("status")]);
+
+  await setter(dm, "processing");
+  sent.length = 0;
+  eq(await setter(dm, "active", { failed: true }), `D0FAIL:${ROOT}`, "the failed settle names the session");
+  eq(
+    calls(),
+    [
+      ["agents.sessions.setStatus", "active"],
+      ["reactions.remove", "eyes"],
+      ["reactions.add", "octagonal_sign"],
+      ["assistant.threads.setStatus", ""],
+    ],
+    "a failed turn: the session goes active, 👀 off, 🛑 on, the status line cleared",
+  );
+  ok(sent.filter((c) => c.method.startsWith("reactions.")).every((c) => c.body.get("timestamp") === ROOT && c.body.get("channel") === "D0FAIL"), "the 🛑 lands on the message the 👀 was on");
+  sent.length = 0;
+  await setter(dm, "processing");
+  ok(sent.some((c) => c.method === "reactions.remove" && c.body.get("name") === "octagonal_sign"), "the next turn's start removes the old 🛑");
+
+  sent.length = 0;
+  await stepper(dm, [{ kind: "tool-call", toolName: "read_thread", input: { secret: "the model's words" } }]);
+  eq(
+    sent.map((c) => [c.method, c.body.get("channel_id"), c.body.get("thread_ts"), c.body.get("status")]),
+    [["assistant.threads.setStatus", "D0FAIL", ROOT, "Reading the thread…"]],
+    "a labelled step shows its label on the DM's status line, on the signs' root",
+  );
+  ok(!sent.some((c) => c.body.toString().includes("the model")), "no model-written input reaches the status line");
+  sent.length = 0;
+  await stepper(dm, [{ kind: "tool-call", toolName: "some_unlabelled_tool" }]);
+  const verb = sent[0]?.body.get("status") ?? "";
+  ok(sent.length === 1 && verb.endsWith("…") && verb !== "Reading the thread…", `an unlabelled step shows a status verb (got ${JSON.stringify(verb)})`);
+  sent.length = 0;
+  await stepper({ channel_id: "C0ROOM", channel_type: "channel", thread_ts: "9.9" }, [{ kind: "tool-call", toolName: "read_thread" }]);
+  await stepper({ channel_id: "D0FAIL", channel_type: "im", agent_session_ts: ROOT }, [{ kind: "tool-call", toolName: "read_thread" }]);
+  eq(sent.length, 0, "a channel turn (the mention door labels its own steps) and an unstamped delivery get no step call");
+
+  sent.length = 0;
+  const GROUP_ROOT = "1700159720.000400";
+  const group = { team_id: "T1", channel_id: "G0GROUP", channel_type: "mpim", user_id: "U7", working_signs_ts: GROUP_ROOT };
+  eq(slackWorkingSignsOf(group), { channelId: "G0GROUP", threadTs: GROUP_ROOT, teamId: "T1" }, "a stamped group DM names its signs' root");
+  eq(await setter(group, "processing"), `G0GROUP:${GROUP_ROOT}`, "the setter names the group DM's root, so core settles it at the park even after a steered message");
+  await stepper(group, [{ kind: "tool-call", toolName: "read_thread" }]);
+  await setter(group, "active");
+  await setter(group, "processing");
+  await setter(group, "active", { failed: true });
+  ok(!sent.some((c) => c.method === "agents.sessions.setStatus"), "a group DM gets no agent-session call");
+  eq(
+    calls(),
+    [
+      ["reactions.add", "eyes"],
+      ["reactions.remove", "octagonal_sign"],
+      ["assistant.threads.setStatus", SLACK_DM_WORKING_STATUS],
+      ["assistant.threads.setStatus", "Reading the thread…"],
+      ["reactions.remove", "eyes"],
+      ["reactions.remove", "octagonal_sign"],
+      ["assistant.threads.setStatus", ""],
+      ["reactions.add", "eyes"],
+      ["reactions.remove", "octagonal_sign"],
+      ["assistant.threads.setStatus", SLACK_DM_WORKING_STATUS],
+      ["reactions.remove", "eyes"],
+      ["reactions.add", "octagonal_sign"],
+      ["assistant.threads.setStatus", ""],
+    ],
+    "a group DM turn: 👀 and the status line, a step label, both cleared at the park; a failed turn ends with 🛑",
+  );
+  ok(sent.every((c) => (c.body.get("channel") ?? c.body.get("channel_id")) === "G0GROUP" && (c.body.get("timestamp") ?? c.body.get("thread_ts")) === GROUP_ROOT), "every group-DM sign lands on the message the person sent");
+
+  const mention = readFileSync(new URL("../agent/channels/slack.ts", import.meta.url), "utf8");
+  const dmDoor = readFileSync(new URL("../agent/channels/slack-agent-session.ts", import.meta.url), "utf8");
+  for (const fn of ["setSlackStatusReaction(", "setSlackThreadStatus(", "slackStepStatus("]) {
+    ok(mention.includes(fn) && dmDoor.includes(fn), `both doors call ${fn.slice(0, -1)} (slack-working-signs.ts)`);
+  }
+  ok(!/reactions\.(add|remove)"/.test(mention) && !/reactions\.(add|remove)"/.test(dmDoor.replace(/SIGN_SETUP_FIX[\s\S]*?\};/, "")), "neither door names a reaction call of its own: the shared function picks add or remove");
   _resetSignWarningsForTest();
 }
 

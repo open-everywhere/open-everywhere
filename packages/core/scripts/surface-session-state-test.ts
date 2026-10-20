@@ -5,6 +5,7 @@ import {
   parkedSurfaceStatus,
   registerSurfaceSessionState,
   type SurfaceSessionStatus,
+  type SurfaceTurnEnd,
 } from "../agent/channels/surface-session-state.js";
 import { noteSessionAttention } from "../agent/status/attention.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
@@ -165,6 +166,110 @@ console.log("§3 a platform with no setter touches no session state");
     await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, slackCtx);
   });
   eq(KEYS.filter((k) => slackContainer.has({ name: k })).length, 2, "(positive control) a Slack session that passes the gate carries both keys");
+}
+
+console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
+{
+  _resetSurfaceSessionStateForTest();
+  const hook = (await import("../agent/hooks/turn-anchor.js")).default as unknown as {
+    events: Record<string, (e: unknown, ctx?: unknown) => Promise<void>>;
+  };
+  const settled: { readonly status: SurfaceSessionStatus; readonly session: unknown; readonly end?: SurfaceTurnEnd }[] = [];
+  const steps: { readonly session: unknown; readonly actions: readonly unknown[] }[] = [];
+  registerSurfaceSessionState(
+    "slack",
+    async (attributes, status, end) => {
+      settled.push({ status, session: attributes.agent_session_ts, ...(end === undefined ? {} : { end }) });
+      return String(attributes.agent_session_ts);
+    },
+    undefined,
+    async (attributes, actions) => {
+      steps.push({ session: attributes.agent_session_ts, actions });
+    },
+  );
+  const DM_ATTRS = { team_id: "T1", channel_id: "D1", channel_type: "im", user_id: "U7", agent_session_ts: "1700159720.000500" };
+  const ctx = {
+    channel: { kind: "slack", continuationToken: "D1:oe-dm:g1" },
+    session: { id: "sess-surface-fail", auth: { current: { principalId: "U7", principalType: "slack-user", attributes: DM_ATTRS } } },
+  };
+  const ACTIONS = [{ kind: "tool-call", toolName: "read_thread", callId: "c1" }];
+
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f1" } }, ctx);
+    await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "f1", actions: ACTIONS } }, ctx);
+    await hook.events["turn.failed"]!({ type: "turn.failed", data: { turnId: "f1", message: "model refused" } }, ctx);
+    await hook.events["session.failed"]!({ type: "session.failed", data: { message: "model refused", code: "MODEL_CALL_FAILED" } }, ctx);
+  });
+  eq(
+    settled,
+    [
+      { status: "processing", session: "1700159720.000500" },
+      { status: "active", session: "1700159720.000500", end: { failed: true } },
+    ],
+    "a failed turn: processing at the start, then the park's state with { failed: true } at session.failed",
+  );
+  eq(steps, [{ session: "1700159720.000500", actions: ACTIONS }], "the step's actions reach the stepper, with the delivery's attributes");
+
+  settled.length = 0;
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f2" } }, ctx);
+    noteSessionAttention("needs_input");
+    await hook.events["session.failed"]!({ type: "session.failed", data: { message: "x", code: "MODEL_CALL_FAILED" } }, ctx);
+  });
+  eq(settled.map((c) => [c.status, c.end]), [["processing", undefined], ["suspended", { failed: true }]], "a failed turn that waits on its person settles suspended, with the failure sign");
+
+  settled.length = 0;
+  const ctxB = { ...ctx, session: { ...ctx.session, auth: { current: { ...ctx.session.auth.current, attributes: { ...DM_ATTRS, agent_session_ts: "1700159720.000600" } } } } };
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f3" } }, ctx);
+    await hook.events["session.failed"]!({ type: "session.failed", data: { message: "x", code: "MODEL_CALL_FAILED" } }, ctxB);
+  });
+  eq(
+    settled,
+    [
+      { status: "processing", session: "1700159720.000500" },
+      { status: "active", session: "1700159720.000600", end: { failed: true } },
+      { status: "active", session: "1700159720.000500", end: { failed: true } },
+    ],
+    "a steered message, then a failure: the failure settles the last message's conversation AND the one the turn started on",
+  );
+
+  settled.length = 0;
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "p1" } }, ctx);
+    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctx);
+  });
+  eq(settled, [{ status: "processing", session: "1700159720.000500" }, { status: "active", session: "1700159720.000500" }], "an ordinary park passes no end");
+
+  settled.length = 0;
+  steps.length = 0;
+  const { workTokenForSeat } = await import("../agent/channels/work.js");
+  const work = { ...ctx, channel: { kind: "slack", continuationToken: workTokenForSeat("oe-dom:e2e-unified:win:slack_T1_D1:oe-sup:g1") } };
+  const child = {
+    channel: { kind: "subagent", continuationToken: "D1:oe-dm:g1" },
+    session: { id: "sess-surface-fail-child", auth: { current: { principalId: "U7", principalType: "slack-user", attributes: { ...DM_ATTRS, oe_platform: "slack" } } } },
+  };
+  for (const other of [work, child]) {
+    await inEveContext(new FakeEveContext(), async () => {
+      await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n1", actions: ACTIONS } }, other);
+      await hook.events["session.failed"]!({ type: "session.failed", data: { message: "x", code: "MODEL_CALL_FAILED" } }, other);
+    });
+  }
+  eq([settled, steps], [[], []], "the work session's and a child's steps and failures touch no conversation");
+
+  registerSurfaceSessionState("slack", async () => "x");
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n2", actions: ACTIONS } }, ctx);
+  });
+  let threw = 0;
+  registerSurfaceSessionState("slack", async () => "x", undefined, async () => {
+    threw += 1;
+    throw new Error("vendor down");
+  });
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n3", actions: ACTIONS } }, ctx);
+  });
+  eq(threw, 1, "the stepper ran, threw, and the throw never escaped the hook");
 }
 
 _resetSurfaceSessionStateForTest();

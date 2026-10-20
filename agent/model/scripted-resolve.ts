@@ -433,6 +433,8 @@ function buildStepModel(
 
       if (wakeFault !== undefined) return { text: wakeFault };
 
+      if (step.failsForGood === true) throw Object.assign(new Error("scripted model: a terminal model failure (failsForGood)"), { statusCode: 400 });
+
       if (step.say === undefined && step.calls === undefined) return { text: "", ...(step.usage !== undefined ? { usage: step.usage } : {}) };
       return {
         ...(step.say !== undefined ? { text: typeof saidReport.value === "string" ? saidReport.value : step.say } : {}),

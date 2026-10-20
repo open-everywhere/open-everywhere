@@ -23,7 +23,6 @@ import {
   getOperationalStore,
   postOnce,
   outboundKey,
-  statusVerbsFor,
   getConfig,
   finalMessageActionForTurn,
   NO_REPLY_SENTINEL_REASON,
@@ -56,7 +55,6 @@ import {
   introMessage,
   instructionBullet,
   ONBOARDED_MARKER,
-  STATUS_REACTION,
   renderPinned,
   isPinnedStatusMessage,
   classifyWakeMapping,
@@ -69,7 +67,6 @@ import {
   type BindableContext,
   type ReactionState,
   dmTrustTtlMs,
-  swallowRoomOp,
   domainRoster,
   domainKeyOf,
   resolveWakeTrust,
@@ -85,7 +82,8 @@ import { admitSlackInputResponse } from "./slack-input-response.js";
 import { taskCardConfidentiality } from "./slack-task-card.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, slackAuthorIsMember, slackWakeAuthorFacts, type SlackMemberProbe, type SupervisorReplyTarget } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
-import { stepStatusFor, type StepAction } from "./slack-step-label.js";
+import { type StepAction } from "./slack-step-label.js";
+import { setSlackStatusReaction, setSlackThreadStatus, SLACK_WORKING_STATUS, slackStatusVerb, slackStepStatus, type SlackSignRequest } from "./slack-working-signs.js";
 import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
@@ -105,23 +103,9 @@ function teamIdFromDomainConfig(channelId: string | undefined): string | undefin
   return undefined;
 }
 
-function statusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
+async function refreshTypingStatus(channel: SlackEventContext, actions?: readonly StepAction[]): Promise<void> {
   try {
-    const p = resolvePartition({
-      channel: { kind: "slack" },
-      session: { auth: { current: { attributes: { team_id: state.teamId ?? "", channel_id: state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-    });
-    const cfg = getConfig();
-    const verbs = statusVerbsFor(p.surfaceKey, cfg.loadDomains(), cfg.loadRoles?.() ?? []);
-    return `${verbs[Math.floor(Math.random() * verbs.length)]}…`;
-  } catch {
-    return "Working…";
-  }
-}
-
-async function refreshTypingStatus(channel: SlackEventContext, stepLabel?: string): Promise<void> {
-  try {
-    await setWakeTyping(channel, stepLabel ?? statusVerb(channel.state));
+    await setWakeTyping(channel, slackStepStatus(actions, channel.state));
   } catch {
   }
 }
@@ -130,11 +114,7 @@ async function setWakeTyping(channel: SlackEventContext, status?: string): Promi
   const override = dmWakeThreadOverride(channel.state);
   const channelId = channel.state.channelId ?? undefined;
   if (override && channelId) {
-    try {
-      const body = new URLSearchParams({ channel_id: channelId, thread_ts: override, status: status ?? "" });
-      await slackForm("assistant.threads.setStatus", body.toString());
-    } catch {
-    }
+    await setSlackThreadStatus(formSign, { channelId, threadTs: override }, status ?? "");
     return;
   }
   await channel.thread.startTyping(status);
@@ -192,14 +172,24 @@ async function setStatusReaction(slack: SlackHandle, state: ReactionState | "non
   const channel = slack.channelId;
   const timestamp = threadTsOverride ?? slack.threadTs;
   if (!channel || !timestamp) return;
-  if (swallowRoomOp("a slack status reaction")) return;
-  for (const [s, name] of Object.entries(STATUS_REACTION)) {
-    try {
-      await slack.request(s === state ? "reactions.add" : "reactions.remove", { channel, name, timestamp });
-    } catch {
-    }
-  }
+  await setSlackStatusReaction(
+    async (method, params) => {
+      try {
+        await slack.request(method, { ...params });
+      } catch {
+      }
+    },
+    { channel, timestamp },
+    state,
+  );
 }
+
+const formSign: SlackSignRequest = async (method, params) => {
+  try {
+    await slackForm(method, new URLSearchParams({ ...params }).toString());
+  } catch {
+  }
+};
 async function syncPinnedStatus(channel: SlackEventContext): Promise<void> {
   try {
     const { channelId, teamId } = channel.state;
@@ -460,7 +450,7 @@ async function onInbound(
   }
 
   try {
-    await ctx.thread.startTyping(statusVerb({ channelId: message.channelId, teamId: message.teamId }));
+    await ctx.thread.startTyping(slackStatusVerb({ channelId: message.channelId, teamId: message.teamId }));
   } catch {
   }
   await setStatusReaction(ctx.slack, "working");
@@ -547,7 +537,7 @@ const slackMentionChannel = slackChannel({
           channel.state.pendingTaskResults = null;
           channel.state.pendingToolCallMessage = null;
           (channel.state as unknown as Record<string, unknown>).oeReasoningTypingAtMs = null;
-          await setWakeTyping(channel, "Working...");
+          await setWakeTyping(channel, SLACK_WORKING_STATUS);
         },
         "reasoning.appended": async (_data, channel) => {
           const now = Date.now();
@@ -561,7 +551,7 @@ const slackMentionChannel = slackChannel({
           await refreshTypingStatus(channel);
         },
         "actions.requested": async (data, channel) => {
-          await refreshTypingStatus(channel, stepStatusFor(data.actions as readonly StepAction[] | undefined));
+          await refreshTypingStatus(channel, data.actions as readonly StepAction[] | undefined);
         },
         "action.partial": async () => {},
         "action.result": async () => {},

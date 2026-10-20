@@ -4,7 +4,13 @@ import { bindFrom, channelPlatform, isSubagentChildContext, type BindableContext
 
 export type SurfaceSessionStatus = "processing" | "active" | "suspended";
 
-export type SurfaceSessionSetter = (attributes: Readonly<Record<string, unknown>>, status: SurfaceSessionStatus) => Promise<string | undefined>;
+export interface SurfaceTurnEnd {
+  readonly failed?: true;
+}
+
+export type SurfaceSessionSetter = (attributes: Readonly<Record<string, unknown>>, status: SurfaceSessionStatus, end?: SurfaceTurnEnd) => Promise<string | undefined>;
+
+export type SurfaceSessionStepper = (attributes: Readonly<Record<string, unknown>>, actions: readonly unknown[]) => Promise<void>;
 
 export type SurfaceSessionPinner = (attributes: Readonly<Record<string, unknown>>) => { readonly id: string; readonly attributes: Readonly<Record<string, string>> } | undefined;
 
@@ -16,17 +22,21 @@ export interface SurfaceSessionPin {
 
 const setters = new Map<string, SurfaceSessionSetter>();
 const pinners = new Map<string, SurfaceSessionPinner>();
+const steppers = new Map<string, SurfaceSessionStepper>();
 
-export function registerSurfaceSessionState(platform: string, setter: SurfaceSessionSetter, pinner?: SurfaceSessionPinner): void {
+export function registerSurfaceSessionState(platform: string, setter: SurfaceSessionSetter, pinner?: SurfaceSessionPinner, stepper?: SurfaceSessionStepper): void {
   if (!admitProviderRegistration(platform, "surface-session-state")) return;
   setters.set(platform, setter);
   if (pinner) pinners.set(platform, pinner);
   else pinners.delete(platform);
+  if (stepper) steppers.set(platform, stepper);
+  else steppers.delete(platform);
 }
 
 export function _resetSurfaceSessionStateForTest(): void {
   setters.clear();
   pinners.clear();
+  steppers.clear();
 }
 
 export function pinSurfaceSession(turn: SurfaceTurn | undefined): SurfaceSessionPin | undefined {
@@ -69,14 +79,24 @@ export function parkedSurfaceStatus(needsPerson: boolean): SurfaceSessionStatus 
   return needsPerson ? "suspended" : "active";
 }
 
-export async function markSurfaceSession(platform: string | undefined, attributes: Readonly<Record<string, unknown>> | undefined, status: SurfaceSessionStatus): Promise<string | undefined> {
+export async function markSurfaceSession(platform: string | undefined, attributes: Readonly<Record<string, unknown>> | undefined, status: SurfaceSessionStatus, end?: SurfaceTurnEnd): Promise<string | undefined> {
   if (!platform || !attributes) return undefined;
   const setter = setters.get(platform);
   if (!setter) return undefined;
   try {
-    return await setter(attributes, status);
+    return await (end === undefined ? setter(attributes, status) : setter(attributes, status, end));
   } catch (err) {
     console.warn(`[open-everywhere:surface-session] ${platform} ${status} failed: ${String(err)}`);
     return undefined;
+  }
+}
+
+export async function stepSurfaceSession(turn: SurfaceTurn, actions: readonly unknown[]): Promise<void> {
+  const stepper = steppers.get(turn.platform);
+  if (!stepper) return;
+  try {
+    await stepper(turn.attributes, actions);
+  } catch (err) {
+    console.warn(`[open-everywhere:surface-session] ${turn.platform} step failed: ${String(err)}`);
   }
 }

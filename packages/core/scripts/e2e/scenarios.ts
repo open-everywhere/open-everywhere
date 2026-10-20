@@ -3451,7 +3451,31 @@ export const SCENARIOS: readonly Scenario[] = [
       const sum = fixtureArithmetic();
       const text = fixtureLine(`quick one for the group — what's ${sum.question}? reply with just the number`);
       const { ts: anchorTs } = await mpim.post(text);
-      const reply = await mpim.awaitAnyReply(anchorTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      let replied = false;
+      const eyesWatch = (async (): Promise<boolean> => {
+        for (;;) {
+          if ((await mpim.reactions(anchorTs)).includes("eyes")) return true;
+          if (replied) return false;
+          await sleep(500);
+        }
+      })().then(
+        (seen) => ({ seen }),
+        (err: unknown) => ({ err }),
+      );
+      const reply = await mpim.awaitAnyReply(anchorTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) }).finally(() => {
+        replied = true;
+      });
+      const watched = await eyesWatch;
+      if ("err" in watched) throw watched.err;
+      ctx.gate(
+        watched.seen,
+        `J-MPIM: the person's group-DM message carries 👀 while its turn runs (reactions.get on ${anchorTs}). Absent: the code lost the group-DM sign, or the app lacks reactions:write — the deployment logs the refused reactions.add once, under [open-everywhere:slack-session]`,
+      );
+      const eyesOff = await pollOptional(async () => (!(await mpim.reactions(anchorTs)).includes("eyes") ? true : undefined), {
+        timeoutMs: AUDIT_ROW_WAIT,
+        what: `the 👀 removed from the group-DM message ${anchorTs} after the turn`,
+      });
+      ctx.gate(eyesOff === true, `J-MPIM: the 👀 leaves the group-DM message once the turn has ended (reactions.get on ${anchorTs})`);
       ctx.gate(reply.text.trim().length > 0, "J-MPIM: the agent's group-DM reply has a body (the await above is what proves an unmentioned mpim message woke it at all — this gate catches an empty one)");
 
       if (ctx.auditRead) {
@@ -6281,6 +6305,11 @@ export const SCENARIOS: readonly Scenario[] = [
         { timeoutMs: AUDIT_ROW_WAIT, what: `the 👀 removed from ${sessionTs} after the turn stopped` },
       );
       ctx.gate(eyesOff === true, `S-SESSION-STOP: the 👀 leaves the DM message once the turn has stopped (reactions.get on ${sessionTs})`);
+      const afterStop = await dm.reactions(sessionTs);
+      ctx.gate(
+        !afterStop.includes("octagonal_sign"),
+        `S-SESSION-STOP: a stopped turn leaves no 🛑 on the DM message — 🛑 is for a turn that failed for good (reactions.get on ${sessionTs}: ${afterStop.join(", ") || "none"})`,
+      );
     },
   },
 

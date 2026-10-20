@@ -33,6 +33,8 @@ const DM_USER_ID = "U0EXOWNER";
 const TITLE_DM = "D0OPE2519TITLE";
 const STOP_DM = "D0OPE2519STOP";
 const FORWARD_DM = "D0OPE2519FWD";
+const GROUP_DM = "G0OPE2632GROUP";
+const FAIL_DM = "D0OPE2632FAIL";
 
 const HOLD_MS = 90_000;
 
@@ -66,9 +68,9 @@ function sessionCalls(s: SlackWebApiStub, channelId: string): { readonly status:
 }
 
 type SignCall = readonly [method: string, ts: string | null, status: string | null];
-function signCalls(s: SlackWebApiStub, channelId: string): SignCall[] {
+function signCalls(s: SlackWebApiStub, channelId: string, name = "eyes"): SignCall[] {
   const reactions = s.calls
-    .filter((c) => (c.method === "reactions.add" || c.method === "reactions.remove") && c.params.get("channel") === channelId && c.params.get("name") === "eyes")
+    .filter((c) => (c.method === "reactions.add" || c.method === "reactions.remove") && c.params.get("channel") === channelId && c.params.get("name") === name)
     .map((c): SignCall => [c.method, c.params.get("timestamp"), null]);
   const statuses = s.calls
     .filter((c) => c.method === "assistant.threads.setStatus" && c.params.get("channel_id") === channelId)
@@ -129,22 +131,26 @@ test("a new DM conversation gets a title, shows processing while it works and su
     expect(first.slice(1).every((c) => c.title === null), "only the creating call carries the title, so a person's rename is never overwritten").toBe(true);
     const signs = await waitFor(() => {
       const calls = signCalls(stub!, TITLE_DM);
-      return calls.some((c) => c[0] === "reactions.remove") && calls.filter((c) => c[0] === "assistant.threads.setStatus").length >= 2 ? calls : undefined;
+      return calls.some((c) => c[0] === "reactions.remove") && calls.filter((c) => c[0] === "assistant.threads.setStatus").at(-1)?.[2] === "" ? calls : undefined;
     }, "the DM turn's 👀 and status line, set and cleared");
-    expect(signs, "👀 on, status line on, then both cleared — all on the message the person sent").toEqual([
+    const statuses = signs.filter((c) => c[0] === "assistant.threads.setStatus");
+    expect(signs.filter((c) => c[0] !== "assistant.threads.setStatus"), "👀 on, then off — on the message the person sent").toEqual([
       ["reactions.add", rootTs, null],
       ["reactions.remove", rootTs, null],
-      ["assistant.threads.setStatus", rootTs, "Working..."],
-      ["assistant.threads.setStatus", rootTs, ""],
     ]);
+    expect(statuses.every((c) => c[1] === rootTs), "every status call names the message the person sent").toBe(true);
+    expect(statuses[0]?.[2], "the status line opens with the start's words").toBe("Working...");
+    expect(statuses.at(-1)?.[2], "the park clears the status line").toBe("");
+    expect(statuses.length, `one status per step between the start and the park (${JSON.stringify(statuses)})`).toBe(4);
+    expect(statuses.slice(1, -1).every((c) => typeof c[2] === "string" && c[2].endsWith("…")), "each step's status is a verb or a label, never empty").toBe(true);
     const addAt = stub.calls.findIndex((c) => c.method === "reactions.add" && c.params.get("channel") === TITLE_DM);
     const parkAt = stub.calls.findIndex((c) => c.method === "agents.sessions.setStatus" && c.params.get("channel_id") === TITLE_DM && c.params.get("status") === "suspended");
     expect(addAt >= 0 && addAt < parkAt, `the 👀 is added before the park (add ${addAt}, park ${parkAt})`).toBe(true);
   } finally {
     __setTestValveForTest("egress-spoof", spoofWas);
+    asks.dispose();
+    live.delete(asks);
   }
-  asks.dispose();
-  live.delete(asks);
 
   const answers = open(registerScript({ parent: [seatReply("Noted — Friday the 16th.", "ope2519-answer")] }));
   const answerTs = slackTs(Date.now() + 1_000, 251_902);
@@ -200,6 +206,82 @@ test("a forwarded message with no typed text opens a session without a title —
   expect(handle.requests.some((r) => r.messages.some((m) => m.text.includes(QUOTED))), "the seat read the forwarded words").toBe(true);
   handle.dispose();
   live.delete(handle);
+});
+
+test("a group DM turn shows 👀, the step's label on the status line, and clears both at the park (OPE-2632)", async () => {
+  await bootAgent();
+  stub ??= armSlackStub();
+  const handle = open(
+    registerScript({
+      parent: [
+        { calls: [{ tool: "read_thread", input: { limit: 5 }, id: "ope2632-read" }] },
+        seatReply("The manual covers setup and the surfaces.", "ope2632-group"),
+      ],
+    }),
+  );
+  const spoofWas = testValveArmed("egress-spoof");
+  __setTestValveForTest("egress-spoof", false);
+  try {
+    expect(signCalls(stub, GROUP_DM)).toEqual([]);
+    const ts = slackTs(Date.now(), 251_905);
+    const res = await slackDmWake({ channelId: GROUP_DM, kind: "mpim", userId: DM_USER_ID, text: "what does the manual cover?", ts });
+    expect(res.status, `the group-DM wake POST was not accepted: ${res.body.slice(0, 200)}`).toBe(200);
+    const signs = await waitFor(() => {
+      const calls = signCalls(stub!, GROUP_DM);
+      return calls.some((c) => c[0] === "reactions.remove") && calls.filter((c) => c[0] === "assistant.threads.setStatus").at(-1)?.[2] === "" ? calls : undefined;
+    }, "the group-DM turn's 👀 and status line, set and cleared");
+    expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+    expect(signs.filter((c) => c[0] !== "assistant.threads.setStatus"), "👀 on, then off — on the person's group-DM message").toEqual([
+      ["reactions.add", ts, null],
+      ["reactions.remove", ts, null],
+    ]);
+    const statuses = signs.filter((c) => c[0] === "assistant.threads.setStatus").map((c) => [c[1], c[2]]);
+    expect(statuses[0], "the status line opens with the start's words").toEqual([ts, "Working..."]);
+    expect(statuses[1], "the read_thread step shows its code-owned label").toEqual([ts, "Reading the thread…"]);
+    expect(statuses.at(-1), "the park clears the status line").toEqual([ts, ""]);
+    expect(sessionCalls(stub, GROUP_DM), "a group DM has no agent session, so it gets no session call").toEqual([]);
+  } finally {
+    __setTestValveForTest("egress-spoof", spoofWas);
+    handle.dispose();
+    live.delete(handle);
+  }
+});
+
+test("a DM turn that fails for good ends with 👀 off, 🛑 on, the status line cleared and the session active (OPE-2632)", async () => {
+  await bootAgent();
+  stub ??= armSlackStub();
+  const cursor = await auditCursor();
+  const handle = open(registerScript({ parent: [{ failsForGood: true }] }));
+  const spoofWas = testValveArmed("egress-spoof");
+  __setTestValveForTest("egress-spoof", false);
+  try {
+    const rootTs = slackTs(Date.now(), 251_906);
+    const res = await slackDmWake({ channelId: FAIL_DM, userId: DM_USER_ID, text: "summarise the launch plan", ts: rootTs });
+    expect(res.status, `the DM wake POST was not accepted: ${res.body.slice(0, 200)}`).toBe(200);
+    const stop = await waitFor(() => {
+      const calls = signCalls(stub!, FAIL_DM, "octagonal_sign");
+      const eyesNow = signCalls(stub!, FAIL_DM);
+      const settled = calls.some((c) => c[0] === "reactions.add") && eyesNow.some((c) => c[0] === "reactions.remove") && eyesNow.filter((c) => c[0] === "assistant.threads.setStatus").at(-1)?.[2] === "";
+      return settled ? calls : undefined;
+    }, "the failed DM turn's settle: 🛑 on, 👀 off, the status line cleared");
+    expect(stop.filter((c) => c[0] !== "assistant.threads.setStatus"), "the start takes any old 🛑 off; the failure puts 🛑 on — on the person's message").toEqual([
+      ["reactions.remove", rootTs, null],
+      ["reactions.add", rootTs, null],
+    ]);
+    const eyes = signCalls(stub, FAIL_DM);
+    expect(eyes.filter((c) => c[0] !== "assistant.threads.setStatus"), "👀 on at the start, off at the failure").toEqual([
+      ["reactions.add", rootTs, null],
+      ["reactions.remove", rootTs, null],
+    ]);
+    expect(eyes.filter((c) => c[0] === "assistant.threads.setStatus").at(-1), "the failure clears the status line").toEqual(["assistant.threads.setStatus", rootTs, ""]);
+    expect(sessionCalls(stub, FAIL_DM).map((c) => c.status), "the session: created, processing, then active at the failure").toEqual(["active", "processing", "active"]);
+    await waitFor(async () => ((await rowsSinceCursor(cursor, ["unified.supervisor_session_failed"])).length > 0 ? true : undefined), "the turn failed for good: a session.failed row, not a park");
+    expect(handle.requests.length, "one model call: the failed one").toBe(1);
+  } finally {
+    __setTestValveForTest("egress-spoof", spoofWas);
+    handle.dispose();
+    live.delete(handle);
+  }
 });
 
 test("Slack's native Stop button stops the running turn through the ✋ arm's cancel path, and sets the session active", async () => {

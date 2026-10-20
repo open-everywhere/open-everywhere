@@ -127,6 +127,7 @@ async function runFront(
     sendThrowsAlways?: Error;
     selfBotId?: string | null;
     extra?: Partial<FrontOptions>;
+    request?: Request;
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -202,7 +203,7 @@ async function runFront(
   const factsLookups: string[] = [];
   let partnerLookups = 0;
   let authorFactLookups = 0;
-  const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  const res = await handler(opts.request ?? mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
   const settled = await Promise.allSettled(waits);
   return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups, authorFactLookups, sendAttempts: () => sendAttempts };
 }
@@ -1148,6 +1149,62 @@ overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "en
   eq(channelSeen, 0, "🔴 a metadata-only edit in a channel (a link unfurl) stops before the dedupe write — no wake candidate");
   await runFront(chanEdit("Ev16g", { text: "see the NEW doc" }), { extra: countSeen });
   eq(channelSeen, 1, "NEGATIVE CONTROL: a real channel edit reaches the dedupe write, the first step of every wake");
+}
+
+{
+  const signsOf = (r: Awaited<ReturnType<typeof runFront>>) => (r.dispatched[0]?.auth.attributes ?? {})["working_signs_ts"];
+  const formReq = (payload: Record<string, unknown>): Request => {
+    const body = `payload=${encodeURIComponent(JSON.stringify(payload))}`;
+    const ts = String(Math.floor(NOW_MS / 1000));
+    const sig = `v0=${createHmac("sha256", SECRET).update(`v0:${ts}:${body}`).digest("hex")}`;
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+      body,
+    });
+  };
+  const runForm = (payload: Record<string, unknown>, opts: Parameters<typeof runFront>[1] = {}) => runFront("", { ...opts, request: formReq(payload) });
+
+  const top = await runFront(dmEnvelope("Ev18a"), { partnerTrust: "internal" });
+  eq(signsOf(top), "1768686402.916000", "a top-level 1:1 message stamps its own ts: the 👀 lands on the message the person sent");
+  const threaded = await runFront(dmEnvelope("Ev18b", { thread_ts: "1768685833.000100" }), { partnerTrust: "internal" });
+  eq(signsOf(threaded), "1768685833.000100", "a threaded 1:1 message stamps its thread root, the root the mention door's 👀 uses");
+  const group = await runFront(mpimEnvelope("Ev18c"));
+  eq(signsOf(group), "1768686403.100200", "🔴 a group-DM message stamps its own ts — before OPE-2632 a group DM showed no sign at all");
+  const mention = await runFront(mentionEnvelope("Ev18d", MPIM_CHANNEL));
+  eq(signsOf(mention), "1768686404.300400", "a group-DM @mention stamps its own ts too");
+
+  const press = (message: Record<string, unknown>) => ({
+    type: "block_actions",
+    team: { id: TEAM },
+    user: { id: USER, team_id: TEAM },
+    channel: { id: DM_CHANNEL },
+    message: { ts: "1768686413.000200", text: "Your meetings are on Thursday.", blocks: [], ...message },
+    container: { type: "message", message_ts: "1768686413.000200", channel_id: DM_CHANNEL },
+    actions: [{ type: "button", action_id: "oe_followup:0", block_id: "oe_followups", value: "Show Friday too" }],
+  });
+  const threadedPress = await runForm(press({ thread_ts: "1768685833.000300" }), { partnerTrust: "internal" });
+  eq(threadedPress.dispatched.length, 1, "(precondition) a threaded follow-up press wakes the DM seat");
+  eq(signsOf(threadedPress), "1768685833.000300", "🔴 a follow-up press inside a thread stamps the thread root, a real message: its turn shows the signs there");
+  const topPress = await runForm(press({}), { partnerTrust: "internal" });
+  eq(topPress.dispatched.length, 1, "(precondition) a top-level follow-up press wakes the DM seat");
+  eq(signsOf(topPress), undefined, "NEGATIVE CONTROL: a top-level press stamps nothing — its minted ts names no message");
+
+  const shortcut = await runForm(
+    {
+      type: "message_action",
+      callback_id: "oe_message_shortcut",
+      trigger_id: "trig-18",
+      team: { id: TEAM },
+      user: { id: USER, username: "u" },
+      channel: { id: DM_CHANNEL },
+      response_url: "https://hooks.slack.test/actions/x",
+      message: { type: "message", user: USER, ts: "1768686423.000400", text: "the refund for order 4417 never landed" },
+    },
+    { partnerTrust: "internal", channelFacts: { internal: true, channelType: "im" } },
+  );
+  eq(shortcut.dispatched.length, 1, "(precondition) a DM message shortcut wakes the DM seat");
+  eq(signsOf(shortcut), undefined, "NEGATIVE CONTROL: a shortcut stamps nothing — its minted ts names no message");
 }
 
 console.log(`✓ slack-dm-divert: ${n} assertions passed (OPE-2577 unchanged-edit drop, classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips)`);

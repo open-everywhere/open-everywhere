@@ -174,6 +174,7 @@ export interface ScriptedStep {
   readonly delayMs?: number;
   readonly holdUntilCancelled?: boolean;
   readonly onEmptyReissue?: ScriptedStep;
+  readonly failsForGood?: true;
 }
 
 export interface SeatScript {
