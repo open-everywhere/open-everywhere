@@ -575,6 +575,8 @@ function step(parts: Partial<SetupStep> & Pick<SetupStep, "id" | "check">): Setu
   const slackStepText = skill.slice(skill.indexOf("5. **Slack app.**"), skill.indexOf("6. **Vouch the workspace.**"));
   ok(/secret_set \{ names: \["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"\] \}/.test(slackStepText), "skill: 🔴 OPE-2650 the Slack step stores both Slack secrets with secret_set");
   ok(!/SLACK_BOT_TOKEN|SLACK_SIGNING_SECRET/.test(envStep.replace("The Slack pair is not on this list", "")), "skill: 🔴 OPE-2650 the deployment-env step pushes no Slack variable");
+  const secretRules = skill.slice(skill.indexOf("- **Where each secret lives.**"), skill.indexOf("## Step 1 — ask which route"));
+  ok(/secret_set \{ names: \[\.\.\.\] \}/.test(secretRules) && /`adopt_env_secrets \{ "org": "<org>", "names": \[/.test(secretRules), "skill: 🔴 OPE-2654 the secret rules name adopt_env_secrets for a value with no local copy");
   ok(/vercel env add/.test(envStep), "skill: …and names the command that sets each one");
   ok(!/vercel env add AI_GATEWAY_API_KEY/.test(skill), "skill: never pushes AI_GATEWAY_API_KEY to a Vercel deployment (OIDC covers it)");
   ok(!/deploy:verify|OE_VERCEL_API_TOKEN|OE_DEPLOY_/.test(skill), "skill: names no repo-only deploy script or variable the scaffolded app does not ship");

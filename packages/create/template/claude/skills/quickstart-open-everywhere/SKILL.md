@@ -42,6 +42,17 @@ that repository ships no `env:pipe` script. Everything else is the same.
   first. It needs `DATABASE_URL` and the key in `.env.local` too. `scaffold_env` marks an operator
   secret with `operatorSecret: true`. Nothing reads a stored secret back out (`secret_list` returns
   names only).
+- **A value with no local copy.** Sometimes the deployment holds an operator secret as a host env
+  var, and the user cannot read the value back. On Vercel a SENSITIVE env var reads back empty:
+  `vercel env pull` writes `[SENSITIVE]`. Then `npx oe env set` has no value to take, and
+  `secret_set` has nothing to move. Do not tell the user to set a value they cannot read. The
+  deployment copies it itself: an org admin calls the control write
+  `adopt_env_secrets { "org": "<org>", "names": ["SLACK_BOT_TOKEN"] }` on the deployed control
+  plane, under its own org-admin auth. The deployment must run 0.9.0 or later. The reply gives each
+  name as `stored`, `already-stored` or `no-env-value`, and never the value. A stored row stays
+  unless the call passes `overwrite: true`. Only operator-secret names are accepted, never
+  `DATABASE_URL` or `OE_CREDENTIAL_ENCRYPTION_KEY`. After a name reports `stored`, tell the user to
+  delete that env var on the host.
 - **If an ops tool answers "the app now runs @open-everywhere/core X; this ops server runs Y"**, the
   server predates an upgrade. Ask the user to restart it (`/mcp`, then reconnect
   `open-everywhere-ops`) and call again. Never work around it: a stale server serves old code. A
