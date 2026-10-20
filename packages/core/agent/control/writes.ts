@@ -27,7 +27,8 @@ import { routinePermissionKeyParts } from "../routines/permission-key.js";
 import { reopenSlackSetupPage } from "../channels/slack-bridge.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
-import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
+import { directoryMode, directoryObserveRefusal, lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
+import { DIRECTORY_PREVIEW_DEFAULT_PEOPLE, DIRECTORY_PREVIEW_MAX_PEOPLE, previewDirectoryOrg } from "../identity/directory-preview.js";
 import { directoryGroupAllowlist, groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
 import { directoryGroupsOf } from "../identity/groups-codemod.js";
 import { deliverGroupsOverlay } from "../identity/groups-delivery.js";
@@ -56,6 +57,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "purge_link_set_credentials",
   "directory_sync_now",
   "directory_sync_status",
+  "directory_sync_preview",
   "directory_groups_plan",
   "reopen_slack_setup",
 ] as const;
@@ -747,12 +749,13 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     {
       title: "Sync identity links from the directory (Okta) now",
       description:
-        "Run the identity-directory sync for an org immediately instead of waiting for the daily schedule, and return the plan it applied. New IdP→platform mappings land as `suggested` links — INERT until the person confirms them in their own DM (`confirm_link`) — unless the deployment declares the `directory.autoConfirm: \"attested\"` setting, which auto-confirms only mappings the IdP itself provisions. A person the directory reports as deprovisioned has their link-set SUSPENDED eagerly. It never unlinks or revokes anything: absence from the directory is not evidence, and revocation stays a human act (revoke_link_set). Safe to run repeatedly and concurrently — a second run over an unchanged directory is all no-ops. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
+        "Run the identity-directory sync for an org immediately instead of waiting for the daily schedule, and return the plan it applied. New IdP→platform mappings land as `suggested` links — INERT until the person confirms them in their own DM (`confirm_link`) — unless the deployment declares the `directory.autoConfirm: \"attested\"` setting, which auto-confirms only mappings the IdP itself provisions. A person the directory reports as deprovisioned has their link-set SUSPENDED eagerly. Refused when the `directory.mode` setting is `observe` — use directory_sync_preview to read the plan instead. It never unlinks or revokes anything: absence from the directory is not evidence, and revocation stays a human act (revoke_link_set). Safe to run repeatedly and concurrently — a second run over an unchanged directory is all no-ops. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
       inputSchema: { org: z.string().min(1) },
     },
     async (a) => {
       const denial = requireOrgAdminForLinks("directory_sync_now", a.org);
       if (denial) return errorResult(denial);
+      if (directoryProvider() && directoryMode() === "observe") return errorResult(directoryObserveRefusal("directory_sync_now"));
       try {
         const res = await syncDirectoryOrg({ org: a.org });
         if (!res) {
@@ -822,6 +825,34 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
   );
 
   server.registerTool(
+    "directory_sync_preview",
+    {
+      title: "Preview what the identity-directory (Okta) sync sees and would do — writes nothing",
+      description:
+        "Read the directory once and report what it sees and what a real sync WOULD do, without doing any of it: people listed (active, deprovisioned, with and without accounts), accounts per platform, each configured source's field and evidence grade, assignments the adapter dropped and why, account ids whose shape cannot match how this deployment keys that platform, accounts the planner would place nowhere (an unadmitted workspace, two directory records claiming one account), the groups seen and read under `directory.groupAllowlist`, the person-group overlay `directory_groups_plan` would propose, and the planned suggestions, confirmations and SUSPENSIONS. Writes nothing, appends no audit row, opens no PR and messages nobody, in either `directory.mode`. Pair it with `directory.mode: \"observe\"` to arm the adapter with nothing applied. `report` is the same facts as readable lines. `limit` caps the per-person rows (default 50, max 500); the counts always cover everyone. Every email address in the answer is masked to its domain (`…@acme.example`), whether it came as an account id, a display name or warning text, and no group member list is returned. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
+      inputSchema: { org: z.string().min(1), limit: z.number().int().min(0).max(DIRECTORY_PREVIEW_MAX_PEOPLE).optional() },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("directory_sync_preview", a.org);
+      if (denial) return errorResult(denial);
+      try {
+        const preview = await previewDirectoryOrg({ org: a.org, limit: a.limit ?? DIRECTORY_PREVIEW_DEFAULT_PEOPLE });
+        if (!preview) {
+          return jsonResult({
+            ok: true,
+            org: a.org,
+            provider: null,
+            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER (with directory.mode: \"observe\") and wire the adapter at boot to preview a directory.",
+          });
+        }
+        return jsonResult({ ok: true, ...preview });
+      } catch (e) {
+        return errorResult(`directory_sync_preview failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
     "directory_groups_plan",
     {
       title: "Plan (or bot-PR-deliver) the IdP person-group overlay — review mode either way",
@@ -842,6 +873,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and wire the adapter at boot to arm directory group sync. Person-groups declared by hand in agent/identity/groups.ts work regardless.",
           });
         }
+        if (a.deliver && directoryMode() === "observe") return errorResult(directoryObserveRefusal("directory_groups_plan with deliver: true"));
         const current = directoryGroupsOf(getConfig().loadGroups?.() ?? []);
         const people = await provider.listPeople();
         const allowGroups = directoryGroupAllowlist();

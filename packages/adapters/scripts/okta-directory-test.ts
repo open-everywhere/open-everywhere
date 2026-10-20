@@ -166,6 +166,68 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
 }
 
 {
+  const routes: Record<string, Route> = {
+    [USERS_P1]: {
+      body: [
+        { id: "00u1", status: "ACTIVE", profile: { login: "rowan@acme.example", email: "rowan@acme.example", displayName: "Rowan" } },
+        { id: "00u2", status: "ACTIVE", profile: { login: "ada@acme.example", displayName: "Ada" } },
+      ],
+    },
+    [GROUPS]: { next: GROUPS_P2, body: [{ id: "00g1", profile: { name: "Engineering" } }] },
+    [GROUPS_P2]: { body: [{ id: "00g2", profile: { name: "Admins" } }, { id: "00g3", profile: {} }, { id: "00g4", profile: { name: "Payments" } }] },
+    [MEMBERS("00g1")]: { body: [{ id: "00u1" }, { id: "00u2" }] },
+    [MEMBERS("00g2")]: { body: [{ id: "00u1" }] },
+    [MEMBERS("00g4")]: { body: [{ id: "00u2" }] },
+    [APP_USERS("0oaSLACK")]: {
+      body: [
+        { id: "00u1", externalId: "U0ROWAN", status: "ACTIVE" },
+        { id: "00u9", externalId: "U0GHOST", status: "ACTIVE" },
+      ],
+    },
+    [APP_USERS("0oaGITHUB")]: {
+      body: [
+        { id: "00u1", externalId: "gh-rowan", status: "ACTIVE" },
+        { id: "00u2", externalId: "gh-ada-old", status: "DEPROVISIONED" },
+        { id: "00u2", status: "ACTIVE" },
+      ],
+    },
+    [APP_USERS("0oaLINEAR")]: { body: [{ id: "00u2", credentials: { userName: "  " }, status: "ACTIVE" }] },
+  };
+  const make = (groupAllowlist: readonly string[] | undefined, seen: { url: string; auth: string | null }[]) =>
+    makeOktaDirectoryProvider({ config: { ...CONFIG, ...(groupAllowlist ? { groupAllowlist } : {}) }, fetch: fakeFetch(routes, seen), resolveToken: async () => TOKEN });
+
+  const seen: { url: string; auth: string | null }[] = [];
+  const view = await make(["Engineering", "Payments", "Paymnets"], seen).inspect!();
+  const memberReads = seen.filter((x) => /\/api\/v1\/groups\/[^/?]+\/users/u.test(x.url)).map((x) => x.url);
+  ok(memberReads.length === 2 && memberReads.includes(MEMBERS("00g1")) && memberReads.includes(MEMBERS("00g4")), `🔴 OPE-2644: with an allowlist, ONLY the listed groups' members are read (got: ${memberReads.join(", ")})`);
+  ok(!seen.some((x) => x.url === MEMBERS("00g2")), "🔴 OPE-2644: …the unlisted group's members are never requested");
+  const by = new Map(view.people.map((p) => [p.externalId, p]));
+  ok(by.get("00u1")!.groups.join(",") === "Engineering" && by.get("00u2")!.groups.join(",") === "Engineering,Payments", "allowlist: a person's groups are the listed ones only");
+  ok(view.groups!.total === 4 && view.groups!.read.join(",") === "Engineering,Payments" && view.groups!.skipped === 1, "inspect: groups listed, read and skipped are counted (the nameless group is neither)");
+  ok(view.groups!.allowlistMissing.join(",") === "Paymnets", "inspect: an allowlisted name the org does not have is reported — the match is verbatim");
+  ok(view.requests === seen.length, "inspect: the request count is the number of HTTP calls the read made");
+
+  const src = (platform: string) => view.sources.find((x) => x.platform === platform)!;
+  ok(src("slack").field === "externalId" && src("slack").grade === "attested" && src("linear").field === "userName" && src("linear").grade === "asserted", "inspect: each source names its field and grade");
+  ok(src("slack").assignments === 2 && src("slack").mapped === 1, "inspect: an assignment whose user is not listed is not counted as mapped");
+  const reasons = (platform: string) => src(platform).skipped.map((k) => `${k.count}:${k.reason}:${k.examples.join("|")}`);
+  ok(reasons("slack").some((r) => r.startsWith("1:") && r.includes("not in the user list") && r.endsWith(":00u9")), "inspect: an assignment for an unlisted user is reported with its Okta user id");
+  ok(reasons("github").some((r) => r.includes("DEPROVISIONED")) && reasons("github").some((r) => r.includes("no externalId")), "inspect: a deprovisioned assignment and a missing externalId are reported separately");
+  ok(reasons("linear").some((r) => r.includes("credentials.userName")), "inspect: a blank userName on a userName app is reported");
+  ok(!JSON.stringify(view.sources).includes("@"), "inspect: a skip example is an Okta user id, never an email");
+  ok(JSON.stringify((await make(["Engineering", "Payments", "Paymnets"], []).listPeople()).map((p) => p.groups)) === JSON.stringify(view.people.map((p) => p.groups)), "listPeople and inspect return the same people");
+
+  const seenAll: { url: string; auth: string | null }[] = [];
+  const all = await make(undefined, seenAll).inspect!();
+  ok(seenAll.filter((x) => /\/api\/v1\/groups\/[^/?]+\/users/u.test(x.url)).length === 3 && all.groups!.allowlist === undefined, "no allowlist: every named group's members are read");
+  const empty = await make([], []).inspect!();
+  ok(empty.groups!.read.length === 3, "an EMPTY allowlist means every group, never no group");
+
+  const cfg = loadOktaDirectoryConfig({ OE_DIRECTORY_PROVIDER: "okta", OE_DIRECTORY_OKTA_ORG_URL: "https://acme.okta.com", OE_DIRECTORY_OKTA_TOKEN_REF: "R" }, [], ["Payments"]);
+  ok(cfg.groupAllowlist?.join(",") === "Payments", "config: directory.groupAllowlist reaches the adapter config");
+}
+
+{
   const seen: { url: string; auth: string | null }[] = [];
   const provider = makeOktaDirectoryProvider({
     config: { ...CONFIG, apps: [] },

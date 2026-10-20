@@ -2150,6 +2150,10 @@
       "types": "./dist/agent/identity/deployment-identity.d.ts",
       "default": "./dist/agent/identity/deployment-identity.js"
     },
+    "./agent/identity/directory-preview.js": {
+      "types": "./dist/agent/identity/directory-preview.d.ts",
+      "default": "./dist/agent/identity/directory-preview.js"
+    },
     "./agent/identity/directory-sync.js": {
       "types": "./dist/agent/identity/directory-sync.d.ts",
       "default": "./dist/agent/identity/directory-sync.js"
@@ -3904,6 +3908,7 @@
     "test:c3-oauth-vault-share": "NODE_NO_WARNINGS=1 tsx scripts/c3-oauth-vault-share-test.ts",
     "test:orphaned-vault-purge": "NODE_NO_WARNINGS=1 tsx scripts/purge-orphaned-vault-rows-test.ts",
     "test:directory-sync": "NODE_NO_WARNINGS=1 tsx scripts/directory-sync-test.ts",
+    "test:directory-preview": "NODE_NO_WARNINGS=1 tsx scripts/directory-preview-test.ts",
     "test:groups": "NODE_NO_WARNINGS=1 tsx scripts/groups-test.ts",
     "test:c2-linkset-access": "NODE_NO_WARNINGS=1 tsx scripts/c2-linkset-access-test.ts",
     "test:capabilities": "NODE_NO_WARNINGS=1 tsx scripts/capabilities-test.ts",

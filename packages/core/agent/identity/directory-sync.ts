@@ -8,7 +8,7 @@ import { LINK_TENANT_NONE, linkTenantUnresolvableMessage, tryLinkTenantOf } from
 import { admittedTenantsFromConfig } from "../access/tenant-admission.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
-import { getSettings, type DirectoryAutoConfirm } from "../settings/settings.js";
+import { getSettings, type DirectoryAutoConfirm, type DirectoryMode } from "../settings/settings.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
 import type { StoredAuditDetail } from "../audit/scrubbed-text.js";
@@ -43,6 +43,16 @@ export const DIRECTORY_AUTOCONFIRM_SETTING = "directory.autoConfirm";
 
 export function directoryAutoConfirm(): DirectoryAutoConfirm {
   return getSettings().directory.autoConfirm;
+}
+
+export const DIRECTORY_MODE_SETTING = "directory.mode";
+
+export function directoryMode(): DirectoryMode {
+  return getSettings().directory.mode;
+}
+
+export function directoryObserveRefusal(what: string): string {
+  return `${DIRECTORY_MODE_SETTING} is "observe", so ${what} is refused: observe mode writes no link, suspends nobody and opens no PR. Run directory_sync_preview to read what a sync would do; set ${DIRECTORY_MODE_SETTING}: "sync" to apply it.`;
 }
 
 const DIRECTORY_SYNC_ACTOR = "directory-sync";
@@ -336,31 +346,49 @@ export interface DirectorySyncResult {
   readonly finishedAt: string;
 }
 
+export async function planDirectoryOrg(input: {
+  readonly org: string;
+  readonly provider: string;
+  readonly people: readonly DirectoryPerson[];
+  readonly autoConfirm?: DirectoryAutoConfirm;
+  readonly accessReferencedSets?: ReadonlySet<string>;
+  readonly linkSetVaultArmed?: boolean;
+}): Promise<DirectorySyncPlan> {
+  const current = await listLinkSetsWithIds(input.org);
+  return planDirectorySync({
+    provider: input.provider,
+    people: input.people,
+    current,
+    autoConfirm: input.autoConfirm ?? directoryAutoConfirm(),
+    accessReferencedSets: input.accessReferencedSets ?? accessReferencedSetsFromConfig(),
+    linkSetVaultArmed: input.linkSetVaultArmed ?? directoryLinkSetVaultArmed(),
+    resolveTenant: (platform, claimed) => admittedDirectoryTenant(platform, claimed),
+  });
+}
+
 export async function syncDirectoryOrg(input: {
   readonly org: string;
   readonly provider?: DirectoryProvider;
   readonly autoConfirm?: DirectoryAutoConfirm;
   readonly accessReferencedSets?: ReadonlySet<string>;
   readonly linkSetVaultArmed?: boolean;
+  readonly mode?: DirectoryMode;
   readonly now?: Date;
 }): Promise<DirectorySyncResult | null> {
   const provider = input.provider ?? directoryProvider();
   if (!provider) return null;
+  if ((input.mode ?? directoryMode()) === "observe") throw new Error(directoryObserveRefusal("a directory sync"));
   const policy = input.autoConfirm ?? directoryAutoConfirm();
   const startedAt = (input.now ?? new Date()).toISOString();
-  const accessReferencedSets = input.accessReferencedSets ?? accessReferencedSetsFromConfig();
-  const vaultArmed = input.linkSetVaultArmed ?? directoryLinkSetVaultArmed();
 
   const people = await provider.listPeople();
-  const current = await listLinkSetsWithIds(input.org);
-  const plan = planDirectorySync({
+  const plan = await planDirectoryOrg({
+    org: input.org,
     provider: provider.id,
     people,
-    current,
     autoConfirm: policy,
-    accessReferencedSets,
-    linkSetVaultArmed: vaultArmed,
-    resolveTenant: (platform, claimed) => admittedDirectoryTenant(platform, claimed),
+    ...(input.accessReferencedSets ? { accessReferencedSets: input.accessReferencedSets } : {}),
+    ...(input.linkSetVaultArmed !== undefined ? { linkSetVaultArmed: input.linkSetVaultArmed } : {}),
   });
 
   const refusals: string[] = [];
@@ -446,10 +474,24 @@ export async function syncDirectoryOrg(input: {
   return result;
 }
 
-export async function runDirectorySync(opts: { readonly orgs?: readonly string[]; readonly now?: Date } = {}): Promise<readonly DirectorySyncResult[]> {
+export async function runDirectorySync(opts: { readonly orgs?: readonly string[]; readonly now?: Date; readonly mode?: DirectoryMode } = {}): Promise<readonly DirectorySyncResult[]> {
   const provider = directoryProvider();
   const orgs = opts.orgs ?? directorySyncOrgs();
   const ts = new Date(opts.now ?? Date.now()).toISOString();
+  if (provider && (opts.mode ?? directoryMode()) === "observe") {
+    log(`${DIRECTORY_MODE_SETTING} is "observe" — the ${provider.id} adapter is armed but the schedule reads and writes nothing; run directory_sync_preview to see the plan`);
+    for (const org of orgs) {
+      await appendAudit({
+        org,
+        platform: "directory",
+        workspace: provider.id,
+        principalId: `${DIRECTORY_SYNC_ACTOR}:${provider.id}`,
+        action: DIRECTORY_SYNC_ACTION,
+        detail: { outcome: "no-op: observe mode", provider: provider.id, mode: "observe", startedAt: ts, finishedAt: ts },
+      });
+    }
+    return [];
+  }
   if (!provider) {
     log("no directory provider registered — nothing to sync (set OE_DIRECTORY_PROVIDER and wire the adapter to arm it)");
     for (const org of orgs) {

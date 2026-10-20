@@ -20,6 +20,8 @@ export type ExternalRoomGrain = "engage" | "silent";
 
 export type DirectoryAutoConfirm = "off" | "attested";
 
+export type DirectoryMode = "sync" | "observe";
+
 export type SandboxBackendChoice = "docker" | "justbash";
 
 export type BlanketTrust = "none" | "internal" | "external";
@@ -92,6 +94,7 @@ export interface AgentSettings {
     readonly adminRoleRules: readonly AdminRoleRule[];
   };
   readonly directory: {
+    readonly mode: DirectoryMode;
     readonly autoConfirm: DirectoryAutoConfirm;
     readonly groupAllowlist: readonly string[];
     readonly oktaApps: readonly OktaAppSetting[];
@@ -545,6 +548,13 @@ export const SETTINGS = {
     } satisfies SettingSpec<readonly AdminRoleRule[]>,
   },
   directory: {
+    mode: {
+      path: "directory.mode",
+      shipped: "sync",
+      validate: (v) => (v === "sync" || v === "observe" ? undefined : 'must be "sync" or "observe"'),
+      summary:
+        "What an armed directory adapter may do (OPE-2644). `sync` (shipped): the daily schedule and `directory_sync_now` apply the plan — `suggested` links, confirmations under `directory.autoConfirm`, and eager suspensions of deprovisioned people. `observe`: nothing writes identity state. The daily schedule makes no IdP call and writes only its heartbeat row, `directory_sync_now` refuses, and `directory_groups_plan` refuses `deliver: true`, so no link, suspension or group PR is made and no person is reached. Read what a sync would do with `directory_sync_preview`, which writes nothing in either mode. Deploy `observe` BEFORE you set `OE_DIRECTORY_PROVIDER`, so the adapter arms with the mode already in force; armed in `sync` mode, the first nightly run applies the plan.",
+    } satisfies SettingSpec<DirectoryMode>,
     autoConfirm: {
       path: "directory.autoConfirm",
       shipped: "off",
@@ -557,7 +567,7 @@ export const SETTINGS = {
       shipped: [] as readonly string[],
       validate: (v) => stringArray(v) ?? (v.every((t) => t.trim() !== "") ? undefined : "must hold no blank group name"),
       summary:
-        "Which IdP groups the group sync reads, by their VERBATIM IdP names (was `OE_DIRECTORY_GROUP_ALLOWLIST`). Empty (shipped) syncs every group. Set, a group outside the list is neither added nor kept in the machine-owned person-group overlay.",
+        "Which IdP groups the group sync reads, by their VERBATIM IdP names (was `OE_DIRECTORY_GROUP_ALLOWLIST`). Empty (shipped) syncs every group. Set, a group outside the list is neither added nor kept in the machine-owned person-group overlay, and the Okta adapter reads the members of the listed groups only (OPE-2644): one member read per listed group, not one per group in the org.",
       format: (v) => (v.length > 0 ? v.join(", ") : "(every group)"),
     } satisfies SettingSpec<readonly string[]>,
     oktaApps: {
@@ -1377,6 +1387,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       adminRoleRules: resolve(SETTINGS.control.adminRoleRules, o.control?.adminRoleRules),
     },
     directory: {
+      mode: resolve(SETTINGS.directory.mode, o.directory?.mode),
       autoConfirm: resolve(SETTINGS.directory.autoConfirm, o.directory?.autoConfirm),
       groupAllowlist: resolve(SETTINGS.directory.groupAllowlist, o.directory?.groupAllowlist),
       oktaApps: resolve(SETTINGS.directory.oktaApps, o.directory?.oktaApps),

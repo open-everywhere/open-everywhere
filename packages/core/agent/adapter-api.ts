@@ -29,7 +29,7 @@ export {
 export type { AwsSsoLinkStore } from "./connections/aws-sso-link.js";
 
 export { registerDirectoryProvider, directoryProvider, resetDirectoryProvider } from "./identity/directory.js";
-export type { DirectoryProvider, DirectoryPerson, DirectoryAccount, DirectoryGrade } from "./identity/directory.js";
+export type { DirectoryProvider, DirectoryPerson, DirectoryAccount, DirectoryGrade, DirectoryInspection, DirectorySourceReport, DirectoryGroupReport } from "./identity/directory.js";
 export { offboardDeactivatedAccount, OFFBOARD_REFUSAL } from "./identity/offboarding.js";
 export type { DeactivationReport, DeactivationConfirmation, OffboardOutcome } from "./identity/offboarding.js";
 
@@ -178,7 +178,7 @@ export type { VoiceTranscriber, VoiceClipAudio, VoiceClipTranscript, VoiceClipOu
 export { getConfig, registerConfig } from "./access/config.js";
 
 export { SETTINGS, getSettings, defineSettings, registerSettings, resetSettingsForTest, overrideSettingsForTest, settingDocs } from "./settings/settings.js";
-export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode, AdminRoleRule, OktaAppSetting, DirectoryAutoConfirm, SandboxBackendChoice, BlanketTrust } from "./settings/settings.js";
+export type { AgentSettings, AgentSettingsOverrides, SettingSpec, SettingDoc, TaintTierMode, ApprovalJudgeMode, AdminRoleRule, OktaAppSetting, DirectoryAutoConfirm, DirectoryMode, SandboxBackendChoice, BlanketTrust } from "./settings/settings.js";
 export { dataPolicyRows, dataPolicyActive, mergeDataPolicy } from "./model/data-policy.js";
 export type { ModelDataPolicy, DataPolicyRegion } from "./model/data-policy.js";
 export { DEFAULT_MODEL_VIA, assertRouteTargets, modelTargetFor, resolvableModels, validateModelTargets, viaProblem } from "./model/targets.js";

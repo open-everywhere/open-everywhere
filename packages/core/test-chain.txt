@@ -42,6 +42,7 @@ test:dm-workspace-reachability
 test:c3-oauth-vault-share
 test:orphaned-vault-purge
 test:directory-sync
+test:directory-preview
 test:groups
 test:c2-linkset-access
 test:domain-credentials

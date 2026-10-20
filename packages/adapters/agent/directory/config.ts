@@ -19,6 +19,7 @@ export interface OktaDirectoryConfig {
   readonly tokenRef: string;
   readonly tokenBroker: string;
   readonly apps: readonly OktaAppMapping[];
+  readonly groupAllowlist?: readonly string[];
 }
 
 export function oktaDirectoryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -55,6 +56,7 @@ function requireHttpsOrgUrl(raw: string): void {
 export function loadOktaDirectoryConfig(
   env: NodeJS.ProcessEnv = process.env,
   apps: readonly OktaAppSetting[] = getSettings().directory.oktaApps,
+  groupAllowlist: readonly string[] = getSettings().directory.groupAllowlist,
 ): OktaDirectoryConfig {
   const orgUrl = env[OE_DIRECTORY_OKTA_ORG_URL_ENV]?.trim();
   const tokenRef = env[OE_DIRECTORY_OKTA_TOKEN_REF_ENV]?.trim();
@@ -70,5 +72,6 @@ export function loadOktaDirectoryConfig(
     tokenRef: tokenRef!,
     tokenBroker: env[OE_DIRECTORY_OKTA_TOKEN_BROKER_ENV]?.trim() || "db",
     apps: oktaAppMappings(apps),
+    groupAllowlist,
   };
 }

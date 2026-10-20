@@ -7,6 +7,7 @@ import { resolveConfigRepoWriteToken } from "../scm/config-repo-token.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { emitGroupsModule } from "./groups-codemod.js";
 import { groupPlanIsNoop, renderGroupPlan, type GroupSyncPlan } from "./group-sync.js";
+import { directoryMode, directoryObserveRefusal } from "./directory-sync.js";
 
 const DEFAULT_GROUPS_OVERLAY_PATH = "agent/identity/groups.generated.ts";
 
@@ -64,6 +65,7 @@ export function groupsPrBody(plan: GroupSyncPlan): string {
 }
 
 export async function deliverGroupsOverlay(plan: GroupSyncPlan, deps: GroupsDeliveryDeps = {}): Promise<GroupsDeliveryOutcome> {
+  if (directoryMode() === "observe") throw new Error(directoryObserveRefusal("a group bot-PR"));
   const cfg = requireGroupsDeliveryConfig(deps.config);
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
