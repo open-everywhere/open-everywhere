@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,7 +181,143 @@ try {
     }
   }
 
-  console.log(`✓ hosted-externals source pass: ${passed} assertions`);
+  {
+    const FUNC = ".vercel/output/functions/__server.func";
+    const STUB = 'export * from "./chunks/server.mjs";\n';
+    const stub = runLint(
+      scratchTree({ [`${FUNC}/index.mjs`]: STUB, [`${FUNC}/chunks/server.mjs`]: 'import "@workflow/serde";\n' }),
+    );
+    ok(stub.code === 1, "(9) 🔴 an unresolvable import that sits only in a chunk exits 1");
+    ok(
+      stub.stderr.includes('__server.func/chunks/server.mjs: "@workflow/serde" is imported but not present'),
+      "(9) the finding names the chunk and the package",
+    );
+
+    const traced = runLint(
+      scratchTree({
+        [`${FUNC}/index.mjs`]: STUB,
+        [`${FUNC}/chunks/server.mjs`]: 'import "@workflow/serde";\n',
+        [`${FUNC}/node_modules/@workflow/serde/package.json`]: "{}\n",
+      }),
+    );
+    ok(traced.code === 0, "(9) control: the chunk's import resolves from the function's node_modules");
+    ok(traced.stderr.includes("1 bare import(s) in 2 module file(s)"), "(9) both module files are read");
+
+    const outside = runLint(
+      scratchTree({
+        [`${FUNC}/index.mjs`]: STUB,
+        [`${FUNC}/chunks/server.mjs`]: 'import "@workflow/serde";\n',
+        ".vercel/output/functions/node_modules/@workflow/serde/package.json": "{}\n",
+      }),
+    );
+    ok(outside.code === 1, "(9) a package above the function directory does not resolve it");
+    ok(
+      outside.stderr.includes('__server.func/chunks/server.mjs: "@workflow/serde" is imported but not present'),
+      "(9) the bound's finding is the unresolved package, not some other failure",
+    );
+
+    const cjsFiles = {
+      [`${FUNC}/index.mjs`]: STUB,
+      [`${FUNC}/chunks/server.mjs`]: 'import { createRequire } from "node:module";\nconst __require = createRequire(import.meta.url);\nexport const s = __require("ghost-shim");\n',
+      [`${FUNC}/chunks/legacy.cjs`]: 'module.exports = require("ghost-cjs");\n',
+      [`${FUNC}/chunks/tpl.cjs`]: "module.exports = require(`ghost-tpl`);\n",
+    };
+    const cjs = runLint(scratchTree(cjsFiles));
+    ok(cjs.code === 1, "(9) an untraced require() exits 1");
+    ok(cjs.stderr.includes('chunks/legacy.cjs: "ghost-cjs"'), "(9) a .cjs file's require() is judged");
+    ok(cjs.stderr.includes('chunks/server.mjs: "ghost-shim"'), "(9) a __require() shim call is judged");
+    ok(cjs.stderr.includes('chunks/tpl.cjs: "ghost-tpl"'), "(9) a backtick require() argument is judged");
+    const cjsTraced = runLint(
+      scratchTree({
+        ...cjsFiles,
+        [`${FUNC}/node_modules/ghost-shim/package.json`]: "{}\n",
+        [`${FUNC}/node_modules/ghost-cjs/package.json`]: "{}\n",
+        [`${FUNC}/node_modules/ghost-tpl/package.json`]: "{}\n",
+      }),
+    );
+    ok(cjsTraced.code === 0, "(9) control: traced require() targets are green");
+
+    {
+      const inside = scratchTree({
+        [`${FUNC}/index.mjs`]: STUB,
+        [`${FUNC}/chunks/server.mjs`]: "export {};\n",
+        [`${FUNC}/zzz/mod.mjs`]: 'import "ghost-linked";\n',
+      });
+      mkdirSync(join(inside, FUNC, "sub"));
+      symlinkSync(join(inside, FUNC, "zzz"), join(inside, FUNC, "sub", "link"), "dir");
+      const followed = runLint(inside);
+      ok(followed.code === 1, "(9) a module file behind a directory symlink is judged");
+      ok(followed.stderr.includes(': "ghost-linked" is imported'), "(9) the linked file's import reds");
+
+      mkdirSync(join(inside, FUNC, "sub", "node_modules", "ghost-linked"), { recursive: true });
+      ok(runLint(inside).code === 1, "(9) a package beside the link does not resolve the real file");
+      mkdirSync(join(inside, FUNC, "zzz", "node_modules", "ghost-linked"), { recursive: true });
+      ok(runLint(inside).code === 0, "(9) control: a package beside the real file resolves it");
+
+      const outsideLink = scratchTree({
+        [`${FUNC}/index.mjs`]: STUB,
+        [`${FUNC}/chunks/server.mjs`]: "export {};\n",
+        "linked/real/mod.mjs": "export {};\n",
+      });
+      symlinkSync(join(outsideLink, "linked", "real"), join(outsideLink, FUNC, "packages"), "dir");
+      const out = runLint(outsideLink);
+      ok(out.code === 1, "(9) a link out of the function directory exits 1");
+      ok(
+        out.stderr.includes("__server.func/packages/mod.mjs: links outside the function directory"),
+        "(9) the finding names the linked file",
+      );
+
+      const cycle = scratchTree({ [`${FUNC}/index.mjs`]: "export {};\n" });
+      symlinkSync(join(cycle, FUNC), join(cycle, FUNC, "loop"), "dir");
+      ok(runLint(cycle).code === 0, "(9) a link cycle ends green");
+
+      const twice = scratchTree({ [`${FUNC}/index.mjs`]: STUB, [`${FUNC}/chunks/server.mjs`]: "export {};\n" });
+      symlinkSync(join(twice, FUNC, "chunks", "server.mjs"), join(twice, FUNC, "chunks", "alias.mjs"));
+      const once = runLint(twice);
+      ok(once.code === 0, "(9) a linked file inside the function is green");
+      ok(once.stderr.includes("in 2 module file(s)"), "(9) a file reached by two paths is judged once");
+
+      const dangling = scratchTree({ [`${FUNC}/index.mjs`]: STUB, [`${FUNC}/chunks/server.mjs`]: "export {};\n" });
+      symlinkSync(join(dangling, "nowhere.mjs"), join(dangling, FUNC, "chunks", "gone.mjs"));
+      const gone = runLint(dangling);
+      ok(gone.code === 1, "(9) a dangling module link exits 1");
+      ok(gone.stderr.includes("chunks/gone.mjs: is a dangling link"), "(9) the finding names the dangling link");
+    }
+
+    const lazy = runLint(
+      scratchTree({
+        [`${FUNC}/index.mjs`]: 'export const load = () => import("./chunks/lazy.mjs");\n',
+        [`${FUNC}/chunks/lazy.mjs`]: 'export const m = await import("ghost-lazy");\n',
+      }),
+    );
+    ok(lazy.code === 1, "(9) a lazily loaded chunk's dynamic import is judged");
+    ok(lazy.stderr.includes('chunks/lazy.mjs: "ghost-lazy"'), "(9) the finding names the lazy chunk");
+
+    const prose = runLint(
+      scratchTree({
+        [`${FUNC}/index.mjs`]: STUB,
+        [`${FUNC}/chunks/server.mjs`]:
+          '// import "ghost-comment";\nexport const s = `\nimport "ghost-string";\n`;\n',
+      }),
+    );
+    ok(prose.code === 0, "(9) a package name in a comment or a string is not a finding");
+
+    const traced2 = runLint(
+      scratchTree({
+        [`${FUNC}/index.mjs`]: 'import "pkg";\n',
+        [`${FUNC}/node_modules/pkg/index.js`]: 'import "pkg-own-dep";\n',
+      }),
+    );
+    ok(traced2.code === 0, "(9) files under node_modules are not read");
+
+    const broken = runLint(
+      scratchTree({ [`${FUNC}/index.mjs`]: STUB, [`${FUNC}/chunks/server.mjs`]: "import {\n" }),
+    );
+    ok(broken.code === 1, "(9) an unparseable chunk exits 1");
+    ok(broken.stderr.includes("chunks/server.mjs: cannot be parsed"), "(9) the finding names the file");
+  }
+
+  console.log(`✓ hosted-externals source and output passes: ${passed} assertions`);
 } finally {
   for (const dir of scratchRoots) rmSync(dir, { recursive: true, force: true });
 }

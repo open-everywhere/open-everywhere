@@ -1,31 +1,10 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { isBuiltin } from "node:module";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { outputImportFailures } from "./hosted-externals-output-scan.js";
 import { computedImportFailures } from "./hosted-externals-source-scan.js";
 
 const OUTPUT_DIR = join(process.cwd(), ".vercel", "output", "functions");
-
-const BARE_IMPORT = /^\s*(?:import|export)[^;]*?from\s*"([a-z@][^"]*)"/gm;
-const SIDE_EFFECT_IMPORT = /(?:^\s*import\s*|\bimport\s*\(\s*)"([a-z@][^"]*)"/gm;
-
-function packageNameOf(specifier: string): string {
-  const parts = specifier.split("/");
-  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : (parts[0] ?? specifier);
-}
-
-function bareImportsOf(source: string): Set<string> {
-  const found = new Set<string>();
-  for (const re of [BARE_IMPORT, SIDE_EFFECT_IMPORT]) {
-    re.lastIndex = 0;
-    for (let m = re.exec(source); m !== null; m = re.exec(source)) {
-      const spec = m[1];
-      if (spec === undefined || spec.startsWith("node:")) continue;
-      found.add(spec);
-    }
-  }
-  return found;
-}
 
 const srcFailures = computedImportFailures(process.cwd());
 if (srcFailures.length > 0) {
@@ -51,23 +30,13 @@ if (functionDirs.length === 0) {
 
 const failures: string[] = [];
 let checkedImports = 0;
+let checkedFiles = 0;
 
 for (const dir of functionDirs) {
-  const funcDir = join(OUTPUT_DIR, dir);
-  const entry = join(funcDir, "index.mjs");
-  if (!existsSync(entry)) {
-    failures.push(`${dir}: no index.mjs`);
-    continue;
-  }
-
-  for (const spec of bareImportsOf(readFileSync(entry, "utf8"))) {
-    checkedImports += 1;
-    if (isBuiltin(spec)) continue;
-    if (existsSync(join(funcDir, "node_modules", packageNameOf(spec)))) continue;
-    failures.push(
-      `${dir}: "${spec}" is imported but not present in ${dir}/node_modules — cold-start crash.`,
-    );
-  }
+  const scan = outputImportFailures(join(OUTPUT_DIR, dir), dir);
+  failures.push(...scan.failures);
+  checkedImports += scan.checkedImports;
+  checkedFiles += scan.checkedFiles;
 }
 
 if (failures.length > 0) {
@@ -82,5 +51,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `✓ ${checkedImports} bare import(s) across ${functionDirs.length} hosted function(s) resolve from their own bundle`,
+  `✓ ${checkedImports} bare import(s) in ${checkedFiles} module file(s) across ${functionDirs.length} hosted function(s) resolve from their own bundle`,
 );
