@@ -36,6 +36,7 @@ export default defineTool({
     const proposeScopeKey = await proposalScopeKey(ctx, p);
     const scope = input.scope;
     const address = chatHaltAddress(scope, proposeScopeKey);
+    // principal-gate: accountability — the card's "asked by" line. Deliberately NOT the acting-sender
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
