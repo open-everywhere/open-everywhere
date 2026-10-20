@@ -13,6 +13,7 @@ const kp = await generateKeyPair("RS256", { extractable: true });
 process.env.GOOGLE_CHAT_SERVICE_ACCOUNT_KEY = JSON.stringify({ type: "service_account", client_email: "it@p.iam.gserviceaccount.com", private_key: await exportPKCS8(kp.privateKey) });
 
 const { registerGoogleChatProvider } = await import("@open-everywhere/provider-google-chat/agent/register.js");
+const { isOperatorSecretName } = await import("@open-everywhere/core/agent/ops/operator-secret-roster.js");
 const { buildGoogleChatAuth } = await import("@open-everywhere/provider-google-chat/agent/channels/google-chat-identity.js");
 const { googleChatPolicy, registerGoogleChatPolicy } = await import("@open-everywhere/provider-google-chat/agent/policy.js");
 const { capabilitiesForPlatform, bindFrom, supportedReadPlatforms, wakeOriginCodec, surfaceMessageOps } = await import("@open-everywhere/core/agent/adapter-api.js");
@@ -38,6 +39,7 @@ ok(typeof postArm("google-chat")?.dispatchUnified === "function", "the post arm 
 ok(postArm("google-chat")?.editMessage === undefined, "the post arm registers no edit (not built yet)");
 ok(wakeOriginCodec("google-chat") !== undefined, "the wake-origin codec is registered");
 ok(surfaceMessageOps("google-chat") !== undefined, "the host-notice transport is registered");
+ok(isOperatorSecretName("GOOGLE_CHAT_SERVICE_ACCOUNT_KEY"), "the service-account key is on the operator-secret roster (adopt_env_secrets accepts it)");
 ok(!supportedReadPlatforms().includes("google-chat"), "no read adapter is registered (the app cannot list a space)");
 ok(surfaceParityFor("google-chat") !== undefined, "the surface parity declaration is registered");
 

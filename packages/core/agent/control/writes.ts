@@ -32,6 +32,7 @@ import { DIRECTORY_PREVIEW_DEFAULT_PEOPLE, DIRECTORY_PREVIEW_MAX_PEOPLE, preview
 import { directoryGroupAllowlist, groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
 import { directoryGroupsOf } from "../identity/groups-codemod.js";
 import { deliverGroupsOverlay } from "../identity/groups-delivery.js";
+import { adoptEnvOperatorSecrets, ENV_ADOPT_MAX_NAMES, EnvAdoptFault, SET_BY_ENV_ADOPT, type EnvAdoptResult } from "../credentials/env-adopt.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -60,6 +61,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "directory_sync_preview",
   "directory_groups_plan",
   "reopen_slack_setup",
+  "adopt_env_secrets",
 ] as const;
 
 const judgeOperatorScopeSchema = z
@@ -1070,6 +1072,45 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
       } catch (e) {
         return errorResult(`reopen_slack_setup failed: ${e instanceof Error ? e.message : String(e)}`);
       }
+    },
+  );
+
+  server.registerTool(
+    "adopt_env_secrets",
+    {
+      title: "Adopt operator secrets from the deployment's environment",
+      description:
+        "Copy the value of each named OPERATOR SECRET from this running deployment's own environment into its db credential store, under the same name. This is the path for a value the operator has no local copy of (a Vercel SENSITIVE env var reads back empty). The value never leaves the deployment: the reply says, per name, `stored`, `already-stored` or `no-env-value`, and nothing else about the value. Only a name on the operator-secret roster is accepted (the surface credentials, the control-token lists, the model gateway key and the other operator secrets the loaded bundles declare); the roots of trust (DATABASE_URL, OE_CREDENTIAL_ENCRYPTION_KEY) are refused. A name that is already stored is kept and reported `already-stored` unless `overwrite: true`. After a name reports `stored`, delete its env var on the host. Org-admin only, and audited by name.",
+      inputSchema: {
+        org: z.string().min(1),
+        names: z.array(z.string()).min(1).max(ENV_ADOPT_MAX_NAMES),
+        overwrite: z.boolean().optional(),
+      },
+    },
+    async (a) => {
+      const denial =
+        foreignOrgDenial(a.org) ??
+        (roles.includes("admin")
+          ? null
+          : `forbidden: adopt_env_secrets requires the org-wide "admin" role — an operator secret serves the whole deployment, so no domain role covers it (have: ${roles.length ? roles.join(", ") : "none"}).`);
+      if (denial) return errorResult(denial);
+      const overwrite = a.overwrite === true;
+      const auditResults = (results: readonly EnvAdoptResult[], fault?: unknown) =>
+        appendAudit({
+          ...orgWideWhere(a.org),
+          principalId: actor,
+          action: "admin.secret.adopt_env",
+          detail: { results: Object.fromEntries(results.map((r) => [r.name, r.outcome])), overwrite, ...(fault === undefined ? {} : auditErrorDetail(fault)) },
+        });
+      let results: readonly EnvAdoptResult[];
+      try {
+        results = await adoptEnvOperatorSecrets({ names: a.names, overwrite, setBy: `${SET_BY_ENV_ADOPT}:${actor}`, org: a.org });
+      } catch (e) {
+        if (e instanceof EnvAdoptFault) await auditResults(e.results, e);
+        return errorResult(`adopt_env_secrets failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      await auditResults(results);
+      return jsonResult({ ok: true, org: a.org, overwrite, results });
     },
   );
 }

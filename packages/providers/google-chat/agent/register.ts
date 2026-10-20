@@ -1,6 +1,7 @@
 import {
   registerCapabilityManifest,
   registerIdentityMapper,
+  registerOperatorSecretNames,
   registerPostArm,
   registerProviderDocs,
   registerProviderEvents,
@@ -17,6 +18,7 @@ import { bindGoogleChat } from "./channels/google-chat-identity.js";
 import { googleChatPostArm } from "./channels/google-chat-post-arm.js";
 import { googleChatWakeOriginCodec } from "./channels/google-chat-origin-codec.js";
 import { googleChatMessageOps } from "./channels/google-chat-message-ops.js";
+import { SERVICE_ACCOUNT_SECRET } from "./channels/google-chat-auth.js";
 
 export function registerGoogleChatProvider(): void {
   registerIdentityMapper("google-chat", bindGoogleChat);
@@ -27,5 +29,6 @@ export function registerGoogleChatProvider(): void {
   registerWakeOriginCodec("google-chat", googleChatWakeOriginCodec);
   registerSurfaceMessageOps(googleChatMessageOps);
   registerSurfaceCredentialProbe("google-chat", () => googleChatPolicy().enabled);
+  registerOperatorSecretNames([SERVICE_ACCOUNT_SECRET]);
   registerProviderDocs("google-chat", PROVIDER_DOCS);
 }

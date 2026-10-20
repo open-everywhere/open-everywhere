@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**728 rows: 725 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**729 rows: 726 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 720 rows are live behaviours and the other five are the retired action
+gives a different number: 721 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -243,6 +243,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `admin.model.clear_domain` | `packages/core/agent/control/writes.ts:578` | core/control | An admin clears a domain's model override. | `docs/security/control-plane.md#the-admin-action-vocabulary` | ? |
 | `admin.model.set_domain` | `packages/core/agent/control/writes.ts:555` | core/control | An admin sets a domain's model, and the row flags an unpriced choice. | `docs/security/control-plane.md#the-admin-action-vocabulary` | ? |
 | `admin.routine.cancel` | `packages/core/agent/control/writes.ts:300` | core/control | An admin cancels a routine through the control plane. | `docs/security/control-plane.md#the-admin-action-vocabulary` | ? |
+| `admin.secret.adopt_env` | `packages/core/agent/control/writes.ts:1097` | core/control | An org admin copies operator secrets from the deployment's environment into the db credential store; the row names each secret and its outcome, never a value. | `docs/security/control-plane.md#the-admin-action-vocabulary` (+1) | ? |
 | `admin.session_grants.revoke` | `packages/core/agent/control/writes.ts:283` | core/control | An admin revokes a session's grants, and the row reports the count even when it is zero. | `docs/security/control-plane.md#the-admin-action-vocabulary` | ? |
 | `admin.spend.clear_limit` | `packages/core/agent/approvals/actions.ts:231` | core/approvals | An admin clears a scope's spend limit. | `docs/security/control-plane.md#the-admin-action-vocabulary` | ? |
 | `admin.spend.set_limit` | `packages/core/agent/approvals/actions.ts:179` | core/approvals | An admin sets a scope's monthly token and dollar limit. | `docs/security/spend-and-cost.md#whats-counted-and-where` | ? |

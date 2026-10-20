@@ -634,7 +634,9 @@ export function buildOpsServer(deps: OpsServerDeps = {}): McpServer {
           missing,
           note:
             `${file} holds no value for ${missing.join(", ")}. Nothing was stored. Ask the person to run, in their own terminal from the ` +
-            `project root: ${missing.map((name) => envSetCommand(name) + (a.envPath === undefined ? "" : ` --file ${file}`)).join(" ; ")}. Then call secret_set again.`,
+            `project root: ${missing.map((name) => envSetCommand(name) + (a.envPath === undefined ? "" : ` --file ${file}`)).join(" ; ")}. Then call secret_set again. ` +
+            "If the person has no copy of a value and only the deployment's host env holds it (a Vercel SENSITIVE env var reads back empty), " +
+            "an org admin calls the control write `adopt_env_secrets` on the deployed control plane instead: the deployment copies the value into the store itself.",
         });
       }
       const store = await connectStore(file, a.org);

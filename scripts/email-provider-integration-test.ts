@@ -10,6 +10,7 @@ process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const { registerEmailProvider } = await import("@open-everywhere/provider-email/agent/register.js");
+const { isOperatorSecretName } = await import("@open-everywhere/core/agent/ops/operator-secret-roster.js");
 const { buildEmailAuth } = await import("@open-everywhere/provider-email/agent/channels/email-identity.js");
 const { capabilitiesForPlatform, bindFrom, supportedReadPlatforms, emailTransport, registerEmailTransport, wakeOriginCodec } = await import("@open-everywhere/core/agent/adapter-api.js");
 const { postArm } = await import("@open-everywhere/core/agent/channels/post-arms.js");
@@ -37,6 +38,7 @@ ok(wakeOriginCodec("email") !== undefined, "the email wake-origin codec is regis
 ok(supportedReadPlatforms().includes("email"), "the email read adapter is registered");
 ok(surfaceParityFor("email") !== undefined, "the email surface parity declaration is registered");
 ok(emailTransport("agentmail")?.id === "agentmail" && emailTransport("agentmail-eu")?.id === "agentmail-eu", "both AgentMail transports are registered");
+ok(["AGENTMAIL_API_KEY", "AGENTMAIL_WEBHOOK_SECRET"].every(isOperatorSecretName), "the AgentMail key and webhook secret are on the operator-secret roster (adopt_env_secrets accepts them)");
 
 type EmailOrigin = Extract<UnifiedWakeOrigin, { platform: "email" }>;
 const origin: EmailOrigin = { platform: "email", inbox: "launch@agent.acme.com", threadId: "thr_1", messageId: "<m1>", to: ["ann@acme.com"], cc: ["bob@acme.com"] };

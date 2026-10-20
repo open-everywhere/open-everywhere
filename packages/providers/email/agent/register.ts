@@ -1,6 +1,7 @@
 import {
   registerCapabilityManifest,
   registerEmailTransport,
+  registerOperatorSecretNames,
   registerIdentityMapper,
   registerPostArm,
   registerProviderDocs,
@@ -18,7 +19,7 @@ import { emailPostArm } from "./channels/email-post-arm.js";
 import { emailWakeOriginCodec } from "./channels/email-origin-codec.js";
 import { emailReadAdapter } from "./channels/email-read.js";
 import { emailMessageOps } from "./channels/email-message-ops.js";
-import { AGENTMAIL_API_HOSTS, agentMailTransport } from "./transports/agentmail.js";
+import { AGENTMAIL_API_HOSTS, AGENTMAIL_API_KEY_SECRET, AGENTMAIL_WEBHOOK_SECRET, agentMailTransport } from "./transports/agentmail.js";
 
 export function registerEmailProvider(): void {
   registerIdentityMapper("email", bindEmail);
@@ -29,6 +30,7 @@ export function registerEmailProvider(): void {
   registerWakeOriginCodec("email", emailWakeOriginCodec);
   registerReadAdapter(emailReadAdapter);
   registerSurfaceMessageOps(emailMessageOps);
+  registerOperatorSecretNames([AGENTMAIL_API_KEY_SECRET, AGENTMAIL_WEBHOOK_SECRET]);
   registerEmailTransport(agentMailTransport("agentmail", AGENTMAIL_API_HOSTS.us));
   registerEmailTransport(agentMailTransport("agentmail-eu", AGENTMAIL_API_HOSTS.eu));
   registerProviderDocs("email", PROVIDER_DOCS);

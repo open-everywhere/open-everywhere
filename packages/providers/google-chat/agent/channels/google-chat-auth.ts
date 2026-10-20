@@ -8,7 +8,7 @@ const GOOGLE_OIDC_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs";
 const GOOGLE_OIDC_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const CHAT_BOT_SCOPE = "https://www.googleapis.com/auth/chat.bot";
-const SERVICE_ACCOUNT_SECRET = "GOOGLE_CHAT_SERVICE_ACCOUNT_KEY";
+export const SERVICE_ACCOUNT_SECRET = "GOOGLE_CHAT_SERVICE_ACCOUNT_KEY";
 
 export type GoogleChatTokenVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 

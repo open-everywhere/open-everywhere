@@ -658,6 +658,12 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   { action: "admin.halt.cleared", fields: ["door", "cleared"], proves: "a halt was lifted, and what it had been holding", notExercised: "pairs with admin.halt.set — no leg may set a halt it cannot clear." },
   {
+    action: "admin.secret.adopt_env",
+    fields: ["results", "overwrite"],
+    proves: "an org admin copied operator secrets from the deployment's environment into the db credential store, naming each secret and its outcome, never a value",
+    notExercised: "needs an operator control-WRITE token; the pack holds a read token only.",
+  },
+  {
     action: "aws.sso.link_refused",
     fields: ["reason", "signerSubject"],
     proves:

@@ -5,12 +5,12 @@ manual that documents each one. It is an audit artefact, not a guide. It reads f
 outward, so a behaviour the manual never mentions still gets a row. A row marked **UNDOCUMENTED**
 is a gap in the manual, never a gap in the code. No row carries that mark today.
 
-235 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
+237 rows, of which 0 are undocumented and 2 are reviewed exemptions. The plane covers five sub-planes: the agent tool roster
 (118 rows), the machinery that registers and checks that roster (20), per-seat tool availability
-(21), the two MCP servers — control with 41 verbs and 11 HTTP routes, ops with 9 verbs — and the
+(21), the two MCP servers — control with 42 verbs and 11 HTTP routes, ops with 10 verbs — and the
 `/oe` commands (7). Three sections carry rows beyond their verbs: the route section adds one for the token
 family that arms the read routes, the ops section four for server-wide properties, and the command
-section three for the parsing and registration rules. That is why those sections hold 12, 13 and
+section three for the parsing and registration rules. That is why those sections hold 12, 14 and
 10 rows. Connector operations and the injected browser family are named at runtime. A connector
 operation runs through `connection_execute` by its `connection` and `tool`, and its gates read it as
 `<connection>__<operation>`. No static scan can produce these names, so they are out of scope here —
@@ -293,7 +293,7 @@ principal keeps all 15 and gets no write verb registered at all.
 
 ## E. Control MCP — write verbs
 
-24 verbs, registered by `registerControlWriteTools()` and mounted only when the server is built
+27 verbs, registered by `registerControlWriteTools()` and mounted only when the server is built
 with `includeWrites`. The HTTP deploy mounts them behind an admin role; the local stdio operator is
 trusted. Every mutation is audited with the acting principal. Most carry an `admin.*` action.
 Three do not: `delete_skill` writes `skill.delete`, `memory_write_file` writes `memory.write`, and
@@ -325,6 +325,7 @@ Three do not: `delete_skill` writes `skill.delete`, `memory_write_file` writes `
 | CTRL-directory_sync_preview | `directory_sync_preview` | Read the directory once and report what it sees and what a real sync WOULD do, without doing any of it: people listed, accounts per platform, each source's field and grade, dropped and malformed mappings, groups, and the planned suggestions and suspensions … | `packages/core/agent/control/writes.ts:1193` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
 | CTRL-directory_groups_plan | `directory_groups_plan` | Diff the directory's (Okta's) GROUP memberships against this deployment's machine-owned person-group overlay, and with `deliver` open the bot-PR that applies it. | `packages/core/agent/control/writes.ts:1165` | `docs/security/control-plane.md#what-the-mcp-exposes` (+3) | ? |
 | CTRL-reopen_slack_setup | `reopen_slack_setup` | Reopen this deployment's `/setup` page after a Slack install has locked it, so setup can be run again. Destroys only the install RECORD — every stored Slack credential stays. Org-admin only. | `packages/core/agent/control/writes.ts:1451` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
+| CTRL-adopt_env_secrets | `adopt_env_secrets` | Copy named operator secrets from the running deployment's own environment into its db credential store, for a value the operator has no local copy of. Replies `stored`, `already-stored` or `no-env-value` per name, never the value. Roster names only; org-admin only. | `packages/core/agent/control/writes.ts:1559` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
 | CTRL-memory_write_file | `memory_write_file` | Full-file replace of one file inside one memory silo (creates it if absent). | `packages/core/agent/control/writes.ts:1282` | `docs/security/control-plane.md#what-the-mcp-exposes` (+1) | ? |
 | CTRL-memory_delete_file | `memory_delete_file` | Delete one file from one memory silo. | `packages/core/agent/control/writes.ts:1319` | `docs/security/control-plane.md#what-the-mcp-exposes` (+2) | ? |
 
@@ -349,7 +350,7 @@ The routes the deployment mounts itself, beside the MCP server.
 
 ## G. Ops MCP verbs
 
-9 verbs, registered by `buildOpsServer()`. This server runs as a local process under the operator's
+10 verbs, registered by `buildOpsServer()`. This server runs as a local process under the operator's
 own environment, which is its whole trust root. It is deliberately not on the control plane: an
 operator-side agent can provision a deployment that has no comm surface yet, and the deployed agent
 never holds a secret verb.

@@ -447,6 +447,15 @@ The operator has two doors, and neither puts the value in front of you:
 `oe secret` CLI. Point it at the same `DATABASE_URL` the deployment uses; the response names the
 store it wired, so a wrong target is visible at once.
 
+**A value with no local copy.** An operator secret that the deployment already holds as a host
+env var, but the operator cannot read back (on Vercel, a SENSITIVE env var reads back empty), cannot
+take either door. The deployment itself copies it: an org admin calls the control write
+`adopt_env_secrets { "org": "<org>", "names": ["SLACK_BOT_TOKEN"] }` on the deployed control plane
+(see [the control plane](../security/control-plane.md#what-the-mcp-exposes)). The reply says, per
+name, `stored`, `already-stored` or `no-env-value`, and never the value. A stored row is kept unless
+the call passes `overwrite: true`. Only operator-secret names are accepted. After a name reports
+`stored`, delete the env var on the host.
+
 The store is **write-only, absolutely**. There is no `secret_get` and no read-back tool anywhere —
 not for you, not for the operator, not for the deployed agent. `secret_list` returns names,
 provenance and timestamps. Tell the operator to keep the original wherever they got it.
@@ -491,4 +500,7 @@ Two more things you cannot do by construction, and should not try:
   it is re-issued at the vendor.
 - **The deployed agent holds no secret verb at all.** These tools work because they run on the
   operator's own machine, under the operator's own environment. That is the trust root, and it is
-  why the setup path is an operator-side agent rather than a hosted one.
+  why the setup path is an operator-side agent rather than a hosted one. The one deployed door that
+  writes an **operator secret** is the org-admin control write `adopt_env_secrets`, and it is not the
+  agent's: it copies a value the deployment already holds in its environment, and it returns no
+  value.

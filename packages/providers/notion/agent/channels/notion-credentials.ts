@@ -15,7 +15,7 @@ export const NOTION_PROVIDER = "notion";
 
 export const NOTION_CHANNEL_CREDENTIAL = "channel-key";
 
-const NOTION_WEBHOOK_SECRET_NAME = "NOTION_WEBHOOK_SECRET";
+export const NOTION_WEBHOOK_SECRET_NAME = "NOTION_WEBHOOK_SECRET";
 
 export function notionChannelCredentialFor(
   workspace: string | undefined,

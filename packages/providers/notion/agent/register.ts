@@ -14,6 +14,7 @@ import {
   registerSubtreePlatform,
   registerSurfaceMessageOps,
   registerEventReach,
+  registerOperatorSecretNames,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionTrustRoots } from "./channels/notion-ancestry-trust.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
@@ -30,6 +31,7 @@ import { notionWebhookVerifier } from "./channels/notion-webhook-verifier.js";
 import { notionEventNormalizer, notionEventScopeGrant } from "./channels/notion-event-normalizer.js";
 import { notionEventsReach } from "./channels/notion-event-reach.js";
 import { registerNotionMemory } from "./memory/memory.js";
+import { NOTION_WEBHOOK_SECRET_NAME } from "./channels/notion-credentials.js";
 
 export function registerNotionProvider(): void {
   registerIdentityMapper("notion", bindNotion);
@@ -48,5 +50,6 @@ export function registerNotionProvider(): void {
   registerEventReach("notion", () => notionEventsReach());
   registerSubtreePlatform("notion", registerNotionTrustRoots);
   registerNotionMemory();
+  registerOperatorSecretNames([NOTION_WEBHOOK_SECRET_NAME]);
   registerProviderDocs("notion", PROVIDER_DOCS);
 }

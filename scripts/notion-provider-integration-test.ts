@@ -1,3 +1,6 @@
+// proves: spend.gate
+// proves: notion.dispatched
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -5,6 +8,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { isOperatorSecretName } from "@open-everywhere/core/agent/ops/operator-secret-roster.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { setRegisteredConnectorCredentials, capabilitiesForPlatform, readAudit } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -38,6 +42,8 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+
+ok(isOperatorSecretName("NOTION_WEBHOOK_SECRET"), "the Notion webhook secret is on the operator-secret roster (adopt_env_secrets accepts it)");
 
 interface FetchCall {
   readonly url: string;

@@ -1758,6 +1758,10 @@
       "types": "./dist/agent/credentials/db-broker.d.ts",
       "default": "./dist/agent/credentials/db-broker.js"
     },
+    "./agent/credentials/env-adopt.js": {
+      "types": "./dist/agent/credentials/env-adopt.d.ts",
+      "default": "./dist/agent/credentials/env-adopt.js"
+    },
     "./agent/credentials/home.js": {
       "types": "./dist/agent/credentials/home.d.ts",
       "default": "./dist/agent/credentials/home.js"

@@ -237,6 +237,89 @@ await client.connect(clientT);
 }
 
 {
+  ok("CONTROL_WRITE_TOOL_NAMES lists adopt_env_secrets", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("adopt_env_secrets"));
+  const { randomBytes } = await import("node:crypto");
+  const { getOperatorSecret, setOperatorSecret, resetOperatorSecretWarnings } = await import("../agent/credentials/operator-secrets.js");
+  const { registerOperatorSecretNames } = await import("../agent/ops/operator-secret-roster.js");
+  process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+  const SENTINEL = "adopt-SENTINEL-VALUE-7f3e9a1c-DO-NOT-LEAK";
+  const SENTINEL_2 = "adopt-SENTINEL-ROTATED-2b8d4e6f-DO-NOT-LEAK";
+  const textOf = (res: Awaited<ReturnType<typeof client.callTool>>) => (res.content as { type: string; text: string }[])[0].text;
+  const adoptRows = async () => (await readAudit({ org: "default", limit: 500 })).filter((r) => r.action === "admin.secret.adopt_env");
+  const ADOPT = "OE_LOG_SHIP_TOKEN";
+  const UNSET = "OE_TELEMETRY_OTLP_HEADERS";
+  const KEPT = "OE_EGRESS_PROXY_TOKEN";
+  process.env[ADOPT] = SENTINEL;
+  delete process.env[UNSET];
+  process.env[KEPT] = SENTINEL_2;
+  await setOperatorSecret({ name: KEPT, value: "the-stored-rotation", setBy: "operator:cli" });
+
+  const domainServer = buildControlServer({ includeWrites: true, actor: "eng-admin@example.com", roles: ["domain:eng"] });
+  const [dClientT, dServerT] = InMemoryTransport.createLinkedPair();
+  await domainServer.connect(dServerT);
+  const domainClient = new Client({ name: "domain-role-adopt-test", version: "0" });
+  await domainClient.connect(dClientT);
+  const denied = await domainClient.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [ADOPT] } });
+  ok("adopt_env_secrets refuses a domain role", denied.isError === true && textOf(denied).includes("requires the org-wide"));
+  await domainClient.close();
+  const foreign = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "some-other-tenant", names: [ADOPT] } });
+  ok("adopt_env_secrets refuses a foreign org", foreign.isError === true && textOf(foreign).includes("not this deployment's org"));
+  ok("…and a refused call stores nothing", (await getOperationalStore().getStoredCredential("default", ADOPT)) === null);
+
+  process.env.OE_ADOPT_TEST_NOT_A_SECRET = SENTINEL;
+  const unknown = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [ADOPT, "OE_ADOPT_TEST_NOT_A_SECRET"] } });
+  ok("adopt_env_secrets refuses a name that is not on the operator-secret roster", unknown.isError === true && textOf(unknown).includes("names[1] is not an operator secret"));
+  ok("…without echoing the refused name", !textOf(unknown).includes("OE_ADOPT_TEST_NOT_A_SECRET"));
+  ok("…and the WHOLE call is refused: the valid name before it is not stored either", (await getOperationalStore().getStoredCredential("default", ADOPT)) === null);
+  registerOperatorSecretNames(["DATABASE_URL"]);
+  const root = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: ["DATABASE_URL"] } });
+  ok("adopt_env_secrets refuses a root-of-trust name even when it is on the roster", root.isError === true && textOf(root).includes("root-of-trust"));
+  const pasted = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [SENTINEL] } });
+  ok("a value pasted into the names field is refused and not echoed", pasted.isError === true && !textOf(pasted).includes(SENTINEL));
+  ok("no refused call wrote an adopt row", (await adoptRows()).length === 0);
+
+  const res = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [ADOPT, UNSET, KEPT] } });
+  const body = JSON.parse(textOf(res)) as { ok: boolean; results: { name: string; outcome: string }[] };
+  const outcome = (name: string) => body.results.find((r) => r.name === name)?.outcome;
+  ok("adopt_env_secrets reports `stored` for a name the env holds", body.ok === true && outcome(ADOPT) === "stored");
+  ok("…`no-env-value` for a name the env does not hold", outcome(UNSET) === "no-env-value");
+  ok("…`already-stored` for a name the store holds, without overwrite", outcome(KEPT) === "already-stored");
+  ok("🔴 the reply carries no value", !textOf(res).includes(SENTINEL) && !textOf(res).includes(SENTINEL_2));
+  delete process.env[ADOPT];
+  resetOperatorSecretWarnings();
+  const resolved = await getOperatorSecret(ADOPT);
+  ok("the adopted value now resolves from the db store", resolved.source === "db" && resolved.value === SENTINEL);
+  ok("…stamped with the env-adopt provenance and the acting principal", (await getOperationalStore().getStoredCredential("default", ADOPT))?.createdBy === "operator:env-adopt:admin@example.com");
+  ok("the stored row is kept: an env value does not replace it without overwrite", (await getOperatorSecret(KEPT)).value === "the-stored-rotation");
+  let rows = await adoptRows();
+  ok("a successful call appends one admin.secret.adopt_env row", rows.length === 1 && rows[0].principalId === "admin@example.com");
+  ok("…naming each secret and its outcome", JSON.stringify(rows[0].detail).includes(`"${UNSET}":"no-env-value"`));
+  ok("🔴 …and no value", !JSON.stringify(rows).includes(SENTINEL) && !JSON.stringify(rows).includes(SENTINEL_2));
+
+  const over = JSON.parse(textOf(await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [KEPT], overwrite: true } }))) as typeof body;
+  ok("overwrite:true replaces a stored row and reports replaced", over.results[0].outcome === "stored" && (over.results[0] as { replaced?: boolean }).replaced === true);
+  ok("…with the env value", (await getOperatorSecret(KEPT)).value === SENTINEL_2);
+
+  const st = getOperationalStore() as unknown as { putStoredCredential: (...a: unknown[]) => Promise<void> };
+  const realPut = st.putStoredCredential;
+  st.putStoredCredential = async () => {
+    throw new Error(`constraint failed near '${SENTINEL_2}'`);
+  };
+  try {
+    const fault = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [UNSET, KEPT], overwrite: true } });
+    ok("a store fault is reported as an error", fault.isError === true && textOf(fault).includes(`adopting ${KEPT} failed`));
+    ok("🔴 …with the value scrubbed out of the message", !textOf(fault).includes(SENTINEL_2) && textOf(fault).includes("[redacted]"));
+    rows = await adoptRows();
+    ok("…and the fault still appends a row, with what was handled before it", rows.length === 3 && JSON.stringify(rows[0].detail).includes(`"${UNSET}":"no-env-value"`));
+    ok("🔴 …which carries no value either", !JSON.stringify(rows).includes(SENTINEL_2));
+  } finally {
+    st.putStoredCredential = realPut;
+    delete process.env[KEPT];
+    delete process.env.OE_ADOPT_TEST_NOT_A_SECRET;
+  }
+}
+
+{
   const r = await callJson(client, "set_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyTokens: 5000, ttlSeconds: 3600, reason: "blocked mid-task" });
   ok("set_spend_limit with ttlSeconds returns a future expiresAt", typeof r.expiresAt === "number" && r.expiresAt > Date.now());
   ok("a future-dated bridge is still applied", (await effectiveCaps("default", "slack/T1", "slack/T1/C1")).surfaceMonthlyTokens === 5000);
