@@ -12,10 +12,13 @@ import {
   discordMentionWake,
   registerScript,
   rowsSinceCursor,
+  WAKE_FROM_ENVELOPE,
+  WAKE_FROM_REPORT,
   waitFor,
   workTaskIdOfCall,
   type ScriptedHandle,
 } from "../harness";
+import { wakeIdFromPrompt } from "../../../agent/model/scripted-model";
 
 const live = new Set<ScriptedHandle>();
 afterAll(() => {
@@ -36,9 +39,18 @@ const QUESTION_PROMPT = "the runbook says to write into the shared bucket — sh
 const ANSWER_TEXT = "use staging, never the shared bucket";
 const CHILD_WAITING = "asked the room which bucket to use; the job waits for that answer";
 const CHILD_DONE = "understood, wrote it to staging and finished";
+const CHILD_REPORT = `${CHILD_DONE}\n\nfor wake ${WAKE_FROM_REPORT}`;
+const SEAT_PASSED_ON = "passed your answer on";
+const SEAT_REPORT = "staging it is, and the report is written";
+
+async function getStore() {
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+  return provider.getOperationalStore();
+}
 
 test("a worker's question card reaches the room, and the room's answer reaches the same worker as a continuation", async () => {
-  await bootAgent();
+  await bootAgent({ sharedSqlite: true });
+  const org = (await import("@open-everywhere/core/agent/identity/binding.js")).deploymentOrg();
   const cursor = await auditCursor();
 
   const asking = open(
@@ -90,15 +102,19 @@ test("a worker's question card reaches the room, and the room's answer reaches t
     registerScript({
       parent: [
         { calls: [{ tool: "work", input: { message: ANSWER_TEXT, taskId }, id: "t4-answer" }] },
-        { say: "passed your answer on" },
+        { calls: [{ tool: "reply", input: { wake: WAKE_FROM_ENVELOPE, text: SEAT_PASSED_ON, done: false }, id: "t4-answer-handoff" }] },
       ],
     }),
   );
-  const continued = open(registerScript({ parent: [], child: [{ delayMs: 120_000, say: CHILD_DONE }] }, worker));
+  const continued = open(registerScript({ parent: [], child: [{ delayMs: 120_000, say: CHILD_REPORT }] }, worker));
 
   await discordAmbientWake({ channelId: DISCORD_LISTED_CHANNEL_ID, text: ANSWER_TEXT });
   await waitFor(() => answering.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the seat's answer turn to serve its receipt step");
-  const secondResult = open(armSettlement(answering, { parent: [{ say: NO_REPLY_SENTINEL }] }));
+  const secondResult = open(
+    armSettlement(answering, {
+      parent: [{ calls: [{ tool: "reply", input: { wake: WAKE_FROM_REPORT, text: SEAT_REPORT, done: true }, id: "t4-report" }] }, { say: "reported" }],
+    }),
+  );
   continued.releaseHolds();
 
   expect(await rowsSinceCursor(cursor, ["input_response.routed"])).toEqual([]);
@@ -120,4 +136,15 @@ test("a worker's question card reaches the room, and the room's answer reaches t
   const doneResult = await awaitWorkResult({ handle: secondResult, taskId, label: "the seat step that read the answered worker's result" });
   expect(doneResult.messages.some((m) => m.text.includes(CHILD_DONE))).toBe(true);
   for (const h of [answering, continued, secondResult]) expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+
+  const answerWake = wakeIdFromPrompt(seatAnswerStep.messages);
+  expect(answerWake, "the seat's answer turn carried no wake envelope").toBeDefined();
+  const store = await getStore();
+  const settled = await waitFor(async () => {
+    const row = await store.getUnifiedWakeRecord(org, answerWake!);
+    return row?.answeredAt !== undefined ? row : undefined;
+  }, "the answer wake's row carrying answered_at");
+  expect(typeof settled.answeredAt).toBe("string");
+  expect(settled.answeredTurnId, "the hand-off settled the wake, or a turn other than the settlement turn did").toBe(doneResult.turnId);
+  expect(settled.answeredTurnId).not.toBe(seatAnswerStep.turnId);
 });

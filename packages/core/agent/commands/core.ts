@@ -336,6 +336,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
   const coverageReport = await (deps.readSpendCoverage ?? readSpendCoverage)(plan.args.org, plan.args.level, plan.args.scopeKey, plan.args.monthlyUsd);
   const coverage = coverageReport === undefined ? undefined : frozenCoverage(coverageReport);
   const posted = await askAdmin(() =>
+    // approval-authority: headless — slash commands execute without a model turn or wake envelope.
     requestApprovalFn(
       {
         org: plan.args.org,
@@ -380,6 +381,7 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
   const scopeLabel = await friendlyScopeLabelFn(plan.scopeKey);
   const place = placeWords({ key: plan.scopeKey, ...(scopeLabel ? { label: scopeLabel } : {}) });
   const posted = await askAdmin(() =>
+    // approval-authority: headless — slash commands execute without a model turn or wake envelope.
     requestApprovalFn(
       {
         org: plan.args.org,
@@ -432,7 +434,7 @@ export async function runStop(binding: SurfaceBinding, attachSession: AttachSess
   return result.message;
 }
 
-const BUDGET_MEMBERS_ONLY = "This channel's budget is for members of this organisation, so I can't show it to you.";
+export const BUDGET_MEMBERS_ONLY = "This channel's budget is for members of this organisation, so I can't show it to you.";
 
 function budgetWithheldFrom(binding: SurfaceBinding): boolean {
   return binding.mode === "channel" && roomTrustOf(binding) === "internal" && binding.trust !== "internal";

@@ -130,6 +130,9 @@ import {
   type NotionTaintReplayResult,
 } from "./notion-taint-replay.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
+import { DISCORD_DM_CARD_ACTIONS, DISCORD_DM_CARD_LOOKBACK_MS, DISCORD_DM_DOMAIN_PREFIX, discordDmCardSteps, discordDmCardVerdict, dmSeatDecisionWake } from "./discord-dm-card.js";
+import { findWorkspaceGuest, roomSharing, showsDollarFigure, UNKNOWN_SLACK_USER_ID } from "./budget-guest.js";
+import { BUDGET_MEMBERS_ONLY } from "../../agent/commands/core.js";
 import { CANVAS_REFRESH_ACTION, CANVAS_WRITE_ACTION, canvasRefreshVerdict, canvasShowsFact, classifyChannelTrust, createdCanvasId, memoryCanvasTeach, readCanvasById, readChannelCanvas, type ChannelCanvasRead } from "./memory-canvas.js";
 import { LIST_FIXTURE_SETUP, LIST_FIXTURE_TITLE, LIST_NOTE_COLUMN, LIST_WRITE_ACTION, findFixtureList, fixtureColumns, listWriteRow, readListRows, rowFieldText, rowsTitled, type ListRowsRead } from "./list-fixture.js";
 import {
@@ -2271,6 +2274,63 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(res.status === 200, `/oe ${text} answers 200`);
         ctx.gate(res.body.trim().length > 0, `/oe ${text} returns a well-formed response body`);
       }
+    },
+  },
+  {
+    id: "S-OE-BUDGET-GUEST",
+    title:
+      "/oe budget refuses a guest in an internal channel (OPE-2611, the live leg for OPE-2588): a member reads the figures, a person the probe cannot check is refused, and a real Slack guest is refused",
+    requires: ["synthetic", "slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 120_000,
+    judged: false,
+    run: async (ctx) => {
+      const synthetic = ctx.synthetic!;
+      const slack = ctx.slack!;
+      const { teamId } = await slack.identity();
+      const call = (method: string, params: Record<string, string>) => slack.apiRaw(method, params);
+
+      const room = await roomSharing(call, slack.channelId);
+      if (room.kind === "missing-scope") ctx.fixtureMissing(`S-OE-BUDGET-GUEST: the driver token (E2E_SLACK_USER_TOKEN) lacks the user scope ${room.scope}, which ${room.method} needs. Add it to the driver app and reinstall.`);
+      ctx.gate(room.kind !== "error", `S-OE-BUDGET-GUEST: the driver can read the base room ${slack.channelId} (${room.kind === "error" ? `${room.method} failed: ${room.error}` : room.kind})`);
+      if (room.kind === "shared") {
+        ctx.fixtureMissing(`S-OE-BUDGET-GUEST: Slack flags the base room ${slack.channelId} ${room.flag}. /oe budget shows a shared room's external figures to everybody in it by design, so no refusal can be asserted there. Point E2E_SLACK_CHANNEL at an internal room.`);
+      }
+
+      const budgetAs = async (arm: string, userId: string): Promise<string> => {
+        const res = await synthetic.slash("budget", { teamId, userId, channelId: slack.channelId });
+        ctx.log(`${res.label}: /oe budget as the ${arm} (${userId}) → ${res.status}`);
+        ctx.gate(res.status === 200, `S-OE-BUDGET-GUEST: /oe budget as the ${arm} answers 200 (got ${res.status})`);
+        return decodeSlackEphemeralText(res.body).trim();
+      };
+
+      const member = await budgetAs("member", synthetic.adminUserId);
+      ctx.gate(member !== BUDGET_MEMBERS_ONLY, `S-OE-BUDGET-GUEST: the member is NOT refused — a refusal here means the route refuses everybody, and the two arms below prove nothing (got "${member.slice(0, 200)}")`);
+      ctx.gate(showsDollarFigure(member), `S-OE-BUDGET-GUEST: the member reads the room's dollar figures (got "${member.slice(0, 200)}")`);
+
+      const unchecked = await budgetAs("unchecked person", UNKNOWN_SLACK_USER_ID);
+      ctx.gate(
+        unchecked === BUDGET_MEMBERS_ONLY,
+        `S-OE-BUDGET-GUEST: a person users.info cannot check is refused with the members-only line in the internal room ${slack.channelId} (got "${unchecked.slice(0, 200)}")`,
+      );
+      ctx.gate(!showsDollarFigure(unchecked), "S-OE-BUDGET-GUEST: the unchecked person's answer carries no dollar figure");
+
+      const guest = await findWorkspaceGuest(call);
+      if (guest.kind === "missing-scope") ctx.fixtureMissing(`S-OE-BUDGET-GUEST: the member and unchecked arms are GREEN, but the driver token (E2E_SLACK_USER_TOKEN) lacks the user scope ${guest.scope}, which ${guest.method} needs to find a guest. Add it to the driver app and reinstall.`);
+      ctx.gate(guest.kind !== "error", `S-OE-BUDGET-GUEST: the driver can list the workspace's members (${guest.kind === "error" ? `${guest.method} failed: ${guest.error}` : guest.kind})`);
+      if (guest.kind === "none") {
+        ctx.fixtureMissing(
+          `S-OE-BUDGET-GUEST: the member and unchecked arms are GREEN, but Slack shows no live guest among the workspace's ${guest.checked} account(s), so the positive guest verdict is unproven. Invite a multi-channel guest (or a single-channel guest) to the e2e workspace and rerun. The guest needs no token and joins no room: the leg forges the command under the guest's id, and the deployment asks Slack about that id for real.`,
+        );
+      }
+      if (guest.kind !== "guest") return;
+      const refused = await budgetAs(`guest (${guest.why})`, guest.userId);
+      ctx.gate(
+        refused === BUDGET_MEMBERS_ONLY,
+        `S-OE-BUDGET-GUEST: the guest ${guest.userId} is refused with the members-only line in the internal room ${slack.channelId} (got "${refused.slice(0, 200)}")`,
+      );
+      ctx.gate(!showsDollarFigure(refused), "S-OE-BUDGET-GUEST: the guest's answer carries no dollar figure");
     },
   },
   {
@@ -8989,6 +9049,59 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         if (creationAttempted) await archiveNotionPageOverRest(ctx, pageTitle, "S-EVE-CARD", createdReplyText);
       }
+    },
+  },
+  {
+    id: "S-EVE-CARD-discord",
+    title:
+      "the connector-write CARD in a Discord DM, live (OPE-2385): a person's Approve on the OE op.connector card in their Discord DM wakes the DM seat on its oe-dm/discord/… domain, and the approved write runs only after the tap",
+    requires: ["discord"],
+    surface: "discord",
+    suite: "core",
+    timeoutMs: 120_000,
+    judged: false,
+    run: async (ctx) => {
+      if (!ctx.auditRead) {
+        ctx.skip("S-EVE-CARD-discord reads the deployment's approval rows: the card lands in a person's Discord DM, which the driver bot cannot read. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN.");
+      }
+      const sinceIso = new Date(Date.now() - DISCORD_DM_CARD_LOOKBACK_MS).toISOString();
+      const query = { sinceIso, actions: DISCORD_DM_CARD_ACTIONS, platform: "discord", limit: 1000 } as const;
+      const page = ctx.auditWindowRead ? await ctx.auditWindowRead(query) : { entries: await ctx.auditRead!(query), capped: false, scanTruncated: false };
+      const verdict = discordDmCardVerdict(page.entries);
+      const steps = discordDmCardSteps(factToken("dcard"));
+      if (verdict.kind === "no-card") {
+        const capped = page.capped || page.scanTruncated ? " The audit read was capped, so a card can sit behind it: narrow the window by rerunning soon after the tap." : "";
+        ctx.fixtureMissing(`S-EVE-CARD-discord: no op.connector card in a Discord DM since ${sinceIso}.${capped} ${steps}`);
+      }
+      if (verdict.kind === "undecided") ctx.fixtureMissing(`S-EVE-CARD-discord: the newest Discord DM card ${verdict.card.pendingId} (${verdict.card.requestedAt}) is still undecided. Tap Approve on it, then rerun.`);
+      if (verdict.kind === "rejected") ctx.fixtureMissing(`S-EVE-CARD-discord: the newest Discord DM card ${verdict.card.pendingId} was rejected, so it proves nothing about an approval. ${steps}`);
+      if (verdict.kind !== "approved") return;
+      const { card } = verdict;
+      const ageMin = Math.round((Date.now() - Date.parse(card.requestedAt)) / 60_000);
+      ctx.log(`S-EVE-CARD-discord: card ${card.pendingId} in ${card.scopeKey}, raised ${card.requestedAt} (${ageMin} min ago) by ${card.requester}`);
+
+      const tail = (p: string | undefined) => (p ?? "").slice((p ?? "").lastIndexOf("/") + 1);
+      ctx.gate(
+        card.requester !== "" && tail(verdict.approved.principalId) === tail(card.requester),
+        `S-EVE-CARD-discord: card ${card.pendingId} was approved by the asking person ${card.requester} (approved by ${verdict.approved.principalId ?? "nobody named"})`,
+      );
+      ctx.gate(verdict.opApproved !== undefined, `S-EVE-CARD-discord: a connector.op_approved row joins the tap at ${verdict.approved.ts} — the kind's execute ran for the approval`);
+
+      const woke = verdict.decisionWakes.find((row) => dmSeatDecisionWake(row, card));
+      ctx.gate(
+        woke !== undefined,
+        `S-EVE-CARD-discord: an approval.decision_wake row for card ${card.pendingId} says the decision was DELIVERED to the DM seat on a ${DISCORD_DM_DOMAIN_PREFIX}… domain that names the DM ${card.channelId} (found ${verdict.decisionWakes.length}: ${JSON.stringify(verdict.decisionWakes.map((r) => r.detail))})`,
+      );
+
+      ctx.gate(
+        verdict.writesBeforeApproval.length === 0,
+        `S-EVE-CARD-discord: no connector write ran in the DM between card ${card.pendingId} and the tap (found ${verdict.writesBeforeApproval.length} at ${JSON.stringify(verdict.writesBeforeApproval.map((r) => r.ts))})`,
+      );
+      ctx.gate(
+        verdict.writeAfter !== undefined,
+        `S-EVE-CARD-discord: a completed connector write ran in the DM ${card.channelId} after the approval at ${verdict.approved.ts} — the DM seat forwarded the approved call again`,
+      );
+      ctx.log(`S-EVE-CARD-discord: the ${String(verdict.writeAfter?.detail?.["op"])} write ran at ${verdict.writeAfter?.ts}, through decision wake ${String(woke?.detail?.["wakeId"])}`);
     },
   },
   {

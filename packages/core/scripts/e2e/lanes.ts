@@ -11,6 +11,7 @@ export type LaneResource =
   | "seat:slack-halt"
   | "seat:slack-supervisor"
   | "seat:dm"
+  | "seat:discord-dm"
   | "seat:email"
   | "seat:engaged-slack"
   | "seat:engaged-discord"
@@ -31,6 +32,7 @@ export const LANE_RESOURCE_NAMES: Readonly<Record<LaneResource, string>> = {
   "seat:slack-halt": "halt room",
   "seat:slack-supervisor": "supervisor room",
   "seat:dm": "driver DM seat",
+  "seat:discord-dm": "a person's Discord DM seat",
   "seat:email": "email inboxes",
   "seat:engaged-slack": "addressed-only Slack room",
   "seat:engaged-discord": "addressed-only Discord room",
@@ -74,6 +76,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "S-MEM-READ", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "J3", parallel: "serial", why: "raises and clears a spend cap on the base room through the control plane" },
   { id: "S6", parallel: "safe", resources: ["seat:e2e-unified"] },
+  { id: "S-OE-BUDGET-GUEST", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-OE-STATUS", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "J-DISC", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S8", parallel: "safe", resources: ["seat:e2e-unified"] },
@@ -168,6 +171,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "S-DM-NOTION", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-PROVENANCE-DM", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
   { id: "S-EVE-CARD", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
+  { id: "S-EVE-CARD-discord", parallel: "safe", resources: ["seat:discord-dm"] },
   { id: "S-CONNECT-CARD", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-APIKEY-INTAKE", parallel: "safe", resources: ["seat:e2e-unified", "seat:e2e-connector"] },
   { id: "S-TAINT-DRYRUN", parallel: "safe", resources: ["seat:e2e-unified", "fixture:pr-repo"] },

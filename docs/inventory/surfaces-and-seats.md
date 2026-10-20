@@ -588,6 +588,7 @@ them. `scripts/env-docs-lint.ts` excludes
 | `E2E-S-MEM-READ` | `S-MEM-READ` | slack | core | — | — | — | Memory recall OPENS A FILE: asserted on reads + delegation evidence, not on reply text (OPE-121) |
 | `E2E-J3` | `J3` | slack | core | — | — | yes | Slack governance journey: reject then INDEPENDENT approve, non-admin click denied, admin-tool refusal + admin listing (a |
 | `E2E-S6` | `S6` | slack | core | — | — | — | /oe zero-inference (synthetic command) |
+| `E2E-S-OE-BUDGET-GUEST` | `S-OE-BUDGET-GUEST` | slack | core | — | — | — | /oe budget refuses a guest in an internal channel (OPE-2611): a member reads the figures, a person the probe cannot check is refused, and a real Slack guest is refused. The guest arm is a missing fixture until the workspace holds a live guest |
 | `E2E-J-DISC` | `J-DISC` | discord | core | — | — | yes | Discord journey: mention → auto-thread → continuity → stop → post_file → card-shape (absorbs S7) |
 | `E2E-S8` | `S8` | cross | core | — | — | yes | Cross-platform recall Slack→Discord (stretch, config-dependent) |
 | `E2E-S9` | `S9` | slack | core | — | — | yes | Name-drop wake + negative control (optional) |
@@ -625,6 +626,7 @@ them. `scripts/env-docs-lint.ts` excludes
 | `E2E-S-DM-NOTION` | `S-DM-NOTION` | notion | core | — | — | yes | DM personal-Notion journey: a real DM through the front door wakes the seat on a Notion ask → real answer about the user |
 | `E2E-S-PROVENANCE-DM` | `S-PROVENANCE-DM` | notion | core | — | — | — | Reply provenance, live (OPE-1717): a DM turn that READS through the Notion connector posts a reply whose footer names th |
 | `E2E-S-EVE-CARD` | `S-EVE-CARD` | notion | core | — | — | — | the connector-write CARD, live (OPE-2340/OPE-2361): a DM connector WRITE never parks on eve's native `tool-approval`; it posts an OE `op.connector` card |
+| `E2E-S-EVE-CARD-discord` | `S-EVE-CARD-discord` | discord | core | — | — | — | the connector-write CARD in a Discord DM (OPE-2385): a person's Approve wakes the DM seat on its `oe-dm/discord/…` domain, and the write runs after the tap. A person asks and taps in their own Discord DM; the leg reads the rows of the last day, which can predate the deployment under test, so redo the tap after each deploy it must prove |
 | `E2E-S-EVE-BRIDGE` | `S-EVE-BRIDGE` | notion | core | — | — | — | a bridged eve approval settled over TEXT (OPE-1721): a DM connector WRITE parks on eve's `tool-approval`, the unified qu |
 | `E2E-S-CONNECT-CARD` | `S-CONNECT-CARD` | notion | core | — | — | — | Channel connector card: (A) a 'connect notion here' ask posts a card that is now API-KEY ONLY — the 'Set API key' button |
 | `E2E-S-APIKEY-INTAKE` | `S-APIKEY-INTAKE` | notion | core | — | — | yes | API-key intake, live: under the db broker a 'connect notion with an API key' ask offers 'Set API key' → a forged admin o |

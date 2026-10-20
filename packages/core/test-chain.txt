@@ -545,4 +545,6 @@ test:workflow-discovery
 test:first-routine
 test:ask-watch
 test:exit-kit
+test:budget-guest
+test:discord-dm-card
 test:list-fixture

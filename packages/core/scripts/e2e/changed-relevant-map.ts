@@ -545,6 +545,18 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-PROVENANCE-DM (OPE-1717) is the ONLY live leg that joins a deployment's own `reply.provenance` row to the bytes the room received, so it is the only scenario that reds when the two halves disagree. `reply-provenance.ts` holds the ledger, the sources line the row records, and the forged-line strip. THREE doors fill that ledger, and each one calls `noteConnectorRead`: `hooks/connector-audit.ts` for a connector op, `channels/read-reach.ts` for an authored read tool, and `channels/delegated-provenance.ts` at the delegation settle, which `hooks/spawn-taint.ts` drives. An unwired call at ANY of the three leaves the row empty while every offline assertion stays green — the defect class OPE-1713 found on the bridge route. The WITHHELD arm of the same rule needs one turn holding two conversations, which no connector on this deployment can reach, so it is proven offline in `packages/core/scripts/reply-provenance-test.ts` and by no live leg.",
   },
   {
+    area: "oe-budget-guest",
+    globs: ["packages/core/agent/commands/core.ts", "packages/providers/slack/agent/channels/slack-commands.ts", "packages/core/agent/identity/binding.ts"],
+    scenarios: ["S-OE-BUDGET-GUEST"],
+    why: "S-OE-BUDGET-GUEST (OPE-2611) is the only live leg that reads what `/oe budget` answers per invoker: a member reads dollar figures, and a person `users.info` cannot check and a real Slack guest both get the members-only line in an internal room. `commands/core.ts` holds `budgetWithheldFrom` and the refusal line, `slack-commands.ts` reads the room verdict and the invoker probe into two trust values, and `identity/binding.ts` carries `roomTrust`. S6 drives the same command and cannot stand in: the refusal is a 200 with a body too.",
+  },
+  {
+    area: "discord-dm-decision-wake",
+    globs: ["packages/core/agent/approvals/flow.ts", "packages/providers/discord/agent/channels/discord-front.ts", "packages/core/agent/channels/dm-seat.ts"],
+    scenarios: ["S-EVE-CARD-discord"],
+    why: "S-EVE-CARD-discord (OPE-2385) is the only live leg on a Discord DM card's decision wake. `approvals/flow.ts` builds the DM target (`discordDecisionWakeTarget`) and checks the authority frozen at proposal, `discord-front.ts` takes the tap, and `dm-seat.ts` mints the DM seat on its `oe-dm/discord/…` domain. A person drives the ask and the tap, so the leg ends as a missing fixture until one did in the last day.",
+  },
+  {
     area: "deploy-sanity-facts",
     globs: ["packages/core/agent/commands/core.ts", "packages/core/agent/tools/agent_version.ts", "agent/agent.ts", "agent/model/stacks.ts"],
     scenarios: ["S-OE-STATUS"],

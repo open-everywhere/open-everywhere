@@ -4226,6 +4226,8 @@
     "test:memory-reads": "NODE_NO_WARNINGS=1 tsx scripts/e2e/memory-reads-test.ts",
     "test:memory-canvas": "NODE_NO_WARNINGS=1 tsx scripts/e2e/memory-canvas-test.ts",
     "test:list-fixture": "NODE_NO_WARNINGS=1 tsx scripts/e2e/list-fixture-test.ts",
+    "test:budget-guest": "NODE_NO_WARNINGS=1 tsx scripts/e2e/budget-guest-test.ts",
+    "test:discord-dm-card": "NODE_NO_WARNINGS=1 tsx scripts/e2e/discord-dm-card-test.ts",
     "test:memory-eval": "NODE_NO_WARNINGS=1 tsx scripts/memory-eval-test.ts",
     "test:retrieval-quality": "NODE_NO_WARNINGS=1 tsx scripts/retrieval-quality-test.ts",
     "test:ambient-eval": "NODE_NO_WARNINGS=1 tsx scripts/ambient-eval-test.ts",
