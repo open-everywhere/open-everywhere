@@ -433,6 +433,57 @@ const ok = (cond: boolean, label: string) => {
     ok(o5.kind === "timeout" && o5.belowFloor === 1, `with NO wake.turn_start row the arm is shut and the refusal is counted (got "${o5.kind}" belowFloor=${o5.kind === "timeout" ? o5.belowFloor : "n/a"})`);
     ok(o5.detail.includes("that arm stayed closed"), `…and the detail says the floor was never fixed, so belowFloor is not read as "it arrived early" (got: ${o5.detail})`);
   }
+
+  {
+    const S260 = "slack/T0AAAA/D0EXDMCH001";
+    const doneRow = (iso: string, wakeId: string, done: boolean | undefined): AuditWireEntry =>
+      row("reply.post", iso, { wakeId, id: slackTs(iso), chars: 120, route: "tool", platform: "slack", ...(done === undefined ? {} : { done }) });
+    const cand = (iso: string, prose: boolean, extra: Partial<OwnWakeCandidate> = {}): OwnWakeCandidate => ({ id: slackTs(iso), atMs: ms(iso), substantive: prose, wanted: true, ...extra });
+
+    const J4_ASK = "2026-06-14T18:26:20.000Z";
+    const J4_INTERIM = "2026-06-14T18:26:30.000Z";
+    const J4_FINAL = "2026-06-14T18:27:39.000Z";
+    const j4Ingress = row("wake.ingress", "2026-06-14T18:26:20.300Z", { wakeId: "w-j4", surfaceKey: S260, vendorTs: J4_ASK });
+    const j4Turn = row("wake.turn_start", "2026-06-14T18:26:21.000Z", { wakeId: "w-j4" });
+    const j4Post = { vendorMs: ms(J4_ASK), surfaceKey: S260 } as const;
+    {
+      const { deps } = makeDeps(
+        [[j4Ingress, j4Turn, doneRow(J4_INTERIM, "w-j4", false)], [j4Ingress, j4Turn, doneRow(J4_INTERIM, "w-j4", false), doneRow(J4_FINAL, "w-j4", true)]],
+        [[cand(J4_INTERIM, true)], [cand(J4_INTERIM, true), cand(J4_FINAL, true)]],
+      );
+      const o = await pollForOwnWakeReply(deps, j4Post, { timeoutMs: 420_000, pollMs: 5_000 });
+      ok(o.kind === "own-wake" && o.id === slackTs(J4_FINAL), `J4: a done:false line is never the answer, however its prose reads — the done:true refusal is (got "${o.kind}": ${o.detail})`);
+      const { deps: d2 } = makeDeps([[j4Ingress, j4Turn, doneRow(J4_INTERIM, "w-j4", undefined), doneRow(J4_FINAL, "w-j4", undefined)]], [[cand(J4_INTERIM, true), cand(J4_FINAL, true)]]);
+      const o2 = await pollForOwnWakeReply(d2, j4Post, { timeoutMs: 420_000, pollMs: 5_000 });
+      ok(o2.kind === "own-wake" && o2.id === slackTs(J4_INTERIM), `…and with no done flag the prose guess still decides, and takes the interim (got "${o2.kind}")`);
+    }
+
+    const S14_ASK = "2026-06-14T18:34:33.000Z";
+    const S14_RECALL = "2026-06-14T18:34:41.000Z";
+    const s14Ingress = row("wake.ingress", "2026-06-14T18:34:33.300Z", { wakeId: "w-s14", surfaceKey: S260, vendorTs: S14_ASK });
+    const s14Turn = row("wake.turn_start", "2026-06-14T18:34:34.000Z", { wakeId: "w-s14" });
+    const s14Post = { vendorMs: ms(S14_ASK), surfaceKey: S260 } as const;
+    {
+      const { deps } = makeDeps([[s14Ingress, s14Turn, doneRow(S14_RECALL, "w-s14", true)]], [[cand(S14_RECALL, false)]]);
+      const o = await pollForOwnWakeReply(deps, s14Post, { timeoutMs: 420_000, pollMs: 5_000 });
+      ok(o.kind === "own-wake" && o.id === slackTs(S14_RECALL), `S14: a done:true answer ends the wait even when its prose reads as filler (got "${o.kind}": ${o.detail})`);
+      const { deps: d2 } = makeDeps([[s14Ingress, s14Turn, doneRow(S14_RECALL, "w-s14", true)]], [[cand(S14_RECALL, false, { wanted: false })]]);
+      const o2 = await pollForOwnWakeReply(d2, s14Post, { timeoutMs: 40_000, pollMs: 5_000 });
+      ok(o2.kind === "timeout" && o2.ownSkipped === 1, `…but a done:true message the leg's want refuses never ends it, and the timeout counts it (got "${o2.kind}")`);
+      const { deps: d3 } = makeDeps([[s14Ingress, s14Turn, doneRow(S14_RECALL, "w-s14", true)]], [[{ id: slackTs(S14_RECALL), atMs: ms(S14_RECALL), substantive: false }]]);
+      const o3 = await pollForOwnWakeReply(d3, s14Post, { timeoutMs: 40_000, pollMs: 5_000 });
+      ok(o3.kind === "timeout", `…and a caller that gives no wanted verdict keeps the prose rule unchanged (got "${o3.kind}")`);
+    }
+
+    {
+      const { deps } = makeDeps([[j4Ingress, j4Turn, doneRow(J4_INTERIM, "w-j4", false)]], [[cand(J4_INTERIM, true, { edited: true })]]);
+      const o = await pollForOwnWakeReply(deps, j4Post, { timeoutMs: 40_000, pollMs: 5_000 });
+      ok(o.kind === "own-wake" && o.id === slackTs(J4_INTERIM), `a done:false message edited into the answer ends the wait (got "${o.kind}")`);
+      const { deps: d2 } = makeDeps([[j4Ingress, j4Turn, doneRow(J4_INTERIM, "w-j4", false)]], [[cand(J4_INTERIM, true, { edited: false })]]);
+      const o2 = await pollForOwnWakeReply(d2, j4Post, { timeoutMs: 40_000, pollMs: 5_000 });
+      ok(o2.kind === "timeout" && o2.ownSkipped === 1, `…and the same message unedited is a hand-off, counted as this wake's own skipped post (got "${o2.kind}")`);
+    }
+  }
 }
 
 {

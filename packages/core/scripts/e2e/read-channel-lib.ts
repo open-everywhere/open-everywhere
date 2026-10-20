@@ -221,6 +221,25 @@ export interface OwnWakeCandidate {
   readonly id: string;
   readonly atMs: number;
   readonly substantive: boolean;
+  readonly wanted?: boolean;
+  readonly edited?: boolean;
+}
+
+function replyDoneById(rows: readonly AuditWireEntry[]): ReadonlyMap<string, boolean> {
+  const out = new Map<string, boolean>();
+  for (const r of rows) {
+    if (r.action !== REPLY_POST_ACTION) continue;
+    const id = dS(r, "id");
+    const done = r.detail?.["done"];
+    if (id !== undefined && id.length > 0 && typeof done === "boolean") out.set(id, done);
+  }
+  return out;
+}
+
+function ownWakeCandidateEnds(c: OwnWakeCandidate, done: boolean | undefined): boolean {
+  if (done === undefined || c.wanted === undefined) return c.substantive;
+  if (done) return c.wanted;
+  return c.edited === true && c.substantive;
 }
 
 export type OwnWakeReplyOutcome =
@@ -346,7 +365,8 @@ export async function pollForOwnWakeReply(
         if (Number.isFinite(parsed)) floorMs = parsed;
       }
       const { mine, foreign } = replyIdsByWake(rows, wakeId, floorMs);
-      const candidates = await deps.fetchCandidates();
+      const doneById = replyDoneById(rows);
+      const candidates = (await deps.fetchCandidates()).map((c) => ({ ...c, substantive: ownWakeCandidateEnds(c, doneById.get(c.id)) }));
       standing = candidates.length;
       foreignSeen = candidates.filter((c) => foreign.has(c.id)).length;
       ownSkipped = candidates.filter((c) => !c.substantive && mine.has(c.id)).length;
@@ -402,7 +422,7 @@ export async function pollForOwnWakeReply(
       `wake ${wakeId} produced no message this wait could accept within ${opts.timeoutMs}ms ` +
       `(${standing} bot message(s) stood in the room, ${foreignSeen} of them attributed to ANOTHER wake — those never end this wait; ` +
       `${ownSkipped} carried a ${REPLY_POST_ACTION} row for this wake's own lineage and did not pass the caller's substantive test ` +
-      `(its skip, and its want when it set one), so a non-zero count there means the wake DID post and the leg refused what it posted; ` +
+      `(the row's done flag when it carried one, else the caller's skip, and its want when it set one), so a non-zero count there means the wake DID post and the leg refused what it posted; ` +
       `${belowFloor} attributed to no wake and refused by the ${WAKE_TURN_START_ACTION} floor` +
       `${floorMs === undefined ? ", which no row in this read fixed — that arm stayed closed" : ""})`,
   };

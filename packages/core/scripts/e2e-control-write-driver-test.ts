@@ -49,6 +49,16 @@ const off = resolveControlWriteConfig({});
 ok(!off.ok && off.missing.includes("E2E_CONTROL_LOCAL_WRITE=1") && off.missing.includes("DATABASE_URL"), "live config fails closed without explicit arming and hosted store");
 const live = resolveControlWriteConfig({ E2E_CONTROL_LOCAL_WRITE: "1", E2E_ORG: "acme", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://not-opened.example.invalid/db" });
 ok(live.ok && live.cfg.org === "acme" && Object.keys(live.cfg.storeEnv).sort().join(",") === "DATABASE_URL,OE_OPERATIONAL_PROVIDER", "live config forwards only the pinned store selector/credential");
+const proxied = resolveControlWriteConfig({
+  E2E_CONTROL_LOCAL_WRITE: "1", E2E_ORG: "acme", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://not-opened.example.invalid/db",
+  HTTPS_PROXY: "http://proxy.example.invalid:3128", NO_PROXY: "localhost", NODE_USE_ENV_PROXY: "1", NODE_EXTRA_CA_CERTS: "/fixture/ca.crt",
+  SLACK_BOT_TOKEN: "xoxb-fixture", ANTHROPIC_API_KEY: "fixture",
+});
+ok(
+  proxied.ok && Object.keys(proxied.cfg.storeEnv).sort().join(",") === "DATABASE_URL,HTTPS_PROXY,NODE_EXTRA_CA_CERTS,NODE_USE_ENV_PROXY,NO_PROXY,OE_OPERATIONAL_PROVIDER",
+  `live config forwards the run's egress route to the child, and still no surface token or model key (got ${proxied.ok ? Object.keys(proxied.cfg.storeEnv).sort().join(",") : "not ok"})`,
+);
+ok(proxied.ok && proxied.cfg.storeEnv.HTTPS_PROXY === "http://proxy.example.invalid:3128", "…with the proxy value unchanged");
 
 const org = "fixture-org";
 const surfaceKey = "slack/T1/C-OWNED";

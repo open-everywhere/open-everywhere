@@ -61,7 +61,7 @@ export async function awaitChannelSeatQuiet(
     readonly quietMs: number;
     readonly timeoutMs: number;
     readonly owedGraceMs: number;
-    readonly isInterim?: (m: SlackMessage) => boolean;
+    readonly isInterim?: (m: SlackMessage) => boolean | Promise<boolean>;
     readonly now?: () => number;
     readonly wait?: (ms: number) => Promise<void>;
   },
@@ -75,9 +75,10 @@ export async function awaitChannelSeatQuiet(
   for (let attempt = 0; ; attempt++) {
     const [topLevel, threadMsgs] = await Promise.all([probe.latest(1), probe.replies(opts.threadTs)]);
     const newest = newestSeatMessage(topLevel, threadMsgs);
+    const interim = newest !== undefined && opts.isInterim !== undefined && probe.isBotReply(newest) ? await opts.isInterim(newest) : false;
     const step = seatFenceStep({
       prev: state,
-      newest: newest ? { ts: newest.ts, settles: seatMessageSettles(newest, (m) => probe.isBotReply(m), opts.isInterim) } : undefined,
+      newest: newest ? { ts: newest.ts, settles: seatMessageSettles(newest, (m) => probe.isBotReply(m), () => interim) } : undefined,
       nowMs: now(),
       quietMs: opts.quietMs,
       owedGraceMs: opts.owedGraceMs,

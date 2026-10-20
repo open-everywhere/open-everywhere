@@ -145,6 +145,28 @@ function fixedProbe(topLevel: readonly SlackMessage[], threadMsgs: readonly Slac
   ok(fence.waitedMs >= 20_000, "🔴 §4a: …after OBSERVING the seat hold still for the whole quiet window, never on one reading");
 }
 {
+  const anchor = msg(1000, HUMAN, "(e2e S-SIDE-PANEL) anchor");
+  const answer = msg(1007, BOT, "ok");
+  const run = async (isInterim: (m: SlackMessage) => boolean | Promise<boolean>) => {
+    const clock = { ms: 1_010_000 };
+    return awaitChannelSeatQuiet(fixedProbe([anchor], [anchor, answer]), {
+      threadTs: anchor.ts,
+      quietMs: 20_000,
+      timeoutMs: 120_000,
+      owedGraceMs: 420_000,
+      isInterim,
+      now: () => clock.ms,
+      wait: async (ms) => {
+        clock.ms += ms;
+      },
+    });
+  };
+  const exact = await run(async () => false);
+  eq(exact.quiet, true, "🔴 §4a': an async interim test that says done:true settles the seat on \"ok\"");
+  const guessed = await run(async () => true);
+  eq(guessed.verdict, "owed", "§4a': NEGATIVE CONTROL — the same answer held interim stays owed, so the awaited value decides");
+}
+{
   const anchor = msg(1000, HUMAN, "(e2e J3/S16) anchor");
   const answer = msg(1010, BOT, "the requester is not an org admin");
   const clock = { ms: 1_020_000 };

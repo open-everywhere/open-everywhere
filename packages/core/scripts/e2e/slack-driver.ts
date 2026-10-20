@@ -422,7 +422,7 @@ export class SlackDriver {
     readonly quietMs: number;
     readonly timeoutMs: number;
     readonly owedGraceMs: number;
-    readonly isInterim?: (m: SlackMessage) => boolean;
+    readonly isInterim?: (m: SlackMessage) => boolean | Promise<boolean>;
   }): Promise<SeatFenceResult> {
     const started = Date.now();
     let state: SeatFenceState | undefined;
@@ -430,10 +430,11 @@ export class SlackDriver {
     let abandoned = false;
     for (let attempt = 0; ; attempt++) {
       const [newest] = await this.latest(1);
+      const interim = newest !== undefined && opts.isInterim !== undefined && this.isBotReply(newest) ? await opts.isInterim(newest) : false;
       const step = seatFenceStep({
         prev: state,
         newest: newest
-          ? { ts: newest.ts, settles: seatMessageSettles(newest, (m) => this.isBotReply(m), opts.isInterim) }
+          ? { ts: newest.ts, settles: seatMessageSettles(newest, (m) => this.isBotReply(m), () => interim) }
           : undefined,
         nowMs: Date.now(),
         quietMs: opts.quietMs,

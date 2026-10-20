@@ -21,7 +21,7 @@ import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import { newRoutineId } from "../../agent/routines/store.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
-import { approvalCardFacts, cardJudgeSurface, endsOwnWakeWait, nextReplyCandidate, tsAfter, type SteppedOverMessage } from "./slack-driver.js";
+import { approvalCardFacts, cardJudgeSurface, endsOwnWakeWait, isQualifyingEdit, nextReplyCandidate, tsAfter, type SteppedOverMessage } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
 import { ADMIN_UNVERIFIED_MARKER, askPastCoalescedRefusal, awaitChannelSeatQuiet, replyExcerpt } from "./coalesced-ask.js";
 import type { DiscordDriver, DiscordMessage } from "./discord-driver.js";
@@ -562,9 +562,17 @@ export const isFillerAck = (text: string): boolean => {
   );
 };
 
-const SEAT_FENCE_QUIET_MS = 20_000;
-const SEAT_FENCE_WAIT = 440_000;
-const SEAT_FENCE_OWED_GRACE_MS = 420_000;
+export const SEAT_FENCE_QUIET_MS = 20_000;
+export const SEAT_FENCE_OWED_GRACE_MS = 420_000;
+const SEAT_FENCE_POLL_MARGIN_MS = 10_000;
+export const SEAT_FENCE_WAIT = SEAT_FENCE_OWED_GRACE_MS + SEAT_FENCE_QUIET_MS + SEAT_FENCE_POLL_MARGIN_MS;
+
+export function seatMessageIsInterim(ctx: Pick<ScenarioContext, "auditRead">): (m: SlackMessage) => Promise<boolean> {
+  return async (m) => {
+    const atMs = slackVendorEventTime(m.ts)?.ms ?? Date.now() - 600_000;
+    return replyIsPendingWorkHandoff(ctx, new Date(atMs - 60_000).toISOString())(m.ts, m.text);
+  };
+}
 
 async function fenceDmSeat(ctx: ScenarioContext, legId: string, drivenDm: SlackDriver | undefined = ctx.dm): Promise<void> {
   const dm = drivenDm;
@@ -573,7 +581,7 @@ async function fenceDmSeat(ctx: ScenarioContext, legId: string, drivenDm: SlackD
     quietMs: SEAT_FENCE_QUIET_MS,
     timeoutMs: SEAT_FENCE_WAIT,
     owedGraceMs: SEAT_FENCE_OWED_GRACE_MS,
-    isInterim: (m) => isFillerAck(m.text),
+    isInterim: seatMessageIsInterim(ctx),
   });
   ctx.gate(
     fence.quiet,
@@ -656,7 +664,13 @@ async function awaitOwnWakeReply(
         const out: OwnWakeCandidate[] = [];
         for (const m of msgs) {
           seen.set(m.ts, m);
-          out.push({ id: m.ts, atMs: slackVendorEventTime(m.ts)?.ms ?? Number.NaN, substantive: endsOwnWakeWait(m, opts.skip, opts.want?.match) });
+          out.push({
+            id: m.ts,
+            atMs: slackVendorEventTime(m.ts)?.ms ?? Number.NaN,
+            substantive: endsOwnWakeWait(m, opts.skip, opts.want?.match),
+            wanted: endsOwnWakeWait(m, undefined, opts.want?.match),
+            edited: isQualifyingEdit(m),
+          });
         }
         return out;
       },
@@ -2182,7 +2196,7 @@ export const SCENARIOS: readonly Scenario[] = [
           quietMs: SEAT_FENCE_QUIET_MS,
           timeoutMs: SEAT_FENCE_WAIT,
           owedGraceMs: SEAT_FENCE_OWED_GRACE_MS,
-          isInterim: (m) => isFillerAck(m.text),
+          isInterim: seatMessageIsInterim(ctx),
         });
         ctx.log(
           `seat: ${legId} fenced J3's channel seat on thread ${threadTs} — verdict "${fence.verdict}" after ` +
@@ -6113,7 +6127,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 900_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       const read = ctx.auditRead;
@@ -6138,7 +6152,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       await fenceDmSeat(ctx, "S-SIDE-PANEL");
-      const { ts: threadTs } = await dm.post(fixtureLine("e2e S-SIDE-PANEL: this message opens a side-panel thread. Reply with one word: ok."));
+      const { ts: threadTs } = await dm.post(fixtureLine("e2e S-SIDE-PANEL: this message opens a side-panel thread. Reply with one word: ready."));
       await fenceDmSeat(ctx, "S-SIDE-PANEL");
 
       const askAt = await presenceSince(ctx, "S-SIDE-PANEL ask");
@@ -6200,7 +6214,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 600_000,
+    timeoutMs: 1_200_000,
     judged: false,
     run: async (ctx) => {
       const read = ctx.auditRead;
@@ -6276,7 +6290,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_500_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       const read = ctx.auditRead;
@@ -6321,7 +6335,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 600_000,
+    timeoutMs: 1_000_000,
     judged: false,
     run: async (ctx) => {
       const read = ctx.auditRead;
@@ -6370,15 +6384,15 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "synthetic", "syntheticDm"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 900_000,
+    timeoutMs: 1_500_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
       const synthetic = ctx.synthetic!;
       const { userId: personId, teamId } = await ctx.slack!.identity();
       await fenceDmSeat(ctx, "S-REPLY-FOLLOWUPS");
-      const token = factToken("next");
-      const followUp = `Say ${token}`;
+      const token = factToken("pong");
+      const followUp = `Reply with the word ${token}`;
       const { ts: askTs } = await dm.post(
         fixtureLine(`e2e S-REPLY-FOLLOWUPS: reply with one short sentence, and offer exactly one follow-up (the followUps input of reply) whose text is "${followUp}".`),
       );
@@ -8153,7 +8167,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 870_000,
+    timeoutMs: 960_000,
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;

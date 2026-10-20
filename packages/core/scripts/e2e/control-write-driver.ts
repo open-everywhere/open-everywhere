@@ -63,6 +63,17 @@ interface OverridesWire {
   readonly halts: readonly (HaltOwnershipHandle | OrgHaltOwnershipHandle)[];
 }
 
+const CONTROL_WRITE_EGRESS_ENV = [
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
+  "NODE_USE_ENV_PROXY",
+  "NODE_EXTRA_CA_CERTS",
+] as const;
+
 export function resolveControlWriteConfig(env: NodeJS.ProcessEnv = process.env):
   | { readonly ok: true; readonly cfg: ControlWriteConfig }
   | { readonly ok: false; readonly missing: readonly string[] } {
@@ -81,6 +92,7 @@ export function resolveControlWriteConfig(env: NodeJS.ProcessEnv = process.env):
         OE_OPERATIONAL_PROVIDER: "postgres",
         DATABASE_URL: env.DATABASE_URL!,
         ...(env.OE_CREDENTIAL_ENCRYPTION_KEY ? { OE_CREDENTIAL_ENCRYPTION_KEY: env.OE_CREDENTIAL_ENCRYPTION_KEY } : {}),
+        ...Object.fromEntries(CONTROL_WRITE_EGRESS_ENV.flatMap((k) => (env[k] ? [[k, env[k]!]] : []))),
       },
     },
   };

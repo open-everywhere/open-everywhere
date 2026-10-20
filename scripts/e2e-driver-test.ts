@@ -182,6 +182,10 @@ const {
   SEED_WRITE_ACTIONS,
   handoffFromReplyPostRows,
   replyIsPendingWorkHandoff,
+  seatMessageIsInterim,
+  SEAT_FENCE_WAIT,
+  SEAT_FENCE_OWED_GRACE_MS,
+  SEAT_FENCE_QUIET_MS,
   parseOeStatusFacts, decodeSlackEphemeralText, oeStatusCompactionThresholdTokens, watchDialAnswerSets, suggestAnswerSets,
   haltWakeForSlackAnchor, haltSetEvidence, haltClearEvidence, haltOwnedBySet, haltOwnedByWake, cleanupExactHalt,
   grantRowWaitMs, grantRowMissingNote, GRANTED_CALL_WAIT_MS,
@@ -5112,6 +5116,38 @@ const { parseAppMentionEvent } = await import(
   const empty = step(undefined, undefined, T0);
   ok(empty.verdict === "settling" && empty.state.newestTs === undefined, "fence: an empty conversation starts the window with no anchor ts");
   ok(step(empty.state, undefined, T0 + QUIET).verdict === "quiet", "fence: an empty conversation goes quiet once the window elapses");
+
+  ok(SEAT_FENCE_WAIT > SEAT_FENCE_OWED_GRACE_MS + SEAT_FENCE_QUIET_MS, `fence: SEAT_FENCE_WAIT (${SEAT_FENCE_WAIT}) exceeds the owed grace plus the quiet window (${SEAT_FENCE_OWED_GRACE_MS} + ${SEAT_FENCE_QUIET_MS})`);
+  const replay = (budgetMs: number): string => {
+    const declinedTs = slackTs(T0);
+    let state: unknown;
+    let verdict = "settling";
+    for (let at = T0; at - T0 <= budgetMs; at += 5_000) {
+      const r = seatFenceStep({ prev: state as never, newest: { ts: declinedTs, settles: false }, nowMs: at, quietMs: SEAT_FENCE_QUIET_MS, owedGraceMs: SEAT_FENCE_OWED_GRACE_MS });
+      state = r.state;
+      verdict = r.verdict;
+      if (verdict === "quiet") break;
+    }
+    return verdict;
+  };
+  ok(replay(SEAT_FENCE_WAIT) === "quiet", `fence: inside SEAT_FENCE_WAIT an abandoned message reaches "quiet"; got ${replay(SEAT_FENCE_WAIT)}`);
+  ok(replay(440_000) !== "quiet", `fence NEGATIVE CONTROL: the old 440 000 budget never reaches "quiet" on the same message; got ${replay(440_000)}`);
+}
+
+{
+  const OK_TS = "1782917289.528000";
+  ok(isFillerAck("ok"), "fence premise: the prose guess reads a bare \"ok\" as filler — the live-run cause");
+  ok(!isFillerAck("ready") && !isFillerAck("Ready."), "fence premise: \"ready\", the word S-SIDE-PANEL now asks for, is not filler");
+  const ok200 = { ts: OK_TS, text: "ok", userId: "UBOT" } as SlackMessage;
+  const withRow = seatMessageIsInterim({ auditRead: async () => [{ ts: "2026-07-01T14:48:09.600Z", org: "default", platform: "slack", action: "reply.post", detail: { id: OK_TS, done: true } }] as never });
+  ok((await withRow(ok200)) === false, "🔴 fence: a reply.post row with done:true settles the seat on \"ok\"");
+  const noRow = seatMessageIsInterim({ auditRead: async () => [] as never });
+  ok((await noRow(ok200)) === true, "fence NEGATIVE CONTROL: with no row the prose guess decides, and holds \"ok\" as interim");
+  const handOff = seatMessageIsInterim({ auditRead: async () => [{ ts: "2026-07-01T14:48:09.600Z", org: "default", platform: "slack", action: "reply.post", detail: { id: OK_TS, done: false } }] as never });
+  ok((await handOff({ ...ok200, text: "The room is #general." })) === true, "fence: a done:false row holds the seat owed, whatever the prose");
+  let since = "";
+  await seatMessageIsInterim({ auditRead: async (q: { sinceIso: string }) => { since = q.sinceIso; return [] as never; } } as never)(ok200);
+  ok(Math.abs(Date.parse(since) - (1_782_917_289_528 - 60_000)) <= 2, `fence: the read opens one minute before the message's own instant (got ${since})`);
 }
 
 {
