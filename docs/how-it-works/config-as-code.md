@@ -92,8 +92,10 @@ store.
 plan. Every name that is not a survivor sits there with its TARGET, either a setting path or
 "operator secret".
 The list is **shrink-only**: once a name moves, its entry must go, or the lint reds. The suite pins
-the survivor count (36), so a new survivor costs a reviewed line. The four `OE_DIRECTORY_*` names
-keep their old `secret` and `connection` classes until OPE-2649 moves them. The first sweep pull
+the survivor count (36), so a new survivor costs a reviewed line. OPE-2649 deleted the four
+`OE_DIRECTORY_*` names, and the `secret` and `connection` classes with them: the Okta selector and
+org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and the API token is the
+operator secret `OKTA_API_TOKEN`. The first sweep pull
 request deleted eight names: the access-request wiring (now the `accessRequests.*` settings and the
 app's own `loadAccessRequests` fields) and the deprecated `OE_AI_GATEWAY_URL` (now
 `models.targets.gateway.url`). The [configuration

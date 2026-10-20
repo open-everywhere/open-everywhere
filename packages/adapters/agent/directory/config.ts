@@ -1,9 +1,6 @@
-import { SETTINGS, getSettings, type OktaAppSetting } from "@open-everywhere/core/agent/adapter-api.js";
+import { SETTINGS, getSettings, type AgentSettings, type OktaAppSetting } from "@open-everywhere/core/agent/adapter-api.js";
 
-const OE_DIRECTORY_PROVIDER_ENV = "OE_DIRECTORY_PROVIDER";
-const OE_DIRECTORY_OKTA_ORG_URL_ENV = "OE_DIRECTORY_OKTA_ORG_URL";
-const OE_DIRECTORY_OKTA_TOKEN_REF_ENV = "OE_DIRECTORY_OKTA_TOKEN_REF";
-const OE_DIRECTORY_OKTA_TOKEN_BROKER_ENV = "OE_DIRECTORY_OKTA_TOKEN_BROKER";
+export const OKTA_API_TOKEN_SECRET = "OKTA_API_TOKEN";
 
 export type OktaAppIdField = "externalId" | "userName";
 
@@ -16,14 +13,14 @@ export interface OktaAppMapping {
 
 export interface OktaDirectoryConfig {
   readonly orgUrl: string;
-  readonly tokenRef: string;
-  readonly tokenBroker: string;
   readonly apps: readonly OktaAppMapping[];
   readonly groupAllowlist?: readonly string[];
 }
 
-export function oktaDirectoryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env[OE_DIRECTORY_PROVIDER_ENV] ?? "").trim().toLowerCase() === "okta";
+type DirectorySettings = Pick<AgentSettings["directory"], "provider" | "oktaOrgUrl" | "oktaApps" | "groupAllowlist">;
+
+export function oktaDirectoryEnabled(directory: Pick<DirectorySettings, "provider"> = getSettings().directory): boolean {
+  return directory.provider === "okta";
 }
 
 export function oktaAppMappings(entries: readonly OktaAppSetting[]): readonly OktaAppMapping[] {
@@ -37,41 +34,19 @@ export function oktaAppMappings(entries: readonly OktaAppSetting[]): readonly Ok
   }));
 }
 
-function requireHttpsOrgUrl(raw: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error(`${OE_DIRECTORY_OKTA_ORG_URL_ENV}="${raw}" is not a URL — expected your Okta org URL, e.g. "https://acme.okta.com".`);
-  }
-  if (parsed.protocol !== "https:") {
+export function loadOktaDirectoryConfig(directory: DirectorySettings = getSettings().directory): OktaDirectoryConfig {
+  const orgUrl = directory.oktaOrgUrl.trim();
+  if (orgUrl === "") {
     throw new Error(
-      `${OE_DIRECTORY_OKTA_ORG_URL_ENV}="${raw}" is not https — refusing to arm directory sync. Every Okta request carries the ` +
-        `SSWS API token in an authorization header, so a plaintext org URL would put an admin credential on the wire on every ` +
-        `sync. Use "https://<your-org>.okta.com".`,
+      `directory.provider is "okta" but directory.oktaOrgUrl is not set — directory sync cannot be armed. ` +
+        `Set directory.oktaOrgUrl to your Okta org URL, e.g. "https://acme.okta.com", in agent/settings/settings.ts.`,
     );
   }
-}
-
-export function loadOktaDirectoryConfig(
-  env: NodeJS.ProcessEnv = process.env,
-  apps: readonly OktaAppSetting[] = getSettings().directory.oktaApps,
-  groupAllowlist: readonly string[] = getSettings().directory.groupAllowlist,
-): OktaDirectoryConfig {
-  const orgUrl = env[OE_DIRECTORY_OKTA_ORG_URL_ENV]?.trim();
-  const tokenRef = env[OE_DIRECTORY_OKTA_TOKEN_REF_ENV]?.trim();
-  const missing: string[] = [];
-  if (!orgUrl) missing.push(OE_DIRECTORY_OKTA_ORG_URL_ENV);
-  if (!tokenRef) missing.push(OE_DIRECTORY_OKTA_TOKEN_REF_ENV);
-  if (missing.length) {
-    throw new Error(`${OE_DIRECTORY_PROVIDER_ENV}="okta" but ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not set — directory sync cannot be armed.`);
-  }
-  requireHttpsOrgUrl(orgUrl!);
+  const problem = SETTINGS.directory.oktaOrgUrl.validate(orgUrl);
+  if (problem !== undefined) throw new Error(`directory.oktaOrgUrl: ${problem} — refusing to arm directory sync.`);
   return {
-    orgUrl: orgUrl!.replace(/\/+$/u, ""),
-    tokenRef: tokenRef!,
-    tokenBroker: env[OE_DIRECTORY_OKTA_TOKEN_BROKER_ENV]?.trim() || "db",
-    apps: oktaAppMappings(apps),
-    groupAllowlist,
+    orgUrl: orgUrl.replace(/\/+$/u, ""),
+    apps: oktaAppMappings(directory.oktaApps),
+    groupAllowlist: directory.groupAllowlist,
   };
 }

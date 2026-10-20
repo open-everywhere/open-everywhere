@@ -180,7 +180,7 @@ below. It then asserts seven more things, and states plainly what it does not pr
    each one writes on every tick, gated against a ceiling derived from that schedule's own cron
    string (a daily cron gets ~26h, weekly ~172h). Before this check existed, a schedule that stopped
    firing looked identical to one with nothing to do — measured live for `directory-sync`, which is a
-   genuine daily no-op on a deployment that never armed `OE_DIRECTORY_PROVIDER`. `routine.fire` is
+   genuine daily no-op on a deployment that never armed `directory.provider`. `routine.fire` is
    also reported (its age, when a row exists) but never gates: it only writes when a routine is
    actually due, so its total absence is legitimate on a deployment with none configured. A mounted
    channel can contribute its own heartbeats the same way: the Discord gateway REPORTS

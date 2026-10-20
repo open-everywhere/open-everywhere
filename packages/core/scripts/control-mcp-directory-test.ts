@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,19 +33,24 @@ function fixtureApp(name: string, settings: string | undefined): string {
   return root;
 }
 
+const ARMED_APP = fixtureApp(
+  "armed-app",
+  `export const SETTINGS_OVERRIDES = { directory: { mode: "observe", provider: "okta", oktaOrgUrl: "https://acme.example.invalid" } };\n`,
+);
 const OBSERVE_APP = fixtureApp("observe-app", `export const SETTINGS_OVERRIDES = { directory: { mode: "observe" } };\n`);
 const BROKEN_APP = fixtureApp("broken-app", undefined);
+const TYPO_APP = fixtureApp("typo-app", `export const SETTINGS_OVERRIDES = { directory: { provider: "okat" } };\n`);
 const EMPTY_APP = fixtureApp("empty-app", "export {};\n");
 
-const OKTA_ENV = {
+const RETIRED_ENV = {
   OE_DIRECTORY_PROVIDER: "okta",
   OE_DIRECTORY_OKTA_ORG_URL: "https://acme.example.invalid",
   OE_DIRECTORY_OKTA_TOKEN_REF: "okta-api-token",
+  OE_DIRECTORY_OKTA_TOKEN_BROKER: "env",
 };
 
 function childEnv(name: string, appRoot: string, extra: Record<string, string>): Record<string, string> {
   const base: Record<string, string | undefined> = { ...process.env };
-  for (const k of ["OE_DIRECTORY_PROVIDER", "OE_DIRECTORY_OKTA_ORG_URL", "OE_DIRECTORY_OKTA_TOKEN_REF", "OE_DIRECTORY_OKTA_TOKEN_BROKER"]) delete base[k];
   return {
     ...(base as Record<string, string>),
     OE_OPERATIONAL_PROVIDER: "sqlite",
@@ -86,63 +92,75 @@ async function callEntry(
   return { results, stderr };
 }
 
-function runToExit(name: string, appRoot: string, extra: Record<string, string>): Promise<{ code: number | null; err: string }> {
-  const child = spawn(process.execPath, [TSX_CLI, ENTRY, "--root-env", NO_ENV_FILE], {
-    cwd: CORE_DIR,
-    env: childEnv(name, appRoot, extra),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  return new Promise((resolvePromise, rejectPromise) => {
-    let err = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      rejectPromise(new Error(`control-mcp.ts did not exit within 60s; stderr so far: ${err}`));
-    }, 60_000);
-    child.stderr.on("data", (chunk: Buffer) => {
-      err += chunk.toString();
-      if (err.includes("ready on stdio")) child.kill("SIGKILL");
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolvePromise({ code, err });
-    });
-  });
-}
-
 const STATUS = { tool: "directory_sync_status", args: { org: "default" } };
+const PREVIEW = { tool: "directory_sync_preview", args: { org: "default" } };
 const SYNC_NOW = { tool: "directory_sync_now", args: { org: "default" } };
 
 {
-  const { results, stderr } = await callEntry("armed", OBSERVE_APP, OKTA_ENV, [STATUS, SYNC_NOW]);
+  const { results, stderr } = await callEntry("armed", ARMED_APP, {}, [STATUS, SYNC_NOW]);
   const [status, syncNow] = results;
   ok(status!.isError === false, `armed: directory_sync_status answers (got ${status!.body})`);
   const body = JSON.parse(status!.body) as { provider: { id: string } | null };
-  ok(body.provider !== null, "armed: the local entry HAS a directory provider while OE_DIRECTORY_PROVIDER is set");
-  ok(body.provider?.id === "okta", "armed: and it is the okta adapter the selector names");
+  ok(body.provider !== null, "armed: the local entry HAS a directory provider while directory.provider is set");
+  ok(body.provider?.id === "okta", "armed: and it is the okta adapter the setting names");
   ok(stderr.includes("directory verbs read from the okta adapter"), "armed: the ready output names the armed adapter");
   ok(syncNow!.isError === true, "observe: directory_sync_now refuses");
   ok(syncNow!.body.includes("observe"), "observe: the refusal names the app's directory.mode, so the settings loaded");
 }
 
 {
-  const { results, stderr } = await callEntry("unarmed", OBSERVE_APP, {}, [STATUS]);
+  const { results, stderr } = await callEntry("unarmed", OBSERVE_APP, RETIRED_ENV, [STATUS]);
   const body = JSON.parse(results[0]!.body) as { provider: unknown };
-  ok(body.provider === null, "unarmed: no selector ⇒ no directory provider");
+  ok(body.provider === null, "unarmed: no directory.provider ⇒ no directory provider, and the retired env vars arm nothing");
   ok(!stderr.includes("directory verbs"), "unarmed: the ready output says nothing about the directory");
 }
 
 {
-  const r = await runToExit("broken", BROKEN_APP, OKTA_ENV);
-  ok(r.code !== 0 && r.code !== null, `broken settings: the entry exits non-zero (got ${String(r.code)})`);
-  ok(!r.err.includes("ready on stdio"), "broken settings: the entry never announces a server armed on the defaults");
-  ok(r.err.includes("agent/settings/settings.ts did not load"), "broken settings: the refusal names the settings file");
+  const { results, stderr } = await callEntry("broken", BROKEN_APP, {}, [STATUS]);
+  ok((JSON.parse(results[0]!.body) as { provider: unknown }).provider === null, "broken settings: no directory provider");
+  ok(stderr.includes("directory verbs are unarmed") && stderr.includes("agent/settings/settings.ts did not load"), "broken settings: the ready output names the settings file");
 }
 
 {
-  const r = await runToExit("empty", EMPTY_APP, OKTA_ENV);
-  ok(r.code !== 0 && r.code !== null, `no export: the entry exits non-zero (got ${String(r.code)})`);
-  ok(!r.err.includes("ready on stdio"), "no export: the entry never announces a server armed on the defaults");
-  ok(r.err.includes("exports no SETTINGS_OVERRIDES"), "no export: the refusal names the missing export");
+  const { results, stderr } = await callEntry("empty", EMPTY_APP, {}, [STATUS]);
+  ok((JSON.parse(results[0]!.body) as { provider: unknown }).provider === null, "no export: no directory provider");
+  ok(stderr.includes("exports no SETTINGS_OVERRIDES"), "no export: the ready output names the missing export");
+}
+
+{
+  const { results, stderr } = await callEntry("typo", TYPO_APP, {}, [STATUS]);
+  ok((JSON.parse(results[0]!.body) as { provider: unknown }).provider === null, "typo: no directory provider");
+  ok(
+    stderr.includes("directory verbs are unarmed") && stderr.includes("the app's settings are invalid") && stderr.includes("directory.provider"),
+    `typo: the ready output names the refused setting (got: ${stderr})`,
+  );
+}
+
+{
+  const pglite = {
+    OE_OPERATIONAL_PROVIDER: "",
+    OE_SQLITE_PATH: "",
+    OE_PGLITE_DIR: join(workDir, "token-pglite"),
+    OE_CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString("base64"),
+  };
+  const before = (await callEntry("token", ARMED_APP, pglite, [PREVIEW])).results[0]!;
+  ok(before.body.includes("is not set"), `token: NEGATIVE CONTROL — with nothing stored the preview reaches the token read and names the missing secret (got: ${before.body})`);
+
+  const stored = spawnSync(process.execPath, [TSX_CLI, join(HERE, "oe-cli.ts"), "secret", "set", "OKTA_API_TOKEN", "--root-env", NO_ENV_FILE], {
+    cwd: CORE_DIR,
+    env: childEnv("token", ARMED_APP, pglite),
+    input: "fake-okta-api-token",
+    encoding: "utf8",
+  });
+  ok(stored.status === 0, `token: oe secret set stores OKTA_API_TOKEN in the PGlite store (exit ${String(stored.status)}: ${stored.stderr})`);
+
+  const after = (await callEntry("token", ARMED_APP, pglite, [PREVIEW])).results[0]!;
+  ok(!after.body.includes("is not set") && !after.body.includes("resolves only from the environment"), `token: the stored secret resolves through the entry's store (got: ${after.body})`);
+  ok(
+    after.isError && after.body.includes("https://acme.example.invalid/api/v1/users"),
+    `token: the adapter reached its first Okta request, so the token resolved from the store (got: ${after.body})`,
+  );
+  ok(!after.body.includes("fake-okta-api-token"), "token: the answer never echoes the token");
 }
 
 {

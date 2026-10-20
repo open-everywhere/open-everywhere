@@ -97,7 +97,7 @@ npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 
 ## 0.9.0 — not released yet
 
-🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the first set: the access-request wiring and the deprecated `OE_AI_GATEWAY_URL`.
+🔴 0.9.0 IS A MINOR RELEASE BECAUSE IT REMOVES ENVIRONMENT VARIABLES. OPE-2650 sweeps the env-read allowlist down to the maintainer's ruling: env holds the root of trust, what opens the db store, what the platform injects, and per-run test seams. Every other value becomes a setting in Git or an operator secret in the db store. A removed variable that is still set does nothing, so move each value BEFORE you deploy. This entry lists the first set: the access-request wiring and the deprecated `OE_AI_GATEWAY_URL`. OPE-2649 moves the Okta directory configuration out of the environment: the selector and the org URL are the settings `directory.provider` and `directory.oktaOrgUrl`, and the API token is the operator secret `OKTA_API_TOKEN`. A deployment that never armed the Okta directory adapter needs no step for it.
 
 eve peer: `0.71.0`
 
@@ -106,12 +106,14 @@ eve peer: `0.71.0`
 - The access-request flows read no environment variable (OPE-2650). `OE_ACCESS_ADMIN_CHANNEL`, `OE_ACCESS_CONFIG_REPO` and `OE_ACCESS_CONFIG_BASE` are the settings `accessRequests.adminChannel`, `accessRequests.configRepo` and `accessRequests.configBase` in `agent/settings/settings.ts`. `OE_ACCESS_GRANTS_PATH`, `OE_WEBHOOK_HOOKS_PATH`, `OE_AGENTS_PATH` and `OE_CREDENTIAL_BINDINGS_PATH` are gone: each overlay path is a field of the app's `agent/access/access-requests.ts` with a code default (`bindingsPath` is new there). A deployment that sets the variables and does not move the values loses `request_access`, `create_agent`, `declare_webhook`, `propose_mcp_server`, the credential-binding pull request and the directory-group delivery: each one refuses politely as unconfigured. With `github.auth: "token"`, the token also stops reaching the deployment's own repository until `accessRequests.configRepo` is set.
 - `OE_AI_GATEWAY_URL` is gone (OPE-2650). 0.8.0 deprecated it for `models.targets.gateway.url`. Nothing reads it now, so a deployment that still sets it and has no target `url` sends its model calls to the shipped Vercel AI Gateway endpoint.
 - `targetBaseUrl` (adapters `model/gateway.ts`) takes no `env` argument, and `DEPRECATED_GATEWAY_URL_ENV` is no longer exported. `gatewayCatalogUrl` (adapters `model/gateway-probe.ts`) takes no argument.
+- The Okta directory adapter no longer reads environment variables (OPE-2649). `OE_DIRECTORY_PROVIDER`, `OE_DIRECTORY_OKTA_ORG_URL`, `OE_DIRECTORY_OKTA_TOKEN_REF` and `OE_DIRECTORY_OKTA_TOKEN_BROKER` are deleted, and nothing reads them. A deployment that set them boots with the directory plane OFF until it declares the settings and stores the secret. The selector is `directory.provider` (`"none"` shipped, or `"okta"`). The org URL is `directory.oktaOrgUrl`, and settings load refuses a value that is not `https:`. The API token is the operator secret `OKTA_API_TOKEN`, under that fixed name. The adapter reads it from the DB-backed store only, and refuses a value that only an environment variable holds. In `@open-everywhere/adapters`, `OktaDirectoryConfig` loses `tokenRef` and `tokenBroker`, `loadOktaDirectoryConfig` and `oktaDirectoryEnabled` take the `directory` settings group instead of an environment, and `OktaDirectoryDeps.resolveToken` takes no argument.
 
 **Config migrations**
 
 - If the deployment sets `OE_ACCESS_ADMIN_CHANNEL`, `OE_ACCESS_CONFIG_REPO` or `OE_ACCESS_CONFIG_BASE`, copy each value into `accessRequests: { adminChannel, configRepo, configBase }` in `agent/settings/settings.ts`, deploy, then unset the variables (OPE-2650). (apply by hand)
 - If the deployment sets `OE_ACCESS_GRANTS_PATH`, `OE_WEBHOOK_HOOKS_PATH`, `OE_AGENTS_PATH` or `OE_CREDENTIAL_BINDINGS_PATH` to a non-default path, set `grantsPath`, `hooksPath`, `agentsPath` or `bindingsPath` in the object `loadAccessRequests()` returns in `agent/access/access-requests.ts`. A default path needs no step (OPE-2650). (apply by hand)
 - If the deployment still sets `OE_AI_GATEWAY_URL`, move its value to `models: { targets: { gateway: { kind: "vercel-ai-gateway", url: "<the value>" } } }` in `agent/settings/settings.ts`, then unset the env var (OPE-2650; the 0.8.0 step of OPE-2556). (apply by hand)
+- A deployment that armed the Okta directory adapter (OPE-2649): add `directory: { provider: "okta", oktaOrgUrl: "https://<your-org>.okta.com" }` to `SETTINGS_OVERRIDES` in `agent/settings/settings.ts`, next to the `directory.oktaApps` it already declares. Use the value `OE_DIRECTORY_OKTA_ORG_URL` held. (apply by hand)
 
 **Environment**
 
@@ -123,10 +125,15 @@ eve peer: `0.71.0`
 - remove `OE_AGENTS_PATH`
 - remove `OE_CREDENTIAL_BINDINGS_PATH`
 - remove `OE_AI_GATEWAY_URL`
+- remove `OE_DIRECTORY_PROVIDER`
+- remove `OE_DIRECTORY_OKTA_ORG_URL`
+- remove `OE_DIRECTORY_OKTA_TOKEN_REF`
+- remove `OE_DIRECTORY_OKTA_TOKEN_BROKER`
 
 **Manual steps**
 
 - BEFORE you deploy 0.9.0, move every removed variable this deployment sets into the line its config migration names, and merge that change in the same deploy. A value left only in the env store is lost at that deploy: the flow it armed turns off with no error. After the deploy, delete the variables from the env store.
+- A deployment that armed the Okta directory adapter (OPE-2649): store the Okta API token under its fixed name with `oe secret set OKTA_API_TOKEN` (value on stdin) BEFORE you deploy 0.9.0. The token was the value behind `OE_DIRECTORY_OKTA_TOKEN_REF`. Then delete `OE_DIRECTORY_PROVIDER`, `OE_DIRECTORY_OKTA_ORG_URL`, `OE_DIRECTORY_OKTA_TOKEN_REF` and `OE_DIRECTORY_OKTA_TOKEN_BROKER` from the host. If the old broker was `env`, also delete the environment variable that `OE_DIRECTORY_OKTA_TOKEN_REF` named: the adapter never reads it, and it holds an admin credential in plaintext. If the old ref was a `db` ref and nothing else uses it, delete that row with `oe secret rm <old ref>`.
 
 ## 0.8.1 — 2026-10-19
 

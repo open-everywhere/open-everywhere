@@ -25,10 +25,8 @@ process.stderr.write(
     ? `  session_transcript reads from ${transcripts.baseUrl}\n`
     : `  session_transcript is unconfigured — set ${transcripts.missing.join(" and ")}\n`,
 );
-if (directory.selector !== "") {
-  process.stderr.write(
-    directory.provider
-      ? `  directory verbs read from the ${directory.provider} adapter\n`
-      : `  directory verbs are unarmed — OE_DIRECTORY_PROVIDER="${directory.selector}" names no adapter this build ships\n`,
-  );
+if (directory.provider) {
+  process.stderr.write(`  directory verbs read from the ${directory.provider} adapter\n`);
+} else if (directory.unloaded) {
+  process.stderr.write(`  directory verbs are unarmed — ${directory.unloaded}\n`);
 }

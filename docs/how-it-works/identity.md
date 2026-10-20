@@ -633,9 +633,11 @@ that signed in is a **confirmed** `okta` account on their link-set, so this prop
 the sign-in usable. With no `xaa` declaration the arm proposes nothing new. See
 [Cross App Access](../capabilities/connectors-and-providers.md#cross-app-access-xaa-a-personal-connection-with-no-per-app-consent).
 
-`OE_DIRECTORY_OKTA_ORG_URL` must be **`https://`**. Every Okta request carries the API token in an
-`authorization` header, so a plaintext org URL is refused at boot rather than leaking an admin
-credential on every sync.
+The `directory.oktaOrgUrl` setting must be **`https://`**. Every Okta request carries the API token
+in an `authorization` header, so settings load refuses a plaintext org URL rather than leaking an
+admin credential on every sync. The API token is the operator secret `OKTA_API_TOKEN` in the
+DB-backed store (`oe secret set OKTA_API_TOKEN`). The adapter reads the store only, and refuses a
+value that only an environment variable holds.
 
 The sync runs **daily on a schedule** and on demand through the control plane
 (`directory_sync_now`, with `directory_sync_status` for the last result, and
@@ -650,15 +652,17 @@ Configuration is in the
 Arming the adapter with the shipped `directory.mode: "sync"` applies the plan at the first nightly
 run (03:00 UTC). That run writes suggestions and **suspends** the directory-built link-set of every
 person the directory reports as deprovisioned. To see what the adapter finds before anything
-applies, arm it in **observe mode**. Deploy the mode first, then set `OE_DIRECTORY_PROVIDER`. The
-variable is env and the mode is a setting, so the order is yours to keep: armed before the mode
-deploys, the adapter runs in `sync` mode.
+applies, arm it in **observe mode**. Deploy the mode first, then set `directory.provider`. Both are
+settings, so one commit can carry both, and the adapter then arms in observe mode at its first
+boot. Armed in a commit before the mode deploys, the adapter runs in `sync` mode.
 
 ```ts
 // agent/settings/settings.ts
 export default defineSettings({
   directory: {
     mode: "observe",
+    provider: "okta",
+    oktaOrgUrl: "https://acme.okta.com", // https only; the API token is the OKTA_API_TOKEN operator secret
     oktaApps: [{ platform: "slack", appId: "0oa1" }, { platform: "github", appId: "0oa2" }],
     groupAllowlist: ["Engineering", "Payments"], // optional: limits the group-member reads
   },
@@ -685,8 +689,7 @@ plan-only `directory_groups_plan` it allows exactly its one provenance audit row
 **Read the report.** Call `directory_sync_preview` with `{ "org": "default" }` through the
 deployed instance's [control plane](../security/control-plane.md), or through the local
 `npm run control` entry. The deployment arms the adapter at boot. The local entry arms it the same
-way when its env sets `OE_DIRECTORY_PROVIDER` and the Okta variables, after it loads the checkout's
-`agent/settings/settings.ts`. So a local preview reads under the checkout's `directory.mode` and
+way when the checkout's `agent/settings/settings.ts` sets `directory.provider`. So a local preview reads under the checkout's `directory.mode` and
 `directory.groupAllowlist`. Run it from a checkout at the deployed commit, because nothing compares
 the two. See
 [The local stdio entry](../security/control-plane.md#the-local-stdio-entry--npm-run-control). The

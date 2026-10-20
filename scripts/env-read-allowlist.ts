@@ -6,8 +6,6 @@ export type EnvClass =
   | "store-bootstrap"
   | "platform"
   | "per-run-seam"
-  | "secret"
-  | "connection"
   | "pending-migration";
 
 export interface AllowEntry {
@@ -80,15 +78,6 @@ allow("per-run-seam", [
   ["OE_VISIBILITY", "the binding visibility stand-in, read ONLY by bindLocal, clamped to private/public. A per-shell value for a local run."],
   ["OE_PRINCIPAL", "the bindLocal principal stand-in, a per-shell value: a committed one would ship to every environment, production included (OPE-2411, see the note above). An ambient posture, not a name."],
   ["OE_APP_ROOT", "the absolute path of the deployer's app checkout that operator scripts load the app config from (agent/scaffold/app-root.ts, OPE-2195). A path for one invocation; no deployed function reads it."],
-]);
-
-allow("secret", [
-  ["OE_DIRECTORY_OKTA_TOKEN_REF", "secrets bootstrap: the ref that resolves to the Okta API token."],
-  ["OE_DIRECTORY_OKTA_TOKEN_BROKER", "secrets bootstrap: which broker that Okta token ref resolves through."],
-]);
-allow("connection", [
-  ["OE_DIRECTORY_PROVIDER", "adapter selection: which directory backing to arm at boot (\"okta\", or nothing)."],
-  ["OE_DIRECTORY_OKTA_ORG_URL", "the Okta org this deployment syncs against — an HTTPS target, per install."],
 ]);
 
 allow("pending-migration", [

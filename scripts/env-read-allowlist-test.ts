@@ -89,10 +89,10 @@ function main(): void {
   }
 
   {
-    const list = synthetic({ OE_GONE: { klass: "secret", why: "a token nothing reads any more." } });
+    const list = synthetic({ OE_GONE: { klass: "root-of-trust", why: "a token nothing reads any more." } });
     const reds = auditEnvReads(new Map(), list);
     ok(reds.length === 1 && reds[0].includes("STALE ALLOWLIST ENTRY"), "an entry with no matching read is a red");
-    ok(reds[0].includes("OE_GONE") && reds[0].includes("secret"), "…naming the entry and its class");
+    ok(reds[0].includes("OE_GONE") && reds[0].includes("root-of-trust"), "…naming the entry and its class");
     ok(auditEnvReads(readsOf("OE_GONE"), list).length === 0, "…and is silent while the read is still there");
   }
 
@@ -104,18 +104,18 @@ function main(): void {
     const ticked = synthetic({ OE_KNOB: { klass: "pending-migration", why: "OPE-1153: a tuning number." } });
     ok(auditEnvReads(readsOf("OE_KNOB"), ticked).length === 0, "…and naming one clears it — the negative control");
 
-    const permanent = synthetic({ OE_KNOB: { klass: "secret", why: "the bearer token this deployment signs with." } });
+    const permanent = synthetic({ OE_KNOB: { klass: "root-of-trust", why: "the bearer token this deployment signs with." } });
     ok(auditEnvReads(readsOf("OE_KNOB"), permanent).length === 0, "…and a permanent class needs no ticket");
   }
 
   {
-    const bare = synthetic({ OE_KNOB: { klass: "secret", why: "" } });
+    const bare = synthetic({ OE_KNOB: { klass: "root-of-trust", why: "" } });
     const reds = auditEnvReads(readsOf("OE_KNOB"), bare);
     ok(reds.length === 1 && reds[0].includes("UNREASONED ALLOWLIST ENTRY"), "an entry with no reason is a red");
     ok(reds[0].includes("OE_KNOB"), "…naming it");
-    const label = synthetic({ OE_KNOB: { klass: "secret", why: "  ok  " } });
+    const label = synthetic({ OE_KNOB: { klass: "root-of-trust", why: "  ok  " } });
     ok(auditEnvReads(readsOf("OE_KNOB"), label)[0]?.includes("UNREASONED"), "…and a bare label does not count as one");
-    const real = synthetic({ OE_KNOB: { klass: "secret", why: "the bearer token this deployment signs with." } });
+    const real = synthetic({ OE_KNOB: { klass: "root-of-trust", why: "the bearer token this deployment signs with." } });
     ok(auditEnvReads(readsOf("OE_KNOB"), real).length === 0, "…while a real reason clears it — the negative control");
   }
 
@@ -136,8 +136,6 @@ function main(): void {
       "store-bootstrap": 5,
       platform: 23,
       "per-run-seam": 4,
-      secret: 2,
-      connection: 2,
       "pending-migration": 63,
     };
     for (const [klass, n] of Object.entries(expected)) {
@@ -146,8 +144,8 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 103, `the allowlist holds 103 names (found ${ENV_READ_ALLOWLIST.size})`);
-    const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration" && e.klass !== "secret" && e.klass !== "connection");
+    ok(ENV_READ_ALLOWLIST.size === 99, `the allowlist holds 99 names (found ${ENV_READ_ALLOWLIST.size})`);
+    const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
     ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
   }
 
@@ -341,7 +339,7 @@ function main(): void {
     const envRows = rowsOf("ENV");
     const dynRows = rowsOf("DYN");
 
-    ok(envRows.length > 100 && dynRows.length > 5, `the row parse reached both tables (${envRows.length} ENV, ${dynRows.length} DYN)`);
+    ok(envRows.length > 50 && dynRows.length > 5, `the row parse reached both tables (${envRows.length} ENV, ${dynRows.length} DYN)`);
 
     ok(
       envRows.length === ENV_READ_ALLOWLIST.size,

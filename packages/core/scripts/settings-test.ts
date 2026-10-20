@@ -205,6 +205,15 @@ console.log("3 — no env seam survives, and no variable OPE-2411 retired moves 
   eq(shipped.models.stack, "american-closed", "[3] models.stack: the shipped alias");
   eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "american-closed", "[3] 🔴 OE_MODEL_STACK selects NOTHING any more — the stack changes by a commit");
   eq(at(Object.fromEntries(RETIRED_BY_OPE_2411)), shipped, "[3] 🔴 every variable OPE-2411 retired, set at once, is byte-identical to an empty environment");
+  eq(
+    at({ OE_DIRECTORY_PROVIDER: "okta", OE_DIRECTORY_OKTA_ORG_URL: "https://acme.okta.com", OE_DIRECTORY_OKTA_TOKEN_REF: "db:okta:token", OE_DIRECTORY_OKTA_TOKEN_BROKER: "env" }),
+    shipped,
+    "[3] 🔴 the four directory variables OPE-2649 retired, set at once, move nothing — directory.provider stays \"none\"",
+  );
+  eq([shipped.directory.provider, shipped.directory.oktaOrgUrl], ["none", ""], "[3] directory.provider ships \"none\" and directory.oktaOrgUrl ships empty: the plane is off until a commit arms it");
+  registerSettings(defineSettings({ directory: { provider: "okta", oktaOrgUrl: "https://acme.okta.com" } }));
+  eq([at({}).directory.provider, at({}).directory.oktaOrgUrl], ["okta", "https://acme.okta.com"], "[3] a registered directory.provider and directory.oktaOrgUrl reach getSettings()");
+  resetSettingsForTest();
 
   registerSettings(defineSettings({ models: { stack: "registered-alias", primary: "acme/p", force: "acme/f" } }));
   eq(at({ OE_MODEL_STACK: "chinese-open" }).models.stack, "registered-alias", "[3] a registered stack applies, and no variable outvotes it");

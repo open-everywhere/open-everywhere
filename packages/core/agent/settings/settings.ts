@@ -22,6 +22,8 @@ export type DirectoryAutoConfirm = "off" | "attested";
 
 export type DirectoryMode = "sync" | "observe";
 
+export type DirectoryProviderChoice = "none" | "okta";
+
 export type SandboxBackendChoice = "docker" | "justbash";
 
 export type BlanketTrust = "none" | "internal" | "external";
@@ -99,6 +101,8 @@ export interface AgentSettings {
     readonly adminRoleRules: readonly AdminRoleRule[];
   };
   readonly directory: {
+    readonly provider: DirectoryProviderChoice;
+    readonly oktaOrgUrl: string;
     readonly mode: DirectoryMode;
     readonly autoConfirm: DirectoryAutoConfirm;
     readonly groupAllowlist: readonly string[];
@@ -342,6 +346,21 @@ const oktaAppsProblem = (apps: readonly OktaAppSetting[]): string | undefined =>
   return undefined;
 };
 
+const oktaOrgUrlProblem = (v: string): string | undefined => {
+  if (typeof v !== "string") return "must be a string";
+  if (v === "") return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(v);
+  } catch {
+    return `"${v}" is not a URL — expected your Okta org URL, e.g. "https://acme.okta.com"`;
+  }
+  if (parsed.protocol !== "https:") {
+    return `"${v}" is not https — every Okta request carries the SSWS API token in an authorization header, so a plaintext org URL would put an admin credential on the wire on every sync. Use "https://<your-org>.okta.com"`;
+  }
+  return undefined;
+};
+
 export function languageTagProblem(value: string): string | undefined {
   if (typeof value !== "string") return "must be a string";
   if (value === "") return undefined;
@@ -578,12 +597,27 @@ export const SETTINGS = {
     } satisfies SettingSpec<readonly AdminRoleRule[]>,
   },
   directory: {
+    provider: {
+      path: "directory.provider",
+      shipped: "none",
+      validate: (v) => (v === "none" || v === "okta" ? undefined : 'must be "none" or "okta"'),
+      summary:
+        "Which directory adapter this deployment arms (was `OE_DIRECTORY_PROVIDER`, OPE-2649). `none` (shipped): no adapter registers, the daily `directory-sync` schedule is a logged no-op, and the directory control verbs report \"not wired\". `okta`: the Okta adapter registers at boot. It needs `directory.oktaOrgUrl` and the operator secret `OKTA_API_TOKEN` (`oe secret set OKTA_API_TOKEN`), and a missing org URL fails the boot. Any other value fails the boot, so a typo cannot half-arm the plane. Deploy `directory.mode: \"observe\"` first: see that row.",
+    } satisfies SettingSpec<DirectoryProviderChoice>,
+    oktaOrgUrl: {
+      path: "directory.oktaOrgUrl",
+      shipped: "",
+      validate: oktaOrgUrlProblem,
+      summary:
+        "The Okta org the Okta adapter reads, e.g. `https://acme.okta.com` or an `*.oktapreview.com` sandbox (was `OE_DIRECTORY_OKTA_ORG_URL`, OPE-2649). Empty (shipped) configures no org. 🔴 It must be `https:`, with no localhost exception: every Okta request carries the SSWS API token in an `authorization` header, so a plaintext or unparseable URL fails the boot. The adapter sends the token to this origin only. The API token itself is the operator secret `OKTA_API_TOKEN` in the DB-backed store, never this setting and never an environment variable.",
+      format: (v) => (v === "" ? "(none)" : v),
+    } satisfies SettingSpec<string>,
     mode: {
       path: "directory.mode",
       shipped: "sync",
       validate: (v) => (v === "sync" || v === "observe" ? undefined : 'must be "sync" or "observe"'),
       summary:
-        "What an armed directory adapter may do (OPE-2644). `sync` (shipped): the daily schedule and `directory_sync_now` apply the plan — `suggested` links, confirmations under `directory.autoConfirm`, and eager suspensions of deprovisioned people. `observe`: nothing writes identity state. The daily schedule makes no IdP call and writes only its heartbeat row, `directory_sync_now` refuses, and `directory_groups_plan` refuses `deliver: true`, so no link, suspension or group PR is made and no person is reached. Read what a sync would do with `directory_sync_preview`, which writes nothing in either mode. Deploy `observe` BEFORE you set `OE_DIRECTORY_PROVIDER`, so the adapter arms with the mode already in force; armed in `sync` mode, the first nightly run applies the plan.",
+        "What an armed directory adapter may do (OPE-2644). `sync` (shipped): the daily schedule and `directory_sync_now` apply the plan — `suggested` links, confirmations under `directory.autoConfirm`, and eager suspensions of deprovisioned people. `observe`: nothing writes identity state. The daily schedule makes no IdP call and writes only its heartbeat row, `directory_sync_now` refuses, and `directory_groups_plan` refuses `deliver: true`, so no link, suspension or group PR is made and no person is reached. Read what a sync would do with `directory_sync_preview`, which writes nothing in either mode. Deploy `observe` BEFORE you set `directory.provider`, so the adapter arms with the mode already in force; armed in `sync` mode, the first nightly run applies the plan.",
     } satisfies SettingSpec<DirectoryMode>,
     autoConfirm: {
       path: "directory.autoConfirm",
@@ -1422,6 +1456,8 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       adminRoleRules: resolve(SETTINGS.control.adminRoleRules, o.control?.adminRoleRules),
     },
     directory: {
+      provider: resolve(SETTINGS.directory.provider, o.directory?.provider),
+      oktaOrgUrl: resolve(SETTINGS.directory.oktaOrgUrl, o.directory?.oktaOrgUrl),
       mode: resolve(SETTINGS.directory.mode, o.directory?.mode),
       autoConfirm: resolve(SETTINGS.directory.autoConfirm, o.directory?.autoConfirm),
       groupAllowlist: resolve(SETTINGS.directory.groupAllowlist, o.directory?.groupAllowlist),

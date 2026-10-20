@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { makeOktaDirectoryProvider, nextLink } from "../agent/directory/okta.js";
-import { loadOktaDirectoryConfig, oktaDirectoryEnabled, oktaAppMappings, type OktaDirectoryConfig } from "../agent/directory/config.js";
-import { defineSettings, type OktaAppSetting } from "@open-everywhere/core/agent/adapter-api.js";
+import { makeOktaDirectoryProvider, nextLink, resolveOktaApiToken } from "../agent/directory/okta.js";
+import { OKTA_API_TOKEN_SECRET, loadOktaDirectoryConfig, oktaDirectoryEnabled, oktaAppMappings, type OktaDirectoryConfig } from "../agent/directory/config.js";
+import { defineSettings, getSettings, type AgentSettings, type OktaAppSetting } from "@open-everywhere/core/agent/adapter-api.js";
 import type { DirectoryPerson } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
@@ -18,14 +18,16 @@ const TOKEN = "fake-okta-api-token";
 
 const CONFIG: OktaDirectoryConfig = {
   orgUrl: ORG_URL,
-  tokenRef: "OKTA_API_TOKEN",
-  tokenBroker: "env",
   apps: [
     { platform: "slack", appId: "0oaSLACK", field: "externalId" },
     { platform: "github", appId: "0oaGITHUB", field: "externalId" },
     { platform: "linear", appId: "0oaLINEAR", field: "userName" },
   ],
 };
+
+function directory(over: Partial<AgentSettings["directory"]>): AgentSettings["directory"] {
+  return { ...getSettings().directory, provider: "okta", ...over };
+}
 
 type Route = { readonly body: unknown; readonly next?: string };
 
@@ -106,9 +108,8 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
   const provider = makeOktaDirectoryProvider({
     config: CONFIG,
     fetch: fakeFetch(routes, seen),
-    resolveToken: async (broker, ref) => {
+    resolveToken: async () => {
       tokenResolutions++;
-      ok(broker === "env" && ref === "OKTA_API_TOKEN", "token is resolved through the CONFIGURED broker + ref, never a raw env read");
       return TOKEN;
     },
   });
@@ -223,7 +224,7 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
   const empty = await make([], []).inspect!();
   ok(empty.groups!.read.length === 3, "an EMPTY allowlist means every group, never no group");
 
-  const cfg = loadOktaDirectoryConfig({ OE_DIRECTORY_PROVIDER: "okta", OE_DIRECTORY_OKTA_ORG_URL: "https://acme.okta.com", OE_DIRECTORY_OKTA_TOKEN_REF: "R" }, [], ["Payments"]);
+  const cfg = loadOktaDirectoryConfig(directory({ oktaOrgUrl: "https://acme.okta.com", groupAllowlist: ["Payments"] }));
   ok(cfg.groupAllowlist?.join(",") === "Payments", "config: directory.groupAllowlist reaches the adapter config");
 }
 
@@ -328,67 +329,82 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
     "app map (OPE-350): …and the same for a vendor-global platform mapped twice",
   );
 
-  ok(!oktaDirectoryEnabled({}), "selector: unset ⇒ the directory plane is OFF (silently — a deployment with no IdP is normal)");
-  ok(!oktaDirectoryEnabled({ OE_DIRECTORY_PROVIDER: "oktaa" }), "selector: a typo leaves it OFF rather than half-arming");
-  ok(oktaDirectoryEnabled({ OE_DIRECTORY_PROVIDER: " Okta " }), "selector: trimmed + case-insensitive exact match arms it");
+  ok(getSettings().directory.provider === "none" && !oktaDirectoryEnabled(), "selector: shipped `none` ⇒ the directory plane is OFF (silently — a deployment with no IdP is normal)");
+  ok(oktaDirectoryEnabled(directory({})), "selector: directory.provider \"okta\" arms it");
+  const refusedSetting = (over: Record<string, unknown>): string => {
+    try {
+      defineSettings({ directory: over } as never);
+      return "";
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  };
+  ok(refusedSetting({ provider: "oktaa" }).includes("directory.provider"), "🔴 selector: a typo FAILS settings load rather than half-arming or silently staying off");
+  ok(refusedSetting({ provider: "okta" }) === "" && refusedSetting({ provider: "none" }) === "", "selector: \"okta\" and \"none\" load");
 
   let threw = "";
   try {
-    loadOktaDirectoryConfig({ OE_DIRECTORY_PROVIDER: "okta" });
+    loadOktaDirectoryConfig(directory({}));
   } catch (e) {
     threw = e instanceof Error ? e.message : String(e);
   }
-  ok(
-    threw.includes("OE_DIRECTORY_OKTA_ORG_URL") && threw.includes("OE_DIRECTORY_OKTA_TOKEN_REF"),
-    "config: FAIL-LOUD naming EVERY missing required var when the selector is armed",
-  );
+  ok(threw.includes("directory.oktaOrgUrl"), "config: FAIL-LOUD naming directory.oktaOrgUrl when the selector is armed without an org");
 
-  const cfg = loadOktaDirectoryConfig(
-    {
-      OE_DIRECTORY_PROVIDER: "okta",
-      OE_DIRECTORY_OKTA_ORG_URL: "https://acme.okta.com/",
-      OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
-    },
-    [{ platform: "slack", appId: "0oa1" }],
-  );
-  ok(cfg.apps.length === 1 && cfg.apps[0]!.appId === "0oa1", "config: the app table comes from the argument (the directory.oktaApps setting by default), never from env");
+  const cfg = loadOktaDirectoryConfig(directory({ oktaOrgUrl: "https://acme.okta.com/", oktaApps: [{ platform: "slack", appId: "0oa1" }] }));
+  ok(cfg.apps.length === 1 && cfg.apps[0]!.appId === "0oa1", "config: the app table comes from the directory.oktaApps setting, never from env");
   ok(cfg.orgUrl === "https://acme.okta.com", "config: a trailing slash on the org URL is normalised away");
-  ok(cfg.tokenBroker === "db", "config: the broker defaults to the encrypted db credential store (OPE-408 step 2)");
-  ok(
-    loadOktaDirectoryConfig({
-      OE_DIRECTORY_PROVIDER: "okta",
-      OE_DIRECTORY_OKTA_ORG_URL: ORG_URL,
-      OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
-      OE_DIRECTORY_OKTA_TOKEN_BROKER: "env",
-    }).tokenBroker === "env",
-    "config: the broker is selectable, so the token can instead live in a plain env var",
-  );
 
   const orgUrlThrows = (value: string, label: string): void => {
     let message = "";
     try {
-      loadOktaDirectoryConfig({
-        OE_DIRECTORY_PROVIDER: "okta",
-        OE_DIRECTORY_OKTA_ORG_URL: value,
-        OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
-      });
+      loadOktaDirectoryConfig(directory({ oktaOrgUrl: value }));
     } catch (e) {
       message = e instanceof Error ? e.message : String(e);
     }
-    ok(message.includes("OE_DIRECTORY_OKTA_ORG_URL"), `${label} (got: ${message || "NO THROW"})`);
+    const atLoad = refusedSetting({ oktaOrgUrl: value });
+    ok(message.includes("directory.oktaOrgUrl") && atLoad.includes("directory.oktaOrgUrl"), `${label} (adapter: ${message || "NO THROW"}; settings load: ${atLoad || "NO THROW"})`);
   };
-  orgUrlThrows("http://acme.okta.com", "🔴 config: a plaintext http:// org URL is REFUSED at boot — the SSWS token must never go out in clear");
+  orgUrlThrows("http://acme.okta.com", "🔴 config: a plaintext http:// org URL is REFUSED at settings load and at boot — the SSWS token must never go out in clear");
   orgUrlThrows("http://localhost:8080", "🔴 config: …and there is no localhost carve-out — an escape hatch that exists for tests is an escape hatch in production");
   orgUrlThrows("acme.okta.com", "config: a scheme-less value is refused too (it is not a URL, and `new URL` would have thrown from a scheduled tick instead)");
   orgUrlThrows("ftp://acme.okta.com", "config: any non-https scheme is refused, not just http");
   ok(
-    loadOktaDirectoryConfig({
-      OE_DIRECTORY_PROVIDER: "okta",
-      OE_DIRECTORY_OKTA_ORG_URL: "https://acme.oktapreview.com",
-      OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
-    }).orgUrl === "https://acme.oktapreview.com",
+    loadOktaDirectoryConfig(directory({ oktaOrgUrl: "https://acme.oktapreview.com" })).orgUrl === "https://acme.oktapreview.com" &&
+      refusedSetting({ oktaOrgUrl: "https://acme.oktapreview.com" }) === "",
     "config: an https org URL (including an *.oktapreview.com sandbox) still loads — the check narrows the scheme, not the host",
   );
+  ok(refusedSetting({ oktaOrgUrl: "" }) === "", "config: the shipped empty org URL loads (an unarmed deployment configures no org)");
+}
+
+{
+  ok(OKTA_API_TOKEN_SECRET === "OKTA_API_TOKEN", "token: the operator-secret name is FIXED — no ref and no broker to configure");
+  const asked: string[] = [];
+  const fromDb = await resolveOktaApiToken(async (name) => {
+    asked.push(name);
+    return { value: TOKEN, source: "db" };
+  });
+  ok(fromDb === TOKEN && asked.join(",") === "OKTA_API_TOKEN", "token: resolved by its fixed name through getOperatorSecret's seam");
+  let refusal = "";
+  try {
+    await resolveOktaApiToken(async () => ({ value: TOKEN, source: "env" }));
+  } catch (e) {
+    refusal = e instanceof Error ? e.message : String(e);
+  }
+  ok(refusal.includes("oe secret set OKTA_API_TOKEN") && !refusal.includes(TOKEN), "🔴 token: a value that resolved from the ENVIRONMENT is refused, the refusal names the fix, and it never echoes the value");
+
+  const before = process.env[OKTA_API_TOKEN_SECRET];
+  process.env[OKTA_API_TOKEN_SECRET] = TOKEN;
+  const seen: { url: string; auth: string | null }[] = [];
+  let defaultRefusal = "";
+  try {
+    await makeOktaDirectoryProvider({ config: { ...CONFIG, apps: [] }, fetch: fakeFetch({}, seen) }).listPeople();
+  } catch (e) {
+    defaultRefusal = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (before === undefined) delete process.env[OKTA_API_TOKEN_SECRET];
+    else process.env[OKTA_API_TOKEN_SECRET] = before;
+  }
+  ok(seen.length === 0 && defaultRefusal.includes(OKTA_API_TOKEN_SECRET), `🔴 token: the default resolver refuses an env-only token before any request (got: ${defaultRefusal || "NO THROW"})`);
 }
 
 assert.ok(passed > 0);

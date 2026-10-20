@@ -1,6 +1,6 @@
 import {
   declaredConnectionSignIns,
-  getSecretVia,
+  getOperatorSecret,
   OKTA_LINK_PLATFORM,
   type DirectoryAccount,
   type DirectoryGroupReport,
@@ -9,7 +9,7 @@ import {
   type DirectoryProvider,
   type DirectorySourceReport,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import type { OktaAppMapping, OktaDirectoryConfig } from "./config.js";
+import { OKTA_API_TOKEN_SECRET, type OktaAppMapping, type OktaDirectoryConfig } from "./config.js";
 
 export type FetchLike = typeof fetch;
 
@@ -52,7 +52,7 @@ interface OktaError {
 export interface OktaDirectoryDeps {
   readonly config: OktaDirectoryConfig;
   readonly fetch?: FetchLike;
-  readonly resolveToken?: (broker: string, ref: string) => Promise<string>;
+  readonly resolveToken?: () => Promise<string>;
   readonly proposeOwnAccount?: () => boolean;
 }
 
@@ -90,10 +90,23 @@ export function nextLink(header: string | null | undefined): string | undefined 
   return undefined;
 }
 
+export async function resolveOktaApiToken(
+  resolve: (name: string) => Promise<{ readonly value: string; readonly source: string }> = getOperatorSecret,
+): Promise<string> {
+  const resolved = await resolve(OKTA_API_TOKEN_SECRET);
+  if (resolved.source !== "db") {
+    throw new Error(
+      `secret "${OKTA_API_TOKEN_SECRET}" resolves only from the environment; the Okta directory adapter reads the secret store and nothing else. ` +
+        `Store it with \`oe secret set ${OKTA_API_TOKEN_SECRET}\` (value on stdin), then delete the environment variable.`,
+    );
+  }
+  return resolved.value;
+}
+
 export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryProvider {
   const { config } = deps;
   const fetchImpl = deps.fetch ?? fetch;
-  const resolveToken = deps.resolveToken ?? ((broker: string, ref: string) => getSecretVia(broker, ref));
+  const resolveToken = deps.resolveToken ?? (() => resolveOktaApiToken());
   const proposeOwnAccount = deps.proposeOwnAccount ?? (() => xaaNamesOrg(config.orgUrl));
 
   const orgOrigin = new URL(config.orgUrl).origin;
@@ -208,7 +221,7 @@ export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryPro
 
   async function read(): Promise<DirectoryInspection> {
     const count = { requests: 0 };
-    const token = await resolveToken(config.tokenBroker, config.tokenRef);
+    const token = await resolveToken();
     const users = await getAll<OktaUser>(`/api/v1/users?limit=${PAGE_LIMIT}`, token, count);
     const groups = await groupsByUser(token, count);
     const accounts = await accountsByUser(token, count);

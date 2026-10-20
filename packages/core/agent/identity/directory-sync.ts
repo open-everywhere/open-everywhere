@@ -493,7 +493,7 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
     return [];
   }
   if (!provider) {
-    log("no directory provider registered — nothing to sync (set OE_DIRECTORY_PROVIDER and wire the adapter to arm it)");
+    log("no directory provider registered — nothing to sync (set the directory.provider setting and wire the adapter to arm it)");
     for (const org of orgs) {
       await appendAudit({
         org,
@@ -503,7 +503,7 @@ export async function runDirectorySync(opts: { readonly orgs?: readonly string[]
         action: DIRECTORY_SYNC_ACTION,
         detail: {
           outcome: "no-op: no provider configured",
-          note: "set OE_DIRECTORY_PROVIDER and wire the adapter to arm it",
+          note: "set the directory.provider setting and wire the adapter to arm it",
           startedAt: ts,
           finishedAt: ts,
         },
