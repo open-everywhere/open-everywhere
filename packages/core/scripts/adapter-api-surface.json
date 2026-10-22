@@ -1091,6 +1091,7 @@
     "recordSpend",
     "recordWakeTail",
     "recordXaaRefusal",
+    "redactOutboundPreview",
     "refusedProviderRegistrations",
     "refutedReadAuthorIds",
     "registerAccountDirectory",

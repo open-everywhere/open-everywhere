@@ -110,6 +110,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "F-SEC", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "J-SUP", parallel: "safe", resources: ["seat:slack-supervisor"] },
   { id: "S-DELEGATED-slack", parallel: "safe", resources: ["seat:e2e-unified"] },
+  { id: "S-OUTBOUND-SENSITIVE", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-DELEGATED-discord", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-DELEGATED-teams", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-DELEGATED-linear", parallel: "safe", resources: ["seat:e2e-unified"] },

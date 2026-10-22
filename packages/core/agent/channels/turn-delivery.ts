@@ -6,6 +6,7 @@ import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/r
 import { consumeStandDownSilenceThisTurn, STAND_DOWN_SILENCE_REASON } from "./stand-down-silence.js";
 import { OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./unified-window.js";
 import type { ChannelSessionRow } from "../operational/store.js";
+import { filterClosingProse } from "../access/outbound-filter.js";
 
 export { NO_REPLY_SENTINEL };
 
@@ -24,7 +25,7 @@ export function finalMessageAction(finishReason: string, message: string | null)
   if (finishReason === "tool-calls") return { kind: "buffer-tool-status" };
   if (!message || !message.trim()) return { kind: "silent", reason: "empty final message" };
   if (isNoReply(message)) return { kind: "silent", reason: NO_REPLY_SENTINEL_REASON };
-  return { kind: "post", text: message };
+  return { kind: "post", text: filterClosingProse(message) };
 }
 
 export function finalMessageActionForTurn(finishReason: string, message: string | null, turnId?: string): FinalMessageAction {

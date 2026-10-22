@@ -28,6 +28,7 @@ const REQUIRED_IDS = [
   "S11",
   "S13",
   "S-VOICE-CLIP",
+  "S-OUTBOUND-SENSITIVE",
   "S14",
   "S-LINK-SLACK",
   "J4",

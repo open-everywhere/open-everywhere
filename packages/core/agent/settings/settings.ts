@@ -261,6 +261,9 @@ export interface AgentSettings {
   readonly stall: {
     readonly repeatThreshold: number;
   };
+  readonly sensitiveData: {
+    readonly extraPatterns: readonly SensitivePatternSetting[];
+  };
   readonly taint: {
     readonly mode: TaintMode;
     readonly tierMode: TaintTierMode;
@@ -309,6 +312,42 @@ export interface SettingSpec<T> {
   readonly alsoAccepts?: "string" | "object";
   readonly summary: string;
   readonly format?: (value: T) => string;
+}
+
+export interface SensitivePatternSetting {
+  readonly type: string;
+  readonly tier: "strictest" | "explicit";
+  readonly pattern: string;
+  readonly flags?: string;
+}
+
+const MAX_SENSITIVE_PATTERN_CHARS = 500;
+
+export function sensitivePatternsProblem(rows: readonly SensitivePatternSetting[]): string | undefined {
+  if (!Array.isArray(rows)) return "must be an array of { type, tier, pattern, flags? } rows";
+  const seen = new Set<string>();
+  for (const [i, row] of rows.entries()) {
+    const at = `extraPatterns[${i}]`;
+    if (row === null || typeof row !== "object") return `${at} must be an object`;
+    const keys = Object.keys(row).filter((k) => !["type", "tier", "pattern", "flags"].includes(k));
+    if (keys.length > 0) return `${at} has an unknown key "${keys[0]}"`;
+    if (typeof row.type !== "string" || !/^[a-z][a-z0-9-]{0,39}$/.test(row.type)) return `${at}.type must be kebab-case, 1-40 characters, starting with a letter`;
+    if (seen.has(row.type)) return `${at}.type "${row.type}" is declared twice`;
+    seen.add(row.type);
+    if (row.tier !== "strictest" && row.tier !== "explicit") return `${at}.tier must be "strictest" or "explicit"`;
+    if (typeof row.pattern !== "string" || row.pattern.length === 0 || row.pattern.length > MAX_SENSITIVE_PATTERN_CHARS) {
+      return `${at}.pattern must be a non-empty regex source of at most ${MAX_SENSITIVE_PATTERN_CHARS} characters`;
+    }
+    if (row.flags !== undefined && (typeof row.flags !== "string" || !/^[imsu]*$/.test(row.flags))) return `${at}.flags may hold only i, m, s and u`;
+    let re: RegExp;
+    try {
+      re = new RegExp(row.pattern, row.flags ?? "");
+    } catch (err) {
+      return `${at}.pattern does not compile: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    if (re.test("")) return `${at}.pattern matches the empty string, so it would refuse every call`;
+  }
+  return undefined;
 }
 
 export interface SlackSuggestedPrompt {
@@ -1491,6 +1530,16 @@ export const SETTINGS = {
         "Identical-(tool, args, result) run length before the NEXT identical call is nudged instead of executed. `0` disables the stall guard entirely.",
     } satisfies SettingSpec<number>,
   },
+  sensitiveData: {
+    extraPatterns: {
+      path: "sensitiveData.extraPatterns",
+      shipped: [] as readonly SensitivePatternSetting[],
+      validate: sensitivePatternsProblem,
+      summary:
+        "The org's OWN outbound sensitive-data detectors, added to the shipped ones (`packages/core/agent/access/sensitive-data.ts`). Each row is `{ type, tier, pattern, flags? }`: a kebab-case name, a tier, and a JavaScript regex source (group 1, when present, is the value). `strictest` refuses any tool call or closing reply text that carries a match, on every sink; `explicit` lets it leave only when the member's own message this turn names it, and otherwise holds the call and tells the agent to ask. Empty (shipped) ⇒ only the shipped detectors run: card numbers, government ID numbers and secrets at `strictest`, health and personal-finance data at `explicit`. A row cannot remove or lower a shipped detector. A pattern that does not compile, or that matches the empty string, fails the boot.",
+      format: (v) => (v.length > 0 ? v.map((r) => `${r.type} (${r.tier})`).join(", ") : "(none)"),
+    } satisfies SettingSpec<readonly SensitivePatternSetting[]>,
+  },
   taint: {
     mode: {
       path: "taint.mode",
@@ -1961,6 +2010,9 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     },
     stall: {
       repeatThreshold: resolve(SETTINGS.stall.repeatThreshold, o.stall?.repeatThreshold),
+    },
+    sensitiveData: {
+      extraPatterns: resolve(SETTINGS.sensitiveData.extraPatterns, o.sensitiveData?.extraPatterns),
     },
     taint: {
       mode: resolve(SETTINGS.taint.mode, o.taint?.mode),

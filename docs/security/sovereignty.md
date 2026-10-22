@@ -107,6 +107,25 @@ defaults would describe a deployment that does not exist.
 Each control below exists for its own reason. This section names what each one means for the
 question on this page.
 
+### Card numbers, ID numbers and secrets never leave
+
+**In one paragraph, for the pitch.** Open Everywhere checks every message, post, email, connector
+write and web fetch the agent makes before it leaves your org. Card numbers, government ID numbers and secrets are
+never sent: the agent withholds them, tells the member plainly what it withheld, and writes an audit
+row that names the sink but never the value. Health and personal-finance data leave only when a
+member asks for them in that conversation. Otherwise the agent asks first. The check is code, not a
+prompt, so an instruction planted in a document cannot argue the rule away; it can only try a form
+the detectors do not recognise, and the limits below name those forms. Your org can add its
+own patterns in config, and no setting can remove the shipped ones.
+
+**The limits, so the pitch stays true.** The detectors recognise the printed forms of each value. A
+value spelled in words, encoded, written in a form no detector claims, or sent from a sandbox file by
+a later command is not seen. A provider-run `web_search` query
+leaves from the model provider, so the check never sees it. The model provider still sees what the
+agent reads. The full statement, with the measured false-positive and
+miss rates, is [Security model § 7](./security-model.md#7-card-numbers-id-numbers-and-secrets-do-not-leave)
+(`packages/core/agent/access/outbound-filter.ts`; `npm run test:outbound-filter -w @open-everywhere/core`).
+
 ### The kill switch: stop, halt and spend limits
 
 - **Stop a turn.** `/oe stop` cancels the turn that runs in the channel, with no model call

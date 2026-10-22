@@ -210,6 +210,7 @@
     "test:roster": "NODE_NO_WARNINGS=1 tsx scripts/roster-test.ts",
     "test:roster-build": "NODE_NO_WARNINGS=1 tsx scripts/roster-build-test.ts",
     "test:e2e-runner-zero-scenario": "NODE_NO_WARNINGS=1 tsx scripts/e2e-runner-zero-scenario-test.ts",
+    "measure:sensitive-data": "NODE_NO_WARNINGS=1 tsx scripts/sensitive-data-measure.ts",
     "test:e2e-board": "NODE_NO_WARNINGS=1 tsx scripts/e2e-board-test.ts",
     "test:e2e-board-plan": "NODE_NO_WARNINGS=1 tsx scripts/e2e-board-plan-test.ts",
     "test:reader-check": "NODE_NO_WARNINGS=1 tsx scripts/reader-check-test.ts",

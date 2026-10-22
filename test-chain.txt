@@ -234,3 +234,4 @@ test:event-reach-live
 test:surface-operator-secrets
 lint:eve-telemetry
 test:fork-host-keepalive
+measure:sensitive-data

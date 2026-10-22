@@ -1675,6 +1675,7 @@ const { parseAppMentionEvent } = await import(
     "S-A2A-INBOUND",
     "S-JUDGE-LIFT-NOTICE",
     "S-DELEGATED-slack",
+    "S-OUTBOUND-SENSITIVE",
     "S-DELEGATED-discord",
     "S-DELEGATED-teams",
     "S-DELEGATED-linear",

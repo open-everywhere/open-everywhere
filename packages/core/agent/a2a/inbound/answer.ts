@@ -1,5 +1,6 @@
 import { appendAudit } from "../../audit/audit.js";
 import { truncateMemoryCitationPaths } from "../../channels/turn-delivery.js";
+import { A2A_ANSWER_SINK, filterOutboundText } from "../../access/outbound-filter.js";
 import type { WorkRowStore } from "../../channels/work.js";
 import { A2A_INBOUND_PLATFORM, A2A_INBOUND_WORKSPACE } from "./declaration.js";
 import { settleA2aInboundTask } from "./task-store.js";
@@ -12,7 +13,7 @@ const CANCELED_TEXT = "The task was cancelled before it produced an answer.";
 export function inboundAnswerOf(input: { readonly status: "completed" | "failed" | "cancelled"; readonly stopped: boolean; readonly resultText: string }): { readonly outcome: "completed" | "failed" | "canceled"; readonly text: string } {
   if (input.stopped || input.status === "failed") return { outcome: "failed", text: FAILED_TEXT };
   if (input.status === "cancelled") return { outcome: "canceled", text: CANCELED_TEXT };
-  return { outcome: "completed", text: truncateMemoryCitationPaths(input.resultText) };
+  return { outcome: "completed", text: filterOutboundText(truncateMemoryCitationPaths(input.resultText), A2A_ANSWER_SINK, { asked: () => [] }) };
 }
 
 export type InboundAnswerWrite = "written" | "gone" | "error";

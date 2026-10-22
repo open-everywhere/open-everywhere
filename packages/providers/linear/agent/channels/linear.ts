@@ -1,4 +1,5 @@
 import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
+import { redactOutboundPreview } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   linearChannel,
   parseLinearWebhookEvent,
@@ -1102,7 +1103,7 @@ const native: LinearChannel = linearChannel({
           : undefined;
     },
     async "actions.requested"(data, channel) {
-      if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested", nativeOrgOf(channel.state))?.(data, channel);
+      if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested", nativeOrgOf(channel.state))?.(redactLinearActionPreviews(data), channel);
     },
     async "input.requested"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) {
@@ -1124,7 +1125,8 @@ const native: LinearChannel = linearChannel({
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
         if (data.finishReason === "tool-calls") {
-          await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(data, channel);
+          const preview = typeof data.message === "string" ? { ...data, message: redactOutboundPreview(data.message) } : data;
+          await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(preview, channel);
           return;
         }
         const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
@@ -1134,7 +1136,8 @@ const native: LinearChannel = linearChannel({
           return;
         }
         const nativeLabel = (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined;
-        const forwarded = nativeLabel && data.message !== null ? { ...data, message: withReplierPrefix(data.message, nativeLabel) } : data;
+        const decided = nativeAction.kind === "post" ? { ...data, message: nativeAction.text } : data;
+        const forwarded = nativeLabel && decided.message !== null ? { ...decided, message: withReplierPrefix(decided.message, nativeLabel) } : decided;
         await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(forwarded, channel);
         return;
       }
@@ -1236,3 +1239,28 @@ const routes: LinearChannel["routes"] = native.routes.map((r) =>
 const channel: LinearChannel = { ...native, routes };
 
 export default withEndsTurnFinalChannel(channel);
+
+export function redactLinearActionPreviews<T>(data: T): T {
+  const actions = (data as { actions?: unknown } | null)?.actions;
+  if (!Array.isArray(actions)) return data;
+  let changed = false;
+  const next = actions.map((raw: unknown) => {
+    if (raw === null || typeof raw !== "object") return raw;
+    const a = raw as { description?: unknown; name?: unknown; input?: unknown };
+    let preview = "";
+    if (typeof a.description === "string" && a.description.length > 0) preview = a.description;
+    else if (typeof a.name === "string" && a.name.length > 0) preview = a.name;
+    else if (a.input !== undefined) {
+      try {
+        preview = JSON.stringify(a.input) ?? "";
+      } catch {
+        preview = "";
+      }
+    }
+    const struck = redactOutboundPreview(preview);
+    if (struck === preview) return raw;
+    changed = true;
+    return { ...a, description: struck };
+  });
+  return changed ? ({ ...(data as object), actions: next } as T) : data;
+}

@@ -1,4 +1,5 @@
 export { CredentialError, registerBroker, getSecretVia, getSecretWithLifetimeVia, resetBrokers } from "./access/credentials.js";
+export { redactOutboundPreview } from "./access/outbound-filter.js";
 export type { CredentialBroker, BrokeredSecret } from "./access/credentials.js";
 
 export {

@@ -474,6 +474,10 @@
       "types": "./dist/agent/access/nullable-optional-fields.d.ts",
       "default": "./dist/agent/access/nullable-optional-fields.js"
     },
+    "./agent/access/outbound-filter.js": {
+      "types": "./dist/agent/access/outbound-filter.d.ts",
+      "default": "./dist/agent/access/outbound-filter.js"
+    },
     "./agent/access/overlay-module.js": {
       "types": "./dist/agent/access/overlay-module.d.ts",
       "default": "./dist/agent/access/overlay-module.js"
@@ -585,6 +589,10 @@
     "./agent/access/self-host-egress.js": {
       "types": "./dist/agent/access/self-host-egress.d.ts",
       "default": "./dist/agent/access/self-host-egress.js"
+    },
+    "./agent/access/sensitive-data.js": {
+      "types": "./dist/agent/access/sensitive-data.d.ts",
+      "default": "./dist/agent/access/sensitive-data.js"
     },
     "./agent/access/settlement-dispatch-signal.js": {
       "types": "./dist/agent/access/settlement-dispatch-signal.d.ts",
@@ -981,6 +989,10 @@
     "./agent/audit/scrubbed-text.js": {
       "types": "./dist/agent/audit/scrubbed-text.d.ts",
       "default": "./dist/agent/audit/scrubbed-text.js"
+    },
+    "./agent/audit/secret-shapes.js": {
+      "types": "./dist/agent/audit/secret-shapes.d.ts",
+      "default": "./dist/agent/audit/secret-shapes.js"
     },
     "./agent/audit/siem-export.js": {
       "types": "./dist/agent/audit/siem-export.d.ts",
@@ -3910,6 +3922,7 @@
     "test:job-toolset": "NODE_NO_WARNINGS=1 tsx scripts/job-toolset-test.ts",
     "test:lean-seat": "NODE_NO_WARNINGS=1 tsx scripts/lean-seat-test.ts",
     "test:worker-toolset": "NODE_NO_WARNINGS=1 tsx scripts/worker-toolset-audit-test.ts",
+    "test:outbound-filter": "NODE_NO_WARNINGS=1 tsx scripts/outbound-filter-test.ts",
     "test:seat-read-recovery": "NODE_NO_WARNINGS=1 tsx scripts/seat-read-recovery-test.ts",
     "test:chat-read-container": "NODE_NO_WARNINGS=1 tsx scripts/chat-read-container-test.ts",
     "test:offline-seat-parity": "NODE_NO_WARNINGS=1 tsx scripts/offline-seat-parity-test.ts",

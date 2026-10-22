@@ -1,4 +1,5 @@
 import { defineState } from "eve/context";
+import { redactOutboundPreview } from "@open-everywhere/core/agent/adapter-api.js";
 import type {
   SlackEventContext,
   SlackRenderer,
@@ -45,7 +46,10 @@ export function genericTaskLabel(task: Pick<TaskCardTask, "kind" | "name">): str
 export function confidentialTaskCardView(view: TaskCardView, room: TaskCardRoom): TaskCardView {
   const tasks = view.tasks.map((task): TaskCardTask => {
     const { summary: _summary, blockedOn, ...rest } = task;
-    if (room === "direct-message") return blockedOn === undefined ? rest : { ...rest, blockedOn };
+    if (room === "direct-message") {
+      const struck = { ...rest, title: redactOutboundPreview(rest.title) };
+      return blockedOn === undefined ? struck : { ...struck, blockedOn };
+    }
     const redacted: TaskCardTask = { ...rest, title: genericTaskLabel(task) };
     return blockedOn === undefined ? redacted : { ...redacted, blockedOn: { kind: blockedOn.kind } };
   });

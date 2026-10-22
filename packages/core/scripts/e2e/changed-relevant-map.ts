@@ -173,6 +173,16 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-APP-HOME (OPE-2451) is the only live leg on the person's Home tab: a signed open publishes the page, Export hands the person their memory, and a forged Forget erases nothing. A change to the page model, the memory data plane behind it or the Slack half reaches exactly that leg. The domain memory canvas is NOT here: S-APP-HOME never reads a canvas, so it has its own area below (OPE-2499).",
   },
   {
+    area: "outbound-filter",
+    globs: [
+      "packages/core/agent/access/sensitive-data.ts",
+      "packages/core/agent/access/outbound-filter.ts",
+      "packages/core/agent/audit/secret-shapes.ts",
+    ],
+    scenarios: ["S-OUTBOUND-SENSITIVE"],
+    why: "S-OUTBOUND-SENSITIVE (OPE-2665) is the only live leg on the outbound sensitive-data filter. It plants a card number and a passport number in a file the agent reads, asks for both to be posted, and gates that neither reaches the room and that `outbound.withheld` rows name both detectors and no value. The detectors, the sink table and the shared secret shapes decide what it refuses.",
+  },
+  {
     area: "voice-clips",
     globs: [
       "packages/core/agent/channels/voice-clips.ts",

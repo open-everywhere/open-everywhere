@@ -223,6 +223,22 @@ try {
       (primaryState as unknown as Record<string, unknown>).oeOrganizationId === undefined,
       "NEGATIVE CONTROL: no workspace on the delivery ⇒ NO stamp (never a claim the delivery did not make)",
     );
+
+    const CARD = "4539 1488 0343 6467";
+    const sent = (): string => JSON.stringify(bodies.map((b) => b.variables?.input ?? {}));
+    reset();
+    const strikeState = nativeState();
+    await inSession(async () => {
+      await adapter["turn.started"]!({}, { state: strikeState });
+      await adapter["message.completed"]!({ finishReason: "tool-calls", message: `Saving card ${CARD} to a file` }, { state: strikeState });
+      await adapter["actions.requested"]!({ actions: [{ kind: "tool-call", toolName: "write_file", input: { path: "a.txt", content: `card ${CARD}` } }] }, { state: strikeState });
+      await adapter["actions.requested"]!({ actions: [{ kind: "tool-call", toolName: "write_file", input: { path: "b.txt", content: `card ${CARD}` } }] }, { state: strikeState });
+      await adapter["message.completed"]!({ finishReason: "stop", message: `Done: the card is ${CARD}.` }, { state: strikeState });
+    }, { agent_session_id: "sess-native", issue_id: "ISS-EVE" });
+    ok(bodies.length >= 4, `the native drive posted its previews and its answer (${bodies.length} activities)`);
+    ok(!sent().includes("4539") && !sent().includes("6467"), `🔴 no Agent Activity carries the card number — the closing text, the tool-call preview and the action preview are all struck (${sent().slice(0, 300)})`);
+    ok(sent().includes("withheld a card number"), "…and the answer tells the member what was withheld");
+    ok(sent().includes("[withheld: a card number]"), "…and a preview shows the strike marker in place of the value");
   }
 
   {

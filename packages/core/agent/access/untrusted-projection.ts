@@ -35,6 +35,7 @@ import { nativeAgentAllowedNow } from "./native-delegation-state.js";
 import { TASK_PARENT_TOOL_NAMES } from "./background-tasks.js";
 import { guardTaskContinuations } from "./worker-continuation.js";
 import { nullableOptionalToolSet } from "./nullable-optional-fields.js";
+import { filterToolsetOutbound } from "./outbound-filter.js";
 import { claimWorkerToolsetEvidence, currentWorkerToolsetIdentity } from "./worker-toolset-state.js";
 import { auditWorkerToolset } from "../audit/worker-toolset.js";
 import { classifyConnectorOpTier, isConnectorOpTool, isReservedNamespaceTool } from "./consequence.js";
@@ -209,6 +210,8 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
   guardTaskContinuations(toolset);
 
   nullableOptionalToolSet(toolset);
+
+  filterToolsetOutbound(toolset);
 
   if (workerWake) recordWorkerToolset(Object.keys(toolset), workerWithheld);
 

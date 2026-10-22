@@ -4,16 +4,9 @@ import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "./audit.js";
 import type { AuditDetail, ScrubbedAuditText } from "./scrubbed-text.js";
+import { SECRET_SHAPES } from "./secret-shapes.js";
 
 const MAX_AUDIT_ERROR_CHARS = 300;
-
-const SECRET_SHAPES: readonly RegExp[] = [
-  /\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi,
-  /\bsk-[A-Za-z0-9_-]{8,}/g,
-  /\bxox[abprs]-[A-Za-z0-9-]{8,}/g,
-  /\bgh[pousr]_[A-Za-z0-9]{8,}/g,
-  /\bAKIA[0-9A-Z]{12,}/g,
-];
 
 function builtInAuditScrub(text: string): string {
   let scrubbed = text;

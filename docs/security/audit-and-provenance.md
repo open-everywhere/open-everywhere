@@ -486,6 +486,8 @@ an org admin may still ask for a person-group there.
 | `browser.<verb>` | A browser-toolkit verb runs. | Ids and the verb only — never the arguments, and never the output. 🔴 The action name is **dotted**: `browser_navigate` audits as `browser.navigate`, because the double underscore is the connector-op separator. The write is best-effort, so a failed audit never fails the tool. |
 | `bash.timeout` | A shell command hits its timeout. | The tool name and the timeout in milliseconds. |
 | `bash.background_unredirected` | A backgrounded shell command's output is redirected nowhere. | The tool name. |
+| `outbound.withheld` | The outbound filter refused a tool call, or struck a text, because it carried a card number, a government ID number or a secret ([Security model § 7](./security-model.md#7-card-numbers-id-numbers-and-secrets-do-not-leave)). | The sensitivity tier (`strictest`), the sink (the tool name, `closing-prose` or `a2a-answer`), the detector names, the count, and the session and turn ids. Never the matched value. A `closing-prose` row records the strike before the arm decides to post or drop the text, so it does not prove a post was attempted. |
+| `outbound.held` | The outbound filter held a tool call, or struck a text, that carried health or personal-finance data no member asked for in the turn. | The same fields, at the `explicit` sensitivity tier. |
 | `stall.nudge` | The stall guard trips on repeated identical tool calls. | The tool name, the threshold it tripped at, and the strike count. The nudge then throws, so the model is told rather than looped. |
 
 ### Turn, reply and window rows

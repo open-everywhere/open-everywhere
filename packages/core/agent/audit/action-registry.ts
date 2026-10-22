@@ -942,6 +942,18 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     notExercised:
       "no e2e leg opts a person out first, for the reason `person.opt_out.set` gives; the unit packs (`test:person-opt-out`, `test:slack-side-panel`) drive both legs through the real write road and the real front route. The integration tier drives the memory-write leg on a real host, in a shared room, through the work session's persist (`tests/integration/memory/person-opt-out-shared-room.test.ts`, OPE-2497).",
   },
+  {
+    action: "outbound.withheld",
+    fields: ["tier", "sink", "types", "count"],
+    proves: "the agent refused to send a card number, a government ID number or a secret, through which sink, and which detectors matched",
+  },
+  {
+    action: "outbound.held",
+    fields: ["tier", "sink", "types", "count"],
+    proves: "the agent held health or personal-finance data that no member asked for in the turn, and through which sink",
+    notExercised:
+      "the e2e leg S-OUTBOUND-SENSITIVE plants strictest-tier data only; an explicit-tier hold needs a second planted document and a judged ask-back turn. The unit pack `test:outbound-filter` drives the hold through the real projection seam.",
+  },
 ];
 
 const AUDIT_ACTION_PLATFORMS: readonly string[] = ["slack", "discord", "teams", "github", "linear", "notion", "unified"];
@@ -1219,6 +1231,11 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
 ];
 
 export const DYNAMIC_ACTION_SITES: readonly DynamicActionSite[] = [
+  {
+    file: "packages/core/agent/access/outbound-filter.ts",
+    expression: "refusal.action",
+    emits: ["outbound.withheld", "outbound.held"],
+  },
   {
     file: "packages/core/agent/a2a/inbound/audit.ts",
     expression: "row.action",

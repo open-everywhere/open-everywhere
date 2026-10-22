@@ -13,7 +13,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { z } from "zod";
 
 import { projectToolSet } from "../agent/access/untrusted-projection.js";
-import { optionalNonNullablePaths, allowsNull } from "../agent/access/nullable-optional-fields.js";
+import { optionalNonNullablePaths, allowsNull, nullableOptionalSchema } from "../agent/access/nullable-optional-fields.js";
 import { registeredMountedEntries } from "../agent/access/window-gated.js";
 import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 import setSpendLimit, { planSetSpendLimit } from "../agent/tools/set_spend_limit.js";
@@ -118,10 +118,7 @@ eq(keep.received, { need: "a", clear: null }, "🔴 §4 a field that ALREADY all
 const reqNull = await driveToolCall(mixed, { need: null }, true);
 ok(reqNull.error !== undefined && reqNull.received === undefined, "🔴 §4 a REQUIRED field sent as null still FAILS validation — only optional fields are widened");
 const allRequired = z.object({ a: z.string(), b: z.number() });
-const idToolset: Record<string, unknown> = { t: tool({ description: "t", inputSchema: allRequired as never, execute: async () => "ok" }) };
-const idBefore = (idToolset.t as { inputSchema: unknown }).inputSchema;
-projectToolSet(idToolset);
-ok((idToolset.t as { inputSchema: unknown }).inputSchema === idBefore, "§4 a schema with no optional field keeps its object identity");
+ok(nullableOptionalSchema(allRequired) === undefined, "§4 a schema with no optional field is not rewritten (the module answers undefined)");
 const stableToolset: Record<string, unknown> = { t: tool({ description: "t", inputSchema: mixed as never, execute: async () => "ok" }) };
 projectToolSet(stableToolset);
 const first = (stableToolset.t as { inputSchema: unknown }).inputSchema;
@@ -192,3 +189,5 @@ const left = await offenders(true);
 eq(left, [], "🔴 §6 WITH the seam no registered tool advertises an optional non-nullable property");
 
 console.log(`\nnullable-optional-fields: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-nullable-optional-fields

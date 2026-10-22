@@ -626,6 +626,100 @@ The audit log captures who, what, where, and when for memory writes, egress and 
 
 Per-surface and per-workspace token budgets are enforced from a DB-backed, org-partitioned ledger; an over-budget scope declines new work cleanly rather than degrading silently. Budgets are set in config and can be bridged **up** or tightened **down** at runtime through an audited override — spend is the one plane where a widening bridge is allowed, because a budget is not a security boundary. The override replaces each cap component it names and leaves the components it does not name at the config value. See [Spend & cost controls](./spend-and-cost.md).
 
+## 7. Card numbers, ID numbers and secrets do not leave
+
+Open Everywhere checks the text the agent writes for sensitive data before that text leaves the org
+(OPE-2665). The check has two **sensitivity tiers**:
+
+| Sensitivity tier | What it covers (shipped) | What happens |
+|---|---|---|
+| `strictest` | card numbers (brand prefix, length and Luhn check), US Social Security numbers, UK National Insurance numbers, passport numbers beside the word "passport", passport machine-readable lines (check digits verified), NHS numbers (mod-11), and secrets: the audit scrub's key shapes, private-key blocks, `Bearer` tokens, GitHub, Google and Stripe keys | **Withheld.** Nothing is sent. The agent is told to say plainly what it withheld and why. |
+| `explicit` | personal finance (IBAN with mod-97 check, sort codes, US routing numbers, bank account numbers) and health (a diagnosis or medicine named with its verb, medical record numbers, ICD-10 codes) | **Held**, unless a member asked for it in this turn. A held call sends nothing, and the agent asks the member first. |
+
+**Where the check runs.** Text the model writes leaves the org through four doors, and the check
+runs at each one:
+
+- **Every tool call.** `projectToolSet` (`packages/core/agent/access/untrusted-projection.ts`) runs
+  on the full toolset before every model call. It wraps each tool's input validation with the filter
+  (`packages/core/agent/access/outbound-filter.ts`). Validation runs before eve raises an approval
+  card and before the tool runs, so a withheld call puts no card in a room, starts no worker and
+  reaches no vendor. The sinks this covers include `reply`, `post_message`, `dm_person`, `post_file`,
+  `ask_question`, every connector and MCP operation (`connection_execute`), `web_fetch`, `bash`,
+  `open_pull_request` and the ticket verbs.
+- **The closing text.** `finalMessageAction` (`packages/core/agent/channels/turn-delivery.ts`)
+  strikes every `strictest` span, and every `explicit` span no member asked for, before any arm
+  decides to post the text or drop it, and adds a line that says what it withheld. Linear's native
+  arm posts closing text, and every other arm drops it (OPE-2006). Slack's supervisor arm would post
+  it only on a surface whose capability manifest declares no `midTurnPost`, and Slack's manifest
+  always declares it (`packages/providers/slack/agent/register.ts`). An arm that posts it posts the
+  struck text. The
+  row it writes records the strike, whether or not the arm then posts the text.
+- **A host preview of model text.** Linear's native arm shows each tool call's input and the first
+  line of mid-turn text as Agent Activities, and Slack's task card shows a worker's brief as its
+  title in a 1:1 DM. Each is struck in place before it is shown (`redactOutboundPreview`).
+- **The answer to an inbound A2A task** (`packages/core/agent/a2a/inbound/answer.ts`). It goes to an
+  external caller and no member asks on that path, so both tiers are struck.
+
+**A new sink cannot skip it.** The sink table is default-outbound: a tool name the filter has never
+seen is filtered. Ten tools skip the check, and each one states why its input stays inside the
+deployment (`OUTBOUND_INTERNAL_TOOLS`): `agent`, `work`, `cancel_work`, `task_cancel`, `task_wait`,
+`final_output`, and the four sandbox file tools. `npm run test:outbound-filter` refuses an internal
+row that names an unknown or gated tool, and proves an unknown name is filtered. A tool whose input
+schema cannot be wrapped is removed from the toolset, never left mounted unfiltered.
+
+**What counts as "a member asked".** The filter reads the member's own trigger body captured in the
+current turn (`requesterAsksThisTurn`, `packages/core/agent/access/requester-messages.ts`), never the
+rendered wake envelope, which also carries other people's backscroll. A worker reads the asks the
+seat forwarded to it. The ask counts when the member wrote the value itself, or named the data
+("send our bank details", "the medical summary", "the health records"). A phrase ordinary
+engineering text uses ("health check", "diagnosis of the outage", "AWS account number", "condition")
+does not count. Neither slot holds a tainted, delegated-child or unattended
+delivery, so text planted in a document cannot stand in for a member's ask. A bare "yes" names nothing, so the hold tells the agent to ask the member to name the
+data when they confirm. An ask never lifts the `strictest` tier.
+
+**Why deterministic detectors, measured.** Each shipped detector tests the format's own check: a
+Luhn digit, an ICAO check digit, a mod-97 or mod-11 remainder. A detector that tests the check finds
+every value written in its own format (0 misses in the measurement below), and it costs microseconds
+on every call. A model classifier
+would see context these cannot, but it would cost a model call per outbound call, and its accuracy
+is not measured. So the shipped table is deterministic, and the classifier is not built.
+`npm run measure:sensitive-data` produces these numbers, and it fails if a detector change crosses
+its bounds (measured on 2026-10-23):
+
+| Corpus | Size | Matched |
+|---|---|---|
+| Real text: every line of `docs/`, of `packages/*/agent/**` and `agent/**` source, and of the git history | 291,148 lines | 2 (0.0007%). Both are a documented sample AWS key id. |
+| Generated look-alikes: Slack timestamps, snowflakes, order, tracking and phone numbers, UUIDs, SHAs, prices | 20,000 lines | 81 (0.41%), all `card-luhn`: a random 16-digit id with a card prefix passes Luhn one time in ten |
+| Generated in-format values (cards, government IDs, finance, health) | 4,400 values | 0 missed |
+
+**The bounds.** The filter is a floor under the model's own judgment, not a data-loss-prevention
+appliance:
+
+- A value in a form no detector claims passes: a card number written in groups of three, with a dash
+  between every digit, or split across two fields; a passport number without the word "passport"; a
+  nine-digit SSN with no dashes and no label. The measurement reports these misses (100% each).
+- An encoded value (base64, hex) or a value spelled in words passes.
+- An input the filter cannot read whole is withheld, not passed: a tool input nested deeper than 32
+  levels or with more than 20,000 leaves, or a text longer than 4 MiB. Object keys are scanned with the
+  values.
+- An internal tool passes anything. `write_file` can put a card number in a sandbox file, and a later
+  `bash` command can send that file without the number ever appearing in a tool input. The egress
+  firewall bounds where that command can reach. This filter does not see those bytes.
+- A provider-executed `web_search` runs its query at the model provider, before any byte of the call
+  passes this process, so the filter never sees that query.
+- The model provider sees the value when the agent reads it. Model calls are not a sink this filter
+  covers: the provider terms are set by `models.dataPolicy` ([Sovereignty](./sovereignty.md)).
+- The AI SDK's own error text quotes the refused input back to the model. The model wrote those
+  bytes and they stay in its context. The text Open Everywhere writes names categories only.
+
+**Audit.** A withheld call writes an `outbound.withheld` row and a held call writes an
+`outbound.held` row. Each row names the sensitivity tier, the sink, the detector names and the count,
+and never the matched value.
+
+**Your switch.** `sensitiveData.extraPatterns` in `agent/settings/settings.ts` adds the org's own
+detectors, at either sensitivity tier. It cannot remove or lower a shipped detector: a card number
+leaves only by a reviewed change to the code.
+
 ## The supply-chain invariant
 
 One property is worth calling out for anyone forking or contributing: **this repository runs no GitHub Actions workflow at all.** `.github/` holds a CODEOWNERS file, the issue templates and the PR template, and nothing else. Gates run on the contributor's own machine or in a cloud sandbox, and a run's evidence is posted back as a commit status. So the classic open-source RCE — `pull_request_target` plus a PR-head checkout plus secrets in the environment — has no lane to take: there is no workflow for a fork's pull request to reach, and no Actions secret to reach for. A fork that adds its own deploy job takes that lane on: keep any such job on `push` to the base branch, never on `pull_request`, and see the template in the repository, at `docs/how-it-works/deploy-on-merge.yml.example`. This invariant is not to be weakened without a security review.
@@ -661,6 +755,7 @@ Every section above states a control and where it is enforced. This one states w
 | Control-plane auth (fail-closed) | the admin resource server | `OE_ADMIN_*` issuer config |
 | Repo access (short-lived tokens) | the GitHub App identity | `OE_GITHUB_APP_*` |
 | Approval gates (consequence tiers) | the consequence registry + ActionKind approvals plane | `consequence.ts` (pinned by `npm run lint:consequence`) |
+| Card numbers, government ID numbers and secrets never leave; health and finance data leave only on a member's ask | the outbound filter at the toolset seam and the closing text | `sensitiveData.extraPatterns` adds detectors; nothing removes a shipped one |
 | Append-only audit | the audit store | `npm run audit` |
 | Fork-safe supply chain | no workflow ships, so a fork PR reaches no Actions secret | invariant — do not weaken |
 

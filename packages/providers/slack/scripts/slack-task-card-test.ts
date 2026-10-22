@@ -75,6 +75,8 @@ const viewOf = (tasks: TaskCardTask[], state: TaskCardView["state"] = "working")
   eq(dm.tasks[0]?.title, `Researcher: ${DM_BRIEF}`, "a DM row keeps its title (negative control)");
   ok(dm.tasks[0]?.summary === undefined, "a DM's completed row shows no result excerpt either — it would bypass review-surface.ts");
   eq(done.title, `Researcher: ${DM_BRIEF}`, "the input view is never changed");
+  const carded = confidentialTaskCardView(viewOf([task({ title: "Researcher: charge card 4539 1488 0343 6467 again" })]), "direct-message");
+  ok(!(carded.tasks[0]?.title ?? "").includes("4539") && (carded.tasks[0]?.title ?? "").includes("[withheld: a card number]"), "🔴 a DM row's title is struck of a card number");
   eq(confidentialTaskCard(viewOf([task()]), (v) => ({ blocks: [], text: v.tasks[0]?.title ?? "" }), "shared")?.text, "Researcher", "the link hands the redacted view to `next`");
 
   const blocked = task({ blockedOn: { kind: "input", label: `Should I quote ${DM_BRIEF}?` }, status: "blocked" });

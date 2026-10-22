@@ -868,6 +868,19 @@ limit untouched, and falls back to the **built-in truncation** on every abstenti
 an arm that answers nothing, an arm that throws, and an arm that times out. Whatever the arm does
 return is capped again, so the arm's output can never exceed the built-in cap.
 
+**sensitivity tier** — how sensitive one piece of OUTBOUND data is (OPE-2665). `strictest` (card
+numbers, government ID numbers, secrets) never leaves the org: the outbound filter withholds the
+call. `explicit` (health, personal finance) leaves only when a member asked for it in the turn:
+otherwise the filter holds the call. The filter runs on every OUTBOUND tool input at the toolset seam
+(the sink table is default-outbound, and ten internal tools skip it), on a reply's closing text, on
+the host previews that show model text (Linear's activity previews, the Slack task card title) and on
+the inbound A2A answer.
+Source: `packages/core/agent/access/sensitive-data.ts#SensitiveTier`, `packages/core/agent/access/sensitive-data.ts#SHIPPED_DETECTORS`,
+the sink table at `packages/core/agent/access/outbound-filter.ts#OUTBOUND_INTERNAL_TOOLS`.
+Not to be confused with: a **source tier** (is an INGESTED read untrusted), a **gate tier** (what a
+tainted turn does at a sink), or a **consequence tier** (what a tool costs on any turn). The
+sensitivity tier reads the bytes LEAVING, and it reads no taint.
+
 ---
 
 ## 4. Approvals
