@@ -656,6 +656,12 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     proves: "the agent was halted, through which door, and whether the halt was announced",
     notExercised: "S-HALT is declared RED-until-fixture: the halt is cleared only through the control plane, so a pack holding a read token could never lift one it set.",
   },
+  {
+    action: "admin.halt.refused",
+    fields: ["door", "reason"],
+    proves: "a chat halt that no person in the turn asked for was refused, and nothing stopped (OPE-2659) — the trace of a seat that read halt talk as an ask",
+    notExercised: "no e2e leg calls halt without a person's ask; tests/integration/approvals/halt-backscroll.test.ts drives the row on a live host.",
+  },
   { action: "admin.halt.cleared", fields: ["door", "cleared"], proves: "a halt was lifted, and what it had been holding", notExercised: "pairs with admin.halt.set — no leg may set a halt it cannot clear." },
   {
     action: "admin.secret.adopt_env",

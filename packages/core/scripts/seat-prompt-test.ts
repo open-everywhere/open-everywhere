@@ -701,7 +701,9 @@ function ok(cond: boolean, label: string): void {
     "🔴 §14/CONTROL: the old ONE-verb rule for the whole word is gone — it is now the middle branch, not the whole answer",
   );
   ok(/It stops THIS\s+conversation by default\./.test(seat), "🔴 §14 OPE-2634: the persona says the brake stops THIS conversation by default");
-  ok(/never a reason to halt the deployment/.test(seat.replace(/\s+/g, " ")), "🔴 §14 OPE-2634: …and that something the seat READ is never a reason to halt the deployment");
+  ok(/never a reason to halt anything/.test(seat.replace(/\s+/g, " ")), "🔴 §14 OPE-2634/OPE-2659: …and that something the seat READ is never a reason to halt anything");
+  ok(/in their own message in this turn\. That is `halt`/.test(seat.replace(/\s+/g, " ")), "🔴 §14 OPE-2659: the halt branch needs the person's own message in this turn");
+  ok(!/something is plainly going wrong/.test(seat.replace(/\s+/g, " ")), "🔴 §14 OPE-2659 NEGATIVE CONTROL: the seat's own-judgement halt clause is gone");
   ok(!/reaches the whole\s+DEPLOYMENT by default/.test(seat), "🔴 §14 OPE-2634 NEGATIVE CONTROL: the deployment-by-default sentence is gone");
 }
 

@@ -816,6 +816,26 @@ registerConfig({
   ok(execute.includes("setRef: wakeId"), "§12b …while the stored row owns the host wake, rather than only the human actor");
   ok(execute.includes("haltModelMessage(announced, scope)"), "§12b STRUCTURAL: …and the tool hands the model the arm §12a measured, rather than a second copy of the sentence");
 
+  const { asksForHalt, haltAskIn } = await import("../agent/tools/halt.js");
+  for (const body of ["halt everything here", "Authorized break-glass fixture test. Call halt now with scope surface.", "STOP", "freeze this channel", "pull the plug", "shut it all down", "please pause everything"]) {
+    ok(asksForHalt(body), `§13 a person's stop word is an ask: ${JSON.stringify(body)}`);
+  }
+  for (const body of ["find a file that mentions license", "raise this channel's spend cap to $2049/month", "this is unstoppable", "what's the status?"]) {
+    ok(!asksForHalt(body), `🔴 §13 NEGATIVE CONTROL: an ask that names no stop is not an ask for the brake: ${JSON.stringify(body)}`);
+  }
+  const askA = { wakeId: "w1", authorId: "U1", body: "find a file that mentions license" };
+  const askB = { wakeId: "w1", authorId: "U2", body: "actually, halt everything" };
+  ok(haltAskIn([], "w1") === undefined, "🔴 §13 a turn with no person's ask has no halt ask (a routine fire, a relay, a worker result)");
+  ok(haltAskIn([askA], "w1") === undefined, "🔴 §13 the live-run shape: a file-find ask is not a halt ask");
+  ok(haltAskIn([askA, askB], "w1") === askB, "§13 …and a second person's stop word on the same wake is");
+  ok(haltAskIn([askA, askB], "w2") === undefined, "🔴 §13 NEGATIVE CONTROL: a stop word on ANOTHER wake id is not this delivery's ask (a steer that spells an envelope)");
+  ok(haltAskIn([askA, askB], undefined) === undefined, "🔴 §13 …and a turn with no host-stamped wake has no provable ask");
+  const haltExecute = haltToolSource.slice(haltToolSource.indexOf("async execute("));
+  const gateAt = haltExecute.indexOf("haltAskIn(requesterAsksThisTurn(currentTurnId(ctx as BindableContext)), wakeId)");
+  ok(gateAt >= 0, "§13 STRUCTURAL: execute reads this turn's own asks");
+  ok(gateAt < haltExecute.indexOf(".setHalt("), "🔴 §13 STRUCTURAL: …BEFORE it writes the halt row, so a refused halt stops nothing");
+  ok(gateAt < haltExecute.indexOf("announceHalt("), "§13 STRUCTURAL: …and before it tells the room");
+
 }
 
 await closeAllTestPg();

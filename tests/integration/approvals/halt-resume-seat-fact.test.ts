@@ -1,3 +1,5 @@
+// proves: admin.halt.set, admin.halt.cleared
+
 import { afterAll, beforeAll, expect, test } from "vitest";
 import {
   auditCursor,
@@ -72,7 +74,7 @@ async function controlWrite(name: string, args: Record<string, unknown>): Promis
 }
 
 test("① a chat `halt` with no scope halts THIS ROOM, never the deployment (OPE-2634)", async () => {
-  const { cursor } = await driveTurn("hrs-halt", [
+  const { cursor } = await driveTurn("hrs-halt halt this room now", [
     { calls: [{ tool: "halt", input: {}, id: "hrs-halt-call" }] },
     { calls: [{ tool: "reply", input: { text: "Stopped this room.", wake: WAKE_FROM_ENVELOPE }, id: "hrs-halt-reply" }] },
   ]);

@@ -1,3 +1,5 @@
+// proves: admin.halt.set
+
 import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { afterAll, expect, test } from "vitest";
 
@@ -59,7 +61,7 @@ test("② a real `halt` call posts the host's confirmation into the room, and th
   __setTestValveForTest("egress-spoof", false);
   (discord.messages as DiscordCreateMessageCall[]).length = 0;
 
-  const cursor = await driveTurn("hc-halt", [
+  const cursor = await driveTurn("hc-halt halt everything here", [
     { calls: [{ tool: "halt", input: { scope: "surface" }, id: "hc-halt-call" }] },
     { calls: [{ tool: "reply", input: { text: "Stopped everything here.", wake: WAKE_FROM_ENVELOPE }, id: "hc-halt-reply" }] },
   ]);

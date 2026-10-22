@@ -110,3 +110,14 @@ export function requesterAsksForWake(input: { readonly turnId: string | undefine
   if (state.turn !== input.turnId) return [];
   return state.asks.filter((a) => a.wakeId === input.wakeId && a.authorId === input.principalId).map((a) => a.body);
 }
+
+export function requesterAsksThisTurn(turnId: string | undefined): readonly RequesterAsk[] {
+  if (turnId === undefined || turnId.length === 0) return [];
+  let state: RequesterAsksState;
+  try {
+    state = readAsksState(asksSlot.get());
+  } catch {
+    return [];
+  }
+  return state.turn === turnId ? state.asks : [];
+}
