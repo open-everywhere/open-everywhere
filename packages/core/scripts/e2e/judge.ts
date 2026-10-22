@@ -26,13 +26,17 @@ export interface ReplyJudge {
 }
 
 function foldTypographic(s: string): string {
-  return s.replace(/[\u2010-\u2015\u2212]/g, "-").replace(/[\u00a0\u202f]/g, " ");
+  return foldQuotes(s.replace(/[\u2010-\u2015\u2212]/g, "-").replace(/[\u00a0\u202f]/g, " "));
+}
+
+function foldQuotes(s: string): string {
+  return s.replace(/[\u2018\u2019\u201a\u201b\u02bc\u2032]/g, "'").replace(/[\u201c\u201d\u201e\u201f\u2033]/g, '"');
 }
 
 function matches(reply: string, pattern: string | RegExp): boolean {
   return typeof pattern === "string"
     ? foldTypographic(reply).toLowerCase().includes(foldTypographic(pattern).toLowerCase())
-    : pattern.test(reply);
+    : pattern.test(foldQuotes(reply));
 }
 
 export function runFallbackCheck(check: FallbackCheck, reply: string): { pass: boolean; detail: string } {
@@ -253,6 +257,7 @@ export function renderReportedJudgeSummary(total: number, reds: readonly string[
 
 export function resolveJudge(): ReplyJudge {
   const key = process.env.AI_GATEWAY_API_KEY;
+  if (key === "") return new FallbackJudge("AI_GATEWAY_API_KEY is set but EMPTY — a shell assignment from an unset variable blanked it; check the source variable is set, or source .env.e2e with `set -a` and do not reassign it");
   if (!key) return new FallbackJudge("no AI_GATEWAY_API_KEY reachable — source .env.e2e to enable the LLM judge");
   const base = (process.env.AI_GATEWAY_BASE_URL ?? "https://ai-gateway.vercel.sh/v1").replace(/\/+$/, "");
   const model = process.env.E2E_JUDGE_MODEL ?? "openai/gpt-6-luna";

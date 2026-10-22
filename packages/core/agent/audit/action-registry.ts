@@ -946,6 +946,8 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     action: "outbound.withheld",
     fields: ["tier", "sink", "types", "count"],
     proves: "the agent refused to send a card number, a government ID number or a secret, through which sink, and which detectors matched",
+    notExercised:
+      "no live leg can force it: the row appears only when the model TRIES to send the value, and a model that declines by itself sends nothing for the filter to catch (S-OUTBOUND-SENSITIVE in a live run: the model refused, no row). The leg gates the outcome (no planted value in the room) and checks any row it finds. The unit pack `test:outbound-filter` drives the withhold and its row through the real projection seam (`projectToolSet`).",
   },
   {
     action: "outbound.held",

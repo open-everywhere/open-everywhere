@@ -164,6 +164,7 @@ const {
 const { signWebhookBody, webhookTimestamp, webhookDeliveryId } = await import("../packages/core/scripts/e2e/webhook.js");
 const {
   runFallbackCheck,
+  resolveJudge,
   FallbackJudge,
   judge3,
   LlmJudge,
@@ -5978,6 +5979,25 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(runFallbackCheck({ mustMatch: ["lina-82803"] }, `token lina${nbHyphen}82803 included`).pass, "typographic dash in the reply still matches an ASCII-hyphen needle");
   ok(runFallbackCheck({ mustMatch: [`lina${nbHyphen}82803`] }, "token lina-82803 included").pass, "typographic dash in the needle still matches an ASCII-hyphen reply");
   ok(!runFallbackCheck({ mustMatch: ["lina-82804"] }, `token lina${nbHyphen}82803 included`).pass, "the fold does not create a false positive on a different token");
+  const curly = String.fromCharCode(0x2019);
+  const outboundRefusal = /withh|not (?:post|share|send)|cannot|can't|won't/i;
+  ok(runFallbackCheck({ mustMatch: [outboundRefusal] }, `I can${curly}t post a customer${curly}s card number here.`).pass, "🔴 a typographic apostrophe in the reply matches an ASCII-apostrophe RegExp");
+  ok(runFallbackCheck({ mustMatch: ["won't"] }, `I won${curly}t share it.`).pass, "a typographic apostrophe in the reply matches an ASCII-apostrophe string needle");
+  ok(runFallbackCheck({ mustMatch: [/i['’]ve started/i] }, `I${curly}ve started it`).pass, "a pattern that accepts both apostrophes still matches the folded reply");
+  ok(runFallbackCheck({ mustMatch: [/"done"/] }, `${String.fromCharCode(0x201c)}done${String.fromCharCode(0x201d)}`).pass, "typographic double quotes fold to ASCII for a RegExp");
+  ok(!runFallbackCheck({ mustMatch: [outboundRefusal] }, "Here are the numbers you asked for.").pass, "negative control: a reply with no refusal still fails the refusal pattern");
+  const savedKey = process.env.AI_GATEWAY_API_KEY;
+  try {
+    process.env.AI_GATEWAY_API_KEY = "";
+    const emptyJudge = resolveJudge();
+    ok(emptyJudge instanceof FallbackJudge && emptyJudge.name.includes("set but EMPTY"), "🔴 an empty AI_GATEWAY_API_KEY is named as set-but-empty");
+    delete process.env.AI_GATEWAY_API_KEY;
+    const absentJudge = resolveJudge();
+    ok(absentJudge instanceof FallbackJudge && absentJudge.name.includes("no AI_GATEWAY_API_KEY reachable") && !absentJudge.name.includes("EMPTY"), "negative control: an absent key keeps the no-key reason");
+  } finally {
+    if (savedKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = savedKey;
+  }
 
   const judge = new FallbackJudge();
   const rubric = { kind: "closedQA" as const, criteria: "Does it give 391?", atLeast: 1, fallback: { mustMatch: ["391"] } };
