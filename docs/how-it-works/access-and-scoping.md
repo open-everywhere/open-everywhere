@@ -561,6 +561,23 @@ GitHub?" or "what can I change from chat?". The agent answers from its live setu
   shared channel, everyone there reads the reply. "Installed" means the GitHub app has an
   installation for the repository's owner; it does not prove the installation covers that one
   repository.
+- **The deployment's own address (OPE-2669).** The seat's instructions carry the deployment's web
+  address and its one OAuth callback URL (`status/public-url.ts`), and `agent_version`'s `publicUrl`
+  field carries the same two values for a worker. Both come from the resolver the OAuth sign-in
+  flow itself sends as its redirect URI: `OE_PUBLIC_BASE_URL`, then `VERCEL_PROJECT_PRODUCTION_URL`,
+  then `VERCEL_URL`. So the URL a person gives an identity-provider admin is the URL the flow sends.
+  Every OAuth service, Notion included, uses this one callback. A service that registered itself
+  (`discovery-dcr-pkce`) before the address changed keeps the callback it registered with, so the old
+  host must still route to the deployment (see Connectors and providers). When no address resolves, the agent
+  says so and names `OE_PUBLIC_BASE_URL`. The agent names the address only when the binding's trust
+  is internal. That trust fails closed. In an externally shared room, or a DM whose partner is not
+  verified, the agent says it gives the address in a DM or an internal channel. The seat of a
+  unified window that serves several surfaces never names the address, because its deliveries differ
+  in trust: it says it gives the address in a DM. A worker that seat starts answers from the trust of
+  the delivery that started it, and replies to that delivery's thread. One
+  limit: on Slack a channel's trust is its external-sharing verdict, not a check of each member. A
+  guest who is a member of an internal channel is not detected, so that guest can read the address.
+  The address is not a secret.
 
 Neither read changes anything. They never add an admin: the roster is config and changes by pull
 request. On a fresh install the `org` admins list is empty, and the agent says that no admins are set

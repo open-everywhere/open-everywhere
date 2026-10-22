@@ -5,7 +5,7 @@ import {
   encryptedKvVault,
   recordXaaRefusal,
   getSecretVia,
-  OE_OAUTH_CALLBACK_PATH,
+  oeOauthCallbackUrl,
   verifyOidcIdToken,
   type XaaBindingVerdict,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -53,6 +53,7 @@ interface DcrClientRecord {
   readonly resource: string;
   readonly scopes?: readonly string[];
   readonly registeredAt: number;
+  readonly redirectUri?: string;
 }
 
 interface StaticClientRecord {
@@ -156,10 +157,7 @@ function subjectKey(subject: OeOauthSubject): string {
 }
 
 function defaultRedirectUri(): string | undefined {
-  const base = process.env.OE_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "");
-  if (!base) return undefined;
-  const withScheme = /^https?:\/\//i.test(base) ? base : `https://${base}`;
-  return `${withScheme}${OE_OAUTH_CALLBACK_PATH}`;
+  return oeOauthCallbackUrl();
 }
 
 export type OeOauthProviderSource = ReadonlyMap<string, OeOauthProviderConfig> | (() => ReadonlyMap<string, OeOauthProviderConfig>);
@@ -236,7 +234,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
       }
       const redirectUri = redirectUriOf();
       if (!redirectUri) {
-        throw new Error(`connection "${providerRef}": OE_PUBLIC_BASE_URL is unset — cannot register a DCR client without a redirect_uri.`);
+        throw new Error(`connection "${providerRef}": this deployment has no public URL (set OE_PUBLIC_BASE_URL) — cannot register a DCR client without a redirect_uri.`);
       }
       const endpoints = await discoverEndpoints(cfg.resource, doFetch);
       const { clientId } = await registerClient(
@@ -253,6 +251,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
         resource: cfg.resource,
         ...(cfg.scopes ? { scopes: cfg.scopes } : {}),
         registeredAt: now(),
+        redirectUri,
       };
       await vault.write(dcrRef(providerRef), JSON.stringify(record), { connector: providerRef });
       return record;
@@ -328,7 +327,7 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
     requireXaaPerson(cfg.ref, subject);
     const oidc = await oidcFor(cfg);
     const redirectUri = redirectUriOf();
-    if (!redirectUri) throw new Error(`connection "${cfg.ref}": OE_PUBLIC_BASE_URL is unset — cannot build a redirect_uri.`);
+    if (!redirectUri) throw new Error(`connection "${cfg.ref}": this deployment has no public URL (set OE_PUBLIC_BASE_URL) — cannot build a redirect_uri.`);
     const state = newState();
     const pkce = newPkce();
     const nonce = newNonce();
@@ -693,8 +692,12 @@ export function makeOeOauthTokenVault(source: OeOauthProviderSource, deps: OeOau
         return out;
       }
       const client = await ensureClient(providerRef);
-      const redirectUri = redirectUriOf();
-      if (!redirectUri) throw new Error(`connection "${providerRef}": OE_PUBLIC_BASE_URL is unset — cannot build a redirect_uri.`);
+      let redirectUri = redirectUriOf();
+      if (!redirectUri) throw new Error(`connection "${providerRef}": this deployment has no public URL (set OE_PUBLIC_BASE_URL) — cannot build a redirect_uri.`);
+      if (!isStaticClient(client) && client.redirectUri !== undefined && client.redirectUri !== redirectUri) {
+        console.warn(`[oe-oauth] connection "${providerRef}": its dynamic client registered with ${client.redirectUri}; this deployment's callback is now ${redirectUri}. Sending the registered one.`);
+        redirectUri = client.redirectUri;
+      }
       const state = newState();
       const pkce = isStaticClient(client) ? { verifier: "", challenge: "" } : newPkce();
       const pending: PendingRecord = {

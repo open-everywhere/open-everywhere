@@ -3,8 +3,14 @@ import "../channels/work-sign-in-resume.js";
 import type { ConsentCarriage } from "./user-auth-flow.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { pageBaseUrl } from "../credentials/page-token.js";
 
 export const OE_OAUTH_CALLBACK_PATH = "/oauth/v1/callback";
+
+export function oeOauthCallbackUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const base = pageBaseUrl(env);
+  return base === undefined ? undefined : `${base}${OE_OAUTH_CALLBACK_PATH}`;
+}
 
 export interface OeOauthCallbackArgs {
   readonly state: string;

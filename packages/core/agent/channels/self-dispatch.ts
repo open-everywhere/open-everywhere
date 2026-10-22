@@ -11,6 +11,7 @@ import { deploymentOrg, type SurfaceBinding } from "../identity/binding.js";
 import { isFrozenSurfaceBinding } from "../identity/frozen-surface-binding.internal.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { getOrMintSelfSecret, selfSecretsArmed } from "../credentials/self-secrets.js";
+import { pageBaseUrl } from "../credentials/page-token.js";
 
 const SPAWN_DISPATCH_SECRET_NAME = "OE_SPAWN_DISPATCH_SECRET";
 
@@ -38,13 +39,7 @@ export interface UnifiedDispatchPayload {
 }
 
 export function selfDispatchBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const explicit = (env.OE_PUBLIC_BASE_URL ?? "").trim();
-  if (explicit.length > 0) {
-    const withScheme = /^https?:\/\//i.test(explicit) ? explicit : `https://${explicit}`;
-    return withScheme.replace(/\/+$/, "");
-  }
-  const host = (env.VERCEL_PROJECT_PRODUCTION_URL ?? "").trim() || (env.VERCEL_URL ?? "").trim();
-  return host.length > 0 ? `https://${host.replace(/\/+$/, "")}` : undefined;
+  return pageBaseUrl(env);
 }
 
 export function selfDispatchConfigured(env: NodeJS.ProcessEnv = process.env): boolean {

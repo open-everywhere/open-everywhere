@@ -7,7 +7,7 @@ import { resolveMemoryProviderId } from "../memory/backing-selection.js";
 import type { SandboxBackendKind } from "../sandbox/backend-select.js";
 import { platformName } from "../access/platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
-import { pageBaseUrl } from "../credentials/page-token.js";
+import { pageBaseUrl, publicBaseUrlSource } from "../credentials/page-token.js";
 
 export const OE_STATUS_PATH = "/eve/v1/oe/status";
 
@@ -98,13 +98,7 @@ function nodeStatus(version: string, range: string | undefined): RequirementStat
 }
 
 function publicUrlStatus(env: NodeJS.ProcessEnv): RequirementStatus {
-  const source = env.OE_PUBLIC_BASE_URL?.trim()
-    ? "OE_PUBLIC_BASE_URL"
-    : env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
-      ? "VERCEL_PROJECT_PRODUCTION_URL"
-      : env.VERCEL_URL?.trim()
-        ? "VERCEL_URL"
-        : undefined;
+  const source = publicBaseUrlSource(env);
   const resolved = pageBaseUrl(env);
   if (resolved === undefined) {
     return {

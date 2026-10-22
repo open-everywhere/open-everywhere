@@ -87,7 +87,7 @@ export type { CaptureHandshakeSecretInput, CaptureHandshakeSecretDeps, CaptureHa
 export { NOTION_HANDSHAKE_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 export { SLACK_APP_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 
-export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
+export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH, oeOauthCallbackUrl } from "./connections/oe-oauth-callback.js";
 export { declareConnectionSignIn, declaredConnectionSignIns, _resetConnectionSignInsForTest } from "./connections/connection-sign-in.js";
 export type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn, XaaSignIn } from "./connections/connection-sign-in.js";
 export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";

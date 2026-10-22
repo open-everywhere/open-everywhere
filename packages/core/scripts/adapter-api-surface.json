@@ -1023,6 +1023,7 @@
     "oauthConnectorHome",
     "oauthConnectorOf",
     "oeCommandName",
+    "oeOauthCallbackUrl",
     "oeSlash",
     "offboardDeactivatedAccount",
     "onVercel",

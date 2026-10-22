@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-instructions
+
 import { pinSuiteStore } from "./_suite-store.js";
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 pinSuiteStore("instructions");
@@ -13,6 +15,7 @@ import { defineMemorySilo } from "../agent/memory/silo.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
 import { classifySessionId, taskWindowId, threadSeatWindowId, formatWindowToken, windowTokenPlatform } from "../agent/channels/window-key.js";
+import { publicUrlFacts, renderSeatPublicUrlSection } from "../agent/status/public-url.js";
 import { registerBotDisplayName, _resetBotDisplayNamesForTest } from "../agent/identity/bot-display-name.js";
 import { registerSlackFixtureMapper, registerSlackFixtureManifest, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { capabilitiesForPlatform, registerCapabilityManifest } from "../agent/identity/capabilities.js";
@@ -309,7 +312,8 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     .replace(
       "The `reply` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of\nthem — and on any wake you have not yet answered, not only the newest one.",
       "The `reply` tool works on any wake you have not yet answered, not only the newest one.",
-    );
+    )
+    .replace(renderSeatPublicUrlSection(publicUrlFacts(), false, { multiSurface: true }), renderSeatPublicUrlSection(publicUrlFacts(), false));
   ok(
     crossMdWithSoloFraming !== crossMd,
     "fixture guard: the framing swap actually matched something in crossMd — otherwise the assertion below proves nothing",

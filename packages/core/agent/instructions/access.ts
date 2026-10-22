@@ -1,5 +1,6 @@
 import { renderSeatSetupSection } from "../status/agent-setup.js";
 import { seatSetupFacts } from "../status/agent-setup-live.js";
+import { publicUrlDisclosed, publicUrlFacts, renderSeatPublicUrlSection } from "../status/public-url.js";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { defineState } from "eve/context";
 import { resolveAccessFor, unattendedOf } from "../access/request.js";
@@ -488,7 +489,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     replyStyle: REPLY_STYLE_RUBRIC,
     language: domain ? renderLanguageSlotForDomain(domain) : renderLanguageSlot(ctx),
     role: roleMd,
-    access: withSeatSetup(accessMd, ctx, domain?.name),
+    access: withSeatSetup(accessMd, ctx, domain?.name, { addressFromDelivery: pinnedPlatform !== undefined }),
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     workerCapabilities: [renderWorkerCapabilitiesFor(ctx, recall), workTierSectionFor(ctx)].filter((b) => b.length > 0).join("\n\n"),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),
@@ -506,17 +507,26 @@ function sessionDomains(access: { readonly domains: readonly string[] }): readon
   }
 }
 
-function seatSetupSlot(ctx: BindableContext, domainName: string | undefined): string {
+function seatSetupSlot(ctx: BindableContext, domainName: string | undefined, addressFromDelivery: boolean): string {
   if (isWorkerSession(ctx)) return "";
   try {
-    return renderSeatSetupSection(seatSetupFacts(domainName));
+    return [renderSeatSetupSection(seatSetupFacts(domainName)), seatPublicUrlSlot(ctx, addressFromDelivery)].filter((b) => b.length > 0).join("\n\n");
   } catch {
     return "";
   }
 }
 
-function withSeatSetup(accessMd: string, ctx: BindableContext, domainName: string | undefined): string {
-  return [accessMd, seatSetupSlot(ctx, domainName)].filter((b) => b.length > 0).join("\n\n");
+function seatPublicUrlSlot(ctx: BindableContext, addressFromDelivery: boolean): string {
+  try {
+    if (!addressFromDelivery) return renderSeatPublicUrlSection(publicUrlFacts(), false, { multiSurface: true });
+    return renderSeatPublicUrlSection(publicUrlFacts(), publicUrlDisclosed(bindFrom(ctx)));
+  } catch {
+    return "";
+  }
+}
+
+function withSeatSetup(accessMd: string, ctx: BindableContext, domainName: string | undefined, opts: { readonly addressFromDelivery: boolean }): string {
+  return [accessMd, seatSetupSlot(ctx, domainName, opts.addressFromDelivery)].filter((b) => b.length > 0).join("\n\n");
 }
 
 async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
@@ -540,7 +550,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     replyStyle: REPLY_STYLE_RUBRIC,
     language: renderLanguageSlot(ctx),
     role: renderRolePrompt(ctx),
-    access: withSeatSetup(assembleAccessInstructions(access, sessionDomains(access)) ?? "", ctx, access.domains[0]),
+    access: withSeatSetup(assembleAccessInstructions(access, sessionDomains(access)) ?? "", ctx, access.domains[0], { addressFromDelivery: true }),
     approvalPreview: renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     workerCapabilities: renderWorkerCapabilitiesFor(ctx, recall),
     recoveryRead: renderRecoveryReadDoctrine(isLeanSeat(ctx)),

@@ -43,6 +43,15 @@ export function pageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | unde
   return host.length > 0 ? `https://${host.replace(/\/+$/, "")}` : undefined;
 }
 
+export type PublicBaseUrlSource = "OE_PUBLIC_BASE_URL" | "VERCEL_PROJECT_PRODUCTION_URL" | "VERCEL_URL";
+
+export function publicBaseUrlSource(env: NodeJS.ProcessEnv = process.env): PublicBaseUrlSource | undefined {
+  if ((env.OE_PUBLIC_BASE_URL ?? "").trim().length > 0) return "OE_PUBLIC_BASE_URL";
+  if ((env.VERCEL_PROJECT_PRODUCTION_URL ?? "").trim().length > 0) return "VERCEL_PROJECT_PRODUCTION_URL";
+  if ((env.VERCEL_URL ?? "").trim().length > 0) return "VERCEL_URL";
+  return undefined;
+}
+
 function b64urlEncode(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }

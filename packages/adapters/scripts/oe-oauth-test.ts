@@ -933,4 +933,41 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   ok(!JSON.stringify(firstBind).includes(s.access) && !JSON.stringify(secondBind).includes("RT-"), "🔴 the returned facts carry no access or refresh token");
 }
 
+{
+  const saved = { a: process.env.OE_PUBLIC_BASE_URL, b: process.env.VERCEL_PROJECT_PRODUCTION_URL, c: process.env.VERCEL_URL };
+  const restore = () => {
+    for (const [k, v] of [["OE_PUBLIC_BASE_URL", saved.a], ["VERCEL_PROJECT_PRODUCTION_URL", saved.b], ["VERCEL_URL", saved.c]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+  try {
+    delete process.env.OE_PUBLIC_BASE_URL;
+    process.env.VERCEL_PROJECT_PRODUCTION_URL = "acme-oe.vercel.app";
+    process.env.VERCEL_URL = "acme-oe-abc123.vercel.app";
+    const fresh = new Map<string, OeOauthProviderConfig>([["notion-2669", { mode: "discovery-dcr-pkce", ref: "notion-2669", resource: RESOURCE }]]);
+    const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT-0", validRefresh: "RT-0", seq: 0, exchangeExpiresIn: 1 };
+    const { flow } = makeOeOauth(fresh, { fetch: makeMockFetch(s) });
+    const { url } = await flow.startAuthorization("notion-2669", { subject: { type: "user", id: "U1" } }, {});
+    const sent = new URL(url).searchParams.get("redirect_uri");
+    ok(sent === "https://acme-oe.vercel.app/oauth/v1/callback", `🔴 OPE-2669: with only the Vercel variables the default redirect_uri is the production alias plus the callback path (saw ${sent})`);
+
+    process.env.OE_PUBLIC_BASE_URL = "https://agent.acme.example";
+    const { url: movedUrl } = await flow.startAuthorization("notion-2669", { subject: { type: "user", id: "U1" } }, {});
+    const movedSent = new URL(movedUrl).searchParams.get("redirect_uri");
+    ok(movedSent === "https://acme-oe.vercel.app/oauth/v1/callback", `🔴 OPE-2669: after the address moves, a registered dynamic client keeps sending the callback it registered with (saw ${movedSent})`);
+    ok(s.registrations === 1, "OPE-2669: the moved address registers no second client");
+    delete process.env.OE_PUBLIC_BASE_URL;
+
+    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
+    delete process.env.VERCEL_URL;
+    const none = new Map<string, OeOauthProviderConfig>([["notion-2669b", { mode: "discovery-dcr-pkce", ref: "notion-2669b", resource: RESOURCE }]]);
+    const { flow: flowNone } = makeOeOauth(none, { fetch: makeMockFetch({ ...s, registrations: 0 }) });
+    const err = await flowNone.startAuthorization("notion-2669b", { subject: { type: "user", id: "U1" } }, {}).then(() => undefined, (e: unknown) => e);
+    ok(err instanceof Error && /no public URL \(set OE_PUBLIC_BASE_URL\)/.test(err.message), `OPE-2669: with no public URL the flow refuses and names the setting (saw ${String(err)})`);
+  } finally {
+    restore();
+  }
+}
+
 console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, expired-pending sweep, DCR endpoint backfill, consent carriage single-use + scrub, typed errors)`);

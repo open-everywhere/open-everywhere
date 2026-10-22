@@ -2,13 +2,14 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { getAppInfo } from "../commands/app-info.js";
-import type { BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { renderAgentSetup, type AgentSetupAnswer } from "../status/agent-setup.js";
 import { gatherAgentSetupFacts } from "../status/agent-setup-live.js";
+import { publicUrlAnswer, publicUrlDisclosed, publicUrlFacts, type PublicUrlAnswer } from "../status/public-url.js";
 
 export default defineTool({
   description:
-    "State which version of this agent is currently running, and how it is set up for the person asking: the deployment's commit sha, the eve framework version this deployment was built against, the Open Everywhere package version where the build carries one, and this deployment's context window with the token count at which compaction fires. The commit sha is the identity that separates two builds — report it first. Use this to answer \"what version are you on?\", \"how big is your context window?\" or \"when do you compact?\", or to compare against an upstream release before proposing a self-upgrade. Its `setup` part answers \"who are your admins?\", \"am I an admin?\", \"are you connected to GitHub?\" and \"what can an admin change from chat?\" from the live config, in plain words ready to say, with the one step that fixes each gap; say `forOperator` only to an admin who asks how to fix a gap. Never guesses — \"unknown\" means this deployment does not expose the fact (e.g. running locally, off Vercel), \"unversioned\" means the build carries no package version, so the sha is the only answer, and an ABSENT token count means this deployment registered none.",
+    "State which version of this agent is currently running, and how it is set up for the person asking: the deployment's commit sha, the eve framework version this deployment was built against, the Open Everywhere package version where the build carries one, and this deployment's context window with the token count at which compaction fires. The commit sha is the identity that separates two builds — report it first. Use this to answer \"what version are you on?\", \"how big is your context window?\" or \"when do you compact?\", or to compare against an upstream release before proposing a self-upgrade. Its `publicUrl` part answers \"what is your URL?\", \"what is your OAuth callback URL?\" and \"what redirect URI do I give <service>?\" with the full value: every OAuth service, Notion included, uses the one callback URL. Its `setup` part answers \"who are your admins?\", \"am I an admin?\", \"are you connected to GitHub?\" and \"what can an admin change from chat?\" from the live config, in plain words ready to say, with the one step that fixes each gap; say `forOperator` only to an admin who asks how to fix a gap. Never guesses — \"unknown\" means this deployment does not expose the fact (e.g. running locally, off Vercel), \"unversioned\" means the build carries no package version, so the sha is the only answer, and an ABSENT token count means this deployment registered none.",
   inputSchema: z.object({}),
   outputSchema: z.object({
     version: z
@@ -41,6 +42,18 @@ export default defineTool({
       })
       .optional()
       .describe("This deployment's setup for the person asking (OPE-2492). ABSENT when it could not be read."),
+    publicUrl: z
+      .object({
+        baseUrl: z.string().optional().describe("This deployment's own web address. ABSENT when none is set, or when this conversation may include people from outside the organisation."),
+        oauthCallbackUrl: z
+          .string()
+          .optional()
+          .describe("The one OAuth callback URL (the redirect URI) every OAuth sign-in on this deployment uses, Notion included. Present exactly when baseUrl is."),
+        note: z.string().describe("One plain sentence to say with it, or instead of it when the address is absent."),
+        forOperator: z.string().optional().describe("The setting behind a gap. Say it only to an admin who asks how to fix it."),
+      })
+      .optional()
+      .describe("This deployment's own address (OPE-2669). ABSENT when it could not be read."),
   }),
   approval: never(),
   async execute(_input, ctx) {
@@ -51,6 +64,12 @@ export default defineTool({
     } catch {
       setup = undefined;
     }
+    let publicUrl: PublicUrlAnswer | undefined;
+    try {
+      publicUrl = publicUrlAnswer(publicUrlFacts(), publicUrlDisclosed(bindFrom(ctx as BindableContext)));
+    } catch {
+      publicUrl = undefined;
+    }
     return {
       version: info.version,
       deploymentSha: info.deploymentSha,
@@ -60,6 +79,7 @@ export default defineTool({
       ...(setup !== undefined
         ? { setup: { ...setup, connectedTo: [...setup.connectedTo], adminCanDoNow: [...setup.adminCanDoNow], notYet: setup.notYet.map((g) => ({ ...g })), forOperator: [...setup.forOperator] } }
         : {}),
+      ...(publicUrl !== undefined ? { publicUrl: { ...publicUrl } } : {}),
     };
   },
 });

@@ -537,6 +537,7 @@ test:personal-browser-teach
 test:bot-ask
 test:reader-instructions
 test:agent-setup
+test:public-url
 test:exit-after-flush
 test:surface-session-state
 test:work-surface-wait
