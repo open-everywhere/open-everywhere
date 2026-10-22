@@ -67,9 +67,11 @@ console.log("2. the exported Slack channel:");
   await inSession(async () => {
     await adapter["reasoning.appended"]?.({ turnId: "t1", stepIndex: 0, reasoningDelta: REASONING }, ch);
     await adapter["reasoning.completed"]?.({ turnId: "t1", stepIndex: 0, reasoning: REASONING }, ch);
+  });
+  ok(ch.typed.length === 0, `🔴 the reasoning events make no typing call at all — OE draws no status line (OPE-2668) (got ${JSON.stringify(ch.typed)})`);
+  await inSession(async () => {
     await adapter["step.started"]?.({ turnId: "t1", stepIndex: 1 }, ch);
   });
-  ok(ch.typed.length > 0, "the channel still refreshes the typing status during reasoning");
   ok(!ch.typed.some((s) => (s ?? "").includes(LEAK)), `🔴 no typing call carries the reasoning (got ${JSON.stringify(ch.typed)})`);
   ok(!JSON.stringify(ch.state).includes(LEAK), "🔴 state.threadStatus does not record the reasoning, so step.started cannot show it again");
 }

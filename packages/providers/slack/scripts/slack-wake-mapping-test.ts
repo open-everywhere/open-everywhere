@@ -122,8 +122,32 @@ async function dropRows(ts: string) {
   const posts: string[] = [];
   const outcome = await admitInbound(fakeCtx(posts), messageIn(MAPPED_CHANNEL, "8002.1"), false);
   ok(outcome !== null, "MAPPED CHANNEL: the same team-less shape heals its team from config and is ADMITTED (the guard is not a blanket refusal)");
+  const attrs = (outcome as { auth?: { attributes?: Record<string, unknown> } } | null)?.auth?.attributes;
+  ok(attrs?.oe_eyes_drawn === "8002.1", `…and its auth carries the 👀-drawn stamp, named by the message's own ts (got ${JSON.stringify(attrs?.oe_eyes_drawn)})`);
   ok(!posts.includes(unmappedWakeCopy("slack", MAPPED_CHANNEL)), "…and is never told it's unmapped");
   ok((await dropRows("8002.1")).length === 0, "…and writes no wake_dropped row");
+}
+
+{
+  const reacted = async (message: unknown): Promise<boolean> => {
+    const calls: string[] = [];
+    const ctx = {
+      thread: { teamId: null, post: async () => {}, startTyping: async () => {} },
+      slack: {
+        channelId: MAPPED_CHANNEL,
+        threadTs: "8003.1",
+        request: async (method: string, params: Record<string, unknown>) => {
+          calls.push(`${method}:${String(params.name)}`);
+          return { ok: true };
+        },
+      },
+    } as never;
+    await admitInbound(ctx, message as never, false);
+    return calls.includes("reactions.add:eyes");
+  };
+  const withAuthor = messageIn(MAPPED_CHANNEL, "8003.1") as unknown as Record<string, unknown>;
+  ok(await reacted(withAuthor), "CONTROL: an admitted mention with an author draws the 👀");
+  ok(!(await reacted({ ...withAuthor, ts: "8003.2", author: undefined })), "🔴 an admitted message with no author draws no 👀: no stamp could follow it");
 }
 
 const here = fileURLToPath(new URL(".", import.meta.url));

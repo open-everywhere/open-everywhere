@@ -1193,6 +1193,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "surface.app_installed",
   "surface.app_uninstalled",
   "surface.quiet_fail",
+  "surface.working_sign_cleared",
   "surface.wake_dropped",
   "surface.wake_failed",
   "surface.wake_retry",

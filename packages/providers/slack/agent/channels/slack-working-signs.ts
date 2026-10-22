@@ -1,9 +1,6 @@
-import { getConfig, resolvePartition, STATUS_REACTION, statusVerbsFor, swallowRoomOp, type ReactionState } from "@open-everywhere/core/agent/adapter-api.js";
-import { stepStatusFor, type StepAction } from "./slack-step-label.js";
+import { STATUS_REACTION, swallowRoomOp, type ReactionState } from "@open-everywhere/core/agent/adapter-api.js";
 
 export type SlackSignRequest = (method: string, params: Readonly<Record<string, string>>) => Promise<void>;
-
-export const SLACK_WORKING_STATUS = "Working...";
 
 export async function setSlackStatusReaction(request: SlackSignRequest, target: { readonly channel: string; readonly timestamp: string }, state: ReactionState | "none"): Promise<void> {
   if (swallowRoomOp("a slack status reaction")) return;
@@ -12,24 +9,20 @@ export async function setSlackStatusReaction(request: SlackSignRequest, target: 
   );
 }
 
-export async function setSlackThreadStatus(request: SlackSignRequest, target: { readonly channelId: string; readonly threadTs: string }, status: string): Promise<void> {
-  await request("assistant.threads.setStatus", { channel_id: target.channelId, thread_ts: target.threadTs, status });
-}
+export const SLACK_STATUS_LINE_METHOD = "assistant.threads.setStatus";
 
-export function slackStatusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
+export function isSlackStatusLineRequest(input: Parameters<typeof fetch>[0]): boolean {
   try {
-    const p = resolvePartition({
-      channel: { kind: "slack" },
-      session: { auth: { current: { attributes: { team_id: state.teamId ?? "", channel_id: state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-    });
-    const cfg = getConfig();
-    const verbs = statusVerbsFor(p.surfaceKey, cfg.loadDomains(), cfg.loadRoles?.() ?? []);
-    return `${verbs[Math.floor(Math.random() * verbs.length)]}…`;
+    const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return new URL(href).pathname.endsWith(`/${SLACK_STATUS_LINE_METHOD}`);
   } catch {
-    return "Working…";
+    return false;
   }
 }
 
-export function slackStepStatus(actions: readonly StepAction[] | undefined, state: { channelId?: string | null; teamId?: string | null }): string {
-  return stepStatusFor(actions) ?? slackStatusVerb(state);
+export function slackFetchWithoutStatusLine(): typeof fetch {
+  return (input, init) =>
+    isSlackStatusLineRequest(input)
+      ? Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } }))
+      : globalThis.fetch(input, init);
 }

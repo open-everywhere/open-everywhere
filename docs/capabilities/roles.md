@@ -67,7 +67,8 @@ framework defaults ← org pseudo-domain ← ROLE ← explicit domain
 - **Status verbs** — the role's verbs join the existing layered merge as a rung: each
   layer *extends* what it inherited (default) or *replaces* it wholesale
   (`statusVerbsMode: "replace"`). A domain can add its in-jokes on top of its role's
-  themed verbs.
+  themed verbs. No surface shows them since OPE-2668: Slack's status line, their only
+  reader, is gone. The field stays so a config that sets it still compiles.
 - **Model routes** — merged field-by-field like every other route layer: a domain with
   `role: "qa-engineer"` and `models: { primary: { reasoning: "low" } }` keeps the
   role's model id and overrides only the reasoning. The

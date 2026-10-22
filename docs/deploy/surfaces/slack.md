@@ -484,11 +484,10 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      > Changes**. Then come back here and add `app_context_changed`. The generated manifest carries
      > both in one document. No run has yet measured that Slack saves both in one paste. If that save
      > fails with the same error, save the manifest once without `app_context_changed`, then add it.
-   - `agent_session_stopped` — **Slack's native Stop button.** Slack shows a Stop button on an
-     agent session that is working, and only to an app that subscribes to this event. A press stops
-     the running turn, exactly as the ✋ reaction and `/oe stop` do. Needs `chat:write` from Step 2.
-     Omit it and the session shows a spinner with no button. See
-     [Agent sessions](#agent-sessions-stop-titles-and-the-waiting-state).
+   - `agent_session_stopped` — **Slack's native Stop button.** A press arrives as this event and
+     stops the running turn, exactly as the ✋ reaction and `/oe stop` do. Needs `chat:write` from
+     Step 2. OE no longer sets the agent-session state that shows the button (OPE-2668), so a press is
+     rare. See [Agent sessions](#agent-sessions-stop-titles-and-the-waiting-state).
 
    The generated manifest (`/setup`, `surface_manifest`, `npx @open-everywhere/create`) subscribes
    every event in this list and requests each event's scope.
@@ -709,21 +708,10 @@ its own solo seat, even with `ambientSupervisor` on at `org`. See
 1. In any channel, invite the bot: `/invite @Open Everywhere`.
 2. Mention it: `@Open Everywhere summarise the last 20 messages and post the action items`.
 3. Expected behaviour:
-   - It reacts to the thread root with 👀 (seen it, working on it) and shows a rotating status verb as its typing indicator (`Tinkering…`). eve's own `Thinking...` status comes first, while the mention is admitted.
-   - **Live step labels.** While a tool runs, the status line says what the agent does, in plain
-     words: `Searching Notion…`, `Reading the PR…`, `Reading the channel…`. Between tool steps it
-     shows the status verb again. The label is code, not model text: it comes from the tool's name
-     and, for a connector, from a fixed list of vendor names. It never shows what the agent searches
-     for, a page title, a URL, or anything a tool returned, so a label in a shared channel cannot
-     carry another conversation's words. Only a step that needs no approval by default gets a label
-     (a read, a search, running code in the sandbox, a hand-off to a declared subagent): a write
-     (a pull request, a ticket, a Notion change) shows the status verb, because the label shows
-     before an approval or a check decides the write. A connector op counts as a read only when
-     its name says so (`list_…`, `search_…`). An operator can still require approval for such an op,
-     and its label then shows while the card waits. A tool with no label shows the status verb.
-     The status line is Slack's native assistant status, so it posts nothing in the thread. The reply still
-     posts once, after every check. A label does tell the room which kind of tool runs, and for a
-     connector, which vendor.
+   - It reacts to the thread root with 👀 (seen it, working on it). The 👀 is the one working sign: OE
+     shows no status line ("is thinking...") and no step labels (OPE-2668). The 👀 said the same thing,
+     and Slack clears the status line on every post and after two minutes, so it flickered across a
+     long wait.
    - A turn that starts a task also posts eve's **task card**: one message per turn, one row per
      task, updated in place. Outside a 1:1 DM a row shows the task's name only (`Researcher`), never
      the brief the agent wrote for it, because a brief can carry content from another conversation.
@@ -731,7 +719,7 @@ its own solo seat, even with `ambientSupervisor` on at `org`. See
      In a 1:1 DM with you, a row shows the brief. In no room does a row show the task's result: the
      answer arrives as the agent's reply.
    - On the **first** mention in a channel it posts a short intro and adopts any pinned messages as standing instructions for that surface.
-   - It does the work, replies in-thread, and **removes** the 👀 — absence is the done signal; the posted reply is the result. On a failure it flips to 🛑 (blocked) instead. (✅ is deliberately left to humans — react ✅ yourself to mark something done.)
+   - It does the work, replies in-thread, and **removes** the 👀 with the reply — absence is the done signal; the posted reply is the result. On a failure it flips to 🛑 (blocked) instead. (✅ is deliberately left to humans — react ✅ yourself to mark something done.)
    - **Every channel reply lands in a thread.** A message that is already in a thread is answered
      in that thread. A **top-level** channel message — an `@mention` or an ambient answer alike —
      is answered in a new thread opened on that message, so a busy channel keeps one root per
@@ -743,12 +731,12 @@ its own solo seat, even with `ambientSupervisor` on at `org`. See
      reaction via the `react` tool — a bare emoji ack (e.g. 👍) instead of a low-content reply in a
      busy thread. It's a genuine alternative response, not a status indicator, and is audited like
      any other tool call.
-4. Test a DM: open a direct message with the bot and send a plain message (no `@mention` needed in a DM). The DM surface's memory is isolated and `private`. While the turn works, the bot shows the same signs a mention gets. A group DM with the bot shows them too.
-   - **👀 on your message.** A message inside a DM thread gets it on the thread's first message, as in a channel. It goes away when the turn ends. A DM reply stays flat, as described above.
-   - **The status line** under your message: `Working...` at the start, then a live step label while a tool runs (`Reading the thread…`), from the same code-owned table a mention uses. It goes away when the turn ends.
-   - **🛑 when the turn fails for good.** The 👀 goes, 🛑 goes on your message, and the status line clears. In a 1:1 DM the agent session also leaves `processing`, so Slack takes its Stop button off the dead turn. The next turn on the same message takes the 🛑 off again.
-   - **A group DM** has no agent session, so it has no Stop button and no session state. It shows every other sign.
-   - **If a sign is missing**, the app lacks a scope or the agent view. The 👀 and the 🛑 need `reactions:write`. The status line needs `assistant:write` and the agent view (`features.agent_view`). All three come from the manifest: paste it again (App Manifest → Save Changes) and reinstall if Slack asks. The deployment logs the refused call once per process, with this fix in the line: search the logs for `[open-everywhere:slack-session]`.
+4. Test a DM: open a direct message with the bot and send a plain message (no `@mention` needed in a DM). The DM surface's memory is isolated and `private`. While the turn works, the bot shows the same sign a mention gets. A group DM with the bot shows it too.
+   - **👀 on your message** means "the agent still owes you a message here". A message inside a DM thread gets it on the thread's first message, as in a channel. It stays on through an interim post (a part of an answer that says more is coming, `done: false`) and through every wait: a tool, a worker, an approval. It comes off when the agent's final reply posts (`done: true`), not when the turn ends: the turn runs on for a few seconds after the reply. That clear writes a `surface.working_sign_cleared` audit row. The turn's end removes it again as a backstop, so no sign is left when the turn ends. A DM reply stays flat, as described above.
+   - **The rule depends on the `done` flag.** If the agent marks an interim post as final, the 👀 comes off early. A job the agent forwards to the work session runs after the turn ends, so its wait shows no 👀; the answer arrives as the agent's reply.
+   - **🛑 when the turn fails for good.** The 👀 goes and 🛑 goes on your message. The next turn on the same message takes the 🛑 off again.
+   - **No status line, no title, no session state** (OPE-2668). OE calls neither `assistant.threads.setStatus` nor `agents.sessions.setStatus`. Setting a status on a thread opens an agent window there, and that is how a flat DM ask grew an agent window and then got a flat reply.
+   - **If the sign is missing**, the app lacks the `reactions:write` scope. It comes from the manifest: paste it again (App Manifest → Save Changes) and reinstall if Slack asks. The deployment logs the refused call once per process, with this fix in the line: search the logs for `[open-everywhere:slack-session]`.
 
 ### What it can read on Slack
 
@@ -988,8 +976,8 @@ Manifest → Save Changes). The shipped three name no product.
 - 🔴 **The switch is one-way for an app that already has `assistant_view`.** Slack cannot move such
   an app back, and its people need a hard refresh. An app made from this manifest before the side
   panel shipped had no `assistant_view`, so for it the paste only adds the panel.
-- Each conversation in the panel is a Slack **agent session**. OE sets its state, gives it a title
-  and answers its Stop button. See [Agent sessions](#agent-sessions-stop-titles-and-the-waiting-state).
+- Each conversation in the panel is a Slack **agent session**. OE sets no state and no title on it
+  (OPE-2668), and answers a Stop press that arrives. See [Agent sessions](#agent-sessions-stop-titles-and-the-waiting-state).
 - **Microsoft Teams** has no equivalent of a panel beside any channel for a bot. The nearest is the
   bot's personal chat, which is the person's DM seat already.
 
@@ -997,71 +985,46 @@ Manifest → Save Changes). The shipped three name no product.
 
 Slack shows each conversation with the app as an **agent session**, keyed by the conversation's
 thread. A session has a status and a title (Slack's reference: `agents.sessions.setStatus`,
-`agents.sessions.rename`, re-read 2026-10-14). OE uses them in the person's DM with the app, which
-is the Messages tab and the side panel:
+`agents.sessions.rename`, re-read 2026-10-14).
+
+🔴 **OE sets neither (OPE-2668).** OE used to give a top-level DM
+message's session a title, set it `processing` while a turn worked (Slack then showed a Stop
+button), and park it `suspended` while the person was owed an answer, also for a forwarded job
+(OPE-2519, OPE-2536). It also showed a status line. Setting a status on a thread opens an agent
+window there: that is how a flat DM ask grew an agent window and then got a flat reply. So OE now
+calls neither `agents.sessions.setStatus` nor `assistant.threads.setStatus`, and the 👀 reaction is
+the one working sign (see the DM test above). Git history keeps the session code for a later
+return.
 
 | What the person sees | What OE does |
 | --- | --- |
-| **A title.** A conversation that opens with a top-level message shows a short title from the words the person typed. | The DM door creates the session with that title before the turn starts. The title is the first typed line, cut to 60 characters at a word. A member mention is dropped, a channel shows as `#name` and a link shows as its label, so the title holds no raw id. The lines of a forwarded or quoted message are another conversation's words, so they never make the title: a forward with no typed text gets no title. A voice clip's transcript is not typed text either, so a clip with no typed words gets no title. The host writes the title in code; no model writes it. |
-| **Their own title.** The person can rename a session at any time. | Slack applies a title only when a call creates the session, so OE never overwrites a rename. |
-| **Working, with a Stop button.** | A turn's start sets the session `processing`. Slack then shows its Stop button, because the app subscribes to `agent_session_stopped`. |
-| **👀 and the status line.** | The same start puts 👀 on the session's first message and shows `Working...` as Slack's assistant status there. The park removes both. The DM seat runs on the `unified` channel, so the Slack channel's own 👀 and status line (the mention door's) never reach it: these two calls are the DM's only working signs (OPE-2629). A forwarded job's settlement (next rows) sets the session state only and leaves the signs to the running turn. A turn that fails for good never parks, so its signs stay. |
-| **Stop.** | A press takes the same road as the ✋ reaction and `/oe stop`: it is decided at ingress, before any model call, so it is free and works over a spend cap. It stops the turn of the session's thread. In the DM it falls back to the DM's newest turn, because a top-level DM message keys its turn by the channel alone. The audit row is `turn.cancel_requested` with `via: "stop-button"`. Slack does not move the status itself, so OE sets the session `active`. |
-| **"Needs you".** | When the seat's turn reported through `update_status` that it waits on the person (`needs_input` or `blocked`), the agent session parks `suspended`. Otherwise it parks `active`. The person's next message clears it: that turn sets `processing`, then parks `active` unless it reports again that it waits on the person, or a job of the session still waits (next row). A job's result turn sets no state: the result wake names no agent session. |
-| **"Needs you", for a job.** | A job the DM seat forwards can end waiting on the person: its worker asked a question in the DM (`ask_room`) and finished, or it needs the person's own sign-in. The work session has no `update_status`, so the host sets the agent session the job came from `suspended` when the job's task settles. While the job waits, every turn of that session parks `suspended`. When the person answers and the seat forwards the answer to the same task, the job moves on in the session it came from, whichever agent session of the DM the answer came from. That session then parks `active`, unless another of its jobs still waits. After a sign-in, the resume forward sets the session `active`. The audit row is `work.surface_wait`: ids, the state and the reason, never the question. |
+| **No title and no session state.** | Slack's own default. The person can still name a session. |
+| **Stop.** | A press of Slack's Stop button still arrives as `agent_session_stopped`, because the manifest subscribes it. It takes the same road as the ✋ reaction and `/oe stop`: it is decided at ingress, before any model call, so it is free and works over a spend cap. It stops the turn of the session's thread. In the DM it falls back to the DM's newest turn, because a top-level DM message keys its turn by the channel alone. The audit row is `turn.cancel_requested` with `via: "stop-button"`. OE sends no session call after it. |
 
 **Limits.**
 
-- Slack raises a hidden `message_changed` on the session's root message each time OE sets the
-  session's status or title. The edit changes no words and no files, so no Slack door wakes on it
-  (OPE-2577). A person's real edit, which changes the words or the files, still wakes the seat.
-- A channel thread gets no session title from OE, and no session state except the `active` a Stop
-  press sets. A shortcut, even on a threaded DM message, sets no session state. A channel turn's status line still rides
-  `assistant.threads.setStatus`, and a Stop press that arrives from a channel thread stops that
-  thread's turn only: it never falls back to the channel's newest turn.
-- When a second message is steered into a running turn, the turn's park settles both agent sessions:
-  the one the turn started on and the one of the last message.
-- A DM message can arrive while another turn of the DM seat still runs, for example the turn that
-  reads a forwarded job's result. The message gets its own turn, but the running turn's park can set
-  the message's agent session first. That park sends the state it reads then: `suspended` when the
-  running turn reported through `update_status` that it waits on its person, or while a forwarded
-  job of that session waits, else `active`. The new turn then sets `processing`.
-- A message that arrives inside a thread gets no title, because it does not open the agent
-  session. Slack's side panel may send its first message inside a thread. No test sends a real
-  panel message, so whether a panel conversation gets a title is unproven.
+- OE no longer sets the `processing` state that makes Slack show its Stop button, so a press is
+  rare. The ✋ reaction and `/oe stop` remain the reliable stop.
+- A Stop press that arrives from a channel thread stops that thread's turn only: it never falls back
+  to the channel's newest turn.
 - The DM seat serves every agent session of the DM. A Stop pressed in one agent session while the
   seat works on a message from another agent session of the same DM stops that work. Both are the
   same person's.
-- A forwarded job shows its wait only when the host can see it: an `ask_room` question followed by
-  a completed task, or a sign-in the job can resume after. A job that only says in its result that it
-  waits sets nothing. A job that nobody answers stops showing its wait to OE 6 hours after its
-  settlement. Slack keeps the session `suspended` until the next turn of that session.
-- The seat's own `cancel_work` on a job that already settled does not clear its wait. The person's
-  next message in that session parks `suspended` again, for up to 6 hours after the job's settlement.
-- The title and the state are best-effort calls. A workspace without Slack's agent features answers
-  an error, which OE logs and ignores.
-- Slack shows the Stop button only after the operator pastes the manifest again (App Manifest →
-  Save Changes), because the subscription is part of it.
 
-**What the tests prove.** The unit packs `test:slack-agent-session` (packages/providers/slack) and
-`test:surface-session-state` (packages/core) pin the title, the setter and the hook.
-`test:work-surface-wait` (packages/core) pins a forwarded job's wait, its move-on and the hook's park. The integration
-test `tests/integration/channels/slack-agent-session.test.ts` drives a booted agent through the
-signed DM door: the title before `processing`, `suspended` after `update_status(needs_input)`,
-`active` after the answer, no title for a forward with no typed text, and a signed Stop press that
-stops a held turn and sets the session `active`. The same test proves the working signs: 👀 on the
-person's top-level message before the park, `Working...` on the same message, and both cleared at the
-park. The live e2e scenario `S-SESSION-STOP` reads `reactions.get` on the person's real DM message
-while its turn runs (👀 present), and again after the stop (👀 gone). No API reads the status line
-back, so no live leg proves it. The integration test
-`tests/integration/channels/slack-job-wait.test.ts` forwards a DM job whose worker asks with
-`ask_room`: the session goes `suspended` at the job's settlement, another message keeps it so, and the
-answer forwarded to the same task parks it `active`. The test holds the seat's result-wake
-turn, so the other message usually arrives while that turn still runs. When it does, the test proves
-that the turn's park sends `suspended` and never `active`. The test also accepts a run in which the
-message arrives after that park. The live e2e scenario
-`S-SESSION-STOP` forges a signed press on a real deployment. No API can press the real button, so no
-test proves that Slack itself shows it.
+**What the tests prove.** The unit pack `test:slack-agent-session` (packages/providers/slack) pins
+the Stop parse and route, the 👀 rule on the DM door, and that no Slack channel source calls either
+status method. Its §5 also drives the mention door's transport fence, which answers
+`assistant.threads.setStatus` locally, so no eve default reaches the wire. `test:slack-mention-eyes`
+drives the mention door's 👀 through the exported channel: off when a `reply`-tool turn's final
+message completes, kept through a tool step, 🛑 on a failure. `test:slack-dm-divert`
+pins that a top-level DM message sends no session or status call. `test:surface-session-state` and
+`test:reply-delegation-pending` §15 (packages/core) pin the hook and the `reply` tool that drive
+the sign. The integration test `tests/integration/channels/slack-agent-session.test.ts` drives a
+booted agent through the signed DM door: 👀 on, off when the final reply posts, before the park,
+and 🛑 on a failed turn, with no status or session call on the wire. The live e2e scenario
+`S-SESSION-STOP` forges a signed Stop press on a real deployment and reads `reactions.get` on the
+person's real DM message while its turn runs (👀 present) and after the stop (👀 gone). No API can
+press the real button.
 
 ## Sources and thumbs on an answer
 

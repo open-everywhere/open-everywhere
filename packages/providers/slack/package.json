@@ -148,10 +148,6 @@
       "types": "./dist/agent/channels/slack-spend-gate.d.ts",
       "default": "./dist/agent/channels/slack-spend-gate.js"
     },
-    "./agent/channels/slack-step-label.js": {
-      "types": "./dist/agent/channels/slack-step-label.d.ts",
-      "default": "./dist/agent/channels/slack-step-label.js"
-    },
     "./agent/channels/slack-task-card.js": {
       "types": "./dist/agent/channels/slack-task-card.d.ts",
       "default": "./dist/agent/channels/slack-task-card.js"
@@ -277,7 +273,7 @@
     "test:slack-wake-trust": "NODE_NO_WARNINGS=1 tsx scripts/slack-wake-trust-test.ts",
     "test:slack-dm-seat": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-seat-test.ts",
     "test:slack-reasoning-fence": "NODE_NO_WARNINGS=1 tsx scripts/slack-reasoning-fence-test.ts",
-    "test:slack-step-label": "NODE_NO_WARNINGS=1 tsx scripts/slack-step-label-test.ts",
+    "test:slack-mention-eyes": "NODE_NO_WARNINGS=1 tsx scripts/slack-mention-eyes-test.ts",
     "test:slack-dm-divert": "NODE_NO_WARNINGS=1 tsx scripts/slack-dm-divert-test.ts",
     "test:slack-shortcut": "NODE_NO_WARNINGS=1 tsx scripts/slack-shortcut-test.ts",
     "test:slack-enterprise-rung": "NODE_NO_WARNINGS=1 tsx scripts/slack-enterprise-rung-test.ts",

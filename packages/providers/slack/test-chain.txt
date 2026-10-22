@@ -45,7 +45,7 @@ test:slack-rate-limit
 test:slack-web-api-seam
 test:slack-setup
 test:slack-reasoning-fence
-test:slack-step-label
+test:slack-mention-eyes
 test:slack-surface-evidence
 test:slack-home
 test:slack-side-panel

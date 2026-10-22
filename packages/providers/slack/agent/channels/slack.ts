@@ -82,8 +82,7 @@ import { admitSlackInputResponse } from "./slack-input-response.js";
 import { taskCardConfidentiality } from "./slack-task-card.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, slackAuthorIsMember, slackWakeAuthorFacts, type SlackMemberProbe, type SupervisorReplyTarget } from "./slack-events.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
-import { type StepAction } from "./slack-step-label.js";
-import { setSlackStatusReaction, setSlackThreadStatus, SLACK_WORKING_STATUS, slackStatusVerb, slackStepStatus, type SlackSignRequest } from "./slack-working-signs.js";
+import { setSlackStatusReaction, slackFetchWithoutStatusLine } from "./slack-working-signs.js";
 import type { AuditDetail } from "@open-everywhere/core/agent/adapter-api.js";
 
 function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
@@ -101,23 +100,6 @@ function teamIdFromDomainConfig(channelId: string | undefined): string | undefin
   } catch {
   }
   return undefined;
-}
-
-async function refreshTypingStatus(channel: SlackEventContext, actions?: readonly StepAction[]): Promise<void> {
-  try {
-    await setWakeTyping(channel, slackStepStatus(actions, channel.state));
-  } catch {
-  }
-}
-
-async function setWakeTyping(channel: SlackEventContext, status?: string): Promise<void> {
-  const override = dmWakeThreadOverride(channel.state);
-  const channelId = channel.state.channelId ?? undefined;
-  if (override && channelId) {
-    await setSlackThreadStatus(formSign, { channelId, threadTs: override }, status ?? "");
-    return;
-  }
-  await channel.thread.startTyping(status);
 }
 
 async function postWakeText(channel: SlackEventContext, text: string): Promise<void> {
@@ -139,6 +121,12 @@ export function supervisorPostFormBody(channelId: string, threadTs: string | und
 
 function isUninvited(state: unknown): boolean {
   return (state as Record<string, unknown> | undefined)?.oeUninvited === true;
+}
+
+const EYES_DRAWN_ATTRIBUTE = "oe_eyes_drawn";
+
+function eyesDrawnThisTurn(state: unknown): boolean {
+  return (state as Record<string, unknown> | undefined)?.oeEyesDrawn === true;
 }
 
 async function recordQuietFailure(
@@ -184,12 +172,6 @@ async function setStatusReaction(slack: SlackHandle, state: ReactionState | "non
   );
 }
 
-const formSign: SlackSignRequest = async (method, params) => {
-  try {
-    await slackForm(method, new URLSearchParams({ ...params }).toString());
-  } catch {
-  }
-};
 async function syncPinnedStatus(channel: SlackEventContext): Promise<void> {
   try {
     const { channelId, teamId } = channel.state;
@@ -449,18 +431,15 @@ async function onInbound(
     await maybeOnboard(ctx, bindableForMessage(message, facts));
   }
 
-  try {
-    await ctx.thread.startTyping(slackStatusVerb({ channelId: message.channelId, teamId: message.teamId }));
-  } catch {
-  }
-  await setStatusReaction(ctx.slack, "working");
+  if (message.author) await setStatusReaction(ctx.slack, "working");
 
   let context: readonly string[] | undefined;
   if (!isDm) {
     context = await loadConversationContext(ctx, message);
     await markThreadEngaged(partitionForMessage(message, facts), message.threadTs, new Date().toISOString(), { participating: true });
   }
-  return { auth: await stampNativeAuthorLeg(message, facts, isDm, authFromFacts(message, facts)), context };
+  const auth = await stampNativeAuthorLeg(message, facts, isDm, authFromFacts(message, facts));
+  return { auth: auth ? { ...auth, attributes: { ...auth.attributes, [EYES_DRAWN_ATTRIBUTE]: message.ts ?? "drawn" } } : auth, context };
 }
 
 export async function stampNativeAuthorLeg(
@@ -509,6 +488,7 @@ export async function admitInbound(
 const slackMentionChannel = slackChannel({
   route: INTERNAL_SLACK_ROUTE,
   credentials: SLACK_EVE_CREDENTIALS,
+  api: { fetch: slackFetchWithoutStatusLine() },
   turnPolicy: "queue",
   onAppMention: (ctx, message) => admitInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),
@@ -534,25 +514,20 @@ const slackMentionChannel = slackChannel({
                 typeof attrs.thread_ts === "string" ? attrs.thread_ts : undefined;
             }
           }
+          {
+            const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+            const st = channel.state as unknown as Record<string, unknown>;
+            const stamp = attrs?.[EYES_DRAWN_ATTRIBUTE];
+            st.oeEyesDrawn = typeof stamp === "string" && stamp.length > 0 && stamp !== st.oeEyesStampTs;
+            if (typeof stamp === "string" && stamp.length > 0) st.oeEyesStampTs = stamp;
+          }
+          if (eyesDrawnThisTurn(channel.state)) await setStatusReaction(channel.slack, "working", dmWakeThreadOverride(channel.state));
           channel.state.pendingTaskResults = null;
           channel.state.pendingToolCallMessage = null;
-          (channel.state as unknown as Record<string, unknown>).oeReasoningTypingAtMs = null;
-          await setWakeTyping(channel, SLACK_WORKING_STATUS);
         },
-        "reasoning.appended": async (_data, channel) => {
-          const now = Date.now();
-          const state = channel.state as unknown as Record<string, unknown>;
-          const last = state.oeReasoningTypingAtMs;
-          if (typeof last === "number" && now - last >= 0 && now - last < 5000) return;
-          state.oeReasoningTypingAtMs = now;
-          await refreshTypingStatus(channel);
-        },
-        "reasoning.completed": async (_data, channel) => {
-          await refreshTypingStatus(channel);
-        },
-        "actions.requested": async (data, channel) => {
-          await refreshTypingStatus(channel, data.actions as readonly StepAction[] | undefined);
-        },
+        "reasoning.appended": async () => {},
+        "reasoning.completed": async () => {},
+        "actions.requested": async () => {},
         "action.partial": async () => {},
         "action.result": async () => {},
         "message.completed": async (data, channel, ctx) => {
@@ -567,6 +542,9 @@ const slackMentionChannel = slackChannel({
           const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
           if (action.kind === "silent") {
             (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
+            if (eyesDrawnThisTurn(channel.state)) {
+              await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
+            }
             console.log(
               `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
             );
@@ -628,10 +606,6 @@ const slackMentionChannel = slackChannel({
               }
             } catch (err) {
               console.warn(`[open-everywhere:slack] warm silent-streak bookkeeping failed: ${String(err)}`);
-            }
-            try {
-              await setWakeTyping(channel);
-            } catch {
             }
             return;
           }
@@ -762,6 +736,7 @@ const slackMentionChannel = slackChannel({
         },
         "turn.failed": async (data, channel) => {
           if (isUninvited(channel.state)) {
+            if (eyesDrawnThisTurn(channel.state)) await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
             await recordQuietFailure(channel.state, "turn.failed", data.message);
             return;
           }
@@ -774,6 +749,7 @@ const slackMentionChannel = slackChannel({
         },
         "session.failed": async (data, channel) => {
           if (isUninvited(channel.state)) {
+            if (eyesDrawnThisTurn(channel.state)) await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
             await recordQuietFailure(channel.state, "session.failed", data.message);
             return;
           }

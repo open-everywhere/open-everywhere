@@ -244,13 +244,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/channels/surface-session-state.ts",
     ],
     scenarios: ["S-SESSION-STOP", "J-MPIM"],
-    why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's native Stop button. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn, and `surface-session-state.ts` drives the session state the button appears on. Since OPE-2629 the leg also reads `reactions.get` on the DM message: 👀 while the turn runs, gone after the stop, which `slack-agent-session.ts` sets through the same setter. Since OPE-2632 it also gates that a stopped turn carries no 🛑 (a stop is not a failure), and J-MPIM reads 👀 on the group-DM message while its turn runs and gone after the reply: a group DM draws its signs through the same setter, with the mention door's own functions (`slack-working-signs.ts`).",
-  },
-  {
-    area: "work-surface-wait",
-    globs: ["packages/core/agent/channels/work-surface-wait.ts", "packages/core/agent/tools/ask_room.ts"],
-    scenarios: ["S-JOB-WAIT"],
-    why: "S-JOB-WAIT (OPE-2536) is the only live leg on a forwarded job's wait: a DM job whose worker asks with ask_room writes a work.surface_wait suspended row at its settlement, and the answer forwarded to the same task writes the moved-on row. `work-surface-wait.ts` owns both rows, and `ask_room.ts` writes the mark the settlement reads.",
+    why: "S-SESSION-STOP (OPE-2519) is the only live leg on Slack's Stop event. It forges a signed agent_session_stopped press for the person's running DM turn, and gates that the press takes the ✋ arm's cancel road (`turn.cancel_requested` with via `stop-button`) and that the turn's own process writes `turn.cancelled`. `slack-agent-session.ts` parses the press and resolves the turn. The leg also reads `reactions.get` on the DM message: 👀 while the turn runs, gone after the stop, and no 🛑 (a stop is not a failure). The setter in `slack-agent-session.ts` draws that sign through `surface-session-state.ts`, with the mention door's own function (`slack-working-signs.ts`). J-MPIM reads 👀 on the group-DM message while its turn runs and gone after the reply, and since OPE-2668 gates a `surface.working_sign_cleared` row within a short bound of the reply: the 👀 comes off at the answer through the answerer `surface-session-state.ts` registers.",
   },
   {
     area: "reply-feedback",
@@ -379,12 +373,6 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     ],
     scenarios: ["S-SLACK-AS-YOU"],
     why: "S-SLACK-AS-YOU (OPE-2421) is the only live leg on a personal-surface MCP server: Slack's own MCP server on a person's own sign-in. It proves the person's DM reads a channel the bot is not in, a channel seat never reaches the connection, and a post as the person raises a card.",
-  },
-  {
-    area: "slack-step-labels",
-    globs: ["packages/providers/slack/agent/channels/slack-step-label.ts"],
-    scenarios: ["S-STEP-LABELS"],
-    why: "S-STEP-LABELS (OPE-2449) is the live leg for the Slack step labels: a labelled tool step runs in a real turn, and the thread holds the one answer and no label post.",
   },
   {
     area: "proactive-dm-road",

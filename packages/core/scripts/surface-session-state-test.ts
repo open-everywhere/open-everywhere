@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   _resetSurfaceSessionStateForTest,
+  answerSurfaceSession,
   markSurfaceSession,
   parkedSurfaceStatus,
   registerSurfaceSessionState,
@@ -270,6 +271,27 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
     await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n3", actions: ACTIONS } }, ctx);
   });
   eq(threw, 1, "the stepper ran, threw, and the throw never escaped the hook");
+}
+
+console.log("§5 the answerer (OPE-2668)");
+{
+  _resetSurfaceSessionStateForTest();
+  const turn = { platform: "slack", attributes: { channel_id: "D1", working_signs_ts: "1.1" } };
+  eq(await answerSurfaceSession(turn), undefined, "no answerer registered: nothing to call, nothing named");
+  const answered: unknown[] = [];
+  registerSurfaceSessionState("slack", async () => "x", undefined, undefined, async (attributes) => {
+    answered.push(attributes.channel_id);
+    return `${String(attributes.channel_id)}:${String(attributes.working_signs_ts)}`;
+  });
+  eq(await answerSurfaceSession(turn), "D1:1.1", "the answerer gets the delivery's attributes and its answer comes back");
+  eq(answered, ["D1"], "the answerer ran once");
+  eq(await answerSurfaceSession({ platform: "discord", attributes: turn.attributes }), undefined, "another platform's turn reaches no answerer");
+  registerSurfaceSessionState("slack", async () => "x", undefined, undefined, async () => {
+    throw new Error("vendor down");
+  });
+  eq(await answerSurfaceSession(turn), undefined, "an answerer that throws is logged, and the throw never escapes");
+  registerSurfaceSessionState("slack", async () => "x");
+  eq(await answerSurfaceSession(turn), undefined, "a second registration with no answerer forgets the first one");
 }
 
 _resetSurfaceSessionStateForTest();

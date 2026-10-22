@@ -112,10 +112,9 @@ Two surface-wide notes before the rows:
    conversation moves there; toggle with `discord.autoThread`. Fails open to an inline
    reply if thread permissions are missing. **Discord has no threads in DMs** (⛔ there —
    replies land in place), and forum posts are already threads.
-5. Live step labels while a tool runs (`Searching Notion…`, code-owned, never model text) and
-   rotating status verbs between steps on the typing indicator, a 👀 working / 🛑 blocked reaction on the
-   thread root (removed when the reply lands — absence is the done signal), and a pinned
-   in-flight status message per channel.
+5. A 👀 working / 🛑 blocked reaction on the thread root (removed when the final reply lands —
+   absence is the done signal), and a pinned in-flight status message per channel. No status line
+   and no step labels: OPE-2668 dropped them, so the 👀 is the one working sign.
 6. The Eve channel's built-in typing indicator only.
 7. A 👀 "seen/working" reaction on direct addresses (mentions and DMs) plus Discord's native
    typing indicator while the turn runs; on auto-threaded mentions the 👀 is removed when the

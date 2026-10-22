@@ -86,8 +86,9 @@ The category-2 sites, as of this audit:
 | `slack-context.ts` | `auth.test`, `conversations.history` |
 | `slack-input-response.ts` | `thread.postEphemeral` |
 
-Plus eve's own machinery, which OE cannot reach at all: `startTyping`
-(`assistant.threads.setStatus`), the thread `refresh` (`conversations.replies`) and `uploadSlackFiles`.
+Plus eve's own machinery, which OE cannot reach at all: the thread `refresh` (`conversations.replies`)
+and `uploadSlackFiles`. eve's `startTyping` (`assistant.threads.setStatus`) never reaches Slack: since
+OPE-2668 the channel's transport answers it locally (`slack-working-signs.ts`).
 
 `slack-web-api-seam-test.ts` holds that list and fails when a **new** binding call appears or a
 listed one disappears, so the gap is a tracked inventory rather than a comment that rots. Closing it

@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentSessionId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deploymentOrg, inheritedWakeStampOf, isUnifiedWindowContext, currentWakeId, currentSessionId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { flushWriteIntentMemory, type MemoryPersistContext } from "../hooks/memory.js";
 import { isThreadStopped } from "../channels/engagement.js";
@@ -74,13 +74,14 @@ import {
 } from "../access/pending-delegation-signal.js";
 import { retargetTaskWakes, taskWakeUnreadRefusalMessage, TASK_WAKE_UNREAD_REFUSAL_REASON } from "../channels/task-wake.js";
 import { rememberWorkReportPromised, workRequestIdOfLedger } from "../channels/work.js";
-import { uningressedTurn } from "../access/task-wake-signal.js";
+import { deliveryChangedThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postUnifiedReply, unifiedEditLocus, terminalPostClosesConversation } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { preRegisterDynamicVariants } from "../access/window-gated.js";
 import { FOLLOW_UPS_INPUT } from "../channels/reply-follow-ups.js";
+import { answerSurfaceSession, surfaceTurnOf, SURFACE_SIGN_CLEARED_ACTION } from "../channels/surface-session-state.js";
 
 function replierFor(ctx: BindableContext): ReplierLabel | undefined {
   return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
@@ -315,6 +316,11 @@ export const unifiedReplyEntry = defineTool({
       if (input.done !== false) {
         await store.markUnifiedWakeAnswered(org, input.wake, new Date().toISOString(), turnId).catch(() => undefined);
         markWakeDoneThisTurn(turnId, input.wake);
+        const surface = surfaceTurnOf(ctx);
+        const answersOwnWake = input.wake === inheritedWakeStampOf(bind) || (input.wake === turnWake && !deliveryChangedThisTurn(turnId));
+        if (surface !== undefined && answersOwnWake && (await answerSurfaceSession(surface)) !== undefined) {
+          await auditToolAction(bind, SURFACE_SIGN_CLEARED_ACTION, { wake: input.wake, ...(turnId !== undefined ? { turnId } : {}) });
+        }
       }
       const overrides = Math.max(doneOverrides, staleOverrides, foldOverrides);
       if (overrides >= FORCED_OVERRIDE_TURN_LIMIT) await noteTurnCloseoutRefusal(bind, REPLY_FORCED_LOOP_REASON);

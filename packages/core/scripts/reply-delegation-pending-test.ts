@@ -1466,4 +1466,161 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 }
 
+{
+  const { _resetSurfaceSessionStateForTest, registerSurfaceSessionState, SURFACE_SIGN_CLEARED_ACTION } = await import("../agent/channels/surface-session-state.js");
+  const answered: Readonly<Record<string, unknown>>[] = [];
+  registerSurfaceSessionState("slack", async () => undefined, undefined, undefined, async (attributes) => {
+    answered.push(attributes);
+    return `${String(attributes.channel_id)}:answer`;
+  });
+  const clearedRows = async (): Promise<Record<string, unknown>[]> =>
+    (await readAudit({ org: ORG, action: SURFACE_SIGN_CLEARED_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS", "151.1");
+    await inTurn(async () => {
+      const part = await callReply(wAsk, "turn_2668a", wAsk, "Part one of the answer.", false);
+      ok(part.posted === true, "§15b: the `done:false` part posts");
+      ok(answered.length === 0, "🔴 §15b: a part that says more is coming leaves the sign up — the answerer is not called");
+      const done = await callReply(wAsk, "turn_2668a", wAsk, "The rest of the answer.", true);
+      ok(done.posted === true, "§15a: the `done:true` answer posts");
+      ok(answered.length === 1, `🔴 §15a THE FIX: the final answer's post hands the delivery to the answerer once (got ${answered.length})`);
+      ok(answered[0]?.oe_wake_id === wAsk && answered[0]?.channel_id === CHAN, "§15a: …with the turn's own delivery attributes, the ones the sign rides");
+    });
+    const rows = (await clearedRows()).filter((d) => d.wake === wAsk);
+    ok(rows.length === 1 && rows[0]?.turnId === "turn_2668a", "🔴 §15a/AUDIT: one surface.working_sign_cleared row names the wake and the turn — the e2e leg reads it, because a person reads the 👀 itself, and the row is the host's own record");
+  }
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS_OWN", "152.1");
+    const wSib = await wake("C_STATUS_SIB", "152.2");
+    const before = answered.length;
+    await inTurn(async () => {
+      const sib = await callReply(wAsk, "turn_2668c", wSib, "The sibling's whole answer.", true);
+      ok(sib.posted === true, "§15c: the sibling answer posts");
+    });
+    ok(answered.length === before, "🔴 §15c: a `done:true` reply to a sibling wake calls no answerer — the delivery's attributes name another conversation");
+  }
+
+  {
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS_DELEG", "153.1");
+    const before = answered.length;
+    await inTurn(async () => {
+      await dispatchReceipt(wAsk, "turn_2668d", "call_2668d", receiptResult("call_2668d", "task_2668d"), ctxFor(wAsk, "turn_2668d"));
+      const refused = await callReply(wAsk, "turn_2668d", wAsk, "An answer the worker has not given yet.", true);
+      ok(typeof refused.error === "string", "§15d: the `done:true` while the worker runs is refused");
+      ok(answered.length === before, "🔴 §15d: a refused reply posted nothing, so it clears nothing");
+      const ack = await callReply(wAsk, "turn_2668d", wAsk, "I've handed this to a worker and will report back.", false);
+      ok(ack.posted === true && answered.length === before, "🔴 §15d: the hand-off note (`done:false`) posts and the sign stays up while the worker runs");
+      await settledHook({ data: settledEvent("call_2668d", "task_2668d", "completed") }, ctxFor(wAsk, "turn_2668d"));
+      const real = await callReply(wAsk, "turn_2668d", wAsk, "The worker's settled answer.", true);
+      ok(real.posted === true, "§15d: the settled answer posts");
+      ok(answered.length === before + 1, "🔴 §15d: the settled answer of the delegated turn clears the sign at its post");
+    });
+  }
+
+  {
+    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS_LATER", "154.1");
+    const wOther = await wake("C_STATUS_OTHER", "154.2");
+    const TASK = "task_2668e";
+    const before = answered.length;
+    await inTurn(async () => {
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e_a"));
+      await dispatchReceipt(wAsk, "turn_2668e_a", "call_2668e", receiptResult("call_2668e", TASK), ctxFor(wAsk, "turn_2668e_a"));
+      const ack = await callReply(wAsk, "turn_2668e_a", wAsk, "I've handed this to a worker and will report back.", false);
+      ok(ack.posted === true && answered.length === before, "§15e: the hand-off note posts and clears nothing");
+
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e_b"));
+      await events["task.settled"]!({ data: { ...settledEvent("call_2668e", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668e_b"));
+      const minted = await taskWakeId(ORG, TASK);
+      ok(typeof minted === "string" && minted !== wAsk, "🔴 §15e/REACHABILITY: the settlement turn holds the task's own wake, not the asking one — the shape a bare wake match misses");
+      const sib = await callReply(wAsk, "turn_2668e_b", wOther, "An answer for the other conversation.", true);
+      ok(sib.posted === true && answered.length === before, "🔴 §15e: a settlement turn's answer to a SIBLING conversation clears nothing");
+      const real = await callReply(wAsk, "turn_2668e_b", wAsk, "The worker's result.", true);
+      ok(real.posted === true, "§15e: the settled answer posts on the later turn");
+      ok(answered.length === before + 1, `🔴 §15e: the settled answer on the later turn clears the sign at its post (got ${answered.length - before})`);
+    });
+  }
+
+  {
+    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS_MINTED");
+    const TASK = "task_2668e2";
+    const before = answered.length;
+    await inTurn(async () => {
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e2_a"));
+      await dispatchReceipt(wAsk, "turn_2668e2_a", "call_2668e2", receiptResult("call_2668e2", TASK), ctxFor(wAsk, "turn_2668e2_a"));
+      await callReply(wAsk, "turn_2668e2_a", wAsk, "I've handed this to a worker and will report back.", false);
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e2_b"));
+      await events["step.started"]!({}, ctxFor(wAsk, "turn_2668e2_b"));
+      await events["task.settled"]!({ data: { ...settledEvent("call_2668e2", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668e2_b"));
+      const minted = (await taskWakeId(ORG, TASK))!;
+      const real = await callReply(wAsk, "turn_2668e2_b", minted, "The worker's result.", true);
+      ok(real.posted === true, "§15e2: the settled answer under the minted wake posts");
+      ok(answered.length === before + 1, "🔴 §15e2: with no delivery steered in, the answer under the minted wake clears the sign this turn drew (positive control for §15h)");
+    });
+  }
+  {
+    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS_STEER");
+    const wNewer = await wake("C_STATUS_STEER");
+    const TASK = "task_2668g";
+    const before = answered.length;
+    await inTurn(async () => {
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668g_a"));
+      await dispatchReceipt(wAsk, "turn_2668g_a", "call_2668g", receiptResult("call_2668g", TASK), ctxFor(wAsk, "turn_2668g_a"));
+      await callReply(wAsk, "turn_2668g_a", wAsk, "I've handed this to a worker and will report back.", false);
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668g_b"));
+      await events["task.settled"]!({ data: { ...settledEvent("call_2668g", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668g_b"));
+      const real = await callReply(wNewer, "turn_2668g_b", wAsk, "The worker's result.", true);
+      ok(real.posted === true, "§15g: the settled answer to the asking message posts");
+      ok(answered.length === before, "🔴 §15g: the sign of the newer, still-owed message stays up — the answer went to another message of the same DM");
+    });
+  }
+
+  {
+    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const inTurn = newSession();
+    const wAsk = await wake("C_STATUS_STEER_M");
+    const wNewer = await wake("C_STATUS_STEER_M");
+    const TASK = "task_2668h";
+    const before = answered.length;
+    await inTurn(async () => {
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668h_a"));
+      await dispatchReceipt(wAsk, "turn_2668h_a", "call_2668h", receiptResult("call_2668h", TASK), ctxFor(wAsk, "turn_2668h_a"));
+      await callReply(wAsk, "turn_2668h_a", wAsk, "I've handed this to a worker and will report back.", false);
+      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668h_b"));
+      await events["step.started"]!({}, ctxFor(wAsk, "turn_2668h_b"));
+      await events["task.settled"]!({ data: { ...settledEvent("call_2668h", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668h_b"));
+      await events["step.started"]!({}, ctxFor(wNewer, "turn_2668h_b"));
+      const minted = (await taskWakeId(ORG, TASK))!;
+      const real = await callReply(wNewer, "turn_2668h_b", minted, "The worker's result.", true);
+      ok(real.posted === true, "§15h: the settled answer under the minted wake posts");
+      ok(answered.length === before, "🔴 §15h: a delivery was steered in, so the newer message keeps its sign — the answer under the minted wake is not its answer");
+    });
+  }
+
+  {
+    const inTurn = newSession();
+    const wA = await wake("C_STATUS_SAME");
+    const wB = await wake("C_STATUS_SAME");
+    const before = answered.length;
+    await inTurn(async () => {
+      const older = await callReply(wB, "turn_2668f", wA, "The answer to the older message.", true);
+      ok(older.posted === true, "§15f: the answer to the older message of the same DM posts");
+      ok(answered.length === before, "🔴 §15f: answering an older message of the same conversation leaves the turn's own sign up — the turn still owes its own wake");
+      const own = await callReply(wB, "turn_2668f", wB, "The answer to this turn's message.", true);
+      ok(own.posted === true && answered.length === before + 1, "§15f: the turn's own answer then clears its sign (positive control)");
+    });
+  }
+  _resetSurfaceSessionStateForTest();
+}
+
 console.log(`✓ reply-delegation-pending: ${passed} assertions passed`);

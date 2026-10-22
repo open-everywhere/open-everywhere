@@ -3684,6 +3684,17 @@ export const SCENARIOS: readonly Scenario[] = [
           posts !== undefined,
           `J-MPIM: a slack \`reply.post\` row carries the GROUP DM's own surface SEGMENT — the bare channel id ${mpim.channelId}, never a qualified \`platform/workspace/surface\` key, which is not what this column holds. The reply is filed under the mpim, which is what keeps its seat fenced off every other room`,
         );
+        const SIGN_CLEAR_BOUND_MS = 10_000;
+        const clearedRow = await pollOptional(
+          async () => (await ctx.auditRead!({ sinceIso, actions: ["surface.working_sign_cleared"] })).find((r) => r.surface === mpim.channelId),
+          { timeoutMs: AUDIT_ROW_WAIT, what: `J-MPIM: a surface.working_sign_cleared row on the group DM ${mpim.channelId}` },
+        );
+        const replyMs = Number(reply.ts) * 1000;
+        const clearLagMs = clearedRow === undefined ? Number.NaN : Date.parse(clearedRow.ts) - replyMs;
+        ctx.gate(
+          clearedRow !== undefined && Number.isFinite(clearLagMs) && clearLagMs > -5_000 && clearLagMs < SIGN_CLEAR_BOUND_MS,
+          `J-MPIM: the group-DM 👀 comes off when the answer posts — a surface.working_sign_cleared row within ${SIGN_CLEAR_BOUND_MS} ms of the reply (${clearedRow === undefined ? "no row" : `lag ${clearLagMs} ms`}). No row: the reply tool lost its answerer call (tools/reply.ts), and the 👀 waits for the park`,
+        );
       } else {
         ctx.log("J-MPIM: no control-read creds (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — the door and surface-segment gates did not run; the reply itself is this leg's evidence");
       }
@@ -6566,51 +6577,6 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
 
-  {
-    id: "S-JOB-WAIT",
-    title: "A forwarded DM job's wait on the person (OPE-2536): a job that asks with ask_room sets the person's Slack agent session suspended, and the answer forwarded to the same task moves it on",
-    requires: ["slack", "syntheticDm"],
-    surface: "slack",
-    suite: "core",
-    timeoutMs: 1_800_000,
-    judged: false,
-    run: async (ctx) => {
-      const read = ctx.auditRead;
-      if (!read) {
-        return ctx.fixtureMissing("S-JOB-WAIT gates on the work.question_posted and work.surface_wait audit rows. Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.");
-      }
-      const dm = ctx.dm!;
-      await fenceDmSeat(ctx, "S-JOB-WAIT");
-      const askAt = await presenceSince(ctx, "S-JOB-WAIT ask");
-      const { ts: sessionTs } = await dm.post(
-        fixtureLine(
-          "e2e S-JOB-WAIT: hand this to a background job with `work`. The job writes one sentence about a colour, but it must first ask me with `ask_room` " +
-            "which colour to use, blue or green, then finish and wait for my answer. Do not pick the colour yourself.",
-        ),
-      );
-
-      await pollUntil(
-        async () => (await read({ sinceIso: askAt, actions: ["work.question_posted"], limit: 200 }))[0],
-        { timeoutMs: FILE_REPLY_WAIT, what: "a work.question_posted row — the job's worker asked with ask_room (none means the seat answered in-seat or the worker chose not to ask)" },
-      );
-      ctx.log("S-JOB-WAIT: the job's worker asked the room with ask_room");
-      const waiting = await pollUntil(
-        async () => (await read({ sinceIso: askAt, actions: ["work.surface_wait"], limit: 200 })).find((r) => dS(r, "state") === "suspended"),
-        { timeoutMs: FILE_REPLY_WAIT, what: "a work.surface_wait row with state suspended — W's settlement showed the wait on the DM's agent session" },
-      );
-      ctx.gate(dS(waiting, "reason") === "asked", `S-JOB-WAIT: the session waits because the job asked the person (reason "${String(dS(waiting, "reason"))}")`);
-      const taskId = dS(waiting, "taskId");
-      ctx.gate(taskId !== undefined, "S-JOB-WAIT: the wait row names the job's task");
-
-      const answerAt = await presenceSince(ctx, "S-JOB-WAIT answer");
-      await dm.post(fixtureLine("blue"), sessionTs);
-      const movedOn = await pollUntil(
-        async () => (await read({ sinceIso: answerAt, actions: ["work.surface_wait"], limit: 200 })).find((r) => dS(r, "state") === "moved-on" && dS(r, "taskId") === taskId),
-        { timeoutMs: FILE_REPLY_WAIT, what: `a work.surface_wait row with state moved-on for task ${String(taskId)} — the seat forwarded the answer to the same task` },
-      );
-      ctx.gate(dS(movedOn, "left") === "none", `S-JOB-WAIT: no job of the session still waits after the answer (left "${String(dS(movedOn, "left"))}")`);
-    },
-  },
   {
     id: "S-REPLY-FEEDBACK",
     title: "Native thumbs on an answer (OPE-2520): a DM answer carries Slack's feedback_buttons, and a signed thumbs-down on it writes one reply.feedback row naming the rater, the rating and the message",
@@ -11719,53 +11685,6 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`write: ${cardText ? "a DM card names" : "no DM card text names"} the ${CONNECTION} connection (evidence, not a gate)`);
       const posted = (await room.history(roomMark)).filter((m) => m.text.includes(postMarker));
       ctx.gate(posted.length === 0, "write: nothing was posted in the person's name before an approval");
-    },
-  },
-  {
-    id: "S-STEP-LABELS",
-    title:
-      "Live step labels on Slack (OPE-2449): a mention that makes the agent read the channel runs a labelled tool step, the answer posts ONCE through the reply tool, and no step label or pre-gate text ever posts in the thread",
-    requires: ["slack"],
-    surface: "slack",
-    suite: "core",
-    timeoutMs: 600_000,
-    judged: false,
-    run: async (ctx) => {
-      const auditRead = ctx.auditRead;
-      const transcriptRead = ctx.transcriptRead;
-      if (!auditRead || !transcriptRead) {
-        return ctx.skip("needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the labelled step is a transcript fact, and the status line has no read API");
-      }
-      const slack = ctx.slack!;
-      const LABELLED = new Set(["read_channel", "read_work_channel"]);
-      const LABEL_TEXTS = ["Reading the channel…", "Reading the thread…"];
-      const token = factToken("steplabel");
-      await slack.post(`e2e S-STEP-LABELS: the step-label marker is ${token}`);
-      const askStart = await presenceSince(ctx, "ask");
-      const { ts: askTs } = await slack.post(
-        slack.mention(fixtureLine(`use read_channel to read the last 5 messages in this channel, then tell me the step-label marker`)),
-      );
-      const answer = await awaitOwnWakeReply(ctx, slack, askTs, { what: "S-STEP-LABELS", timeoutMs: FILE_REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
-      ctx.gate(answer.text.includes(token), `the answer carries the marker it read from the channel (${token})`);
-
-      const askStartMs = Date.parse(askStart);
-      const rows = await auditRead({ sinceIso: askStart, limit: 1000 });
-      const toolNames: string[] = [];
-      for (const sessionId of new Set(auditSessionIds(rows))) {
-        for (const e of findEvents(await transcriptRead(sessionId), "actions.requested")) {
-          const at = e.at === null ? Number.NaN : Date.parse(e.at);
-          if (!Number.isFinite(at) || at < askStartMs) continue;
-          const actions = (e.data as { actions?: readonly { toolName?: unknown }[] } | null)?.actions ?? [];
-          for (const a of actions) if (typeof a.toolName === "string") toolNames.push(a.toolName);
-        }
-      }
-      ctx.log(`tool steps since the ask: ${toolNames.join(", ") || "none"}`);
-      ctx.gate(toolNames.some((n) => LABELLED.has(n)), `the turn ran a step the code labels "Reading the channel…" (tools: ${toolNames.join(", ") || "none"})`);
-
-      const botAfter = (await slack.replies(askTs)).filter((m) => slack.isBotMessage(m) && tsAfter(m.ts, askTs) && !isPendingWorkHandoff(m.text));
-      ctx.gate(botAfter.length === 1, `the answer posts once in the thread (found ${botAfter.length} bot message(s))`);
-      const labelPosts = botAfter.filter((m) => LABEL_TEXTS.some((l) => m.text.trim() === l));
-      ctx.gate(labelPosts.length === 0, `no step label posts as a message (found ${labelPosts.length})`);
     },
   },
   {

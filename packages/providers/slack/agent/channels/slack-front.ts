@@ -93,7 +93,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { botReplyCandidate, slackBotReplyFacts } from "./slack-bot-ask.js";
 import { sidePanelViewedRoom, slackDmSystemNote } from "./slack-side-panel.js";
-import { parseAgentSessionStopped, routeAgentSessionStop, setSlackSessionStatus, slackSessionTitle } from "./slack-agent-session.js";
+import { parseAgentSessionStopped, routeAgentSessionStop } from "./slack-agent-session.js";
 import { parseSlackFeedbackClick, routeSlackFeedbackClick, type ParsedSlackFeedbackClick } from "./slack-reply-feedback.js";
 import { followUpMessageEvent, followUpPressKey, markFollowUpPressed, parseSlackFollowUpClick, type ParsedSlackFollowUpClick } from "./slack-follow-ups.js";
 import {
@@ -777,10 +777,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       ev: ParsedMessageEvent,
       dmKind: "im" | "mpim",
       driverAdmitted = false,
-      agentSessionTypedText?: string,
       showsWorkingSigns = false,
     ): Promise<void> => {
-      const opensAgentSession = agentSessionTypedText !== undefined;
       if (slackFrontTenantFenceDeclined(ev, `dm-${dmKind}`, "scheduleDmWake")) return;
       const p = resolvePartition(bindableFor(ev));
       const atIso = new Date(now()).toISOString();
@@ -819,7 +817,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           channelType: dmKind,
           isPrivate: true,
           ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
-          ...(opensAgentSession && !isGroup ? { agentSessionTs: ev.threadTs ?? ev.ts } : {}),
           ...(showsWorkingSigns && (ev.threadTs ?? ev.ts) ? { workingSignsTs: ev.threadTs ?? ev.ts } : {}),
           ...(roomFacts?.extShared === undefined ? {} : { isExternal: roomFacts.extShared }),
           ...(roomFacts?.trustChecked === undefined ? {} : { trustChecked: roomFacts.trustChecked }),
@@ -846,11 +843,6 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         wakeId,
         ...(seat.freshGeneration && seat.tail.length > 0 ? { backscroll: seat.tail } : {}),
       });
-
-      if (opensAgentSession && !isGroup && !ev.threadTs && ev.ts) {
-        const title = slackSessionTitle(agentSessionTypedText);
-        if (title) await setSlackSessionStatus({ channelId: ev.channelId, threadTs: ev.ts, status: "active", title });
-      }
 
       const origin = { platform: "slack" as const, channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) };
       await divertInboundToUnifiedWindow(args.to, {
@@ -962,7 +954,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
           const heard = await hearVoice(dev);
-          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted, decision.dmKind === "im" ? dev.authoredText : undefined, true));
+          await deliverWithStrandRetry(() => scheduleDmWake(heard, decision.dmKind, driverAdmitted, true));
           console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );
@@ -1070,7 +1062,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           args.waitUntil(
             fifo.enqueue(dmFifoKey(mev.channelId), async () => {
               const heard = mev.botId ? mev : await hearVoice(mev);
-              await deliverWithStrandRetry(() => scheduleDmWake({ ...heard, channelType: "mpim" }, "mpim", false, undefined, true));
+              await deliverWithStrandRetry(() => scheduleDmWake({ ...heard, channelType: "mpim" }, "mpim", false, true));
             }),
           );
           return OK();
@@ -1186,7 +1178,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       );
       args.waitUntil(
         fifo.enqueue(dmFifoKey(click.channelId), async () => {
-          await deliverWithStrandRetry(() => scheduleDmWake(sev, "im", false, click.threadTs === undefined ? undefined : click.text, click.threadTs !== undefined));
+          await deliverWithStrandRetry(() => scheduleDmWake(sev, "im", false, click.threadTs !== undefined));
           console.log(`[open-everywhere:slack-front] follow-up press in ${click.channelId}: woke the DM window`);
         }),
       );
