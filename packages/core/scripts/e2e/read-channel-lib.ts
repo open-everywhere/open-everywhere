@@ -83,6 +83,7 @@ export async function pollForDelegationSettlement(
 export type FinalReplyOutcome = {
   readonly kind: "settled-relay" | "quiet" | "timeout";
   readonly replyCount: number;
+  readonly answerId?: string;
   readonly detail: string;
 };
 
@@ -134,18 +135,23 @@ export async function pollForFinalReply(
       settledFirstSeenAt = deps.now();
       lastChangeAt = settledFirstSeenAt;
     }
-    if (settled && replies.some((r) => atOrAfter(r.ts, settled.ts))) {
+    const answer = settled ? replies.find((r) => atOrAfter(r.ts, settled.ts) && r.detail?.["done"] !== false) : undefined;
+    if (answer) {
+      const answerId = dS(answer, "id");
       return {
         kind: "settled-relay",
         replyCount: replies.length,
-        detail: `a reply.post landed at or after delegation.task_settled for session ${sessionId} — the worker's answer, not the interim ack (${replies.length} reply row(s) this turn)`,
+        ...(answerId !== undefined && answerId.length > 0 ? { answerId } : {}),
+        detail: `a reply.post${answerId ? ` (id ${answerId})` : ""} landed at or after delegation.task_settled for session ${sessionId} — the worker's answer, not the interim ack (${replies.length} reply row(s) this turn)`,
       };
     }
     const foldEdit = settled ? settlementEditOf(rows, wakeId, sessionId, settled.ts) : undefined;
     if (foldEdit) {
+      const answerId = dS(foldEdit, "id");
       return {
         kind: "settled-relay",
         replyCount: replies.length,
+        ...(answerId !== undefined && answerId.length > 0 ? { answerId } : {}),
         detail:
           `a reply.edit of this turn's own reply id ${dS(foldEdit, "id") ?? "(none)"} landed at or after ` +
           `delegation.task_settled for session ${sessionId} — the settlement FOLDED into the ack, the product's ` +
@@ -157,7 +163,8 @@ export async function pollForFinalReply(
       lastChangeAt = deps.now();
       continue;
     }
-    const outstanding = delegation.started.length > 0 && !settled;
+    const newestAfterSettle = settled ? replies.filter((r) => atOrAfter(r.ts, settled.ts)).at(-1) : undefined;
+    const outstanding = (delegation.started.length > 0 && !settled) || newestAfterSettle?.detail?.["done"] === false;
     if (!outstanding && deps.now() - lastChangeAt >= quietMs) {
       return {
         kind: "quiet",
@@ -174,6 +181,11 @@ export async function pollForFinalReply(
     replyCount: Math.max(count, 0),
     detail: `no settled relay and no ${quietMs}ms quiet period within ${timeoutMs}ms (last seen ${Math.max(count, 0)} reply row(s)) — reading the transcript anyway; the existing classification still decides the verdict`,
   };
+}
+
+export function settledAnswerMessage<M extends { readonly ts: string }>(outcome: FinalReplyOutcome, messages: readonly M[]): M | undefined {
+  if (outcome.kind !== "settled-relay" || outcome.answerId === undefined) return undefined;
+  return messages.find((m) => m.ts === outcome.answerId);
 }
 
 export const readRefusalActions = (platform: "slack" | "discord"): readonly string[] => [`${platform}.sources_refused`, `${platform}.origin_refused`];

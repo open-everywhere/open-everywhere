@@ -249,7 +249,7 @@ import {
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
 import { noteNamesViewedRoom, slackTsAt, toolCallsNamingRoom, turnRows, viewedRoomRows } from "./side-panel.js";
-import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, ingressOfDriverPost, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, seatDelegationRows, TASK_WAKE_ACTION, WORK_FORWARDED_ACTION, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, DELEGATION_TASK_SETTLED_ACTION, DELEGATION_TASK_STARTED_ACTION, dS, ingressOfDriverPost, pollForFinalReply, pollForOwnWakeReply, REPLY_EDIT_ACTION, seatDelegationRows, settledAnswerMessage, TASK_WAKE_ACTION, WORK_FORWARDED_ACTION, type FinalReplyOutcome, type OwnWakeCandidate } from "./read-channel-lib.js";
 import {
   CLAIMED_REQUEST_SHAPES,
   NARRATED_ACT_SHAPES,
@@ -817,21 +817,34 @@ async function gateDelegatedTurn(
     readonly sinceIso: string;
     readonly platform: string;
     readonly timeoutMs: number;
+    readonly anchorId?: string;
+    readonly onPoll?: () => Promise<void>;
+    readonly beforeGates?: () => Promise<void>;
   },
-): Promise<void> {
+): Promise<FinalReplyOutcome | undefined> {
   const read = ctx.auditRead;
   if (!read) {
     ctx.skip(
       `delegated turn on ${opts.platform}: the control-plane audit reader is unreachable, and every gate on this shape is an audit row (delegation.task_started/task_settled joined to reply.post). Set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to run it.`,
     );
-    return;
+    return undefined;
   }
-  const first = await awaitReplyPostRows(read, {
-    sinceIso: opts.sinceIso,
-    platform: opts.platform,
-    budget: { timeoutMs: AUDIT_ROW_WAIT, what: `delegated turn on ${opts.platform}: the turn's first ${REPLY_POST_ACTION} row` },
-  });
-  const anchor = (first ?? []).find((r) => typeof r.detail?.["sessionId"] === "string");
+  const { anchorId } = opts;
+  const first =
+    anchorId === undefined
+      ? await awaitReplyPostRows(read, {
+          sinceIso: opts.sinceIso,
+          platform: opts.platform,
+          budget: { timeoutMs: AUDIT_ROW_WAIT, what: `delegated turn on ${opts.platform}: the turn's first ${REPLY_POST_ACTION} row` },
+        })
+      : await pollOptional(
+          async () => {
+            const rows = await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [REPLY_POST_ACTION] });
+            return rows.some((r) => dS(r, "id") === anchorId) ? rows : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, what: `delegated turn on ${opts.platform}: the ${REPLY_POST_ACTION} row of message ${anchorId}` },
+        );
+  const anchor = (first ?? []).find((r) => typeof r.detail?.["sessionId"] === "string" && (anchorId === undefined || dS(r, "id") === anchorId));
   ctx.gate(
     anchor !== undefined,
     `🔴 (hard): the delegating turn filed a ${REPLY_POST_ACTION} row NAMING ITS SESSION on ${opts.platform} — without one there is no key to join the settlement to, and every gate below would be about some other turn (read ${(first ?? []).length} row(s))`,
@@ -843,8 +856,13 @@ async function gateDelegatedTurn(
     ...(await read({ sinceIso: opts.sinceIso, platform: opts.platform, actions: [...DELEGATED_TURN_SURFACE_ACTIONS] })),
     ...(await read({ sinceIso: opts.sinceIso, actions: [...DELEGATED_TURN_DELEGATION_ACTIONS] })),
   ];
+  const { onPoll } = opts;
   const outcome = await pollForFinalReply(
-    { now: () => Date.now(), sleep, fetchRows: readTurnRows },
+    {
+      now: () => Date.now(),
+      sleep,
+      fetchRows: onPoll === undefined ? readTurnRows : async () => (await onPoll(), readTurnRows()),
+    },
     wakeId,
     sessionId,
     opts.timeoutMs,
@@ -852,6 +870,7 @@ async function gateDelegatedTurn(
     30_000,
   );
   ctx.log(`delegated turn on ${opts.platform}: ${outcome.kind} — ${outcome.detail}`);
+  await opts.beforeGates?.();
 
   const rows = await readTurnRows();
   const { forwards, started, settled } = seatDelegationRows(rows, sessionId, wakeId);
@@ -868,6 +887,7 @@ async function gateDelegatedTurn(
     outcome.kind === "settled-relay",
     `🔴 (hard, OPE-1856): the SUBSTANTIVE reply landed at or after the settlement — the worker's answer, never the interim ack. Got "${outcome.kind}": ${outcome.detail}`,
   );
+  return outcome;
 }
 
 async function gateAmbientReplyRow(ctx: ScenarioContext, opts: { readonly sinceIso: string; readonly platform: string }): Promise<void> {
@@ -8661,7 +8681,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm", "synthetic"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 960_000,
+    timeoutMs: 1_020_000,
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
@@ -8674,38 +8694,61 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: anchorTs } = await dm.post(ask);
 
       const clicked = new Set<string>();
-      const answer = await pollUntil(
-        async () => {
-          const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
-          let pending: SlackMessage | undefined;
-          for (const m of msgs) {
-            const buttons = eveRequestApprovalButtons(m);
-            if (buttons) {
-              if (!clicked.has(m.ts)) {
-                clicked.add(m.ts);
-                const res = await synthetic.clickBlockAction({
-                  actionId: buttons.approve.actionId,
-                  blockId: buttons.approve.blockId,
-                  value: buttons.approve.value,
-                  buttonText: buttons.approve.text,
-                  userId,
-                  teamId,
-                  channelId: dm.channelId,
-                  messageTs: m.ts,
-                  threadTs: m.threadTs ?? anchorTs,
-                });
-                ctx.log(`approval card Allow → synthetic click ${res.status}`);
-              }
-              continue;
+      const sweep = async (): Promise<readonly SlackMessage[]> => {
+        const msgs = await dm.collectBotMessagesAfter(anchorTs, anchorTs);
+        const texts: SlackMessage[] = [];
+        for (const m of msgs) {
+          const buttons = eveRequestApprovalButtons(m);
+          if (buttons) {
+            if (!clicked.has(m.ts)) {
+              clicked.add(m.ts);
+              const res = await synthetic.clickBlockAction({
+                actionId: buttons.approve.actionId,
+                blockId: buttons.approve.blockId,
+                value: buttons.approve.value,
+                buttonText: buttons.approve.text,
+                userId,
+                teamId,
+                channelId: dm.channelId,
+                messageTs: m.ts,
+                threadTs: m.threadTs ?? anchorTs,
+              });
+              ctx.log(`approval card Allow → synthetic click ${res.status}`);
             }
-            if (m.text.trim().length > 0 && !isFillerAck(m.text)) pending = pending ?? m;
+            continue;
           }
-          return pending;
-        },
-        { timeoutMs: FILE_REPLY_WAIT, what: "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask" },
-      );
+          if (m.text.trim().length > 0) texts.push(m);
+        }
+        return texts;
+      };
+      const replyDeadline = Date.now() + FILE_REPLY_WAIT;
+      const first = await pollUntil(async () => (await sweep())[0], {
+        timeoutMs: Math.max(0, replyDeadline - Date.now()),
+        what: `the turn's first non-card bot reply to the DM Notion-pages ask (the ack, or the answer), within the ${FILE_REPLY_WAIT}ms reply deadline`,
+      });
       await assertDmDoorAdmitted(ctx, sinceIso, "S-DM-NOTION");
       await arming.recheck();
+      const outcome = await gateDelegatedTurn(ctx, {
+        sinceIso,
+        platform: "slack",
+        timeoutMs: Math.max(0, replyDeadline - Date.now()),
+        anchorId: first.ts,
+        onPoll: async () => {
+          await sweep();
+        },
+        beforeGates: async () => {
+          await arming.recheck();
+        },
+      });
+      if (outcome === undefined) return;
+      const answer = settledAnswerMessage(outcome, await sweep());
+      if (answer === undefined) {
+        ctx.gate(
+          false,
+          `🔴 (hard, OPE-2660): the settled answer's own message is in the DM — the message whose ts is the settled reply's id (${outcome.answerId ?? "no id on the row"}). Without it the judge would grade some other message`,
+        );
+        return;
+      }
       await ctx.judgePass(
         closedQA(
           "Does the reply substantively answer a request to list the user's Notion pages — naming/describing pages or workspace content, or an honest 'your workspace has no pages' — rather than an error, a permissions failure, or a refusal to access Notion?",

@@ -4215,6 +4215,11 @@ const { parseAppMentionEvent } = await import(
       !/await dm\.replies\(anchorTs\)/.test(src),
       "🔴 OPE-1027 — S-DM-NOTION's poll body no longer reads dm.replies(anchorTs) alone (the thread-only trap that redded a live run)",
     );
+    ok(
+      src.includes("gateDelegatedTurn(") && src.includes("settledAnswerMessage(") && /judgePass\([\s\S]*answer\.text/.test(src),
+      "🔴 OPE-2660 — S-DM-NOTION waits through gateDelegatedTurn and judges settledAnswerMessage's message",
+    );
+    ok(!src.includes("isFillerAck("), "🔴 OPE-2660 — S-DM-NOTION no longer picks its judged reply with the isFillerAck prose filter");
   }
 
   {

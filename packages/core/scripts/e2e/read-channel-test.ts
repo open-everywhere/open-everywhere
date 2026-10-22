@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { AuditWireEntry } from "./audit-read.js";
-import { awaitDelegatedAnswer, classifyDelegatedAnswer, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
+import { awaitDelegatedAnswer, classifyDelegatedAnswer, classifyDelegatedReadEvidence, pollForDelegationSettlement, pollForFinalReply, pollForOwnWakeReply, settledAnswerMessage, type DelegatedReadVerdict, type OwnWakeCandidate } from "./read-channel-lib.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -280,6 +280,61 @@ const ok = (cond: boolean, label: string) => {
     ok(sleepCount() === 5, `…after holding the full 12000ms from the SETTLEMENT, not from the ack (got ${sleepCount()} polls; 4 would mean no restart, >5 a repeating one)`);
     ok(o.detail.includes("clock measured from the settlement"), `…and the detail says which instant the clock ran from (got: ${o.detail})`);
   }
+
+  {
+    const handAck = rowAt("reply.post", "2026-04-15T09:30:02.000Z", { sessionId: "s1", wakeId: "w1", chars: 79, done: false, id: "1758498804.000100" });
+    const handOff = rowAt("reply.post", "2026-04-15T09:30:46.000Z", { sessionId: "s1", wakeId: "w2-completion", chars: 120, done: false, id: "1758498846.000200" });
+    const settledAnswer = rowAt("reply.post", "2026-04-15T09:31:20.000Z", { sessionId: "s1", wakeId: "w2-completion", chars: 1257, done: true, id: "1758498880.000300" });
+    const messages = [
+      { ts: "1758498804.000100", text: "On it — checking your Notion workspace now." },
+      { ts: "1758498846.000200", text: "Still reading a few more pages, one moment." },
+      { ts: "1758498880.000300", text: "Here are the pages in your Notion workspace: Roadmap, Meeting notes, …" },
+    ];
+
+    {
+      const { deps } = makeDeps([[handAck, started], [handAck, started, settled, settledAnswer]]);
+      const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o.kind === "settled-relay" && o.answerId === "1758498880.000300", `the settled answer's id is the relay's answerId, never the ack's (got "${o.kind}", ${o.answerId})`);
+      const judged = settledAnswerMessage(o, messages);
+      ok(judged?.ts === "1758498880.000300", `the judge receives the settled answer, never the done:false ack (got ${judged?.ts})`);
+    }
+
+    {
+      const { deps } = makeDeps([[handAck, started, settled, handOff], [handAck, started, settled, handOff, settledAnswer]]);
+      const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o.answerId === "1758498880.000300", `a done:false hand-off posted after the settlement is skipped — the done:true post is the answer (got ${o.answerId}: ${o.detail})`);
+      ok(settledAnswerMessage(o, messages)?.ts === "1758498880.000300", "…and the judge skips the done:false hand-off");
+
+      const { deps: d2 } = makeDeps([[handAck, started, settled, handOff]]);
+      const o2 = await pollForFinalReply(d2, "w1", "s1", 40_000, 4000, 12_000);
+      ok(o2.kind !== "settled-relay", `a done:false hand-off alone never settles the wait (got "${o2.kind}")`);
+      ok(settledAnswerMessage(o2, messages) === undefined, "…so NO message reaches the judge");
+    }
+
+    {
+      const still = [handAck, started, settled, handOff];
+      const { deps } = makeDeps([still, still, still, still, still, still, still, still, still, still, still, [...still, settledAnswer]]);
+      const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o.kind === "settled-relay" && o.answerId === "1758498880.000300", `a done:false hand-off holds the wait through its stillness until the done:true answer (got "${o.kind}", ${o.answerId}: ${o.detail})`);
+    }
+
+    {
+      const noIntent = rowAt("reply.post", "2026-04-15T09:31:20.000Z", { sessionId: "s1", wakeId: "w2-completion", chars: 900, id: "1758498880.000300" });
+      const { deps } = makeDeps([[handAck, started, settled, noIntent]]);
+      const o = await pollForFinalReply(deps, "w1", "s1", 40_000, 4000, 12_000);
+      ok(o.kind === "settled-relay" && o.answerId === "1758498880.000300", `a post with no done field still counts as the settled answer (got "${o.kind}", ${o.answerId})`);
+    }
+
+    {
+      const foldEdit = rowAt("reply.edit", "2026-04-15T09:30:50.000Z", { sessionId: "s1", wakeId: "w1", chars: 1257, id: "1758498804.000100" });
+      const { deps } = makeDeps([[handAck, started, settled, foldEdit]]);
+      const o = await pollForFinalReply(deps, "w1", "s1", 40_000, 4000, 12_000);
+      ok(o.kind === "settled-relay" && o.answerId === "1758498804.000100", `a fold edit's answerId is the id it rewrote (got "${o.kind}", ${o.answerId})`);
+    }
+
+    ok(settledAnswerMessage({ kind: "quiet", replyCount: 1, detail: "" }, messages) === undefined, "a quiet outcome hands the judge no message");
+    ok(settledAnswerMessage({ kind: "timeout", replyCount: 1, answerId: "1758498880.000300", detail: "" }, messages) === undefined, "a timeout hands the judge no message, even with an id");
+  }
 }
 
 {
@@ -397,12 +452,12 @@ const ok = (cond: boolean, label: string) => {
 
   {
     const S228 = "slack/T0EXAMPLE/D0EXDMCH001";
-    const WAKE = "00000000-0000-4000-8000-000000000031";
+    const WAKE = "1483107d-6074-4eb5-8f80-a9f02c4662c7";
     const ASK_Rc = "2026-05-25T22:27:18.890Z";
     const REPLY_ID = "1779748052.241000";
     const REPLY_AT = ms("2026-05-25T22:27:32.241Z");
     const ing228 = row("wake.ingress", ASK_Rc, { wakeId: WAKE, surfaceKey: S228, vendorTs: ASK_Rc });
-    const turn228 = row("wake.turn_start", "2026-05-25T22:27:27.017Z", { wakeId: WAKE, sessionId: "wrun_example30", turnId: "turn_0" });
+    const turn228 = row("wake.turn_start", "2026-05-25T22:27:27.017Z", { wakeId: WAKE, sessionId: "wrun_41MBA5E9KR0GS2E883KA0Z6Y8T", turnId: "turn_0" });
     const post228 = row("reply.post", "2026-05-25T22:27:32.269Z", { wakeId: WAKE, id: REPLY_ID, chars: 200, route: "tool", platform: "slack" });
     const driverPost = { vendorMs: ms(ASK_Rc), surfaceKey: S228 } as const;
     const acked: OwnWakeCandidate = { id: REPLY_ID, atMs: REPLY_AT, substantive: false };
