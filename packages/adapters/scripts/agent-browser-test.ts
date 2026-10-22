@@ -203,7 +203,7 @@ function setEnv(values: { enabled?: boolean; hosts?: BrowserHostDeclaration[]; p
   ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag on but no declared host ⇒ no bake (fail closed)");
 
   setEnv({ enabled: true, hosts: [ro("localhost")], platform: "self-host" });
-  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (self-host image has no Chromium — the MVP posture)");
+  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (no self-host backend can run the browser inside the declared hosts)");
 
   setEnv({ enabled: true, hosts: [ro("localhost")], platform: "vercel" });
   const installed: string[] = [];

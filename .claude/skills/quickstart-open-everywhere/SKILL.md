@@ -273,6 +273,9 @@ Then:
    Tell the user plainly: this stack runs the `justbash` sandbox backend, so the agent's shell
    shares the app process's filesystem and environment, every `.env` value included. That is
    development grade, and it does not meet the contract's `sandbox-backend` requirement.
+   Tell the user too: the browser does not run on this route. `justbash` runs no native binary, so
+   the plane refuses and logs one line at boot. The new app ships `browser: { enabled: true }`, so
+   set `browser: { enabled: false }` in `agent/settings/settings.ts` to silence that line (OPE-2666).
 7. **Prove it, then the Slack URLs and the hello.** As steps 11–13 of the Vercel route, with
    `--route docker --host https://<host>`.
 

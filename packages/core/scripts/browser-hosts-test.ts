@@ -243,6 +243,13 @@ const row = (extra: Partial<BrowserHostDeclaration> = {}): BrowserHostDeclaratio
     overrideSettingsForTest({ sandbox: { useVercelSandbox: true } });
     ok(browserPlaneRefusal() === undefined, "…while a declared `sandbox.useVercelSandbox` arms it off a Vercel host, because the Vercel Sandbox then really runs");
     resetSettingsForTest();
+
+    overrideSettingsForTest({ sandbox: { selfHostBackend: "justbash" } });
+    ok(/justbash backend runs no native binary/.test(browserPlaneRefusal() ?? ""), "🔴 on justbash the refusal says the backend runs no native binary");
+    resetSettingsForTest();
+    overrideSettingsForTest({ sandbox: { selfHostBackend: "docker" } });
+    ok(/docker backend's session containers sit outside the egress proxy/.test(browserPlaneRefusal() ?? ""), "🔴 on docker the refusal says the containers sit outside the egress proxy");
+    resetSettingsForTest();
     resetExtraEgressHostsForTest();
   } finally {
     if (saved === undefined) delete process.env.VERCEL;

@@ -5,7 +5,7 @@ import { currentSessionId, type BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "./untrusted.js";
 import { browserEvaluateHosts } from "./browser-hosts.js";
-import { sandboxOnVercel } from "../sandbox/backend-select.js";
+import { resolveSandboxBackend } from "../sandbox/backend-select.js";
 import { registerExtraEgressHosts } from "./extra-hosts.js";
 
 export interface BrowserToolEntry {
@@ -19,9 +19,13 @@ export interface BrowserToolEntry {
 const BROWSER_TOOLS_SLUG = "browser_tools";
 
 export function browserPlaneRefusal(): string | undefined {
-  return sandboxOnVercel()
-    ? undefined
-    : "the browser plane needs the Vercel Sandbox backend — the self-host image ships no Chromium, so nothing arms here (agent/access/browser-toolkit.ts).";
+  const backend = resolveSandboxBackend();
+  if (backend === "vercel") return undefined;
+  const why =
+    backend === "justbash"
+      ? "the justbash backend runs no native binary, so it cannot run the agent-browser CLI or Chromium"
+      : "the docker backend's session containers sit outside the egress proxy and take no host allow-list (OPE-2407), so the declared hosts and the credential stamp cannot hold";
+  return `the browser plane needs the Vercel Sandbox backend: ${why}. Nothing arms here (agent/access/browser-toolkit.ts).`;
 }
 
 const BROWSER_EGRESS_SOURCE = "agent-browser";
