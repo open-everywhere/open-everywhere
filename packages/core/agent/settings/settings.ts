@@ -214,6 +214,7 @@ export interface AgentSettings {
     readonly attentionPauseRuns: number;
     readonly discoveryMinWeeks: number;
     readonly firstConversationDays: number;
+    readonly firstDayBrief: boolean;
   };
   readonly rotation: {
     readonly quietGapHours: number;
@@ -1265,6 +1266,12 @@ export const SETTINGS = {
         "First conversation ends in a routine (OPE-2514): for this many days after a person's first DM turn, or after a room's first introduction, the seat may offer ONE routine that fits what they said they do, in one plain sentence, with the routine card as the one confirmation. The host ends the offer when the routine card posts, and a decline or a set-up routine records how it ended. A no said in words before any card posts is covered only by the seat's instruction and this window. A person gets it when their first DM turn after this shipped creates their watch row, and a room when it is first introduced after this shipped. `0` turns it off.",
       format: (v) => (v === 0 ? "off" : `${v} days`),
     } satisfies SettingSpec<number>,
+    firstDayBrief: {
+      path: "routines.firstDayBrief",
+      shipped: true,
+      summary:
+        "The first-day brief (OPE-2662): on a person's first DM turn, the agent posts ONE card in that DM that offers a morning brief (weekdays at 09:00 UTC) and a needs-you watch (weekdays at 11:00, 14:00 and 17:00 UTC) whose empty checks post nothing. Set it up arms both routines through the normal routine path, and the first brief is due at the click, so the next dispatcher tick fires it. No thanks is remembered, and the card is never posted again. Nothing runs before the click. It needs `routines.firstConversationDays` above 0, because the offer lives inside that window. `false` turns it off.",
+    } satisfies SettingSpec<boolean>,
   },
   rotation: {
     quietGapHours: {
@@ -1908,6 +1915,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       attentionPauseRuns: resolve(SETTINGS.routines.attentionPauseRuns, o.routines?.attentionPauseRuns),
       discoveryMinWeeks: resolve(SETTINGS.routines.discoveryMinWeeks, o.routines?.discoveryMinWeeks),
       firstConversationDays: resolve(SETTINGS.routines.firstConversationDays, o.routines?.firstConversationDays),
+      firstDayBrief: resolve(SETTINGS.routines.firstDayBrief, o.routines?.firstDayBrief),
     },
     rotation: {
       quietGapHours: resolve(SETTINGS.rotation.quietGapHours, o.rotation?.quietGapHours),

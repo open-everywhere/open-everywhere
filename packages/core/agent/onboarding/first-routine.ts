@@ -58,7 +58,8 @@ export const DM_FIRST_CONVERSATION_BLOCK = `### Your first conversation with thi
 
 You and this person are still new to each other. Answer what they ask first. Then, when
 they have told you what they do or what they keep an eye on, offer them ONE routine that fits it: a
-weekly digest, a morning summary, or a watch that tells them when something changes.
+weekly digest, or a watch that tells them when something changes. A card in this DM may already offer
+them a morning brief and check-ins. Never offer those again, and never repeat what that card says.
 
 ${HOW_TO_OFFER}`;
 

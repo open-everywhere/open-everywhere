@@ -80,7 +80,7 @@ test("a DM channel-scope ask yields no unfounded submitted claim in the room", a
   expect(res.status).toBe(200);
 
   const posted = await waitFor(() => {
-    const call = slack.calls.find((c) => c.method === "chat.postMessage" && (c.params.get("channel") ?? "") === DM_CHANNEL_ID);
+    const call = slack.calls.find((c) => c.method === "chat.postMessage" && (c.params.get("channel") ?? "") === DM_CHANNEL_ID && !(c.params.get("blocks") ?? "").includes("Want a morning brief and check-ins?"));
     return call === undefined ? undefined : (call.params.get("text") ?? "");
   }, "the seat's DM reply reached chat.postMessage");
 
@@ -98,6 +98,6 @@ test("a DM channel-scope ask yields no unfounded submitted claim in the room", a
   expect(detail.subjects).toContain("access");
   expect(JSON.stringify(withheld[0])).not.toContain("e2e-run-ope2022");
 
-  const proposed = await rowsSinceCursor(cursor, ["approval.requested"]);
+  const proposed = (await rowsSinceCursor(cursor, ["approval.requested"])).filter((r) => (r.detail as Record<string, unknown> | undefined)?.kind !== "routine.suggest");
   expect(proposed).toHaveLength(0);
 });

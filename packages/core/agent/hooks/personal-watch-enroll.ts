@@ -1,8 +1,11 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/binding.js";
-import { tryPrincipalKey } from "../identity/principal-key.js";
+import { parsePrincipalKey, tryPrincipalKey } from "../identity/principal-key.js";
 import { enrollPersonalWatch } from "../personal-watch/state.js";
 import { partitionOfBinding } from "../memory/partition.js";
+import { offerFirstDayBrief, type FirstDayBriefDeps, type FirstDayBriefOutcome } from "../onboarding/first-day-brief.js";
+import { proposeFirstDayBriefCard } from "../personal-watch/propose.js";
+import { personAddress, readDmAudience } from "../channels/dm-audience.js";
 
 const SEEN = new Set<string>();
 
@@ -18,9 +21,29 @@ export async function enrollFromBinding(binding: ReturnType<typeof bindFrom>, en
   return r;
 }
 
+function liveFirstDayDeps(): FirstDayBriefDeps {
+  return {
+    propose: proposeFirstDayBriefCard(),
+    dmStopped: async (org, principalKey) => {
+      const p = parsePrincipalKey(principalKey);
+      return p ? (await readDmAudience(org, personAddress(p.platform, p.id))).stopped : true;
+    },
+  };
+}
+
+export async function onDmTurn(binding: ReturnType<typeof bindFrom>, deps: { readonly enroll?: typeof enrollPersonalWatch; readonly firstDay?: FirstDayBriefDeps } = {}): Promise<FirstDayBriefOutcome | undefined> {
+  try {
+    const enrolled = await enrollFromBinding(binding, deps.enroll);
+    if (enrolled === "skipped") return undefined;
+    return await offerFirstDayBrief(binding, partitionOfBinding(binding).surfaceKey, deps.firstDay ?? liveFirstDayDeps());
+  } catch {
+    return undefined;
+  }
+}
+
 async function onTurn(ctx: HookContext): Promise<void> {
   try {
-    await enrollFromBinding(bindFrom(ctx as unknown as BindableContext));
+    await onDmTurn(bindFrom(ctx as unknown as BindableContext));
   } catch {
   }
 }

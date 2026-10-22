@@ -55,6 +55,7 @@ export interface Routine {
   readonly report?: RoutineReport;
   readonly prompt: string;
   readonly watchFor?: string;
+  readonly quietWhenEmpty?: true;
   readonly createdBy?: string;
   readonly createdAt: string;
   readonly taintedAtCreation?: boolean;

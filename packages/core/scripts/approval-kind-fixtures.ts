@@ -46,7 +46,7 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     args: {
       org: ORG,
       scopeKey: SCOPE,
-      requestId: "00000000-0000-4000-8000-000000000080",
+      requestId: "3b6f2c1e-8a4d-4e7f-9b2a-6c5d4e3f2a1b",
       delta: {
         kind: "widen-connection",
         scope: { level: "surface", surface: SCOPE },
@@ -76,7 +76,7 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     args: {
       org: ORG,
       scopeKey: SCOPE,
-      requestId: "00000000-0000-4000-8000-000000000081",
+      requestId: "7d1e4a2b-5c3f-4b8e-a9d0-1f2e3d4c5b6a",
       spec: {
         name: "release-notes",
         title: "Release notes helper",
@@ -211,7 +211,7 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     args: {
       org: ORG,
       scopeKey: SCOPE,
-      requestId: "00000000-0000-4000-8000-000000000082",
+      requestId: "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
       inbox: "support@acme.example",
       sender: "*@example-partner.com",
       why: "Example Partner files escalations to this inbox and the team wants the agent to triage them.",
@@ -235,7 +235,7 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     args: {
       org: ORG,
       scopeKey: SCOPE,
-      requestId: "00000000-0000-4000-8000-000000000083",
+      requestId: "c4d3e2f1-a0b9-4c8d-9e7f-6a5b4c3d2e1f",
       declaration: {
         name: "example-crm",
         url: "https://mcp.example-crm.com/mcp",
@@ -483,6 +483,36 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     },
   },
   {
+    kind: "routine.suggest",
+    args: {
+      scope: "first-day",
+      org: ORG,
+      principalKey: `slack/${WORKSPACE}/${REQUESTER}`,
+      personId: REQUESTER,
+      fingerprint: "first-day-brief",
+      brief: {
+        org: ORG,
+        partition: { ...PARTITION, surface: "D0EXAMPLE1", surfaceKey: `slack/${WORKSPACE}/D0EXAMPLE1`, key: `slack/${WORKSPACE}/D0EXAMPLE1` },
+        surfaceKey: `slack/${WORKSPACE}/D0EXAMPLE1`,
+        target: { channelId: "D0EXAMPLE1" },
+        trigger: { kind: "cron", expr: "0 9 * * 1-5" },
+        prompt: "This is the morning brief for the person who set it up. Look across the apps they have connected for what needs them today. Post a short brief.",
+        createdBy: REQUESTER,
+        firstRunNow: true,
+      },
+      needsYou: {
+        org: ORG,
+        partition: { ...PARTITION, surface: "D0EXAMPLE1", surfaceKey: `slack/${WORKSPACE}/D0EXAMPLE1`, key: `slack/${WORKSPACE}/D0EXAMPLE1` },
+        surfaceKey: `slack/${WORKSPACE}/D0EXAMPLE1`,
+        target: { channelId: "D0EXAMPLE1" },
+        trigger: { kind: "watch", expr: "0 11,14,17 * * 1-5" },
+        prompt: "This checks what needs the person who set it up. Look across the apps they have connected for what needs them now.",
+        createdBy: REQUESTER,
+        quietWhenEmpty: true,
+      },
+    },
+  },
+  {
     kind: "session.checkpoint",
     args: {
       org: ORG,
@@ -584,7 +614,7 @@ export const APPROVAL_KIND_FIXTURES: readonly KindFixture[] = [
     args: {
       org: ORG,
       scopeKey: SCOPE,
-      requestId: "00000000-0000-4000-8000-000000000084",
+      requestId: "e5f4a3b2-c1d0-4e9f-8a7b-6c5d4e3f2a1b",
       declaration: {
         id: "github-releases",
         source: "github",

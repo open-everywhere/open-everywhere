@@ -143,6 +143,14 @@ export default defineTool({
           "e.g. \"a new issue is opened in acme/web\" or \"the contract comes back signed\". Set it for an event subscription, or for an only-on-change check on an app that sends no events here. " +
           "The card's headline and the person's list read it; the filter or the prompt still decides each post, so make them say the same thing. Leave it off every other routine.",
       ),
+    quietWhenEmpty: z
+      .boolean()
+      .optional()
+      .describe(
+        "Only with `postPolicy: \"only-on-change\"`: a check that finds nothing posts NOTHING, even when the last check found something " +
+          "and even on the first check. The check then records the state as exactly `nothing`. Set it for a 'tell me when something needs me' check, " +
+          "including when you re-create such a check on a new schedule. It only removes posts, so it grants nothing.",
+      ),
     job: z
       .boolean()
       .optional()
@@ -255,6 +263,9 @@ export default defineTool({
     if (watchFor !== undefined && t.kind !== "event" && t.kind !== "watch") {
       throw new Error("`watchFor` names what a watch looks for, so it needs an event trigger or `postPolicy: \"only-on-change\"`. Drop it, or make this a watch.");
     }
+    if (input.quietWhenEmpty === true && t.kind !== "watch") {
+      throw new Error("`quietWhenEmpty` holds back an empty check of an only-on-change watch, so it needs `postPolicy: \"only-on-change\"`. Drop it, or make this a watch.");
+    }
     if (t.kind === "event" && (await eventReach(t.source)) === "deaf") {
       const app = sourceWords(t.source);
       throw new Error(
@@ -357,7 +368,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(watchFor ? { watchFor } : {}), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(watchFor ? { watchFor } : {}), ...(input.quietWhenEmpty === true ? { quietWhenEmpty: true as const } : {}), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
         scopeKey: proposeScopeKey,
         domain: null,
         requestedBy: createdBy,

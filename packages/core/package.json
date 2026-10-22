@@ -2602,6 +2602,10 @@
       "types": "./dist/agent/observability/turn-clock.d.ts",
       "default": "./dist/agent/observability/turn-clock.js"
     },
+    "./agent/onboarding/first-day-brief.js": {
+      "types": "./dist/agent/onboarding/first-day-brief.d.ts",
+      "default": "./dist/agent/onboarding/first-day-brief.js"
+    },
     "./agent/onboarding/first-routine.js": {
       "types": "./dist/agent/onboarding/first-routine.d.ts",
       "default": "./dist/agent/onboarding/first-routine.js"
@@ -4014,6 +4018,7 @@
     "test:personal-triage": "NODE_NO_WARNINGS=1 tsx scripts/personal-triage-test.ts",
     "test:workflow-discovery": "NODE_NO_WARNINGS=1 tsx scripts/workflow-discovery-test.ts",
     "test:first-routine": "NODE_NO_WARNINGS=1 tsx scripts/first-routine-test.ts",
+    "test:first-day-brief": "NODE_NO_WARNINGS=1 tsx scripts/first-day-brief-test.ts",
     "test:ask-watch": "NODE_NO_WARNINGS=1 tsx scripts/ask-watch-test.ts",
     "test:bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/bot-ask-test.ts",
     "test:memory-claim-guard": "NODE_NO_WARNINGS=1 tsx scripts/memory-claim-guard-test.ts",

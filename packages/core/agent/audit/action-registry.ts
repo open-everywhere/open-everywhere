@@ -840,8 +840,8 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   {
     action: "personal_watch.proposal",
     fields: ["fingerprint", "kind", "connector", "tool", "weekday", "hour", "weeks", "dial"],
-    proves: "the watch posted a routine proposal card into the person's own DM, for which repeated connector op or repeated question (`kind`; a question names its hash, never its words) and weekday, under which dial",
-    notExercised: "a live proposal needs three weeks of a person's real tool-call history, which no board carries. `test:workflow-discovery` drives the real tick and the tier-2 spec drives the compiled schedule.",
+    proves: "the watch posted a routine proposal card into the person's own DM, for which repeated connector op or repeated question (`kind`; a question names its hash, never its words) and weekday, under which dial. OPE-2662: the first-day brief card files the same row, with `kind` `first-day-brief` and fingerprint `first-day-brief`",
+    notExercised: "a live proposal needs three weeks of a person's real tool-call history, which no board carries. `test:workflow-discovery` drives the real tick and the tier-2 spec drives the compiled schedule. The first-day card's row is driven by `test:first-day-brief`, the tier-2 spec tests/integration/routines/first-day-brief.test.ts, and the live leg S-FIRST-DAY-BRIEF.",
   },
   {
     action: "personal_watch.proposal.accepted",

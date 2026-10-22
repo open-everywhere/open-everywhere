@@ -21,6 +21,7 @@ import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import { newRoutineId } from "../../agent/routines/store.js";
+import { BRIEF_PROMPT, NEEDS_YOU_PROMPT } from "../../agent/onboarding/first-day-brief.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import { approvalCardFacts, cardJudgeSurface, endsOwnWakeWait, isQualifyingEdit, nextReplyCandidate, tsAfter, type SteppedOverMessage } from "./slack-driver.js";
 import { slackVendorEventTime } from "../../agent/channels/wake-timing.js";
@@ -7409,6 +7410,93 @@ export const SCENARIOS: readonly Scenario[] = [
         } else {
           ctx.gate(false, "S-ASK-WATCH: the judge armed a live watch and the leg could not disable it (set DATABASE_URL). Cancel it in the base channel.");
         }
+      }
+    },
+  },
+
+  {
+    id: "S-FIRST-DAY-BRIEF",
+    title: "The first-day brief (OPE-2662): a person's first DM turn posts ONE morning-brief card, Set it up arms the brief and the needs-you watch, and the first brief arrives in the DM",
+    requires: ["slack", "synthetic", "syntheticDm"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 2_400_000,
+    judged: false,
+    run: async (ctx) => {
+      const read = ctx.auditRead;
+      const dbUrl = process.env.DATABASE_URL;
+      if (!read || !dbUrl) {
+        return ctx.fixtureMissing("S-FIRST-DAY-BRIEF resets the person's watch row and gates on audit rows. Set DATABASE_URL, E2E_TARGET_URL and E2E_CONTROL_READ_TOKEN to run it.");
+      }
+      const dm = ctx.dm!;
+      const synthetic = ctx.synthetic!;
+      const org = process.env[ENV.org]?.trim() || "default";
+      const { userId: person, teamId } = await dm.identity();
+      const principalKey = `slack/${teamId}/${person}`;
+      const dmKey = `slack/${teamId}/${dm.channelId}`;
+      const store = await wireNeonOperationalStore(dbUrl);
+      const original = await store.getPersonalWatch(org, principalKey);
+      const before = new Set((await store.listRoutines(org, dmKey).catch(() => [])).map((r) => r.id));
+      const armed: string[] = [];
+      try {
+        const base = original ? (JSON.parse(original.stateJson) as Record<string, unknown>) : { dial: "less", dialSource: "default", dampening: 0, enrolledAt: new Date().toISOString(), nudges: [], told: [], silenced: {}, nudgesSinceAsk: 0, proposals: [] };
+        const proposals = (Array.isArray(base["proposals"]) ? base["proposals"] : []).filter((p) => (p as { fingerprint?: unknown }).fingerprint !== "first-day-brief");
+        const reset = { ...base, dial: base["dial"] === "none" ? "less" : base["dial"], proposals, firstConversation: { since: new Date().toISOString(), surfaceKey: dmKey } };
+        const written = await store.casPersonalWatch(org, principalKey, JSON.stringify(reset), new Date().toISOString(), original ? original.version : null);
+        ctx.gate(written !== null, "S-FIRST-DAY-BRIEF: the leg reset the person's watch row to a first conversation in this DM");
+        await sleep(65_000);
+        await fenceDmSeat(ctx, "S-FIRST-DAY-BRIEF");
+        const askAt = await presenceSince(ctx, "S-FIRST-DAY-BRIEF first turn");
+        const { ts: askTs } = await dm.post(fixtureLine("e2e S-FIRST-DAY-BRIEF: hi, I'm new here."));
+        const card = await pollOptional(
+          async () => (await dm.collectBotMessagesAfter(askTs, askTs)).find((m) => approveButton(m) !== undefined && /Want a morning brief and check-ins\?/u.test(m.text)),
+          { timeoutMs: FILE_REPLY_WAIT, what: "S-FIRST-DAY-BRIEF: the first-day card in the DM" },
+        );
+        ctx.gate(card !== undefined, "🔴 S-FIRST-DAY-BRIEF: the first DM turn posted the first-day card in the DM");
+        const proposed = (await read({ sinceIso: askAt, actions: ["personal_watch.proposal"], limit: 50 })).filter((r) => r.principalId === principalKey && r.detail?.["fingerprint"] === "first-day-brief");
+        ctx.gate(proposed.length === 1, `S-FIRST-DAY-BRIEF: ONE personal_watch.proposal row names the first-day brief (${proposed.length})`);
+        const btn = approveButton(card!)!;
+        const clickAt = await presenceSince(ctx, "S-FIRST-DAY-BRIEF click");
+        const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card!.ts, channelId: dm.channelId, teamId, userId: person });
+        ctx.gate(clicked.status === 200, `S-FIRST-DAY-BRIEF: Set it up acked 200 (HTTP ${clicked.status})`);
+        const created = await pollOptional(
+          async () => {
+            const rows = (await read({ sinceIso: clickAt, actions: ["routine.create"], limit: 50 })).filter((r) => r.surface === dm.channelId);
+            return rows.length >= 2 ? rows : undefined;
+          },
+          { timeoutMs: AUDIT_ROW_WAIT, initialDelayMs: 1_000, maxDelayMs: 3_000, what: "S-FIRST-DAY-BRIEF: the two routine.create rows" },
+        );
+        for (const r of created ?? []) if (typeof r.detail?.["id"] === "string") armed.push(r.detail["id"] as string);
+        ctx.gate(armed.length === 2, `🔴 S-FIRST-DAY-BRIEF: Set it up armed the brief and the needs-you watch in the DM (${armed.length} routine.create row(s))`);
+        const routines = await Promise.all(armed.map((id) => store.getRoutine(org, dmKey, id)));
+        const brief = routines.find((r) => r?.trigger.kind === "cron");
+        ctx.gate(routines.some((r) => r?.trigger.kind === "watch" && r.quietWhenEmpty === true), "S-FIRST-DAY-BRIEF: the needs-you watch is a quiet-when-empty watch");
+        ctx.gate(brief !== undefined && brief!.nextRunAt !== null && Date.parse(brief!.nextRunAt!) <= Date.now(), "S-FIRST-DAY-BRIEF: the brief's first run is due at once");
+        const fired = await pollOptional(
+          async () => (await read({ sinceIso: clickAt, actions: ["routine.fire_attrs_sent"], limit: 50 })).find((r) => r.detail?.["routineId"] === brief?.id),
+          { timeoutMs: (2 * DISPATCH_TICK_MINUTES + 2) * 60_000, initialDelayMs: 5_000, maxDelayMs: 30_000, what: "S-FIRST-DAY-BRIEF: the brief's first fire" },
+        );
+        ctx.gate(fired !== undefined, "🔴 S-FIRST-DAY-BRIEF: the dispatcher fired the brief");
+        const arrived = await pollOptional(
+          async () => (await dm.collectBotMessagesAfter(card!.ts, card!.ts)).find((m) => approveButton(m) === undefined && m.ts > card!.ts && m.text.trim().length > 0 && !/Want a morning brief/u.test(m.text)),
+          { timeoutMs: FILE_REPLY_WAIT, what: "S-FIRST-DAY-BRIEF: the first brief in the DM" },
+        );
+        ctx.gate(arrived !== undefined, "🔴 S-FIRST-DAY-BRIEF: the first brief arrived in the DM");
+        ctx.log(`S-FIRST-DAY-BRIEF: the first brief's head (not scored): "${(arrived?.text ?? "").replace(/\s+/g, " ").slice(0, 200)}"`);
+      } finally {
+        const leftover = (await store.listRoutines(org, dmKey).catch(() => [])).filter(
+          (r) => r.status === "active" && !before.has(r.id) && (r.prompt === BRIEF_PROMPT || r.prompt === NEEDS_YOU_PROMPT),
+        );
+        const toDisable = [...new Set([...armed, ...leftover.map((r) => r.id)])];
+        for (const id of toDisable) {
+          await store.updateRoutine(org, dmKey, id, { status: "disabled", disabledReason: "e2e: S-FIRST-DAY-BRIEF cleanup", nextRunAt: null }).catch(() => null);
+        }
+        const now = await store.getPersonalWatch(org, principalKey).catch(() => null);
+        const restore = original
+          ? original.stateJson
+          : JSON.stringify({ ...(now ? (JSON.parse(now.stateJson) as Record<string, unknown>) : {}), firstConversation: undefined, proposals: [{ fingerprint: "first-day-brief", summary: "a morning brief and check-ins", at: now?.updatedAt ?? "1970-01-01T00:00:00.000Z", outcome: "declined" }] });
+        if (now) await store.casPersonalWatch(org, principalKey, restore, new Date().toISOString(), now.version).catch(() => null);
+        ctx.log(`S-FIRST-DAY-BRIEF: teardown disabled ${toDisable.length} routine(s) and restored the person's watch row`);
       }
     },
   },

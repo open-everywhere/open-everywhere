@@ -799,6 +799,8 @@ const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
   "packages/core/agent/approvals/routine-attention.ts": "the `routine.attention` click (OPE-2511), a NON_TOOL_ACTION_KIND the dispatcher raises. A verified member click clears the check-in count or lifts the check-in's own pause; it never authors instruction text",
   "packages/core/agent/control/writes.ts": "the control-plane MCP write surface — operator-authenticated over its own transport, not a tool the model can call in a turn",
   "packages/core/agent/control/server.ts": "the control-plane MCP server that mounts those writes; same plane, same reason",
+  "packages/core/agent/approvals/routine-suggest.ts":
+    "the `routine.suggest` click (OPE-2662), a NON_TOOL_ACTION_KIND the host raises. When the first-day card's second routine fails to arm, it disables the needs-you watch the same click armed a moment before, so the person keeps both or neither. It only stops a routine, and it never authors instruction text",
   "packages/core/agent/home/doing-home.ts":
     "the person's Home tab (OPE-2522): a Pause or Remove click from the VERIFIED viewer, on a routine in their own DM that they created, delivered by the surface's signed interaction outside any session. It only stops or deletes a routine, and it never authors instruction text, so there is no turn here to be tainted",
 };

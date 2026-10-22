@@ -108,8 +108,8 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
   {
     area: "routines",
     globs: ["packages/core/agent/routines/**", "packages/core/agent/tools/*_routine*.ts", "packages/core/agent/tools/*routine*.ts"],
-    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-ROUTINE-TEST", "S-ASK-WATCH"],
-    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/declared-permissions.ts), so a change to the grant key or the declare vocabulary reds it; S-ROUTINE-TEST (OPE-2515) is the only leg on a test run, so a change to the test stamp or the allow list (routines/test-run.ts) reds it; S-ASK-WATCH (OPE-2510) is the only leg on a watch asked for in chat, so a change to routines/ask-watch.ts or the watch headline reds it.",
+    scenarios: ["S23", "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-ROUTINE-TEST", "S-ASK-WATCH", "S-FIRST-DAY-BRIEF"],
+    why: "S23 proves create_routine(\"once\") acks; S-TAINT-UNATTENDED-DENY proves a real dispatcher-fired routine's gated action is refused before the approval plane (doctrine P2.6); S-ROUTINE-CONNECTOR-WRITE is the only leg reading a routine's DECLARED standing-permission row back at fire time (routines/declared-permissions.ts), so a change to the grant key or the declare vocabulary reds it; S-ROUTINE-TEST (OPE-2515) is the only leg on a test run, so a change to the test stamp or the allow list (routines/test-run.ts) reds it; S-ASK-WATCH (OPE-2510) is the only leg on a watch asked for in chat, so a change to routines/ask-watch.ts or the watch headline reds it; S-FIRST-DAY-BRIEF (OPE-2662) is the only leg on a host-raised card that arms two routines and a first run due at the click, so a change to the routine.create execute's first run or the watch's quiet-when-empty rule reds it.",
   },
   {
     area: "routine-test-run",
@@ -306,9 +306,10 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/hooks/personal-watch-enroll.ts",
       "packages/core/agent/hooks/question-ledger.ts",
       "packages/core/agent/schedules/personal-watch.ts",
+      "packages/core/agent/onboarding/first-day-brief.ts",
     ],
-    scenarios: ["S-WATCH", "S-DOING", "S-ROOM-SUGGEST"],
-    why: "S-WATCH (OPE-2422) is the only live leg on the chief-of-staff watch: the person's dial through `/oe watch` and the Home tab, and a forged Not useful that moves no dose. The check itself has no live fixture and is driven offline. S-ROOM-SUGGEST (OPE-2550) is the live leg on the room's stop for room discovery's cards.",
+    scenarios: ["S-WATCH", "S-DOING", "S-ROOM-SUGGEST", "S-FIRST-DAY-BRIEF"],
+    why: "S-WATCH (OPE-2422) is the only live leg on the chief-of-staff watch: the person's dial through `/oe watch` and the Home tab, and a forged Not useful that moves no dose. The check itself has no live fixture and is driven offline. S-ROOM-SUGGEST (OPE-2550) is the live leg on the room's stop for room discovery's cards. S-FIRST-DAY-BRIEF (OPE-2662) is the only live leg on the first-day card: the enrolment hook posts it, and its click arms the brief and the check-in.",
   },
   {
     area: "meetings",

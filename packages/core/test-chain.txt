@@ -545,6 +545,7 @@ test:reply-follow-ups
 test:worker-reply-wake
 test:workflow-discovery
 test:first-routine
+test:first-day-brief
 test:ask-watch
 test:exit-kit
 test:budget-guest

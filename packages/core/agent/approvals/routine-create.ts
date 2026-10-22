@@ -43,6 +43,8 @@ export interface RoutineCreateArgs {
   readonly collectors?: readonly string[];
   readonly gate?: string;
   readonly modelRole?: ModelRole;
+  readonly quietWhenEmpty?: true;
+  readonly firstRunNow?: true;
   readonly firstRoutineRoom?: true;
 }
 
@@ -127,6 +129,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
     return [
       `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,
       ...(watchWords(args.trigger, args.watchFor) !== undefined ? [`👀 watches for: ${plainQuote(args.watchFor ?? "", 140)} (the trigger above and the instruction below decide each post)`] : []),
+      ...(args.quietWhenEmpty === true && args.trigger.kind === "watch" ? ["🤫 posts nothing when a check finds nothing"] : []),
       ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
       ...(args.report?.kind === "surface" ? [`📤 posts into ${placeWords({ key: args.report.surfaceKey })} — this surface can't post proactively, so its domain's configured reportChannel is where every run will land`] : []),
       ...(args.sessionMode === "job"
@@ -144,7 +147,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
   },
   async execute(args, decidedBy) {
     const now = new Date();
-    const next = args.trigger.kind === "once" ? new Date(args.trigger.at) : computeNextRun(args.trigger, now);
+    const next = args.firstRunNow === true ? now : args.trigger.kind === "once" ? new Date(args.trigger.at) : computeNextRun(args.trigger, now);
     const routine: Routine = {
       id: newRoutineId(),
       org: args.org,
@@ -154,6 +157,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.report ? { report: args.report } : {}),
       prompt: args.prompt,
       ...(args.watchFor ? { watchFor: args.watchFor } : {}),
+      ...(args.quietWhenEmpty === true && args.trigger.kind === "watch" ? { quietWhenEmpty: true as const } : {}),
       createdBy: args.createdBy,
       createdAt: now.toISOString(),
       status: "active",

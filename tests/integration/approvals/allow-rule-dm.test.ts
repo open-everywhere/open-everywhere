@@ -1,3 +1,5 @@
+// proves: approval.rule.added, approval.rule.removed
+
 import { createHash } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 
@@ -152,6 +154,8 @@ async function ask(input: { readonly ids: string; readonly channelId: string; re
   };
 }
 
+const FIRST_DAY_HEADLINE = "Want a morning brief and check-ins?";
+
 const APPROVAL_ACTIONS = ["approval.judge.verdict", "approval.requested", "approval.autoapproved"] as const;
 
 async function judgedAsk(cursor: AuditCursor, label: string): Promise<{ verdict: Record<string, unknown>; requested: AuditRow[]; autoapproved: AuditRow[] }> {
@@ -159,7 +163,7 @@ async function judgedAsk(cursor: AuditCursor, label: string): Promise<{ verdict:
     probe: async () => {
       const got = await rowsSinceCursor(cursor, APPROVAL_ACTIONS);
       const judged = got.filter((r) => r.action === "approval.judge.verdict" && detailOf(r).tool === "create_routine");
-      const decided = got.some((r) => r.action === "approval.requested" || r.action === "approval.autoapproved");
+      const decided = got.some((r) => (r.action === "approval.requested" || r.action === "approval.autoapproved") && detailOf(r).kind === "routine.create");
       return judged.length >= 1 && decided ? got : undefined;
     },
     label: `${label}: the judge row and the chain's outcome row`,
@@ -171,8 +175,8 @@ async function judgedAsk(cursor: AuditCursor, label: string): Promise<{ verdict:
   expect(verdicts, `${label}: exactly one judge consult`).toHaveLength(1);
   return {
     verdict: detailOf(verdicts[0]),
-    requested: rows.filter((r) => r.action === "approval.requested"),
-    autoapproved: rows.filter((r) => r.action === "approval.autoapproved"),
+    requested: rows.filter((r) => r.action === "approval.requested" && detailOf(r).kind === "routine.create"),
+    autoapproved: rows.filter((r) => r.action === "approval.autoapproved" && detailOf(r).kind === "routine.create"),
   };
 }
 
@@ -187,6 +191,7 @@ function postedApprovalButtons(postMark: number, channelId: string): SlackButton
   for (const call of slack.calls.slice(postMark)) {
     if (call.method !== "chat.postMessage" || call.params.get("channel") !== channelId) continue;
     const raw = call.params.get("blocks");
+    if ((raw ?? "").includes(FIRST_DAY_HEADLINE)) continue;
     if (raw === null) continue;
     const blocks = JSON.parse(raw) as { type?: string; elements?: SlackButton[] }[];
     const buttons = blocks.flatMap((b) => (b.type === "actions" ? (b.elements ?? []) : [])).filter((e) => e.action_id.startsWith("oe_approval:"));
