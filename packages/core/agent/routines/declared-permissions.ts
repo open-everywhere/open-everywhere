@@ -1,6 +1,7 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { classifyConnectorOpTier } from "../access/consequence.js";
 import { connectorOpTierParts } from "../access/connector-op-gating.js";
+import { neverTierDefaultMatch, neverTierMatch } from "../access/never-tier.js";
 import {
   ROUTINE_PERMISSION_NO_EXPIRY,
   describeDeclaredPermissionKind,
@@ -33,6 +34,10 @@ export function declaredPermissionKinds(declared: readonly string[]): string[] {
         `"${d}" is not a declarable routine permission${why ? ` — ${why}` : ""}. The whole vocabulary is: "pr.open" (open pull requests) and "tool:<connector tool>" — one row per TOOL, named exactly as the tool is called, e.g. "tool:notion__share_page". A connector slug on its own ("tool:notion") names no tool and is refused. Anything else — deletes included — is never declarable up front and always asks a human when it fires.`,
       );
     }
+    const never = namesNeverTierTool(trimmed);
+    if (never !== undefined) {
+      throw new Error(`"${d}" names a tool that is never allowed: ${never}. No declaration, card or approval can run it, so a routine cannot either.`);
+    }
     if (namesUnliftableTool(trimmed)) {
       throw new Error(
         `"${d}" names a tool the fence will never lift, so declaring it would put a promise on the arming card that the runtime does not keep. A DELETE-tier verb refuses on every unattended fire whatever is declared. So does a verb the tier classifier does not recognise, which fails closed to the delete tier — if this op really is an ordinary write, its verb has to be a recognised one (access/consequence.ts CONNECTOR_WRITE_VERBS). Have the routine ask a person for that step.`,
@@ -51,15 +56,22 @@ function declaredToolName(declared: string): string {
 
 export function namesUnliftableTool(trimmed: string): boolean {
   if (trimmed === PR_OPEN_DECLARATION) return false;
-  return classifyConnectorOpTier(declaredToolName(trimmed)) === "destructive";
+  const tool = declaredToolName(trimmed);
+  return classifyConnectorOpTier(tool) === "destructive" || neverTierDefaultMatch(tool) !== undefined;
+}
+
+function namesNeverTierTool(trimmed: string): string | undefined {
+  if (trimmed === PR_OPEN_DECLARATION) return undefined;
+  const rule = neverTierDefaultMatch(declaredToolName(trimmed));
+  return rule === undefined ? undefined : `it ${rule.label} (rule "${rule.id}")`;
 }
 
 export function namesBundleRaisedTool(trimmed: string): boolean {
   if (trimmed === PR_OPEN_DECLARATION) return false;
   const tool = declaredToolName(trimmed);
-  if (classifyConnectorOpTier(tool) === "destructive") return false;
+  if (classifyConnectorOpTier(tool) === "destructive" || neverTierDefaultMatch(tool) !== undefined) return false;
   try {
-    return connectorOpTierParts(tool).declared === "destructive";
+    return connectorOpTierParts(tool).declared === "destructive" || neverTierMatch(tool)?.source === "config";
   } catch {
     return false;
   }
@@ -103,7 +115,7 @@ export function describeDeclaredPermissions(declared: readonly string[]): string
         : namesUnliftableTool(trimmed)
           ? `the "${declaredToolName(trimmed)}" tool, never lifted on an unattended fire (grants nothing)`
           : namesBundleRaisedTool(trimmed)
-            ? `the "${declaredToolName(trimmed)}" tool, which this deployment's bundle configuration raises to the delete tier — the fence refuses it on every unattended fire (grants nothing here)`
+            ? `the "${declaredToolName(trimmed)}" tool, which this deployment's bundle configuration raises to the delete tier or the never tier — the fence refuses it on every unattended fire (grants nothing here)`
             : describeDeclaredPermissionKind(kind);
     if (!out.includes(line)) out.push(line);
   }

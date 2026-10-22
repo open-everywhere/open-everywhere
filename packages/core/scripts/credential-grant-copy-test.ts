@@ -78,7 +78,7 @@ const grantRow: CredentialGrantRow = {
   createdAt: ask.createdAt,
   expiresAt: SESSION_EXPIRY,
   frozenArgs: ask.frozenArgs,
-  id: "00000000-0000-4000-8000-000000000018",
+  id: "9f8b4c2e-1d3a-4f6b-8c7d-2e1f0a9b8c7d",
   mcpTool: "notion-fetch",
   mode: "session",
   ownerPrincipalId: ask.ownerPrincipalId,
@@ -102,7 +102,7 @@ console.log("1. the phrase helpers:");
   eq(grantActionPhrase("notion", undefined), "read one thing in Notion", "…and a row naming no tool at all says the same, rather than nothing");
 
   const mintInput = (mcpTool: string): GrantMintInput => ({
-    borrow: { mcpTool, rowId: "00000000-0000-4000-8000-000000000015", takenToolNames: [], targetLabel: "Quarterly report" },
+    borrow: { mcpTool, rowId: "11112222-3333-4444-5555-666677778888", takenToolNames: [], targetLabel: "Quarterly report" },
     connector: "notion",
     domainGrantsConnector: true,
     liveAsk: undefined,
@@ -498,7 +498,7 @@ console.log("3. the golden:");
 console.log("4. the leak lint:");
 
 const SENTINELS = {
-  guid: "00000000-0000-4000-8000-000000000018",
+  guid: "9f8b4c2e-1d3a-4f6b-8c7d-2e1f0a9b8c7d",
   instant: "2026-03-21T04:19:45.132Z",
   minted: "grant__9000000000000000002_notion__notion_fetch_notion_pag",
   snowflake: "9000000000000000002",
@@ -558,6 +558,8 @@ const GRANT_REFUSAL_REASONS = [
   "unattended_wake",
   "halted",
   "connector_delisted",
+  "never_tier",
+  "never_tier_config_unavailable",
 ] as const satisfies readonly CredentialGrantRefusal[];
 type MissingRefusal = Exclude<CredentialGrantRefusal, (typeof GRANT_REFUSAL_REASONS)[number]>;
 const noRefusalMissing: MissingRefusal extends never ? true : MissingRefusal = true;
@@ -576,6 +578,8 @@ const REFUSALS: readonly GrantMintRefusal[] = [
   "write_verb_out_of_slice",
   "illegal_tool_name",
   "illegal_connector_id",
+  "never_tier",
+  "never_tier_config_unavailable",
 ];
 
 const rendered: readonly { readonly what: string; readonly text: string }[] = [
@@ -675,7 +679,7 @@ for (const { what, text } of rendered) {
 
 console.log("5. the negative controls:");
 {
-  const pageId = "00000000-0000-4000-8000-000000000019";
+  const pageId = "1f2e3d4c-5b6a-4978-8899-aabbccddeeff";
   const card = grantCardText({ ...ask, frozenArgs: { page_id: pageId } }, "Ada", undefined, "#proj-chat");
   ok(card.includes(pageId), "🔴 a uuid a REQUESTER pinned still renders in full — the owner is the review of the reach, and hiding a value is the worse defect");
   ok(card.includes("summarise the quarter"), "…and the model-authored purpose still renders, so the owner reads what was actually asked for");
@@ -684,7 +688,7 @@ console.log("5. the negative controls:");
     "That conversation can now run `grant__9000000000000000002_notion__notion_fetch_notion_pag` on `Notion page read — notion-fetch({})`",
     "until 2026-03-21T04:19:45.132Z",
     "discord/9000000000000000003 asks to use your notion credential",
-    "grant `00000000-0000-4000-8000-000000000018`",
+    "grant `9f8b4c2e-1d3a-4f6b-8c7d-2e1f0a9b8c7d`",
   ];
   for (const line of old) {
     ok(

@@ -466,6 +466,10 @@
       "types": "./dist/agent/access/network-access.d.ts",
       "default": "./dist/agent/access/network-access.js"
     },
+    "./agent/access/never-tier.js": {
+      "types": "./dist/agent/access/never-tier.d.ts",
+      "default": "./dist/agent/access/never-tier.js"
+    },
     "./agent/access/nullable-optional-fields.js": {
       "types": "./dist/agent/access/nullable-optional-fields.d.ts",
       "default": "./dist/agent/access/nullable-optional-fields.js"
@@ -3993,6 +3997,8 @@
     "test:connector-approval-model": "NODE_NO_WARNINGS=1 tsx scripts/connector-approval-model-test.ts",
     "test:connector-unattended-fence": "NODE_NO_WARNINGS=1 tsx scripts/connector-unattended-fence-test.ts",
     "test:connector-op-gating": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-gating-test.ts",
+    "test:never-tier": "NODE_NO_WARNINGS=1 tsx scripts/never-tier-test.ts",
+    "test:credential-grant-never-tier": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-never-tier-test.ts",
     "test:connector-op-audit": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-audit-test.ts",
     "test:connector-op-arm": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-arm-test.ts",
     "test:connector-op-hint": "NODE_NO_WARNINGS=1 tsx scripts/connector-op-hint-test.ts",

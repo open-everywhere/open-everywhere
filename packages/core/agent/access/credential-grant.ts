@@ -1,4 +1,5 @@
 import { classifyConnectorOpTier } from "./consequence.js";
+import { neverTierMatch } from "./never-tier.js";
 import { connectorDisplayName, grantDuplicateRefusalText, type GrantCopyAudience, type GrantDuplicateFacts } from "./credential-grant-copy.js";
 import { grantScopeKeyForMode } from "./credential-grant-scope.js";
 import {
@@ -78,7 +79,9 @@ export type GrantMintRefusal =
   | "ask_already_pending"
   | "write_verb_out_of_slice"
   | "illegal_tool_name"
-  | "illegal_connector_id";
+  | "illegal_connector_id"
+  | "never_tier"
+  | "never_tier_config_unavailable";
 
 export interface GrantBorrowMintInput {
   readonly mcpTool: string;
@@ -125,6 +128,8 @@ function borrowShape(connector: string, borrow: GrantBorrowMintInput): GrantMint
   if (!isGrantNameSegment(connector)) return { ok: false, reason: "illegal_connector_id" };
   const toolSlug = grantToolSlug(borrow.mcpTool);
   if (toolSlug === undefined) return { ok: false, reason: "illegal_tool_name" };
+  const never = neverTierMatch(`${connector}__${borrow.mcpTool}`);
+  if (never !== undefined) return { ok: false, reason: never.source === "config-unavailable" ? "never_tier_config_unavailable" : "never_tier" };
   const tier = classifyConnectorOpTier(`${connector}__${borrow.mcpTool}`);
   if (tier !== "read") return { ok: false, reason: "write_verb_out_of_slice" };
   const targetSlug = grantTargetSlug(borrow.targetLabel);
@@ -174,6 +179,10 @@ export function grantMintRefusalMessage(connector: string, reason: GrantMintRefu
       return "That call mutates. Credential grants admit read operations today; a write grant records the owner's name at the vendor on the requester's act, and it needs its own slice.";
     case "illegal_tool_name":
       return `That tool name carries no characters a mounted tool name can hold, so the grant could not be named. Name the ${connectorDisplayName(connector)} tool exactly as the connection publishes it.`;
+    case "never_tier":
+      return `That ${connectorDisplayName(connector)} tool is never allowed on this deployment, so no grant can lend it. No owner's approval can change this, and this is not waiting for approval. Do not ask again.`;
+    case "never_tier_config_unavailable":
+      return "This deployment's configuration could not be read, so I cannot prove that tool is allowed, and no grant can lend it now. An operator must fix the configuration. Do not ask again until they have.";
     case "illegal_connector_id":
       return `This deployment spells the ${connectorDisplayName(connector)} connector id in a form a mounted tool name cannot hold, so no grant for it can be named. Nothing about the ask was wrong — an operator fixes this, not a retry.`;
   }

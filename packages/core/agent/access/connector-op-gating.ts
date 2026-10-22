@@ -41,6 +41,14 @@ function connectorKeyOf(toolName: string): string {
   return sep > 0 ? opKey(toolName.slice(0, sep)) : "";
 }
 
+export function canonicalDeclarationKey(raw: string): string {
+  return opKey(raw);
+}
+
+export function connectorOpDeclarationKeys(toolName: string): { readonly connector: string; readonly ops: readonly string[] } {
+  return { connector: connectorKeyOf(toolName), ops: opKeysOf(toolName) };
+}
+
 type GatingIndex = ReadonlyMap<string, ReadonlyMap<string, ConnectorOpTier>>;
 
 const EMPTY_INDEX: GatingIndex = new Map();

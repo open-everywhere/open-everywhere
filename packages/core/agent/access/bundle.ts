@@ -107,6 +107,7 @@ export interface ConnectorOpGating {
   readonly connector: string;
   readonly gated?: readonly string[];
   readonly destructive?: readonly string[];
+  readonly never?: readonly string[];
 }
 
 export interface AwsRoleGrant {
@@ -312,9 +313,9 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
         bad.push(`  bundle "${b.name}" declares connectorOps for "${g.connector}" more than once — merge the entries (two entries for one connector make the declaration ambiguous)`);
       }
       gatedConnectors.add(key);
-      const ops = [...(g.gated ?? []), ...(g.destructive ?? [])];
+      const ops = [...(g.gated ?? []), ...(g.destructive ?? []), ...(g.never ?? [])];
       if (ops.length === 0) {
-        bad.push(`  bundle "${b.name}" connectorOps entry for "${g.connector}" names no ops — it raises nothing; list ops under gated/destructive or drop the entry`);
+        bad.push(`  bundle "${b.name}" connectorOps entry for "${g.connector}" names no ops — it raises nothing; list ops under gated/destructive/never or drop the entry`);
       }
       if (ops.some((op) => op.trim() === "")) {
         bad.push(`  bundle "${b.name}" connectorOps entry for "${g.connector}" has an empty op name — every entry must name a real operation (or "*" for all of them)`);

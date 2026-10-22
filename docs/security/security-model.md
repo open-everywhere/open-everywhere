@@ -153,6 +153,54 @@ Three further constraints bind the clicker, and all are Slack-scoped today. Firs
 
 The table is guarded by `npm run lint:consequence` on the `test` chain, which makes it **total and honest**: a tool absent from it fails the build (no default tier — a new tool cannot mount un-tiered), a declared tier whose source code stops matching its actual gating mechanism fails, and gating can therefore move *only* through a visible diff to this one file. Even eve's own framework tools are enumerated and pinned, so a future framework tool can't slip in ungated.
 
+### Never, always ask, allowed
+
+Some actions Open Everywhere never takes, even when a person approves them. This is the **never tier**
+(`packages/core/agent/access/never-tier.ts`). A never-tier op gets no card. No click, session approval,
+routine permission, approval judge, approval mode or config allow can run it. The refusal tells the
+person that the action is never allowed, not that it waits for approval.
+
+| Tier | What it covers | Who can lift it |
+|---|---|---|
+| **Never** | Money movement: `money.send` (send money, transfer or withdraw money or funds, payout), `money.convert` (currency conversion), `money.recipient` (set up a payout recipient), `money.refund` (refund or pay), `money.generic-payments-write` (a payment provider's generic write API, such as Stripe's `stripe_api_write`). Trading: `trading.order` (place, replace or cancel an order, which also covers a shop's `cancel_order` refund; trade, buy, sell), `trading.position` (close a position, exercise an option). Legal entity: `legal.company-formation`. Plus every op a bundle lists under `connectorOps[].never`. | Nobody at runtime. A shipped default changes only by a reviewed diff to `never-tier.ts`. A config entry changes only by a config diff. |
+| **Always ask** | Send: `post_message`, `dm_person`, and every connector op whose verb is a write (`send`, `post`, `publish`, `share`). Sign and every verb the classifier does not know: the delete tier, so a card per call. Delete: connector deletes (a card per call), `delete_skill`, `cancel_routine`, `purge_memory` (the approval judge never lifts it). Every other `gate:member` and `gate:admin` row above. | A person's click on the card. A routine may declare a connector write on its creation card. The approval judge may lift a defer-flipped registry row (such as `open_pull_request`) and a domain-credential connector write or delete, each only when an authored pre-approval rule names it; it never lifts `purge_memory` or an admin row. A `DANGEROUSLY_BYPASS` domain turns the card into an allow. |
+| **Allowed** | Reads, and acts that stay in the asking conversation: `reply`, `react`, `post_file` to the asking room. | Open, and audited. |
+
+**How the never tier matches.** It reads the tokens of the op name, on every connector. A default rule
+names a token set, such as `send` + `money`, and each rule names the real tools it is grounded in: the
+Stripe MCP server's `send_money`, `transfer_money`, `convert_currency`, `setup_recipient`,
+`stripe_api_write` and `atlas_company_formation`, and the Alpaca MCP server's `place_stock_order`,
+`close_position` and `exercise_options_position`. A plural noun is not a verb, so `list_refunds` stays a
+read. A singular token matches whatever the tier, so `get_refund` is refused too. That is deliberate: the
+verb classifier reads a name that leads with a read verb as a read (`search_and_buy` is a read to it), so
+a tier test in front of the never tier would let such a name trade. The tier also closes a real gap: the
+classifier reads `send_money` and `stripe_api_write` as ordinary writes, which a session approval or a
+routine permission can lift. `npm run lint:never-tier` checks that every default is grounded,
+that no default refuses a bare common verb, that the gate runs first, and that this table names every rule.
+A word that also names an ordinary act, such as `transfer` (`transfer_ticket`) or `exercise`
+(`log_exercise`), always pairs with a money or market noun.
+
+**Charges are not in the never tier by name.** A Stripe charge on Stripe's hosted MCP server goes through
+`stripe_api_write`, which is never-tier. On any other connector a charge op is an ordinary write or an
+unknown verb, so it always asks.
+
+**Where it runs.** `connectorApprovalPolicy` asks the never tier before anything else: before the
+personal-surface fence, the unattended fence, the session approval memo, the card and the judge. Every
+MCP connection, hosted or plugin-extracted, builds its approval through that one policy. The
+credential-grant plane dials the vendor itself, so it asks the tier twice: when a grant is minted, and
+again on every call, because a config entry can land after the owner approved the grant. A routine
+cannot declare a shipped never-tier default. A config `never` entry declares nothing, and the creation card
+never offers either. A config `never` entry can only
+add ops. A registered config that cannot be read refuses every connector op, because the tier cannot
+prove a config entry is absent.
+
+🔴 **What it does not cover.** The never tier governs the connector plane. It does not govern the egress
+plane: code in the sandbox that reaches a host a bundle opens to `POST` is bounded by the firewall policy,
+not by a tool name. So do not open a payment or brokerage API host to `POST` on the egress plane if the
+agent must never move money. No authored Open Everywhere tool moves funds or trades. The
+[personal browser](../capabilities/personal-browser.md) already refuses password, one-time-code and card
+fields whatever its card says.
+
 ### The unified approver chain
 
 Every permission scheme above is one mechanism: a chain of **approvers**, each answering

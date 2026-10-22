@@ -59,6 +59,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, auditSurfaceModeStamp, bindFrom, deploymentOrg, proposingGrantScope, unattendedFrom, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { appendAudit } from "../audit/audit.js";
+import { neverTierAuditDetail, neverTierMatch, neverTierRefusalMessage } from "../access/never-tier.js";
 import {
   requireUserAuthFlow,
   userAuthFlowProvider,
@@ -512,6 +513,14 @@ export function connectorApprovalPolicy(deps: OeConnectorCardDeps = {}): Approva
     deps,
   );
   return async (ctx) => {
+    const never = neverTierMatch(ctx.toolName);
+    if (never !== undefined) {
+      await callAsync(
+        () => appendAudit({ org: deploymentOrg(), platform: "unknown", workspace: "unknown", action: "connector.refused", detail: neverTierAuditDetail(ctx.toolName, never) }),
+        undefined,
+      );
+      return { type: "denied", reason: neverTierRefusalMessage(ctx.toolName, never) };
+    }
     const refusal = await personalSurfaceApprovalRefusal(ctx.toolName, ctx.session?.auth as SessionAuth | undefined);
     if (refusal !== undefined) return { type: "denied", reason: refusal };
     return carded(ctx);

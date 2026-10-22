@@ -12,6 +12,7 @@ import {
 import { getOperationalStore } from "../operational/provider.js";
 import { connectorTransportSpec } from "../connections/connector-transport.js";
 import { isCredentialGrantConnector } from "./credential-grant.js";
+import { neverTierMatch } from "./never-tier.js";
 import { auditGrant, type GrantAuditStamps } from "./credential-grant-flow.js";
 import {
   GrantBorrowTransportAlreadyRegisteredError,
@@ -126,6 +127,9 @@ export async function runGrantedCall(grantId: string, input: Readonly<Record<str
 
   const mcpTool = grant.mcpTool;
   if (mcpTool === undefined) return refuse("no_lent_tool");
+
+  const never = neverTierMatch(`${grant.connector}__${mcpTool}`);
+  if (never !== undefined) return refuse(never.source === "config-unavailable" ? "never_tier_config_unavailable" : "never_tier");
 
   if (!isCredentialGrantConnector(grant.connector)) return refuse("connector_delisted");
 

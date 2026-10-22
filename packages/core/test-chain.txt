@@ -80,6 +80,8 @@ test:connector-approval-reachability
 test:connector-approval-model
 test:connector-unattended-fence
 test:connector-op-gating
+test:never-tier
+test:credential-grant-never-tier
 test:connector-op-arm
 test:connector-op-hint
 test:connector-op-audit

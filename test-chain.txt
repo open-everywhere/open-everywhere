@@ -10,6 +10,7 @@ lint:subagent-template
 test:subagent-zero-hands
 lint:publish-exports
 lint:consequence
+lint:never-tier
 lint:window-gate
 lint:source-gate
 lint:work-mount

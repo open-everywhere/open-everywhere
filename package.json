@@ -53,6 +53,7 @@
     "lint:access": "tsx scripts/access-lint.ts",
     "lint:subagents": "tsx scripts/subagents-lint.ts",
     "lint:consequence": "tsx scripts/consequence-lint.ts",
+    "lint:never-tier": "tsx scripts/never-tier-lint.ts",
     "lint:window-gate": "tsx scripts/window-gate-lint.ts",
     "lint:dynamic-replay": "tsx scripts/dynamic-replay-doctrine-lint.ts",
     "lint:source-gate": "tsx scripts/source-gate-lint.ts",

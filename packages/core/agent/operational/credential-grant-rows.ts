@@ -220,7 +220,9 @@ export type CredentialGrantRefusal =
   | "unverified_requester"
   | "unattended_wake"
   | "halted"
-  | "connector_delisted";
+  | "connector_delisted"
+  | "never_tier"
+  | "never_tier_config_unavailable";
 
 export function credentialGrantStateRefusal(row: CredentialGrantRow, nowIso: string): CredentialGrantRefusal | undefined {
   if (row.status === "revoked") return "revoked";
@@ -271,6 +273,16 @@ export function credentialGrantRefusalMessage(
       return (
         `Refused: this deployment no longer admits credential grants for that connector. ${what} cannot be spent, ` +
         `even where a route to the vendor still exists. The grant itself stays as ${owner} approved it. Do not retry.`
+      );
+    case "never_tier":
+      return (
+        `Refused: ${what} is never allowed on this deployment. No approval, ${owner}'s included, can run it, ` +
+        `and this is not waiting for approval. Do not retry.`
+      );
+    case "never_tier_config_unavailable":
+      return (
+        `Refused: this deployment's configuration could not be read, so ${what} cannot be proved allowed and did not run. ` +
+        `The grant itself stays as ${owner} approved it. An operator must fix the configuration. Do not retry until then.`
       );
     case "owner_unresolvable":
       return `Refused: this grant does not name ${owner} in a form this deployment can resolve a credential for, so ${what} cannot be spent under anybody. Do not retry — ask again so a fresh grant is minted.`;

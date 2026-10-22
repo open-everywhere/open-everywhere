@@ -199,6 +199,8 @@ console.log("6. the refusal copy names the boundary and the vocabulary stays exh
     "unattended_wake",
     "halted",
     "connector_delisted",
+    "never_tier",
+    "never_tier_config_unavailable",
   ] as const satisfies readonly CredentialGrantRefusal[];
   type Missing = Exclude<CredentialGrantRefusal, (typeof every)[number]>;
   const noneMissing: Missing extends never ? true : Missing = true;
