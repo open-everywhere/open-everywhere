@@ -1,3 +1,5 @@
+// proves: ROUT-11
+
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -65,7 +67,7 @@ const bundles = [
   { name: "coding", repos: ["acme/app"] },
 ] as never;
 const catalogues = [
-  { connector: "personal-notion", allows: ["user-oauth"], credentials: [{ id: "mine", type: "user-oauth", home: { kind: "vercel-connect", config: { connector: "oauth/notion-user" } } }] },
+  { connector: "personal-notion", allows: ["user-oauth"], credentials: [{ id: "mine", type: "user-oauth", home: { kind: "oauth", config: { connector: "oauth/notion-user" } } }] },
 ] as never;
 const bindings = [
   { scope: { level: "principal" as const, principal: principalKey("slack", TEAM, CREATOR) }, bundle: "personal" },

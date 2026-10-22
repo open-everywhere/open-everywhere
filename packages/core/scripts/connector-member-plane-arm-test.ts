@@ -17,7 +17,7 @@ setPlatformStandInForTest("slack");
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
-const { defineConnectorCredentials, vercelConnectorHome } = await import("../agent/access/connector-credentials.js");
+const { defineConnectorCredentials, oauthConnectorHome } = await import("../agent/access/connector-credentials.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 
 const ROOM = "C_MEMBER_ROOM";
@@ -32,8 +32,8 @@ const notionCatalogue = defineConnectorCredentials({
   connector: "notion",
   allows: ["api-key", "user-oauth"],
   credentials: [
-    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") },
-    { id: MEMBER_CREDENTIAL, type: "user-oauth", home: vercelConnectorHome("oauth/notion-member") },
+    { id: "user-oauth", type: "user-oauth", home: oauthConnectorHome("oauth/notion-user") },
+    { id: MEMBER_CREDENTIAL, type: "user-oauth", home: oauthConnectorHome("oauth/notion-member") },
     { id: "team", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" },
   ],
 });
@@ -192,7 +192,7 @@ armMemberPlane(true);
   const requesterSubject = rawVaultSubject(deploymentOrg(), "slack", TEAM, REQUESTER);
   const actingSubject = rawVaultSubject(deploymentOrg(), "slack", TEAM, ACTING);
   ok(r.token === `USER-TOKEN-${requesterSubject}` && r.err === undefined, "🔴 ① THE MEMBER ARM IS REACHED — a CHANNEL turn mints a personal token (no test reached this before)");
-  ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-member", "① the mint used the MEMBER credential's own vercel-connect home, not the role id's");
+  ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-member", "① the mint used the MEMBER credential's own oauth home, not the role id's");
   ok(m.calls[0].id === requesterSubject, "🔴 ① the token is minted for the VERIFIED REQUESTER's vault subject");
   ok(requesterSubject !== actingSubject, "① precondition: the requester and the acting principal have DIFFERENT vault subjects on this turn");
   ok(m.calls[0].id !== actingSubject, "🔴 ① …and NOT for the acting principal — `actorId` reads the verdict's requester, never the last delivery's author");

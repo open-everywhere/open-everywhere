@@ -16,7 +16,7 @@ import { grantFooterPlace } from "../agent/access/credential-grant-card.js";
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { approveCredentialGrant, askForCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { credentialGrantRefusalNote } from "../agent/access/credential-grant-ask.js";
-import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent/access/window-gated.js";
@@ -110,7 +110,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });

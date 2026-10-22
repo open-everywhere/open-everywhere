@@ -1,7 +1,7 @@
 import {
   assertConnectorCredentialsValid,
   defineConnectorCredentials,
-  vercelConnectorHome,
+  oauthConnectorHome,
   type ConnectorCredentials,
 } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { applyOverridesToConnectorCredentials } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
@@ -32,8 +32,8 @@ const catalogues: ConnectorCredentials[] = [
         intake: false,
         endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/blocks/"], methods: ["GET"] },
       },
-      { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
-      { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
+      { id: "user-oauth", type: "user-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
+      { id: "workspace-oauth", type: "service-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
     ],
   }),
   defineConnectorCredentials({

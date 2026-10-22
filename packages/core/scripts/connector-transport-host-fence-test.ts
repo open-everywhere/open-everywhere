@@ -130,7 +130,7 @@ resetBrokers();
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
-const { defineConnectorCredentials, vercelConnectorHome } = await import("../agent/access/connector-credentials.js");
+const { defineConnectorCredentials, oauthConnectorHome } = await import("../agent/access/connector-credentials.js");
 const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
 
 registerConfig({
@@ -139,7 +139,7 @@ registerConfig({
       connector: "vendor",
       allows: ["user-oauth"],
       credentials: [
-        { id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/vendor-user"), endpoints: HOSTS_ONLY },
+        { id: "mine", type: "user-oauth", home: oauthConnectorHome("oauth/vendor-user"), endpoints: HOSTS_ONLY },
       ],
     }),
   ],

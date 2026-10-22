@@ -1,5 +1,5 @@
 import { connectorGrantCredential, connectorGrantName, type Binding, type Bundle } from "../../agent/access/bundle.js";
-import { vercelConnectorOf, type ConnectorCredentials } from "../../agent/access/connector-credentials.js";
+import { oauthConnectorOf, type ConnectorCredentials } from "../../agent/access/connector-credentials.js";
 import { domainForChannel, type Domain } from "../../agent/memory/domain.js";
 import { loadAppBindings, loadAppBundles, loadAppConnectorCredentials, loadAppDomains } from "./app-config.js";
 import type { Routine } from "../../agent/routines/routine.js";
@@ -66,7 +66,7 @@ export function routineConnectorFixture(input: {
       );
       continue;
     }
-    const oauthHome = credential.type === "service-oauth" ? vercelConnectorOf(credential) : undefined;
+    const oauthHome = credential.type === "service-oauth" ? oauthConnectorOf(credential) : undefined;
     return { ok: true, domain: domain ?? "(no explicit domain)", bundle: bundle.name, credential: credentialId, ...(oauthHome ? { oauthHome } : {}) };
   }
 

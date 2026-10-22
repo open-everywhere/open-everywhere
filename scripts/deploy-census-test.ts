@@ -56,7 +56,7 @@ const CATALOGUES: readonly ConnectorCredentials[] = [
       { id: "payments-key", type: "api-key", secretRef: "db:acme:payments-key", broker: "db" },
       { id: "channel-key-unused", type: "api-key", secretRef: "db:acme:channel-key-unused", broker: "db" },
       { id: "env-key", type: "api-key", secretRef: "ACME_ENV_KEY", broker: "env" },
-      { id: "user-oauth", type: "user-oauth", home: { name: "vercel-connect", config: { vercelConnector: "acme" } } },
+      { id: "user-oauth", type: "user-oauth", home: { kind: "oauth", config: { connector: "acme" } } },
     ],
   } as unknown as ConnectorCredentials,
 ];

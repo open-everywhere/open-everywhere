@@ -44,8 +44,8 @@ export { findConnectorCredential } from "./access/connector-credentials.js";
 export type { ConnectorCredential } from "./access/connector-credentials.js";
 export {
   registerExclusiveCredentialHome,
-  vercelConnectorHome,
-  vercelConnectorOf,
+  oauthConnectorHome,
+  oauthConnectorOf,
 } from "./access/connector-credentials.js";
 export type { ExclusiveCredentialHome, CredentialHomeRef, ConnectorCredentialType } from "./access/connector-credentials.js";
 export { grantFamilyOf, isHumanActing, principalOfCredential, humanActingSupport } from "./access/connector-credentials.js";

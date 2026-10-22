@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { findConnectorCredential, vercelConnectorOf } from "../access/connector-credentials.js";
+import { findConnectorCredential, oauthConnectorOf } from "../access/connector-credentials.js";
 import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
 import { CREDENTIAL_GRANT_ROLES } from "../access/credential-grant.js";
 import { fenceMcpBorrowFetch } from "../access/mcp-call-fence.js";
@@ -97,7 +97,7 @@ export function resolveBorrowConnection(connector: string, deps: GrantBorrowDeps
         "credential to spend. Declare one in agent/access/connector-credentials.ts (connections/grant-mcp-borrow.ts).",
     );
   }
-  const providerRef = vercelConnectorOf(cred);
+  const providerRef = oauthConnectorOf(cred);
   if (providerRef === undefined) {
     throw new Error(
       `granted call: the "${credentialId}" ${provider} credential declares no OAuth home, so no per-user token can be ` +

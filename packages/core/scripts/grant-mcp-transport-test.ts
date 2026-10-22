@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { resetRegisteredConnectorCredentials, setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { resetRegisteredConnectorCredentials, setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
 import type { GrantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
@@ -35,7 +35,7 @@ const catalogue = (endpoints?: { readonly hosts: readonly string[] }): void => {
       connector: "notion",
       credentials: [
         {
-          home: vercelConnectorHome("mcp.notion.com/notion-mcp"),
+          home: oauthConnectorHome("mcp.notion.com/notion-mcp"),
           id: "user-oauth",
           type: "user-oauth",
           ...(endpoints === undefined ? {} : { endpoints }),

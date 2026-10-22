@@ -1,5 +1,5 @@
 import type { Binding, Bundle } from "../access/bundle.js";
-import { vercelConnectorHome, type ConnectorCredentials } from "../access/connector-credentials.js";
+import { oauthConnectorHome, type ConnectorCredentials } from "../access/connector-credentials.js";
 import { EVERYONE_GROUP } from "../identity/everyone-group.js";
 import { processRegistryMap } from "../lib/process-registry.js";
 import type { ConnectionSignIn, DiscoverySignIn, StaticConfidentialSignIn, XaaSignIn } from "./connection-sign-in.js";
@@ -137,7 +137,7 @@ export function mcpServerConnectionSignIn(server: McpServerDeclaration): Connect
 
 export function mcpServerConnectorCredentials(servers: readonly McpServerDeclaration[]): ConnectorCredentials[] {
   return servers.map((s): ConnectorCredentials => {
-    const home = vercelConnectorHome(mcpServerHomeRef(s.name));
+    const home = oauthConnectorHome(mcpServerHomeRef(s.name));
     const endpoints = { hosts: [new URL(s.url).hostname] };
     if (s.personalSurface !== undefined) {
       return {

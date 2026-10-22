@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-credential-grant-notice
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 
@@ -21,7 +23,7 @@ import {
   postGrantRoomNotice,
   withGrantRoomContext,
 } from "../agent/access/credential-grant-notice.js";
-import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
@@ -118,7 +120,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });

@@ -7,7 +7,7 @@ import { deploymentOrg, type SurfaceBinding } from "../identity/binding.js";
 import { rawVaultSubject } from "../identity/oauth-vault-share.js";
 import type { Domain } from "../memory/domain.js";
 import type { ConnectorCredentials, ConnectorCredentialType } from "../access/connector-credentials.js";
-import { vercelConnectorOf } from "../access/connector-credentials.js";
+import { oauthConnectorOf } from "../access/connector-credentials.js";
 import {
   AUTH_URL_TTL_MS,
   defaultConnectorAuthStarter,
@@ -64,10 +64,10 @@ export function buildConnectCard(
 
 async function mintOAuthUrl(
   startAuth: ConnectorAuthorizationStarter,
-  vercelConnector: string,
+  oauthConnector: string,
   subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" },
 ): Promise<string> {
-  return (await startAuth(vercelConnector, { subject }, { expiresInMs: AUTH_URL_TTL_MS })).url;
+  return (await startAuth(oauthConnector, { subject }, { expiresInMs: AUTH_URL_TTL_MS })).url;
 }
 
 export async function renderNonSlackConnect(
@@ -85,9 +85,9 @@ export async function renderNonSlackConnect(
         lines.push(`• *${optionLabel(o)}* — an admin connects your organisation's account here: ${o.dashboardUrl}`);
         continue;
       }
-      if (o.route.kind === "url" && o.vercelConnector && ctx.mode === "dm") {
+      if (o.route.kind === "url" && o.oauthConnector && ctx.mode === "dm") {
         try {
-          const url = await mintOAuthUrl(startAuth, o.vercelConnector, { type: "app" });
+          const url = await mintOAuthUrl(startAuth, o.oauthConnector, { type: "app" });
           lines.push(`• *${optionLabel(o)}* — connect your organisation's account (this link expires soon): ${url}`);
           issued.push(o);
         } catch {
@@ -95,7 +95,7 @@ export async function renderNonSlackConnect(
         }
         continue;
       }
-      if (o.route.kind === "url" && o.vercelConnector) {
+      if (o.route.kind === "url" && o.oauthConnector) {
         lines.push(`• *${optionLabel(o)}* — send me a direct message and ask again, so the link stays private.`);
         continue;
       }
@@ -111,10 +111,10 @@ export async function renderNonSlackConnect(
       );
       continue;
     }
-    if (o.route.kind === "url" && o.vercelConnector && o.credentialType === "user-oauth") {
+    if (o.route.kind === "url" && o.oauthConnector && o.credentialType === "user-oauth") {
       if (!(ctx.mode === "dm" && ctx.principalId)) continue;
       try {
-        const url = await mintOAuthUrl(startAuth, o.vercelConnector, {
+        const url = await mintOAuthUrl(startAuth, o.oauthConnector, {
           type: "user",
           id: rawVaultSubject(ctx.org, ctx.platform, ctx.workspace, ctx.principalId),
         });
@@ -221,13 +221,13 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         await ephemeral(post, channelId, clickerId, "To connect your own account, send me a direct message and ask again.");
         return true;
       }
-      const userConnector = vercelConnectorOf(cred);
+      const userConnector = oauthConnectorOf(cred);
       if (!userConnector) {
         await ephemeral(post, channelId, clickerId, "Connecting your own account isn't set up yet. Ask your admin.");
         return true;
       }
       return await mintAndDeliverOAuth(post, startAuth, {
-        org, teamId, channelId, clickerId, connectorName, vercelConnector: userConnector,
+        org, teamId, channelId, clickerId, connectorName, oauthConnector: userConnector,
         subject: { type: "user", id: rawVaultSubject(deploymentOrg(), "slack", teamId, clickerId) }, subjectLabel: "user",
       });
     }
@@ -251,7 +251,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
           return true;
         }
         return await mintAndDeliverOAuth(post, startAuth, {
-          org, teamId, channelId, clickerId, connectorName, vercelConnector: mintHome,
+          org, teamId, channelId, clickerId, connectorName, oauthConnector: mintHome,
           subject: { type: "app" }, subjectLabel: "app",
         });
       }
@@ -320,14 +320,14 @@ async function mintAndDeliverOAuth(
     readonly channelId: string;
     readonly clickerId: string;
     readonly connectorName: string;
-    readonly vercelConnector: string;
+    readonly oauthConnector: string;
     readonly subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" };
     readonly subjectLabel: "user" | "app";
   },
 ): Promise<boolean> {
   let url: string | undefined;
   try {
-    url = (await startAuth(ctx.vercelConnector, { subject: ctx.subject }, { expiresInMs: AUTH_URL_TTL_MS })).url;
+    url = (await startAuth(ctx.oauthConnector, { subject: ctx.subject }, { expiresInMs: AUTH_URL_TTL_MS })).url;
   } catch (err) {
     console.error(`[open-everywhere:connector] oauth mint failed for ${ctx.connectorName} (${ctx.subjectLabel}): ${String(err)}`);
     await ephemeral(post, ctx.channelId, ctx.clickerId, "I couldn't start connecting just now. This isn't fully set up yet, so ask your admin.");

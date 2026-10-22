@@ -33,7 +33,7 @@ import {
   boundConnectorCredential,
   surfaceContextFromAuth,
 } from "../access/connector-scope.js";
-import { vercelConnectorOf } from "../access/connector-credentials.js";
+import { oauthConnectorOf } from "../access/connector-credentials.js";
 import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoints.js";
 import { classifyConnectorOpTier, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { effectiveConnectorOpTier, joinConnectorOpTiers } from "../access/connector-op-gating.js";
@@ -135,9 +135,9 @@ export async function resolveAppTokenFromCred(
     return { token: await getSecretVia(cred.broker, cred.secretRef) };
   }
   if (cred.type === "service-oauth") {
-    const connector = vercelConnectorOf(cred);
+    const connector = oauthConnectorOf(cred);
     if (!connector)
-      throw new Error(`connection "${opts.connector}": service-oauth credential has no vercel-connect home`);
+      throw new Error(`connection "${opts.connector}": service-oauth credential has no oauth home`);
     return requireUserAuthFlow(opts.connector).mintServiceToken(connector, o);
   }
   throw new Error(
@@ -153,10 +153,10 @@ export interface ConnectUserTokenParams {
   readonly resources?: readonly string[];
 }
 
-export type ConnectUserTokenMinter = (vercelConnector: string, params: ConnectUserTokenParams) => Promise<TokenResult>;
+export type ConnectUserTokenMinter = (oauthConnector: string, params: ConnectUserTokenParams) => Promise<TokenResult>;
 
 export type ConnectAuthorizationStarter = (
-  vercelConnector: string,
+  oauthConnector: string,
   params: { readonly subject: { readonly type: "user"; readonly id: string } },
   options: { readonly expiresInMs?: number; readonly consent?: ConsentCarriage },
 ) => Promise<{ url: string }>;
@@ -180,13 +180,13 @@ export type ConnectorAuthSubject =
   | { readonly type: "app" };
 
 export type ConnectorAuthorizationStarter = (
-  vercelConnector: string,
+  oauthConnector: string,
   params: { readonly subject: ConnectorAuthSubject },
   options: { readonly expiresInMs?: number },
 ) => Promise<{ url: string }>;
 
-export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = (vercelConnector, params, options) =>
-  requireUserAuthFlow(vercelConnector).startAuthorization(vercelConnector, params, options);
+export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = (oauthConnector, params, options) =>
+  requireUserAuthFlow(oauthConnector).startAuthorization(oauthConnector, params, options);
 
 function needsSignInMessage(connector: string, delivered: boolean, repeat = false, resumes = false): string {
   const where = repeat
@@ -259,7 +259,7 @@ async function memoSelfHealsUserGrant(
   if (!flow?.hasFreshGrant) return false;
   const cred = await boundConnectorCredential(connector, auth);
   if (cred?.type !== "user-oauth") return false;
-  const providerRef = vercelConnectorOf(cred);
+  const providerRef = oauthConnectorOf(cred);
   if (!providerRef) return false;
   const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(auth);
   if (mode !== "dm" || !principalId || !org || !platform) return false;
@@ -371,9 +371,9 @@ export function userAwareProviderToken(
           memberRequester = verdict.requesterPrincipalId;
         }
         const actorId = memberRequester ?? principalId;
-        const connector = vercelConnectorOf(cred);
+        const connector = oauthConnectorOf(cred);
         if (!connector)
-          throw new Error(`connection "${opts.connector}": user-oauth credential has no vercel-connect home`);
+          throw new Error(`connection "${opts.connector}": user-oauth credential has no oauth home`);
         const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, workspace, actorId);
         try {
           const minted = await mintUser(connector, { subject: { type: "user", id: subjectId } });

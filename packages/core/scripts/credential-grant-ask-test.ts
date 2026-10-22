@@ -17,7 +17,7 @@ import { bindFrom } from "../agent/identity/binding.js";
 import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
 import { standingSeatDomainFor } from "../agent/memory/domain.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
-import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { registerUserAuthFlow } from "../agent/connections/user-auth-flow.js";
 import { OE_OWN_ACCOUNT_ASK_ATTR, renderOwnAccountStamp } from "../agent/connections/own-account-carriage.js";
@@ -106,7 +106,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });

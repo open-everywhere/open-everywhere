@@ -15,7 +15,7 @@ import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { DM_SEAT_CARVE_IN, allowedOnLeanSeat } from "../agent/access/lean-seat.js";
 import { CONTRIBUTIONS } from "../agent/contributions.js";
-import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import type { ReplyTarget } from "../agent/channels/reply-post.js";
@@ -112,7 +112,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: "https://mcp.notion.com/mcp", provider: "notion" });

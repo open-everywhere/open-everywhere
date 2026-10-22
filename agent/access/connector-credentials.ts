@@ -1,7 +1,7 @@
 import {
   assertConnectorCredentialsValid,
   defineConnectorCredentials,
-  vercelConnectorHome,
+  oauthConnectorHome,
   type ConnectorCredentials,
 } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { applyOverridesToConnectorCredentials } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
@@ -32,8 +32,8 @@ const catalogues: ConnectorCredentials[] = [
         intake: false,
         endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/blocks/"], methods: ["GET"] },
       },
-      { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
-      { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
+      { id: "user-oauth", type: "user-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
+      { id: "workspace-oauth", type: "service-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: ["mcp.notion.com"] } },
     ],
   }),
 
@@ -50,7 +50,7 @@ const catalogues: ConnectorCredentials[] = [
         id: "user-oauth",
         type: "user-oauth",
         grantFamily: "human-acting",
-        home: vercelConnectorHome("github.com/login/oauth"),
+        home: oauthConnectorHome("github.com/login/oauth"),
         lifecycle: { refresh: "refresh-token" },
         endpoints: { hosts: ["api.github.com"], methods: ["GET"] },
       },
@@ -108,7 +108,7 @@ const catalogues: ConnectorCredentials[] = [
     allows: ["api-key", "service-oauth"],
     credentials: [
       { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "env" },
-      { id: "e2e-oauth", type: "service-oauth", home: vercelConnectorHome("example.com/e2e-intake"), dashboardUrl: "https://example.com/e2e-intake/org-consent" },
+      { id: "e2e-oauth", type: "service-oauth", home: oauthConnectorHome("example.com/e2e-intake"), dashboardUrl: "https://example.com/e2e-intake/org-consent" },
     ],
   }),
 ];

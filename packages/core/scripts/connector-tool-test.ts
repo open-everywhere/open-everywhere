@@ -25,7 +25,7 @@ const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js
 const { rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 type ConnectorCredentials = import("../agent/access/connector-credentials.js").ConnectorCredentials;
-const { vercelConnectorHome } = await import("../agent/access/connector-credentials.js");
+const { oauthConnectorHome } = await import("../agent/access/connector-credentials.js");
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 type Domain = import("../agent/memory/domain.js").Domain;
 
@@ -44,8 +44,8 @@ const NOTION: ConnectorCredentials = {
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
-    { id: "team-oauth", type: "service-oauth", home: vercelConnectorHome("notion.so/open-everywhere"), dashboardUrl: "https://vercel.com/team-x/~/connect/scl_TEST" },
-    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("notion.so/open-everywhere") },
+    { id: "team-oauth", type: "service-oauth", home: oauthConnectorHome("notion.so/open-everywhere"), dashboardUrl: "https://dashboard.example/team-x/~/org-grant" },
+    { id: "user-oauth", type: "user-oauth", home: oauthConnectorHome("notion.so/open-everywhere") },
   ],
 };
 
@@ -54,8 +54,8 @@ const NOTION_ORG_MINT: ConnectorCredentials = {
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
-    { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
-    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
+    { id: "workspace-oauth", type: "service-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp") },
+    { id: "user-oauth", type: "user-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp") },
   ],
 };
 
@@ -105,7 +105,7 @@ console.log("1. resolver matrix:");
   const api = dmOpts.find((o) => o.credentialType === "api-key")!;
   const svc = dmOpts.find((o) => o.credentialType === "service-oauth")!;
   ok(api.secretRef === "NOTION_API_KEY" && api.route.kind === "modal", "api-key option carries its secretRef (egress resolves the SAME ref)");
-  ok(svc.vercelConnector === "notion.so/open-everywhere", "service-oauth option carries its vercelConnector");
+  ok(svc.oauthConnector === "notion.so/open-everywhere", "service-oauth option carries its oauthConnector");
 
   ok(BROKER_INTAKE_CAPS.db.hostWrite === true && BROKER_INTAKE_CAPS.env.hostWrite === false, "broker declarations: only db can host-write today");
 
@@ -210,10 +210,10 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const rec = recorder();
   const st = starter();
   ok((await handleConnectClick(click("service-oauth", "U_ADMIN", "C123"), deps({ post: rec.post, startAuth: st.startAuth }))) === true, "service-oauth admin click handled");
-  eq(st.calls.length, 0, "a service-oauth credential WITH a dashboardUrl calls no startAuthorization — Connect's hosted flow rejects app subjects");
+  eq(st.calls.length, 0, "a service-oauth credential WITH a dashboardUrl calls no startAuthorization — its authorization server refuses an app subject");
   ok(rec.methods().includes("chat.postEphemeral"), "the dashboard link is delivered EPHEMERALLY");
   ok(
-    rec.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("https://vercel.com/team-x/~/connect/scl_TEST")),
+    rec.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("https://dashboard.example/team-x/~/org-grant")),
     "the ephemeral post carries the configured dashboard URL",
   );
   const dashRows = (await readAudit({ org: ORG })).filter((r) => r.action === "connector.dashboard_link_issued");
@@ -277,7 +277,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   await handleConnectClick(click("service-oauth", "U_DOM_ADMIN", "C_DOM"), deps({ post: recDash.post, startAuth: stDash.startAuth }));
   eq(stDash.calls.length, 0, "the dashboard route mints nothing (as ever)");
   ok(
-    recDash.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("https://vercel.com/team-x/~/connect/scl_TEST")),
+    recDash.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("https://dashboard.example/team-x/~/org-grant")),
     "🔴 …and a DOMAIN admin still gets the dashboard link — the org-admin bar is on the MINT route only",
   );
 }
@@ -307,7 +307,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const st2 = starter();
   const linked = await renderNonSlackConnect("notion", dashOpt, { mode: "channel", org: ORG, platform: "discord", workspace: "G1" }, st2.startAuth);
   eq(st2.calls.length, 0, "🔴 …and a credential that DOES declare a dashboardUrl still mints NOTHING");
-  ok(linked.text.includes("https://vercel.com/team-x/~/connect/scl_TEST"), "…it posts the dashboard link instead");
+  ok(linked.text.includes("https://dashboard.example/team-x/~/org-grant"), "…it posts the dashboard link instead");
   eq(linked.issued.length, 0, "…and issues no URL, so no oauth_url_issued row is written for it");
 
   const memberOpts = resolveConnectorOptions({ catalogue: NOTION_ORG_MINT, platform: "discord", mode: "channel", isAdmin: false, isOrgAdmin: false, hostWriteBroker: true });

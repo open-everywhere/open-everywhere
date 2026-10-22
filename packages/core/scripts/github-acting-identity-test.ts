@@ -17,7 +17,7 @@ import {
 import { GITHUB_OWN_ACCOUNT_VENDOR } from "../agent/scm/github-acting-identity.js";
 import { stampOwnAccountAsk } from "../agent/hooks/own-account-ask.js";
 import { registerConfig } from "../agent/access/config.js";
-import { defineConnectorCredentials, vercelConnectorHome, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
+import { defineConnectorCredentials, oauthConnectorHome, type ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import { registerIdentityMapper, type BindableContext } from "../agent/identity/binding.js";
@@ -118,7 +118,7 @@ function githubCatalogue(): ConnectorCredentials {
     connector: GITHUB_CONNECTOR,
     allows: ["user-oauth"],
     humanActing: { supported: true, credentialTypes: ["user-oauth"] },
-    credentials: [{ id: "user-oauth", type: "user-oauth", grantFamily: "human-acting", home: vercelConnectorHome("github.com/login/oauth"), lifecycle: { refresh: "refresh-token" } }],
+    credentials: [{ id: "user-oauth", type: "user-oauth", grantFamily: "human-acting", home: oauthConnectorHome("github.com/login/oauth"), lifecycle: { refresh: "refresh-token" } }],
   });
 }
 function researchNoteOnlyCatalogue(): ConnectorCredentials {
@@ -127,7 +127,7 @@ function researchNoteOnlyCatalogue(): ConnectorCredentials {
     connector: "linear",
     allows: ["user-oauth"],
     humanActing: { supported: true, credentialTypes: ["user-oauth"] },
-    credentials: [{ id: "workspace", type: "user-oauth", home: vercelConnectorHome("linear.app") }],
+    credentials: [{ id: "workspace", type: "user-oauth", home: oauthConnectorHome("linear.app") }],
   });
 }
 ok(humanActingConnectors([githubCatalogue()]).includes(GITHUB_CONNECTOR), "§7 a catalogue with BOTH halves is a human-acting connector");

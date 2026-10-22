@@ -7,7 +7,7 @@ import {
   isHumanActing,
   principalOf,
   principalOfCredential,
-  vercelConnectorHome,
+  oauthConnectorHome,
   type ConnectorCredentials,
   type ConnectorCredential,
   type ConnectorCredentialType,
@@ -115,7 +115,7 @@ ok(isHumanActing({ grantFamily: "human-acting" }), "an explicit human-acting sta
     ...capable,
     credentials: [
       ...capable.credentials,
-      { id: "as-me-oauth", type: "user-oauth", home: vercelConnectorHome("oauth/acme-user"), grantFamily: "human-acting" },
+      { id: "as-me-oauth", type: "user-oauth", home: oauthConnectorHome("oauth/acme-user"), grantFamily: "human-acting" },
     ],
   };
   const msg = throwsWith(() => assertConnectorCredentialsValid([forged]), "human-acting on a type the vendor didn't declare throws");

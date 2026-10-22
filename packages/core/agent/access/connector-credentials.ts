@@ -48,14 +48,16 @@ export interface CredentialHomeRef {
   readonly config: Readonly<Record<string, unknown>>;
 }
 
-const VERCEL_CONNECT_HOME_KIND = "vercel-connect";
+const OAUTH_HOME_KIND = "oauth";
 
-export function vercelConnectorHome(connector: string): CredentialHomeRef {
-  return { kind: VERCEL_CONNECT_HOME_KIND, config: { connector } };
+const RETIRED_HOME_KINDS: Readonly<Record<string, string>> = { "vercel-connect": OAUTH_HOME_KIND };
+
+export function oauthConnectorHome(connector: string): CredentialHomeRef {
+  return { kind: OAUTH_HOME_KIND, config: { connector } };
 }
 
-export function vercelConnectorOf(cred: { readonly home?: CredentialHomeRef }): string | undefined {
-  if (cred.home?.kind !== VERCEL_CONNECT_HOME_KIND) return undefined;
+export function oauthConnectorOf(cred: { readonly home?: CredentialHomeRef }): string | undefined {
+  if (cred.home?.kind !== OAUTH_HOME_KIND) return undefined;
   const c = cred.home.config.connector;
   return typeof c === "string" ? c : undefined;
 }
@@ -122,11 +124,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 function registerCoreExclusiveHomes(): void {
   registerExclusiveCredentialHome({
-    name: VERCEL_CONNECT_HOME_KIND,
+    name: OAUTH_HOME_KIND,
     validFor: ["service-oauth", "user-oauth"],
     validateConfig: (config, where) => {
       if (!isRecord(config) || typeof config.connector !== "string" || !config.connector) {
-        throw new Error(`${where}: vercel-connect home needs a non-empty { connector }`);
+        throw new Error(`${where}: oauth home needs a non-empty { connector }`);
       }
     },
   });
@@ -185,6 +187,10 @@ export function assertConnectorCredentialsValid(catalogues: readonly ConnectorCr
 
       if (c.home) {
         const h = EXCLUSIVE_HOMES.get(c.home.kind);
+        const replacement = Object.hasOwn(RETIRED_HOME_KINDS, c.home.kind) ? RETIRED_HOME_KINDS[c.home.kind] : undefined;
+        if (!h && replacement) {
+          throw new Error(`${where}: credential home kind "${c.home.kind}" is retired — rename it to "${replacement}" (the config bag keeps its shape)`);
+        }
         if (!h) {
           throw new Error(`${where}: unknown credential home kind "${c.home.kind}" — no ExclusiveCredentialHome is registered for it (register one; a new home vendor is registration-only)`);
         }
@@ -200,7 +206,7 @@ export function assertConnectorCredentialsValid(catalogues: readonly ConnectorCr
           throw new Error(`${where}: api-key needs an explicit broker stamp ("env" | "db" | ...) — a credential has exactly one home; unstamped-follows-selection is not allowed`);
         }
         if (c.type === "service-oauth" || c.type === "user-oauth") {
-          throw new Error(`${where}: ${c.type} needs a home — a vercel-connect connector (vercelConnectorHome) or a registered exclusive vendor home`);
+          throw new Error(`${where}: ${c.type} needs a home — an oauth connector (oauthConnectorHome) or a registered exclusive vendor home`);
         }
       }
 

@@ -19,7 +19,7 @@ process.env.NOTION_TEAM = "BOUND-TEAM-KEY";
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
-const { defineConnectorCredentials, vercelConnectorHome } = await import("../agent/access/connector-credentials.js");
+const { defineConnectorCredentials, oauthConnectorHome } = await import("../agent/access/connector-credentials.js");
 
 registerConfig({
   loadConnectorCredentials: () => [
@@ -27,7 +27,7 @@ registerConfig({
       connector: "notion",
       allows: ["api-key", "service-oauth", "user-oauth"],
       credentials: [
-        { id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") },
+        { id: "mine", type: "user-oauth", home: oauthConnectorHome("oauth/notion-user") },
         { id: "team", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" },
       ],
     }),
@@ -160,7 +160,7 @@ resetSettingsForTest();
   const m = makeMinter("ok");
   const r = await getToken(dmAuth, m);
   ok(r.token === `USER-TOKEN-${RAW}`, "DM → mints a per-user token via the injected minter");
-  ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-user" && m.calls[0].id === RAW, "mint used the user-oauth vercelConnector + subject id = the caller's QUALIFIED subject");
+  ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-user" && m.calls[0].id === RAW, "mint used the user-oauth oauthConnector + subject id = the caller's QUALIFIED subject");
   ok(m.calls[0].id !== "U_caller", "🔴 the vault subject is NOT the bare native id — the spelling OPE-286 deleted");
   ok(m.calls[0].id.startsWith("p:") && m.calls[0].id.endsWith("/slack/T_TEAM/U_caller"), "the raw subject carries its own prefix + the platform from the BINDING (never sniffed from the id's shape)");
   ok(rawVaultSubject(deploymentOrg(), "slack", "T_TEAM", "U_caller") !== rawVaultSubject("other-org", "slack", "T_TEAM", "U_caller"), "🔴 same native id, different org → different vault subject (no cross-tenant alias)");
@@ -179,7 +179,7 @@ resetSettingsForTest();
   ok(!/user_authorization_required/i.test(r.err ?? ""), "the raw SDK error is NOT surfaced to the model");
   ok((r.err ?? "").includes("https://connect.vercel.com/auth/PERSONAL-LINK"), "the minted PERSONAL authorization URL appears in the relayed error");
   ok(/expires/i.test(r.err ?? "") && /YOU with YOUR own access/.test(r.err ?? ""), "keeps the personal + expiry framing (link is personal, acts as YOU)");
-  ok(s.calls.length === 1 && s.calls[0].connector === "oauth/notion-user" && s.calls[0].id === RAW, "#112: startAuthorization used the user-oauth vercelConnector + the SAME qualified subject the mint would use (threat j)");
+  ok(s.calls.length === 1 && s.calls[0].connector === "oauth/notion-user" && s.calls[0].id === RAW, "startAuthorization used the user-oauth oauthConnector + the SAME qualified subject the mint would use (threat j)");
   ok(typeof s.calls[0].expiresInMs === "number" && (s.calls[0].expiresInMs ?? 0) > 0 && (s.calls[0].expiresInMs ?? 0) <= 20 * 60 * 1000, "a short (~15 min) TTL is passed to the mint");
 }
 

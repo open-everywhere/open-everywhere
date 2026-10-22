@@ -20,7 +20,7 @@ import {
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { _resetGrantRoomNoticeForTest } from "../agent/access/grant-room-notice-registry.internal.js";
 import { McpCallFenceError } from "../agent/access/mcp-call-fence.js";
-import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
@@ -87,7 +87,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });

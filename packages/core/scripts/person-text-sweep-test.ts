@@ -131,9 +131,9 @@ const ROUTINE_ID = "r-1a2b3c4d";
 {
   ok(connectorWords("notion") === "Notion" && connectorWords("acme-crm") === "Acme-crm", "a connector reads by its display name");
   const options = [
-    { credentialType: "user-oauth", principal: "user", credentialId: "c1", vercelConnector: "vc1", route: { kind: "url" } },
+    { credentialType: "user-oauth", principal: "user", credentialId: "c1", oauthConnector: "vc1", route: { kind: "url" } },
     { credentialType: "service-oauth", principal: "app", credentialId: "c2", dashboardUrl: "https://vercel.com/acme/connect", route: { kind: "url" } },
-    { credentialType: "service-oauth", principal: "app", credentialId: "c3", vercelConnector: "vc3", route: { kind: "url" } },
+    { credentialType: "service-oauth", principal: "app", credentialId: "c3", oauthConnector: "vc3", route: { kind: "url" } },
     { credentialType: "service-oauth", principal: "app", credentialId: "c4", route: { kind: "url" } },
     { credentialType: "api-key", principal: "app", credentialId: "c5", route: { kind: "page" } },
     { credentialType: "api-key", principal: "app", credentialId: "c6", route: { kind: "text-degrade", reason: "I can't take a key safely here. Ask me in Slack, where I can open a private form, or ask your admin to add it." } },

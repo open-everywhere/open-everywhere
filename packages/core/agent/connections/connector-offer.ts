@@ -1,5 +1,5 @@
 import type { ConnectorCredentials, ConnectorCredential, ConnectorCredentialType } from "../access/connector-credentials.js";
-import { isHumanActing, principalOf, vercelConnectorOf } from "../access/connector-credentials.js";
+import { isHumanActing, principalOf, oauthConnectorOf } from "../access/connector-credentials.js";
 import { hostWriteHomeAvailable as homesHostWriteAvailable, type CredentialHome } from "../credentials/home.js";
 
 export interface SurfaceIntakeCapability {
@@ -54,7 +54,7 @@ export interface ConnectorOption {
   readonly principal: "app" | "user";
   readonly credentialId: string;
   readonly secretRef?: string;
-  readonly vercelConnector?: string;
+  readonly oauthConnector?: string;
   readonly dashboardUrl?: string;
   readonly route: ConnectRoute;
 }
@@ -63,7 +63,7 @@ export type ConnectMode = "dm" | "channel";
 
 export function unqualifiedAppRowMintHome(type: ConnectorCredentialType, cred: ConnectorCredential): string | undefined {
   if (type !== "service-oauth" || cred.dashboardUrl) return undefined;
-  return vercelConnectorOf(cred);
+  return oauthConnectorOf(cred);
 }
 
 export interface ResolveConnectorInput {
@@ -126,7 +126,7 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
       principal,
       credentialId: cred.id,
       ...(cred.secretRef ? { secretRef: cred.secretRef } : {}),
-      ...(vercelConnectorOf(cred) ? { vercelConnector: vercelConnectorOf(cred) } : {}),
+      ...(oauthConnectorOf(cred) ? { oauthConnector: oauthConnectorOf(cred) } : {}),
       ...(cred.dashboardUrl ? { dashboardUrl: cred.dashboardUrl } : {}),
       route,
     });

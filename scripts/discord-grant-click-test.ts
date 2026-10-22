@@ -67,7 +67,7 @@ const { handleDiscordGrantCardInteraction } = await import("@open-everywhere/pro
 const { grantCardActionId, grantCardActions, parseGrantCardActionId, expireGrantCard } = await import("@open-everywhere/core/agent/access/credential-grant-card.js");
 const { askForCredentialGrant } = await import("@open-everywhere/core/agent/access/credential-grant-flow.js");
 const { GRANT_CARD_CLICK_ACTION } = await import("@open-everywhere/core/agent/access/credential-grant-click.js");
-const { setRegisteredConnectorCredentials, vercelConnectorHome } = await import("@open-everywhere/core/agent/access/connector-credentials.js");
+const { setRegisteredConnectorCredentials, oauthConnectorHome } = await import("@open-everywhere/core/agent/access/connector-credentials.js");
 const { selectConnectorTransport } = await import("@open-everywhere/core/agent/connections/connector-transport.js");
 const { registerUserAuthFlow } = await import("@open-everywhere/core/agent/connections/user-auth-flow.js");
 const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
@@ -86,7 +86,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });

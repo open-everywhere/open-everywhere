@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-ref
+
 import assert from "node:assert/strict";
 
 const {
@@ -107,7 +109,7 @@ const ok = (cond: boolean, label: string) => {
   assert.throws(
     () => assertConnectorCredentialsValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never),
     /unknown credential home kind "vaultx"/,
-    "resetExclusiveCredentialHomes: the vendor home is forgotten (the core vercel-connect home remains)",
+    "resetExclusiveCredentialHomes: the vendor home is forgotten (the core oauth home remains)",
   );
   n++;
 }

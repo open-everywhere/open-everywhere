@@ -504,7 +504,7 @@ const { parseAppMentionEvent } = await import(
 
 {
   const { routineConnectorFixture, NOTION_MCP_HOST, ROUTINE_CONNECTOR_WRITE_OP } = await import("../packages/core/scripts/e2e/routine-connector-fixture.js");
-  const { vercelConnectorHome } = await import("../packages/core/agent/access/connector-credentials.js");
+  const { oauthConnectorHome } = await import("../packages/core/agent/access/connector-credentials.js");
   const { readFileSync: readSource } = await import("node:fs");
   const { fileURLToPath: toPath } = await import("node:url");
 
@@ -522,7 +522,7 @@ const { parseAppMentionEvent } = await import(
       credentials: [
         { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db", endpoints: { hosts: ["api.notion.com"], pathPrefixes: ["/v1/"], methods: ["GET", "POST"] } },
         { id: "user-oauth", type: "user-oauth" },
-        { id: "workspace-oauth", type: "service-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: [NOTION_MCP_HOST] } },
+        { id: "workspace-oauth", type: "service-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp"), endpoints: { hosts: [NOTION_MCP_HOST] } },
       ],
     },
   ] as const;

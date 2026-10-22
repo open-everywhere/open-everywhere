@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-member-plane
+
 import assert from "node:assert/strict";
 import {
   memberPlaneRefusalMessage,
@@ -120,8 +122,8 @@ const CAT: ConnectorCredentials = {
   connector: "notion",
   allows: ["api-key", "user-oauth"],
   credentials: [
-    { id: "personal", type: "user-oauth", home: { kind: "vercel-connect", config: { connector: "mcp.notion.com/notion-mcp" } } },
-    { id: "other-personal", type: "user-oauth", home: { kind: "vercel-connect", config: { connector: "mcp.notion.com/notion-mcp" } } },
+    { id: "personal", type: "user-oauth", home: { kind: "oauth", config: { connector: "mcp.notion.com/notion-mcp" } } },
+    { id: "other-personal", type: "user-oauth", home: { kind: "oauth", config: { connector: "mcp.notion.com/notion-mcp" } } },
     { id: "team-key", type: "api-key", secretRef: "db:notion:team-key", broker: "db" },
   ],
 };
@@ -350,3 +352,5 @@ _resetSurfacesForTest();
 
 assert.equal(typeof passed, "number");
 console.log(`✓ member-plane: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-trust

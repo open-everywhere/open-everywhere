@@ -8,7 +8,7 @@ delete process.env.OE_PLATFORM;
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { setRegisteredConnectorCredentials, vercelConnectorHome } from "../agent/access/connector-credentials.js";
+import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/access/connector-credentials.js";
 import { approveCredentialGrant, askForCredentialGrant, declineCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { grantCardActions, grantCardText, GRANT_MODE_WORDS, approvedGrantCardText, declinedGrantCardText } from "../agent/access/credential-grant-card.js";
 import { registerSlackTestBridge } from "./_slack-test-stubs.js";
@@ -91,7 +91,7 @@ setRegisteredConnectorCredentials([
   {
     allows: ["user-oauth"],
     connector: "notion",
-    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: vercelConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
+    credentials: [{ endpoints: { hosts: ["mcp.notion.com"] }, home: oauthConnectorHome("mcp.notion.com/notion-mcp"), id: "user-oauth", type: "user-oauth" }],
   },
 ]);
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });

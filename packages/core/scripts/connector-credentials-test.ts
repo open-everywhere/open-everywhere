@@ -1,10 +1,12 @@
+// proves: AP-MOD-core-access-connector-credentials
+
 import {
   assertConnectorCredentialsValid,
   defineConnectorCredentials,
   expandConnectorGrant,
   principalOf,
-  vercelConnectorHome,
-  vercelConnectorOf,
+  oauthConnectorHome,
+  oauthConnectorOf,
   type ConnectorCredentials,
 } from "../agent/access/connector-credentials.js";
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
@@ -44,8 +46,8 @@ const notion: ConnectorCredentials = defineConnectorCredentials({
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" },
-    { id: "team-oauth", type: "service-oauth", home: vercelConnectorHome("oauth/notion-app") },
-    { id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") },
+    { id: "team-oauth", type: "service-oauth", home: oauthConnectorHome("oauth/notion-app") },
+    { id: "mine", type: "user-oauth", home: oauthConnectorHome("oauth/notion-user") },
   ],
 });
 
@@ -69,8 +71,19 @@ throwsWith(
 throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "x", allows: ["service-oauth"], credentials: [{ id: "o", type: "service-oauth" }] }]),
   'connector "x" credential "o": service-oauth needs a home',
-  "service-oauth credential without vercelConnector throws",
+  "service-oauth credential without oauthConnector throws",
 );
+throwsWith(
+  () =>
+    assertConnectorCredentialsValid([
+      { connector: "x", allows: ["user-oauth"], credentials: [{ id: "o", type: "user-oauth", home: { kind: "vercel-connect", config: { connector: "oauth/x" } } }] },
+    ]),
+  'connector "x" credential "o": credential home kind "vercel-connect" is retired — rename it to "oauth"',
+  "a credential homed at the retired kind throws and names the new kind",
+);
+ok(oauthConnectorHome("oauth/x").kind === "oauth", "oauthConnectorHome builds the `oauth` kind");
+assertConnectorCredentialsValid([{ connector: "x", allows: ["user-oauth"], credentials: [{ id: "o", type: "user-oauth", home: { kind: "oauth", config: { connector: "oauth/x" } } }] }]);
+ok(true, "a credential homed at the `oauth` kind loads");
 throwsWith(
   () => assertConnectorCredentialsValid([{ connector: "", allows: ["api-key"], credentials: [] }]),
   "connector credentials: missing connector slug",
@@ -97,7 +110,7 @@ throwsWith(
 }
 {
   const r = expandConnectorGrant({ name: "notion", credential: "team-oauth" }, notion, { dm: false });
-  ok(r.resolved !== null && vercelConnectorOf(r.resolved) === "oauth/notion-app" && r.resolved?.principal === "app", "service-oauth carries the connect connector");
+  ok(r.resolved !== null && oauthConnectorOf(r.resolved) === "oauth/notion-app" && r.resolved?.principal === "app", "service-oauth carries its oauth connector");
 }
 {
   const restrictive: ConnectorCredentials = { ...notion, allows: ["service-oauth"] };

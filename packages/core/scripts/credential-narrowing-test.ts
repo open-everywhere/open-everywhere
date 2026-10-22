@@ -236,7 +236,7 @@ asked = [];
 asked = [];
 {
   await assert.rejects(
-    () => resolveAppTokenFromCred(conn, { connector: "notion", credential: "oauth", type: "service-oauth", grantFamily: "install", principal: "app", home: { kind: "vercel-connect", config: { connector: "oauth/notion" } } }, undefined),
+    () => resolveAppTokenFromCred(conn, { connector: "notion", credential: "oauth", type: "service-oauth", grantFamily: "install", principal: "app", home: { kind: "oauth", config: { connector: "oauth/notion" } } }, undefined),
     "a service-oauth credential whose mint fails must reject",
   );
   n++;

@@ -3,8 +3,8 @@ import {
   assertConnectorCredentialsValid,
   registerExclusiveCredentialHome,
   resetExclusiveCredentialHomes,
-  vercelConnectorHome,
-  vercelConnectorOf,
+  oauthConnectorHome,
+  oauthConnectorOf,
   type ConnectorCredentials,
 } from "../agent/access/connector-credentials.js";
 import {
@@ -126,7 +126,7 @@ const notion: ConnectorCredentials = {
   allows: ["api-key", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
-    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
+    { id: "user-oauth", type: "user-oauth", home: oauthConnectorHome("mcp.notion.com/notion-mcp") },
   ],
 };
 {
@@ -135,7 +135,7 @@ const notion: ConnectorCredentials = {
   const cred = merged[0].credentials.find((c) => c.id === "team-key")!;
   ok(cred.broker === "db" && cred.secretRef === "db:notion:team-key", "overlay: team-key re-stamped env → db");
   ok(base[0].credentials.find((c) => c.id === "team-key")!.broker === "env", "overlay: base set is NOT mutated (pure)");
-  ok(vercelConnectorOf(merged[0].credentials.find((c) => c.id === "user-oauth")!) === "mcp.notion.com/notion-mcp", "overlay: untouched credential unchanged");
+  ok(oauthConnectorOf(merged[0].credentials.find((c) => c.id === "user-oauth")!) === "mcp.notion.com/notion-mcp", "overlay: untouched credential unchanged");
   assertConnectorCredentialsValid(merged);
   ok(true, "overlay: merged connector set passes assertConnectorCredentialsValid");
 

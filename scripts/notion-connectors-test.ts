@@ -15,7 +15,7 @@ import { connectorGrantCredentialProblems } from "@open-everywhere/core/agent/ac
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
 import { credentialEndpointVerdict, credentialEndpointHostVerdict } from "@open-everywhere/core/agent/access/credential-endpoints.js";
-import { vercelConnectorOf } from "@open-everywhere/core/agent/access/connector-credentials.js";
+import { oauthConnectorOf } from "@open-everywhere/core/agent/access/connector-credentials.js";
 import { offerableCredential } from "@open-everywhere/core/agent/connections/connector-offer.js";
 
 let passed = 0;
@@ -128,11 +128,11 @@ ok(
     "…and it is what the connector card's 'Connect org account' click actually resolves (offerableCredential, the one selector both sides use)",
   );
 
-  ok(org?.dashboardUrl === undefined, "🔴 it declares NO dashboardUrl — that field routes the click away from the mint, to a Vercel page that cannot complete this grant");
-  ok(vercelConnectorOf(org!) === "mcp.notion.com/notion-mcp", "…and it is homed at the MCP OAuth ref — the only token family hosted mcp.notion.com accepts");
+  ok(org?.dashboardUrl === undefined, "🔴 it declares NO dashboardUrl — that field routes the click away from the mint, to a declared dashboard page that cannot complete this grant");
+  ok(oauthConnectorOf(org!) === "mcp.notion.com/notion-mcp", "…and it is homed at the MCP OAuth ref — the only token family hosted mcp.notion.com accepts");
 
   const dmCred = notionCat.credentials.find((cr) => cr.id === "user-oauth");
-  ok(vercelConnectorOf(org!) === vercelConnectorOf(dmCred!), "…and it shares `user-oauth`'s home ref — one provider entry, one client, two vault rows keyed by subject");
+  ok(oauthConnectorOf(org!) === oauthConnectorOf(dmCred!), "…and it shares `user-oauth`'s home ref — one provider entry, one client, two vault rows keyed by subject");
 
   ok(credentialEndpointHostVerdict(org?.endpoints, "https://mcp.notion.com/mcp").allowed, "the org credential's rules ADMIT hosted MCP — the host connections/notion.ts actually dials");
   ok(
