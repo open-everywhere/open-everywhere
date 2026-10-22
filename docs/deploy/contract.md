@@ -214,7 +214,7 @@ A running deployment answers `GET /eve/v1/oe/status` with one verdict per requir
 ```json
 {
   "contract": 1,
-  "version": { "app": "unversioned", "core": "0.9.0", "eve": "0.71.0" },
+  "version": { "app": "unversioned", "core": "0.9.1", "eve": "0.71.0" },
   "host": "vercel",
   "requirements": [
     { "id": "node-24", "met": "yes", "detail": "running node 24.21.0, which satisfies 24.x" }
