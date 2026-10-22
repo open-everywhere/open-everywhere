@@ -1660,6 +1660,136 @@ the next tick (30 minutes later) resumes at the next room.
 - **The DM seat does not veto.** The host decides whether to interrupt. The seat writes the message
   it is handed.
 
+## What needs me: the personal triage pass
+
+The **triage pass** answers "what needs me?" for one person. It reads the sources that person can
+see, ranks what needs them, and says why, in a few lines. Each line has three parts: what the item
+is, why it needs the person, and a link. The code is `personal-watch/triage.ts` (OPE-2663).
+
+A person asks for it in their own DM ("what needs me?", "what is waiting on me?"). The DM seat
+forwards the ask, and the worker calls `waiting_on_me`. The answer lists the agent's own
+[queue](../security/control-plane.md#in-slack-approvals) first, then the triage pass under "From
+your connected apps". The first-day brief and its check-ins (OPE-2662, a separate change) are to call
+the same pass.
+
+### Declaring triage sources
+
+Core declares no source, so the pass reads nothing until the deployment declares one in
+`agent/routines/collectors.ts`. A source is a `personal: true` [collector](#pre-run-data-collection)
+plus the reader that turns its body into items:
+
+```ts
+export const ROUTINE_COLLECTORS: readonly RoutineCollectorDef[] = [
+  {
+    name: "github.review-requests",
+    tool: "github__search_issues",
+    args: { q: "is:open is:pr review-requested:@me", per_page: 20 },
+    describe: "the pull requests that ask for the person's review",
+    personal: true,
+  },
+];
+
+export const PERSONAL_TRIAGE: PersonalTriageDecl = {
+  sources: [{ collector: "github.review-requests", read: "github-review-requests" }],
+};
+```
+
+Core ships five readers. A pass reads at most six sources.
+
+| Reader | The body it reads | What it lists |
+| --- | --- | --- |
+| `slack-messages` | Slack `search.messages` | A 1:1 message is a direct message. Any other match is a mention. |
+| `github-review-requests` | GitHub `/search/issues` | Each open item asks for the person's review. |
+| `github-assigned` | GitHub `/search/issues` | Each open item is assigned to the person. |
+| `linear-issues` | Linear `viewer.assignedIssues`, `issues`, or a bare `nodes` list | Each issue that is not completed or canceled. |
+| `notion-comments` | Notion `/v1/comments` | Each comment, with a link to its page. The person's own comments are listed too. |
+
+The boot refuses an unknown reader, a source that names an undeclared collector, a collector that is
+not `personal: true`, a source named twice, and more than six sources.
+
+🔴 **The pass reads only what the person can already see.** Each read runs as the person, through
+the same road as the [chief-of-staff watch](#turning-it-on-for-a-deployment): the reader receives
+`forPrincipal` and must read with the person's own sign-in, or throw. `waiting_on_me` refuses every
+room but the person's own 1:1 DM, and refuses a turn with no acting person. So the pass runs as the
+person's own room, never as an org-wide view. A caller that is not `waiting_on_me` must hold the same
+two checks.
+
+### How it ranks
+
+Host code ranks the items. No model reads them first. The order is the urgency (`urgent`, `soon`,
+`later`, the watch's own words), then the reason, then the nearer due date, then the longest wait.
+
+| Reason | When | Urgency |
+| --- | --- | --- |
+| Marked urgent | Linear priority 1, or a GitHub label such as `p0`, `blocker`, `sev1`, `urgent`, `security` | `urgent` |
+| Overdue | A Linear due date has passed | `urgent` |
+| Due soon | Due by the end of a day within 24 hours (`urgent`), or within 72 hours (`soon`) | `urgent` or `soon` |
+| Review requested | A GitHub review request | `soon` |
+| Direct message | A Slack 1:1 message | `soon` |
+| Assigned | A GitHub or Linear assignment (Linear priority 2 is `soon`) | `later` or `soon` |
+| Mentioned | A Slack mention | `later` |
+| Comment | A Notion comment | `later` |
+
+🔴 **Message text never ranks an item.** "URGENT!!" in a message is a lever that anybody can pull, so
+the pass reads only structured fields: a priority, a due date, a label, the age, and the kind of
+conversation. One item that two sources read, such as a pull request that is both assigned and up for
+review, is listed once. The match is on the app and the vendor's own id, so it holds when the item has no link.
+
+A pass shows at most seven items and counts the rest. Each line is host words and a link: "A
+GitHub pull request: your review is asked for, and it has waited at least 2 days — <link>". The line
+carries no title, no channel name and no raw id, because a title is text that anybody who opens an
+issue can write. 🔴 A link is external text too: a Linear issue link ends in a slug of its title. So the
+pass rebuilds each link from the parts that address the item, on the app's own host, over https, and
+drops the rest: the owner, repo and number on GitHub, the workspace and issue key on Linear, the
+channel and message on Slack, and the page id on Notion. A link in any other form is dropped, and
+the line says "no link". The titles ride a separate `facts` field, which only a fenced delivery may
+render. `waiting_on_me` never returns it.
+
+### What drops out
+
+- **A handled item.** An item the source no longer lists is gone: a review given, an issue closed.
+  Each reader also drops a closed state on its own, such as a merged pull request or a completed
+  issue.
+- **An item the person already saw, on a check-in.** The pass has two modes. A `full` pass (an ask,
+  a brief) lists everything current. A `changes` pass (a check-in) lists only what is new or changed
+  since the person was shown it. An item changes when its urgency, its reason or its update time
+  moves, so an item that got worse comes back. A `changes` pass with nothing to say is **quiet**, and
+  its caller posts nothing.
+
+Both modes record what they showed on the person's [watch row](#who-is-watched): a hash of each item
+and its version, never a title. The pass writes only a row that exists. It never creates one, so an
+ask never enrols anybody in the watch. When the row does not answer (a store error, a row that does
+not parse), a `full` pass still answers in full, and a `changes` pass stays quiet: it cannot tell new
+from seen, and a check-in that repeats the whole list is the failure a person notices.
+
+### A source that cannot be read
+
+A declared source that the pass cannot read is **named once**, in one plain line: "I could not check
+GitHub, so it is not in this list." That covers a person who never connected the app, a read that
+timed out, and a body in no shape the reader knows. The person's row records the name, so the next
+pass says nothing more about it. A clean read forgets the name, so the next outage is named again.
+`waiting_on_me` gives each pass the session and turn id. When eve runs the same step again, the pass
+answers what the first run chose, so the re-run does not lose the name.
+An outage does not clear what the person was shown from that source, so its return repeats nothing.
+
+### What the triage pass does not do yet
+
+- **No audit row per pass.** A failed read is named to the person, but the pass files no
+  `personal_watch.silence` row for it, as the watch does.
+- **A link only from the app's own host.** GitHub Enterprise links are dropped, and the line says "no
+  link".
+- **A link keeps the names that address the item.** These are the owner and repo on GitHub, the
+  workspace on Linear, and the workspace subdomain on Slack. Somebody outside the host chooses each
+  of them, so a line can carry those words. It never carries a title.
+- **Notion links open the page, not the comment.** A Notion comment carries no link of its own.
+- **The person's own Notion comments are listed.** A Notion author id is not the person's chat id,
+  so the pass cannot tell them apart. The person's own Slack messages are dropped.
+- **A review request's wait is a floor.** GitHub's search answers when the pull request last
+  changed, not when the review was asked for.
+- **No record without a watch row.** A person with no watch row (an outsider, or a member who never DMed the
+  agent) gets the full answer, but nothing is recorded, so a source they cannot read is named on
+  every ask.
+
 ## Everything I do for you: one list per person
 
 A person sees, in one place, everything the agent does on their behalf (OPE-2522). The list is built

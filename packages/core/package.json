@@ -2774,6 +2774,10 @@
       "types": "./dist/agent/personal-watch/state.d.ts",
       "default": "./dist/agent/personal-watch/state.js"
     },
+    "./agent/personal-watch/triage.js": {
+      "types": "./dist/agent/personal-watch/triage.d.ts",
+      "default": "./dist/agent/personal-watch/triage.js"
+    },
     "./agent/personal-watch/watch.js": {
       "types": "./dist/agent/personal-watch/watch.d.ts",
       "default": "./dist/agent/personal-watch/watch.js"
@@ -4007,6 +4011,7 @@
     "test:person-opt-out-hooks": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-hooks-test.ts",
     "test:cover": "NODE_NO_WARNINGS=1 tsx scripts/cover-test.ts",
     "test:personal-watch": "NODE_NO_WARNINGS=1 tsx scripts/personal-watch-test.ts",
+    "test:personal-triage": "NODE_NO_WARNINGS=1 tsx scripts/personal-triage-test.ts",
     "test:workflow-discovery": "NODE_NO_WARNINGS=1 tsx scripts/workflow-discovery-test.ts",
     "test:first-routine": "NODE_NO_WARNINGS=1 tsx scripts/first-routine-test.ts",
     "test:ask-watch": "NODE_NO_WARNINGS=1 tsx scripts/ask-watch-test.ts",

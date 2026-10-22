@@ -97,6 +97,7 @@ test:memory-visible
 test:person-opt-out
 test:person-opt-out-hooks
 test:personal-watch
+test:personal-triage
 test:cover
 test:memory-claim-guard
 test:approval-claim-guard

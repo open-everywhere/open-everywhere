@@ -46,6 +46,43 @@ export interface FirstConversationRecord {
   readonly decidedAt?: string;
 }
 
+export interface PersonalTriageShown {
+  readonly f: string;
+  readonly v: string;
+  readonly s: string;
+}
+
+export interface PersonalTriageRecord {
+  readonly lastPassAt: string;
+  readonly shown: readonly PersonalTriageShown[];
+  readonly missing: readonly string[];
+  readonly lastPass?: { readonly id: string; readonly items: readonly string[]; readonly omitted: number; readonly named: readonly string[] };
+}
+
+export const TRIAGE_SHOWN_MAX = 200;
+
+export function parseTriageRecord(value: unknown): PersonalTriageRecord | undefined {
+  const o = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+  const lastPassAt = strOrUndef(o?.["lastPassAt"]);
+  if (!o || !lastPassAt) return undefined;
+  const shown = (Array.isArray(o["shown"]) ? o["shown"] : [])
+    .map((e): PersonalTriageShown | undefined => {
+      const r = e as Record<string, unknown>;
+      const f = strOrUndef(r?.["f"]);
+      const v = strOrUndef(r?.["v"]);
+      const src = strOrUndef(r?.["s"]);
+      return f && v && src ? { f, v, s: src } : undefined;
+    })
+    .filter((e): e is PersonalTriageShown => e !== undefined);
+  const missing = (Array.isArray(o["missing"]) ? o["missing"] : []).filter((m): m is string => typeof m === "string" && m.length > 0);
+  const lp = typeof o["lastPass"] === "object" && o["lastPass"] !== null ? (o["lastPass"] as Record<string, unknown>) : undefined;
+  const lpId = strOrUndef(lp?.["id"]);
+  const strings = (v: unknown): string[] => (Array.isArray(v) ? v : []).filter((x): x is string => typeof x === "string" && x.length > 0);
+  const lastPass =
+    lp && lpId ? { id: lpId, items: strings(lp["items"]), omitted: typeof lp["omitted"] === "number" && lp["omitted"] >= 0 ? Math.floor(lp["omitted"]) : 0, named: strings(lp["named"]) } : undefined;
+  return { lastPassAt, shown, missing, ...(lastPass ? { lastPass } : {}) };
+}
+
 export type WatchDialSource = "default" | "command" | "app-home";
 
 export interface PersonalWatchState {
@@ -64,6 +101,7 @@ export interface PersonalWatchState {
   readonly proposals: readonly WatchProposalRecord[];
   readonly lastDiscoveryAt?: string;
   readonly firstConversation?: FirstConversationRecord;
+  readonly triage?: PersonalTriageRecord;
 }
 
 export const NUDGE_LOG_MAX = 20;
@@ -106,6 +144,7 @@ export function parseWatchState(json: string): PersonalWatchState {
   const silencedRaw = typeof raw["silenced"] === "object" && raw["silenced"] !== null ? (raw["silenced"] as Record<string, unknown>) : {};
   const silenced: Record<string, WatchSilenceReason> = {};
   for (const [k, v] of Object.entries(silencedRaw)) if (typeof v === "string") silenced[k] = v as WatchSilenceReason;
+  const triage = parseTriageRecord(raw["triage"]);
   return {
     dial,
     dialSource: source,
@@ -122,6 +161,7 @@ export function parseWatchState(json: string): PersonalWatchState {
     proposals,
     ...(strOrUndef(raw["lastDiscoveryAt"]) ? { lastDiscoveryAt: strOrUndef(raw["lastDiscoveryAt"])! } : {}),
     ...(firstConversation ? { firstConversation } : {}),
+    ...(triage ? { triage } : {}),
   };
 }
 
@@ -129,7 +169,14 @@ export function capWatchState(s: PersonalWatchState): PersonalWatchState {
   const silencedKeys = Object.keys(s.silenced);
   const silenced =
     silencedKeys.length <= SILENCED_MAX ? s.silenced : Object.fromEntries(silencedKeys.slice(-SILENCED_MAX).map((k) => [k, s.silenced[k]!] as const));
-  return { ...s, nudges: s.nudges.slice(-NUDGE_LOG_MAX), told: s.told.slice(-TOLD_MAX), silenced, proposals: s.proposals.slice(-PROPOSAL_LOG_MAX) };
+  return {
+    ...s,
+    nudges: s.nudges.slice(-NUDGE_LOG_MAX),
+    told: s.told.slice(-TOLD_MAX),
+    silenced,
+    proposals: s.proposals.slice(-PROPOSAL_LOG_MAX),
+    ...(s.triage ? { triage: { ...s.triage, shown: s.triage.shown.slice(-TRIAGE_SHOWN_MAX) } } : {}),
+  };
 }
 
 export interface PersonalWatchRead {

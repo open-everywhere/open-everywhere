@@ -163,7 +163,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "what-waits-on-you",
-    headline: "Tell the person what is waiting on them — open approval cards they can decide and jobs blocked on them, with links (DM only)",
+    headline: "Tell the person what needs them or is waiting on them — open approval cards they can decide, jobs blocked on them, and what in their own connected apps needs them, ranked, with links (DM only)",
     tools: ["waiting_on_me"],
   },
   {

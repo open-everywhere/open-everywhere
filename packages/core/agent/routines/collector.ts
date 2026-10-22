@@ -181,10 +181,8 @@ async function readWithDeadline(reader: RoutineCollectorReader, input: { org: st
   }
 }
 
-function capBody(body: string): { body: string; truncated: boolean } {
-  return body.length <= COLLECTOR_BODY_MAX_CHARS
-    ? { body, truncated: false }
-    : { body: body.slice(0, COLLECTOR_BODY_MAX_CHARS), truncated: true };
+function capBody(body: string, max: number = COLLECTOR_BODY_MAX_CHARS): { body: string; truncated: boolean } {
+  return body.length <= max ? { body, truncated: false } : { body: body.slice(0, max), truncated: true };
 }
 
 export async function collectRoutineInputs(input: {
@@ -193,6 +191,7 @@ export async function collectRoutineInputs(input: {
   readonly names: readonly string[];
   readonly heldKinds: readonly string[];
   readonly forPrincipal?: string;
+  readonly bodyMaxChars?: number;
 }): Promise<readonly CollectedInput[]> {
   const out: CollectedInput[] = [];
   for (const name of input.names) {
@@ -221,7 +220,7 @@ export async function collectRoutineInputs(input: {
         collector: def,
         ...(input.forPrincipal !== undefined ? { forPrincipal: input.forPrincipal } : {}),
       });
-      const { body, truncated } = capBody(raw);
+      const { body, truncated } = capBody(raw, input.bodyMaxChars);
       out.push({ name, ok: true, describe: def.describe, body, truncated });
     } catch (err) {
       if (err instanceof CollectorDeadline) {
