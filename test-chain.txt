@@ -225,6 +225,7 @@ test:email-integration
 test:google-chat-integration
 test:personal-browser-fence
 test:personal-browser-recorder
+test:personal-browser-never
 test:card-budget
 test:reader-check
 test:docs-generate-merge

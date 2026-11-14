@@ -534,6 +534,7 @@ test:email
 test:app-code-fingerprint
 test:personal-browser
 test:personal-browser-teach
+test:personal-browser-judge
 test:bot-ask
 test:reader-instructions
 test:agent-setup

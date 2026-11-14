@@ -124,7 +124,7 @@ async function installFakes(): Promise<void> {
       box.badSignatures++;
       return { status: 401, json: { ok: false } };
     }
-    if (path === "/health") return { status: 200, json: { ok: true, url: box.page, title: "Your orders" } };
+    if (path === "/health") return { status: 200, json: { ok: true, url: box.page, title: "Your orders", capabilities: ["payment-submit-refusal"] } };
     if (path === "/frame") return { status: 200, bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]) };
     if (path === "/shutdown") return { status: 200, json: { ok: true } };
     const body = JSON.parse(req.body ?? "{}") as Record<string, unknown>;
@@ -388,4 +388,53 @@ test("⑤ teach by demonstration: the hand-off records, the hand-back saves a pa
   const rows = await rowsSinceCursor(cursor, ["browser.personal.teach"]);
   expect(rows.map((r) => r.detail?.phase).sort()).toEqual(["recorded", "rehearsed", "started"]);
   expect(JSON.stringify(rows), "🔴 no teach row carries a label").not.toContain("Order 1042");
+});
+
+test("⑥ the judge switch: off posts the card; enforce runs ONE judged click on the box and grants no window", async () => {
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
+  settings.overrideSettingsForTest({ approvals: { judgeMode: "enforce" } });
+  cleanups.push(() => settings.overrideSettingsForTest({ approvals: { judgeMode: "off" } }));
+  const judge = await import("@open-everywhere/core/agent/access/approval-judge.js");
+  let judgeCalls = 0;
+  judge.registerApprovalJudgeCompletion(async (_prompt, pass) => {
+    judgeCalls++;
+    return pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: the person asked for this click\nRULE: pr-asked-for-here";
+  });
+  cleanups.push(() => judge.resetApprovalJudgeCompletion());
+  const policy = await import("@open-everywhere/core/agent/personal-browser/policy.js");
+  const clicks = (): number => [...fakeBoxes.values()].reduce((n, b) => n + b.cmds.filter((c) => c.op === "click").length, 0);
+  const steps = [
+    { tool: "my_browser", input: { action: "go", url: `https://${SITE}/orders` } },
+    { tool: "my_browser", input: { action: "look" } },
+    { tool: "my_browser", input: { action: "click", ref: "e1", reason: "open order 1042" } },
+  ];
+
+  policy.registerPersonalBrowserPolicy({ ...policy.DEFAULT_PERSONAL_BROWSER_POLICY, enabled: true, box: { image: "oe-personal-browser:it", vcpus: 2, memoryMb: 4096 } });
+  expect(policy.personalBrowserJudgeMode(), "the switch ships off").toBe("off");
+  const clicksBefore = clicks();
+  const off = await inDm("judge-off", steps);
+  expect(workerSaw(off.handle), "with the switch off the click asks for the person's OK").toContain("I need your OK before I click or type");
+  expect(clicks(), "🔴 with the switch off nothing is clicked").toBe(clicksBefore);
+  expect(judgeCalls, "🔴 with the switch off the judge is not consulted").toBe(0);
+  off.handle.dispose();
+
+  policy.registerPersonalBrowserPolicy({ ...policy.DEFAULT_PERSONAL_BROWSER_POLICY, enabled: true, judge: "enforce", box: { image: "oe-personal-browser:it", vcpus: 2, memoryMb: 4096 } });
+  const on = await inDm("judge-on", steps);
+  const action = await waitForAuditRows({
+    probe: async () => (await rowsSinceCursor(on.cursor, ["browser.personal.action"])).find((r) => r.detail?.op === "click"),
+    label: "the judged click's browser.personal.action row",
+    actions: ["browser.personal.action"],
+    cursor: on.cursor,
+    timeoutMs: 60_000,
+  });
+  expect(action.detail?.host).toBe(SITE);
+  expect(action.detail?.decidedBy, "the click row names the judge as the decider").toBe("chain:judge");
+  expect(clicks(), "🔴 with the switch at enforce the judge allow ran ONE click on the box").toBe(clicksBefore + 1);
+  expect(judgeCalls, "the judge was consulted").toBeGreaterThan(0);
+  const lifted = (await rowsSinceCursor(on.cursor, ["approval.autoapproved"])).filter((r) => r.detail?.kind === "browser.personal.act");
+  expect(lifted.length, "ONE judge-lifted act row").toBe(1);
+  const onCards = (await rowsSinceCursor(on.cursor, ["approval.requested"])).filter((r) => r.detail?.kind === "browser.personal.act");
+  expect(onCards, "no act card was posted for the judged step").toEqual([]);
+  expect(await rowsSinceCursor(on.cursor, ["browser.personal.act_granted"]), "🔴 a judge allow grants no act window").toEqual([]);
+  expect(workerSaw(on.handle)).toContain("Your orders");
 });

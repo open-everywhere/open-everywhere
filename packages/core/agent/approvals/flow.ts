@@ -510,9 +510,10 @@ export async function requestApproval(
         dedupIdentity(source.argsJson, kindDef.proseArgs) === proposalIdentity
       );
     });
+    const chainRules = [...preApprovalRulesForScopeKey(input.scopeKey, chainDomain ?? undefined), ...dmRules];
     const resolution = await resolveApproverChain(chainReq, {
       approvers: approversForScopeKey(input.scopeKey, chainDomain ?? undefined),
-      rules: [...preApprovalRulesForScopeKey(input.scopeKey, chainDomain ?? undefined), ...dmRules],
+      rules: chainRules,
       judge: true,
     });
     await appendAudit({
@@ -549,7 +550,7 @@ export async function requestApproval(
       }).catch(() => undefined);
     }
 
-    void shadowJudgeAuditDetail(chainReq, resolution)
+    void shadowJudgeAuditDetail(chainReq, resolution, undefined, chainRules)
       .then((shadowDetail) =>
         shadowDetail === undefined
           ? undefined

@@ -3,6 +3,7 @@ import { plainValue } from "./plain-text.js";
 import { friendlyWhen } from "../channels/person-text.js";
 import { registerActionKind } from "./actions.js";
 import { grantAct, handBack } from "../personal-browser/lifecycle.js";
+import { browserNeverHostMatch, browserNeverRefusalMessage } from "../personal-browser/never-tier.js";
 import { getPersonalBrowserState } from "../personal-browser/store.js";
 import { findDraft, proposeDraft } from "../personal-browser/teach.js";
 import type { ActionKind } from "./types.js";
@@ -14,7 +15,30 @@ export interface BrowserActArgs {
   readonly host: string;
   readonly minutes: number;
   readonly reason?: string;
+  readonly step?: BrowserActStep;
 }
+
+export interface BrowserActStep {
+  readonly op: "click" | "type" | "select" | "key";
+  readonly submit?: true;
+  readonly key?: string;
+}
+
+export function browserActStepOf(args: unknown): BrowserActStep | undefined {
+  const step = (args as { step?: unknown } | null | undefined)?.step as Partial<BrowserActStep> | undefined;
+  if (step === undefined || step === null || typeof step !== "object") return undefined;
+  if (step.op !== "click" && step.op !== "type" && step.op !== "select" && step.op !== "key") return undefined;
+  return { op: step.op, ...(step.submit === true ? { submit: true } : {}), ...(typeof step.key === "string" ? { key: step.key } : {}) };
+}
+
+export function browserStepWords(step: BrowserActStep): string {
+  if (step.op === "type") return step.submit === true ? "type into a field and press Enter" : "type into a field";
+  if (step.op === "key") return `press ${step.key ?? "a key"}`;
+  if (step.op === "select") return "choose an option";
+  return "click";
+}
+
+export const JUDGE_DECIDER = "chain:judge";
 
 export interface BrowserHandbackArgs {
   readonly org: string;
@@ -34,6 +58,7 @@ export function browserActSummary(args: BrowserActArgs): string[] {
     "You are signed in there, so I can submit forms and change things in your account on that site.",
     "I can't type into password, one-time-code or card fields: you type those yourself after you take the controls.",
     "Every action I take writes an audit row with the site and the kind of action, never what I typed.",
+    ...(args.step !== undefined ? [`The step that asked: ${browserStepWords(args.step)}.`] : []),
     ...(args.reason ? [`Why: ${inlineForReview(args.reason)}`] : []),
   ];
 }
@@ -47,6 +72,12 @@ const browserAct: ActionKind<BrowserActArgs> = {
     return `Let the agent click and type on ${plainValue(args.host)} in your own browser for ${args.minutes} minutes`;
   },
   async execute(args, decidedBy) {
+    const never = browserNeverHostMatch(args.host);
+    if (never !== undefined) throw new Error(browserNeverRefusalMessage(args.host, never));
+    const step = browserActStepOf(args);
+    if (decidedBy === JUDGE_DECIDER && step !== undefined) {
+      return `the approval judge allowed one step (${browserStepWords(step)}) on ${args.host} under a pre-approval rule. No act window was granted, so the next step asks again`;
+    }
     ownerOnly(args.principalId, decidedBy);
     const until = await grantAct(args.org, args.person, args.host, args.minutes, decidedBy);
     return `the agent may click and type on ${args.host} in your browser until ${friendlyWhen(new Date(until).toISOString())}`;

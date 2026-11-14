@@ -5,6 +5,9 @@ import {
   TOOL_CONSEQUENCE,
   classifyConnectorOpTier,
   isConnectorOpTool,
+  judgeDeferSwitchStateOf,
+  judgeReadsTaint,
+  judgeVerdictUncacheable,
 } from "./consequence.js";
 import type { ApprovalChainRequest, ChainResolution } from "./approver-chain.js";
 import { taintKindsThisTurn, untrustedIngestedThisTurn } from "./taint-signal.js";
@@ -78,6 +81,7 @@ export interface ApprovalJudgeContext {
   readonly unattended: boolean;
   readonly tainted: boolean;
   readonly taintKinds: readonly string[];
+  readonly taintBlind?: true;
   readonly requesterMessages?: readonly string[];
   readonly earlierRequesterMessages?: readonly string[];
   readonly argsDigest?: string;
@@ -100,7 +104,8 @@ export function judgeContextOf(
   }
   const argsDigest = createHash("sha256").update(argsJson).digest("hex").slice(0, 32);
   if (argsJson.length > ARGS_JSON_CAP) argsJson = `${argsJson.slice(0, ARGS_JSON_CAP)}…[truncated]`;
-  const tainted = req.tainted ?? untrustedIngestedThisTurn();
+  const taintBlind = !judgeReadsTaint(req.tool);
+  const tainted = taintBlind ? false : (req.tainted ?? untrustedIngestedThisTurn());
   const { current: requesterMessages, earlier: earlierRequesterMessages } = requesterMessagesByTurn();
   return {
     tool: req.tool,
@@ -111,6 +116,7 @@ export function judgeContextOf(
     unattended: req.unattended,
     tainted,
     taintKinds: tainted ? taintKindsThisTurn() : [],
+    ...(taintBlind ? { taintBlind: true as const } : {}),
     ...(requesterMessages.length > 0 ? { requesterMessages } : {}),
     ...(earlierRequesterMessages.length > 0 ? { earlierRequesterMessages } : {}),
     argsDigest,
@@ -134,7 +140,9 @@ function judgePromptPrefix(ctx: ApprovalJudgeContext): string {
     `Displaced per-verb default: ${ctx.registryVerdict}`,
     ...(ctx.domain !== undefined ? [`Domain: ${ctx.domain}`] : []),
     `Unattended (no human behind this turn): ${ctx.unattended}`,
-    `Turn ingested untrusted content: ${ctx.tainted}${ctx.taintKinds.length > 0 ? ` (${ctx.taintKinds.join(", ")})` : ""}`,
+    ctx.taintBlind === true
+      ? "Turn ingested untrusted content: not considered for this action (every use of it follows a web page read). Judge the frozen action against the authored rules."
+      : `Turn ingested untrusted content: ${ctx.tainted}${ctx.taintKinds.length > 0 ? ` (${ctx.taintKinds.join(", ")})` : ""}`,
     ...(ctx.requesterMessages !== undefined && ctx.requesterMessages.length > 0
       ? ["Requester's visible messages:", ...ctx.requesterMessages.map((m) => `> ${m}`)]
       : []),
@@ -334,7 +342,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
   const cacheKey = enforce ? enforcedVerdictCacheKey(ctx) : judgeVerdictCacheKey(ctx.tool);
   const sig = taintSigOf(ctx);
   const rulesSig = rulesSigOf(ctx);
-  const store = enforce && isConnectorOpTool(ctx.tool) ? undefined : cacheStoreFor(enforce);
+  const store = (enforce && isConnectorOpTool(ctx.tool)) || judgeVerdictUncacheable(ctx.tool) ? undefined : cacheStoreFor(enforce);
   const cached = store?.get(cacheKey);
   if (cached !== undefined) {
     if (cached.taintSig !== sig || cached.rulesSig !== rulesSig) {
@@ -535,16 +543,20 @@ export async function shadowJudgeAuditDetail(
   req: ApprovalChainRequest,
   res: ChainResolution,
   meta?: VendorToolMeta,
+  rules?: readonly ResolvedPreApprovalRule[],
 ): Promise<AuditDetail | undefined> {
-  if (approvalJudgeMode() !== "shadow") return undefined;
+  const mode = approvalJudgeMode();
+  const switchShadow = mode !== "off" && judgeDeferSwitchStateOf(req.tool) === "shadow";
+  if (mode !== "shadow" && !switchShadow) return undefined;
   if (!shadowJudgeEligible(res)) return undefined;
   if (judgeExemption(req.tool, meta).exempt) return undefined;
-  const ctx = judgeContextOf(req, res);
-  const run = await runApprovalJudge(ctx);
+  const ctx = judgeContextOf(req, res, switchShadow ? rules : undefined);
+  const run = await runApprovalJudge(ctx, switchShadow ? { enforce: true, timeoutMs: JUDGE_ENFORCE_TIMEOUT_MS } : {});
   return {
     tool: req.tool,
     ...(req.action !== undefined ? { action: req.action } : {}),
     mode: "shadow",
+    ...(switchShadow ? { switch: TOOL_CONSEQUENCE[req.tool]?.judgeDeferSwitch ?? "" } : {}),
     wouldVerdict: run.verdict,
     enforcedVerdict: res.verdict,
     resolvedBy: res.resolvedBy,
@@ -554,8 +566,11 @@ export async function shadowJudgeAuditDetail(
     passes: run.passes,
     cacheKey: run.cacheKey,
     cacheHit: run.cacheHit,
+    ...(run.ruleId !== undefined ? { ruleId: run.ruleId } : {}),
+    ...(run.ruleCitation !== undefined ? { ruleCitation: run.ruleCitation } : {}),
     unattended: req.unattended,
-    tainted: ctx.tainted,
+    tainted: ctx.taintBlind === true ? res.tainted : ctx.tainted,
+    ...(ctx.taintBlind === true ? { judgeTaintBlind: true } : {}),
     ...(req.domain !== undefined ? { domain: req.domain } : {}),
   };
 }

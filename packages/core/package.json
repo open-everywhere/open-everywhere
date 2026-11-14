@@ -2742,6 +2742,10 @@
       "types": "./dist/agent/personal-browser/lifecycle.d.ts",
       "default": "./dist/agent/personal-browser/lifecycle.js"
     },
+    "./agent/personal-browser/never-tier.js": {
+      "types": "./dist/agent/personal-browser/never-tier.d.ts",
+      "default": "./dist/agent/personal-browser/never-tier.js"
+    },
     "./agent/personal-browser/policy.js": {
       "types": "./dist/agent/personal-browser/policy.d.ts",
       "default": "./dist/agent/personal-browser/policy.js"
@@ -3994,6 +3998,7 @@
     "test:email": "tsx scripts/email-test.ts",
     "test:personal-browser": "tsx scripts/personal-browser-test.ts",
     "test:personal-browser-teach": "tsx scripts/personal-browser-teach-test.ts",
+    "test:personal-browser-judge": "tsx scripts/personal-browser-judge-test.ts",
     "test:tool-usage": "tsx scripts/tool-usage-test.ts",
     "test:connections": "tsx scripts/connections-test.ts",
     "test:connector-credentials": "NODE_NO_WARNINGS=1 tsx scripts/connector-credentials-test.ts",

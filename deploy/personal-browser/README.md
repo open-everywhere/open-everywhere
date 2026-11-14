@@ -74,6 +74,11 @@ message, never the page's own error text (which can carry a URL with a token).
   it after they take the controls.
 - **No values leave the box.** No answer carries a field's value or a cookie value. `sites` lists cookie
   domains only.
+- **The agent never submits a payment form** (`never.mjs`, OPE-2672). A click, an Enter or a typed submit that
+  would send a form holding a card or bank field, or an embedded payment provider's frame (Stripe Elements, a
+  PayPal button), is refused, whatever OE approved. With no form, the whole page counts for a control whose
+  label reads as paying ("Pay", "Place order"). A box built before this rule does not refuse: rebuild and
+  publish the image.
 - **A demonstration records names, never the text in a field** (`teach.mjs`). While OE has started a
   recording, each input from the person adds one step: the page's origin and path (never a query, a fragment
   or a title), and the role and label of the link, button or field they used. A text input records the field,

@@ -18,6 +18,7 @@ import {
   type LongLivedBoxBackend,
 } from "../sandbox/long-lived-box.js";
 import { personalBrowserPolicy, type PersonalBrowserPolicy } from "./policy.js";
+import { BOX_CAPABILITY_REFUSAL, boxRefusesPaymentSubmit, browserNeverHostMatch, browserNeverRefusalMessage } from "./never-tier.js";
 import { BoxCallError, callBox, mintBoxKey } from "./box-client.js";
 import { finishTeaching } from "./teach.js";
 import {
@@ -390,24 +391,30 @@ export function hostOf(url: string | undefined): string | undefined {
 export type ActOutcome =
   | { readonly kind: "done"; readonly page: Record<string, unknown> }
   | { readonly kind: "needs-approval"; readonly host: string }
-  | { readonly kind: "refused"; readonly message: string };
+  | { readonly kind: "refused"; readonly message: string; readonly neverTier?: true };
+
+export interface JudgedStep {
+  readonly host: string;
+  readonly pendingId: string;
+}
 
 export async function actOnBrowser(
   state: PersonalBrowserState & { readonly box: BrowserBox },
   op: BrowserOp,
   args: Record<string, unknown>,
   deps: LifecycleDeps = {},
+  judged?: JudgedStep,
 ): Promise<ActOutcome> {
   const now = (deps.now ?? Date.now)();
   if (personHolds(state, now)) {
     return { kind: "refused", message: "you have the controls of your browser right now, so I'm not touching it. Hand them back (the card in our DM, or Hand back on the page) and I'll carry on" };
   }
   let host: string | undefined;
+  let health: Awaited<ReturnType<typeof callBox>> | undefined;
   if (op === "go") {
     host = hostOf(typeof args["url"] === "string" ? args["url"] : undefined);
     if (host === undefined) return { kind: "refused", message: "give a full http(s) address to go to" };
   } else {
-    let health;
     try {
       health = await callBox(state.box, "GET", "/health", undefined, 10_000);
     } catch (err) {
@@ -418,7 +425,27 @@ export async function actOnBrowser(
   }
   if (isWriteOp(op)) {
     if (host === undefined) return { kind: "refused", message: "the page has no web address yet, so there is nothing to act on — go to a site first" };
-    if (!((state.acts[host] ?? 0) > now)) return { kind: "needs-approval", host };
+    const never = browserNeverHostMatch(host, deps.policy ?? personalBrowserPolicy());
+    if (never !== undefined) {
+      await appendAudit({
+        ...auditWhere(state.partition),
+        principalId: state.principalId,
+        action: "browser.personal.action",
+        detail: { op, host, box: state.box.name, ok: false, refused: "never_tier", rule: never.rule, source: never.source },
+      });
+      return { kind: "refused", message: browserNeverRefusalMessage(host, never), neverTier: true };
+    }
+    const windowLive = (state.acts[host] ?? 0) > now;
+    if (!windowLive && judged?.host !== host) return { kind: "needs-approval", host };
+    if (!windowLive && !boxRefusesPaymentSubmit(health?.json)) {
+      await appendAudit({
+        ...auditWhere(state.partition),
+        principalId: state.principalId,
+        action: "browser.personal.action",
+        detail: { op, host, box: state.box.name, ok: false, refused: "box_capability", ...(judged !== undefined ? { pendingId: judged.pendingId } : {}) },
+      });
+      return { kind: "refused", message: BOX_CAPABILITY_REFUSAL };
+    }
   }
   const fresh = (await getPersonalBrowserState(state.org, state.person))?.state;
   if (fresh === undefined || fresh.box?.name !== state.box.name) return { kind: "refused", message: "your browser changed while I was working (it closed or restarted), so I did not act — ask me again" };
@@ -437,7 +464,14 @@ export async function actOnBrowser(
     ...auditWhere(state.partition),
     principalId: state.principalId,
     action: "browser.personal.action",
-    detail: { op, host: host ?? "", box: state.box.name, ok: res.json?.["ok"] === true, ...(typeof res.json?.["code"] === "string" ? { code: res.json["code"] } : {}) },
+    detail: {
+      op,
+      host: host ?? "",
+      box: state.box.name,
+      ok: res.json?.["ok"] === true,
+      ...(typeof res.json?.["code"] === "string" ? { code: res.json["code"] } : {}),
+      ...(isWriteOp(op) && judged !== undefined && !((state.acts[host ?? ""] ?? 0) > now) ? { decidedBy: "chain:judge", pendingId: judged.pendingId } : {}),
+    },
   });
   return { kind: "done", page: res.json ?? {} };
 }
@@ -477,6 +511,8 @@ export async function handBack(org: string, person: string, by: "card" | "page" 
 }
 
 export async function grantAct(org: string, person: string, host: string, minutes: number, decidedBy: string, deps: LifecycleDeps = {}): Promise<number> {
+  const never = browserNeverHostMatch(host, deps.policy ?? personalBrowserPolicy());
+  if (never !== undefined) throw new Error(browserNeverRefusalMessage(host, never));
   const now = (deps.now ?? Date.now)();
   const until = now + minutes * 60_000;
   const s = await updatePersonalBrowser(org, person, (cur) => {

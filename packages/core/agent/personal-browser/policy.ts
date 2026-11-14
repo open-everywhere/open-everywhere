@@ -10,7 +10,11 @@ export interface PersonalBrowserPolicy {
   readonly keepLoginsDays: number;
   readonly takeoverMinutes: number;
   readonly actGrantMinutes: number;
+  readonly judge?: PersonalBrowserJudgeMode;
+  readonly neverHosts?: readonly string[];
 }
+
+export type PersonalBrowserJudgeMode = "off" | "shadow" | "enforce";
 
 export const DEFAULT_PERSONAL_BROWSER_POLICY: PersonalBrowserPolicy = Object.freeze({
   enabled: false,
@@ -20,7 +24,14 @@ export const DEFAULT_PERSONAL_BROWSER_POLICY: PersonalBrowserPolicy = Object.fre
   keepLoginsDays: 30,
   takeoverMinutes: 30,
   actGrantMinutes: 60,
+  judge: "off",
 });
+
+export function personalBrowserJudgeMode(policy: PersonalBrowserPolicy = personalBrowserPolicy()): PersonalBrowserJudgeMode {
+  return policy.judge ?? "off";
+}
+
+const HOST_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/u;
 
 const MAX_SESSION_MINUTES = 24 * 60;
 
@@ -44,6 +55,11 @@ export function personalBrowserPolicyProblems(p: PersonalBrowserPolicy): readonl
   if (typeof p.idleMinutes === "number" && typeof p.sessionMinutes === "number" && p.idleMinutes > p.sessionMinutes) {
     problems.push("idleMinutes must not exceed sessionMinutes");
   }
+  if (p.judge !== undefined && p.judge !== "off" && p.judge !== "shadow" && p.judge !== "enforce") problems.push('judge must be "off", "shadow" or "enforce"');
+  if (p.neverHosts !== undefined) {
+    if (!Array.isArray(p.neverHosts)) problems.push("neverHosts must be a list of host names");
+    else for (const h of p.neverHosts) if (typeof h !== "string" || !HOST_RE.test(h)) problems.push(`neverHosts entry ${JSON.stringify(h)} must be a lower-case host name, with no scheme, port or path`);
+  }
   return problems;
 }
 
@@ -52,7 +68,7 @@ export function definePersonalBrowserPolicy(p: PersonalBrowserPolicy): PersonalB
   if (problems.length > 0) {
     throw new Error(`personal browser policy is unusable — the personal browser stays OFF (fail closed):\n${problems.map((x) => `  - ${x}`).join("\n")}`);
   }
-  return Object.freeze({ ...p, box: Object.freeze({ ...p.box }) });
+  return Object.freeze({ ...p, box: Object.freeze({ ...p.box }), ...(p.neverHosts !== undefined ? { neverHosts: Object.freeze([...p.neverHosts]) } : {}) });
 }
 
 const SLOT = processRegistrySlot<PersonalBrowserPolicy>("personal-browser-policy.v1");

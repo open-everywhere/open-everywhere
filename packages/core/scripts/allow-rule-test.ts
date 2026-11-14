@@ -347,7 +347,7 @@ let ruleSource: PendingActionRow | undefined;
     for (const e of readdirSync(dir)) {
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (p.endsWith(".ts") && !storeFiles.has(p) && !PROSE_ONLY.has(p) && !p.includes(`${join("docs", "generated")}`) && namesWriter(readFileSync(p, "utf8"))) callers.push(p.slice(repoRoot.length + 1));
+      else if (p.endsWith(".ts") && !storeFiles.has(p) && !PROSE_ONLY.has(p) && !p.includes(`${join("docs", "generated")}`) && namesWriter(readFileSync(p, "utf8"))) callers.push(p.slice(repoRoot.length + 1).split("\\").join("/"));
     }
   };
   for (const t of [...fixed, ...providerTrees]) walk(t);

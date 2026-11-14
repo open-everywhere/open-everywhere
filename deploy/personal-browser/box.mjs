@@ -2,6 +2,7 @@ import http from "node:http";
 import net from "node:net";
 import { bareHost, checkedAddress as fenceAddress, hostAllowed as fenceAllowed, parseAllow } from "./fence.mjs";
 import { createRecorder, nameTarget, SECRET_AUTOCOMPLETE, SECRET_NAME } from "./teach.mjs";
+import { BOX_CAPABILITIES, paymentSubmitRefusal } from "./never.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
@@ -205,6 +206,43 @@ async function isSecretField(loc) {
   );
 }
 
+function paymentFactsInPage({ ref }) {
+  const start = typeof ref === "string" ? document.querySelector(`[data-oe-ref="${ref}"]`) : document.activeElement;
+  let control = null;
+  let form = null;
+  if (start && start !== document.body) {
+    const el = (start.closest && start.closest("button,input,select,textarea,a[href],summary,[role=button],[role=link]")) || start;
+    const tag = (el.tagName || "").toLowerCase();
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    const submitControl = (tag === "button" && type !== "button" && type !== "reset") || (tag === "input" && (type === "submit" || type === "image"));
+    const raw = el.getAttribute("aria-label") || el.innerText || (tag === "input" && (type === "submit" || type === "button") ? el.value : "") || el.getAttribute("title") || "";
+    control = { submitControl, label: String(raw).replace(/\s+/g, " ").trim().slice(0, 200) };
+    form = el.form || (el.closest ? el.closest("form") : null);
+  }
+  const root = form || document;
+  const hintOf = (f) => `${f.getAttribute("name") || ""} ${f.id || ""} ${f.getAttribute("aria-label") || ""} ${f.getAttribute("placeholder") || ""} ${(f.labels && f.labels[0] && f.labels[0].innerText) || ""}`;
+  const fields = [...root.querySelectorAll("input,select,textarea")].slice(0, 300).map((f) => ({ autocomplete: f.getAttribute("autocomplete") || "", hint: hintOf(f) }));
+  const hostOf = (f) => {
+    try {
+      return new URL(f.getAttribute("src") || "", location.href).hostname;
+    } catch {
+      return "";
+    }
+  };
+  const frames = [...root.querySelectorAll("iframe[src]")].slice(0, 50).map(hostOf);
+  const pageFrames = [...document.querySelectorAll("iframe[src]")].slice(0, 50).map(hostOf);
+  return { control, scope: form ? "form" : "page", fields, frames, pageFrames };
+}
+
+async function refusePaymentSubmit(body) {
+  const sendsMaybe = body.op === "click" || (body.op === "type" && body.submit === true) || (body.op === "key" && (body.key === "Enter" || body.key === "Space"));
+  if (!sendsMaybe) return;
+  const facts = await page.evaluate(paymentFactsInPage, { ref: body.op === "key" ? undefined : body.ref }).catch(() => null);
+  if (facts === null) throw new BoxError("payment-check-failed", "I could not check whether that step submits a payment form, so I did not act — the person can do it after they take the controls");
+  const refusal = paymentSubmitRefusal({ ...facts, op: body.op, key: body.key, submit: body.submit === true });
+  if (refusal !== undefined) throw new BoxError("payment-submit", refusal);
+}
+
 class BoxError extends Error {
   constructor(code, message) {
     super(message);
@@ -272,6 +310,7 @@ async function command(body, byPerson = false) {
     if (typeof body.expectHost !== "string" || body.expectHost !== host) {
       throw new BoxError("page-moved", "the page moved to another site before the action, so I did not act — look again");
     }
+    await refusePaymentSubmit(body);
   }
   if (op === "go") {
     if (typeof body.url !== "string" || !/^https?:\/\//i.test(body.url)) throw new BoxError("bad-url", "give a full http(s) URL");
@@ -423,7 +462,7 @@ const server = http.createServer((req, res) => {
     }
     const url = (req.url ?? "").split("?")[0];
     try {
-      if (req.method === "GET" && url === "/health") return send(res, 200, { ok: true, ...(await state()) });
+      if (req.method === "GET" && url === "/health") return send(res, 200, { ok: true, capabilities: BOX_CAPABILITIES, ...(await state()) });
       if (req.method === "GET" && url === "/frame") return send(res, 200, await frame(), "image/jpeg");
       if (req.method === "POST" && url === "/cmd") return send(res, 200, { ok: true, ...(await command(parsed)) });
       if (req.method === "POST" && url === "/input") return send(res, 200, { ok: true, ...(await input(parsed)) });

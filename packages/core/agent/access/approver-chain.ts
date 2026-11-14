@@ -282,6 +282,16 @@ export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "tool" | "a
       "the judge is not consulted, so no pre-approval rule can lift it (OPE-2366)"
     );
   }
+  if (req.action === BROWSER_ACT_ACTION) {
+    const op = (req.args as { step?: { op?: unknown } } | null | undefined)?.step?.op;
+    if (op !== "click" && op !== "type" && op !== "select" && op !== "key") {
+      return (
+        "human-only: this browser.personal.act card grants a window on a site with no single step frozen, and only the browser owner's own click may grant one — " +
+        "the judge is not consulted (OPE-2672)"
+      );
+    }
+    return undefined;
+  }
   if (req.action !== ROUTINE_CREATE_ACTION) return undefined;
   const raw = (req.args as { permissions?: unknown } | null | undefined)?.permissions;
   const declared = Array.isArray(raw) ? raw.filter((d): d is string => typeof d === "string") : [];
@@ -296,6 +306,8 @@ export function judgeHumanOnlyReason(req: Pick<ApprovalChainRequest, "tool" | "a
 const PURGE_MEMORY_TOOL = "purge_memory";
 
 const ROUTINE_CREATE_ACTION = "routine.create";
+
+const BROWSER_ACT_ACTION = "browser.personal.act";
 
 export async function resolveApproverChain(
   req: ApprovalChainRequest,

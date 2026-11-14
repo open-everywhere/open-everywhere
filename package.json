@@ -192,6 +192,7 @@
     "test:template-adapters": "NODE_NO_WARNINGS=1 tsx scripts/template-adapters-boot-test.ts",
     "test:personal-browser-fence": "tsx scripts/personal-browser-fence-test.ts",
     "test:personal-browser-recorder": "tsx scripts/personal-browser-recorder-test.ts",
+    "test:personal-browser-never": "tsx scripts/personal-browser-never-test.ts",
     "lint:release-records": "tsx scripts/release-record-lint.ts",
     "test:release-record": "NODE_NO_WARNINGS=1 tsx scripts/release-record-test.ts",
     "test:upgrade-diff-fence": "NODE_NO_WARNINGS=1 tsx scripts/upgrade-diff-fence-test.ts",

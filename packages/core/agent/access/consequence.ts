@@ -1,3 +1,5 @@
+import { personalBrowserJudgeMode } from "../personal-browser/policy.js";
+
 export type ConsequenceTier = "open" | "gate:member" | "gate:admin";
 
 export const CONNECTOR_READ_VERBS: readonly string[] = [
@@ -197,11 +199,36 @@ export interface ConsequenceEntry {
   readonly via: GatingMechanism;
   readonly reason: string;
   readonly judgeDefer?: true;
+  readonly judgeDeferSwitch?: JudgeDeferSwitch;
+  readonly judgeTaintBlind?: true;
   readonly taint?: "gate" | "disclose";
   readonly postTurnSurface?: PostTurnSurface;
 }
 
 type TaintTolerance = "gate" | "disclose";
+
+export type JudgeDeferSwitch = "personal-browser.judge";
+
+export function judgeDeferSwitchState(sw: JudgeDeferSwitch): "off" | "shadow" | "enforce" {
+  switch (sw) {
+    case "personal-browser.judge":
+      return personalBrowserJudgeMode();
+  }
+}
+
+export function judgeDeferSwitchStateOf(tool: string): "off" | "shadow" | "enforce" | undefined {
+  const sw = TOOL_CONSEQUENCE[tool]?.judgeDeferSwitch;
+  return sw === undefined ? undefined : judgeDeferSwitchState(sw);
+}
+
+export function judgeReadsTaint(tool: string): boolean {
+  return TOOL_CONSEQUENCE[tool]?.judgeTaintBlind !== true;
+}
+
+export function judgeVerdictUncacheable(tool: string): boolean {
+  const row = TOOL_CONSEQUENCE[tool];
+  return row?.judgeTaintBlind === true || row?.judgeDeferSwitch !== undefined;
+}
 
 export type PostTurnSurface = "arms" | "disarms" | "templated" | "none";
 
@@ -384,9 +411,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   meeting_leave: open(
     "stops a meeting bot THIS conversation sent (OPE-2459): it removes a recorder and never adds one, so it posts no card. It finds only meetings whose origin is this conversation, so one room cannot stop another room's bot, and it refuses a room that is not confirmed internal, a non-member wake and a turn with no acting person, like meeting_join. It does not read the meetings switch, so a room can recall its bot after meetings are turned off. Audited as meeting.ended with the stopper",
   ),
-  my_browser: member("browser.personal.act", "disclose",
-    "drives the person's OWN browser (OPE-2441): a persistent profile that holds their signed-in sessions, on the deployment's own sandbox backend, reachable only from their internal DM (never a channel, a group DM, a guest or an outside account, a non-member wake, or a turn with no person) and only to the hosts their DM's egress declaration admits. Reading a page is open and taints the turn. A click, a keystroke, a select or a key press on a site acts in the person's NAME on an account they are signed in to, so it escapes the conversation: the tool posts a `browser.personal.act` card for that site, into the person's DM, and only the owner's own click grants it for the policy's window (a chain lowering is refused in execute). Password, one-time-code and card fields are refused outright, whatever the card says. `close` and `forget` touch only the person's own browser. Declares `taint: \"disclose\"`, not gate: it arms nothing that runs after the turn, so it answers no vector-1 predicate, and the floor a gate would add is already structural — the act kind's execute refuses every decider but the owner's own click, so no lowering (a config rule, the judge, a bypass) can grant it on a tainted turn or any other. The card carries the taint disclosure. TAUGHT DRAFTS (OPE-2454): `drafts` shows a paused draft the person taught by demonstration (fenced, because its labels came from pages), `discard` deletes one, `rehearse` is a test run that sends the box only reads (`go` and `find`, each a GET or a page read in the signed-in session) and so needs no card, and `propose` posts the second card this tool raises, `browser.personal.propose` (pinned in NON_TOOL_ACTION_KINDS, because the policy table has one kind per tool), whose owner-only click opens a skill pull request on the config repo through the dream cycle's own path (memory/dream/skill-proposal-pr.ts): it never merges, the `memory.skillProposalPr` switch and the `loadAccessRequests().dryRun` switch govern it, and merging is the human decision that arms the skill",
-  ),
+  my_browser: { ...member("browser.personal.act", "disclose",
+    "drives the person's OWN browser (OPE-2441): a persistent profile that holds their signed-in sessions, on the deployment's own sandbox backend, reachable only from their internal DM (never a channel, a group DM, a guest or an outside account, a non-member wake, or a turn with no person) and only to the hosts their DM's egress declaration admits. Reading a page is open and taints the turn. A click, a keystroke, a select or a key press on a site acts in the person's NAME on an account they are signed in to, so it escapes the conversation: the tool posts a `browser.personal.act` card for that site, into the person's DM, and the owner's own click grants it for the policy's window. Password, one-time-code and card fields are refused outright, whatever the card says. THE NEVER TIER (OPE-2672): a finance, trading or payment site (personal-browser/never-tier.ts, plus the policy's `neverHosts`) gets no card and no act at all, whoever approves, and the box refuses a submit of a form that holds a card or bank field on any site. THE JUDGE (OPE-2672): only while the policy's `judge` switch reads `enforce` (and `approvals.judgeMode` is `enforce`), a card that froze ONE step (op, Enter, key — never typed text) is defer-flipped, and a judge allow that cites an authored pre-approval rule runs that one step once and grants no window; a card with no step, and every other chain lowering (a config rule, a bypass), is refused in execute. The judge is taint-blind here (ruling B): every step follows a page read, so its rules are written at site and op grain, and the rule's author accepts that page text can steer which step is asked for. `close` and `forget` touch only the person's own browser. Declares `taint: \"disclose\"`, not gate: it arms nothing that runs after the turn, so it answers no vector-1 predicate. The card carries the taint disclosure. TAUGHT DRAFTS (OPE-2454): `drafts` shows a paused draft the person taught by demonstration (fenced, because its labels came from pages), `discard` deletes one, `rehearse` is a test run that sends the box only reads (`go` and `find`, each a GET or a page read in the signed-in session) and so needs no card, and `propose` posts the second card this tool raises, `browser.personal.propose` (pinned in NON_TOOL_ACTION_KINDS, because the policy table has one kind per tool), whose owner-only click opens a skill pull request on the config repo through the dream cycle's own path (memory/dream/skill-proposal-pr.ts): it never merges, the `memory.skillProposalPr` switch and the `loadAccessRequests().dryRun` switch govern it, and merging is the human decision that arms the skill",
+  ), judgeDeferSwitch: "personal-browser.judge", judgeTaintBlind: true },
   my_browser_handoff: member("browser.personal.handback", "disclose",
     "gives the person the controls of their OWN browser (OPE-2441): it takes the take-over lock FOR the person (every agent action is then refused), host-posts a private single-use watch link into their DM, and posts a `browser.personal.handback` card whose owner-only approval returns the controls to the agent. It reduces what the agent can do and adds no reach: the same DM-only, internal-only, member-wake, person-present refusal as my_browser. Declares `taint: \"disclose\"`: a tainted turn handing the controls TO the person is not a sink, and the card it raises can only hand them back, by the owner's own click. With `teach` (OPE-2454) the box also records the person's demonstration — page addresses (origin and path) and the labels of what they use, never the text they type into a field — for up to ten minutes, and the hand-back saves it as a paused draft on the person's own row; nothing runs a draft on its own. A path can carry an id or a token and a label can repeat typed text, which is why proposing a draft takes the owner's own click",
   ),
@@ -562,7 +589,9 @@ export function judgeableConnectorOp(tool: string): boolean {
 
 export function judgeDeferredTool(tool: string): boolean {
   if (isConnectorOpTool(tool)) return judgeableConnectorOp(tool);
-  return TOOL_CONSEQUENCE[tool]?.judgeDefer === true;
+  const row = TOOL_CONSEQUENCE[tool];
+  if (row?.judgeDefer === true) return true;
+  return row?.judgeDeferSwitch !== undefined && judgeDeferSwitchState(row.judgeDeferSwitch) === "enforce";
 }
 
 export interface ActionKindEntry {
