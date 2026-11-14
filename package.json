@@ -333,6 +333,7 @@
     "test:publish-preview": "NODE_NO_WARNINGS=1 tsx scripts/publish-preview-test.ts",
     "test:publish-license": "NODE_NO_WARNINGS=1 tsx scripts/publish-license-test.ts",
     "test:publish-readme": "NODE_NO_WARNINGS=1 tsx scripts/publish-readme-test.ts",
+    "test:release-publish": "NODE_NO_WARNINGS=1 tsx scripts/release-publish-test.ts",
     "test:attw-cache-preload": "NODE_NO_WARNINGS=1 tsx scripts/attw-cache-preload-test.ts",
     "test:publish-cold-install": "NODE_NO_WARNINGS=1 tsx scripts/publish-cold-install-test.ts",
     "test:quickstart": "NODE_NO_WARNINGS=1 tsx scripts/quickstart-test.ts",

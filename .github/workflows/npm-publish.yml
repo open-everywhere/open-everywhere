@@ -1,0 +1,109 @@
+# Publishes every @open-everywhere/* package whose version npm does not hold yet (OPE-2538).
+#
+# npm trusted publishing trusts THIS file, by its name `npm-publish.yml`, in the repository
+# open-everywhere/open-everywhere. A rename breaks every package's trust, so do not rename it.
+# No npm token exists anywhere: npm exchanges the job's GitHub identity token for a credential
+# that is valid for this run only, and attaches provenance to each version.
+#
+# Every job runs only when github.repository is open-everywhere/open-everywhere. In any other
+# repository, a fork included, both jobs are skipped and nothing runs.
+#
+# It publishes on two events only:
+#   - a pushed tag `v<version>` (the release process pushes it when core's version changes);
+#   - a manual run from main that names an existing tag. Use it to finish a release whose run
+#     failed part-way: it skips each version that npm already holds.
+# A branch push, a pull request or any other event never starts it.
+#
+# It is not CI. It runs no test suite. The maintainer runs the gates before the version bump.
+# Read docs/dev/publishing.md § Publishing through the workflow.
+name: npm-publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing release tag to publish, for example v0.8.0"
+        required: true
+        type: string
+
+permissions: {}
+
+# One group per tag. GitHub keeps one pending run per group and cancels an older pending one, so a
+# single group could drop a tag's release with no notice.
+concurrency:
+  group: npm-publish-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  # Installs, builds and packs. It holds no identity token, so no dependency's install script can
+  # ask for one. A compromised dependency here can still change the bytes that publish: the sha512
+  # check in the publish job guards only the hand-off between the two jobs.
+  pack:
+    if: >-
+      github.repository == 'open-everywhere/open-everywhere'
+      && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "24"
+          check-latest: true
+          package-manager-cache: false
+      - name: Install and build every dist
+        run: npm ci
+      - name: Refuse a secret in the tarballs
+        run: npm run publish:preview
+      - name: Pack in dependency order
+        run: npx tsx scripts/release-plan.ts --out "$RUNNER_TEMP/release"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-tarballs
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publishes the packed tarballs. The identity token that npm trusts exists only in this job. It
+  # runs no `npm ci` and no dependency code: only three first-party actions, each pinned to a full
+  # commit sha, then npm and scripts/release-publish.ts.
+  publish:
+    needs: pack
+    if: >-
+      github.repository == 'open-everywhere/open-everywhere'
+      && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
+        with:
+          node-version: "24"
+          check-latest: true
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: release-tarballs
+          path: ${{ runner.temp }}/release
+      - name: Publish each version npm does not hold
+        run: node scripts/release-publish.ts --plan "$RUNNER_TEMP/release/plan.json"

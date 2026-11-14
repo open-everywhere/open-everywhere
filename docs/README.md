@@ -103,7 +103,7 @@ model, or jump straight to a section. New here? Start with
 - [The coverage matrix](./dev/coverage-matrix.md) — how a behaviour row in `docs/inventory/` gets a machine answer to "is this proven?": the `proves` annotations, the `n/a` declaration, the `lint:coverage-matrix` gate, and THE BOARD.
 - [Evals mined from transcripts](./dev/transcript-mined-evals.md) — the recipe that turns a failed turn from a soak or e2e run into an eval case, and the per-family bench it feeds.
 - Behaviour inventories — [access planes](./inventory/access-planes.md) · [audit and spend](./inventory/audit-and-spend.md) · [settings](./inventory/settings.md) · [surfaces and seats](./inventory/surfaces-and-seats.md) · [tools](./inventory/tools.md). Every behaviour the code exposes on a plane, with the manual page that documents it and the test that covers it. These are audit artefacts, not guides, so they are the one section of `docs/` the compiled manual leaves out — the agent never reads them in-context (`UNCOMPILED_DOC_SECTIONS`, `packages/core/agent/docs/source-map.ts`).
-- [Publishing to npm](./dev/publishing.md) — the maintainer's release path: the publish gate, the publish preview a human reads before the first publish, one version per milestone, the 72-hour unpublish window, and why provenance waits for the public repo.
+- [Publishing to npm](./dev/publishing.md) — the maintainer's release path: the publish gate, the publish preview a human reads before the first publish, one version per milestone, the 72-hour unpublish window, and the tag-triggered workflow that publishes through npm trusted publishing.
 
 ## 6. Deploy & operate
 

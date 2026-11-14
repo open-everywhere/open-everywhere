@@ -300,7 +300,7 @@ that fails before the fix.
 ### Live e2e driver pack — secrets
 
 `npm test` above is the deterministic, secret-free gate every run executes on its own commit; this
-repo runs no workflow, so nothing else runs it (see § Build/test/typecheck). Separately,
+repo runs no CI workflow, so nothing else runs it (see § Build/test/typecheck). Separately,
 `packages/core/scripts/e2e/{runner,scenarios,env}.ts` is a **live** pack that drives a real
 deployed instance over real Slack/Discord/Teams/GitHub/Linear/Notion accounts (`npm run
 e2e:driver` from `packages/core`, or `npm run test:e2e-driver` from the repo root) — it is
@@ -537,7 +537,9 @@ specific guide:
 - **Security-sensitive areas get extra care** (closer review; see `CONTRIBUTING.md`): the egress
   firewall + credential injection, the connector hard-gate (`test:connector-scope` fails loud on
   an Eve bump), and the untrusted/prompt-injection boundary. **CI invariant:** this repo runs no
-  workflow at all. A fork that adds one must trigger on `pull_request` (never
+  CI workflow. Its one workflow, `.github/workflows/npm-publish.yml`, runs only on a release tag
+  in `open-everywhere/open-everywhere`, reads no secret, and is skipped everywhere else (OPE-2538; see
+  [Publishing to npm](./docs/dev/publishing.md)). A fork that adds a CI workflow must trigger on `pull_request` (never
   `pull_request_target`) and needs **no secrets**, so a fork PR runs safely — never introduce a
   secret-bearing `pull_request_target` that checks out the PR head.
 - **Contributions are DCO-signed** (`git commit -s`) — no CLA. The enforcing check is the pre-merge

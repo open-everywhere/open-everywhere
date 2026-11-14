@@ -74,8 +74,10 @@ These enforce the security model — changes here get closer review:
 - `packages/core/agent/access/connector-scope.ts` — the connector hard-gate (reaches Eve internals; pinned by
   `npm run test:connector-scope -w @open-everywhere/core`, which fails loud on an Eve bump).
 - `packages/core/agent/access/untrusted.ts` — the prompt-injection boundary.
-- **CI invariant — never weaken it:** this repo runs no workflow at all, and the suites need
-  **no secrets**. If you add a workflow to a fork, trigger it on `pull_request`, never on
+- **CI invariant — never weaken it:** this repo runs no CI workflow, and the suites need
+  **no secrets**. The one workflow, `.github/workflows/npm-publish.yml`, publishes to npm on a
+  release tag in `open-everywhere/open-everywhere` only. It reads no secret, because npm trusted publishing
+  needs none (see `docs/dev/publishing.md`). If you add a workflow to a fork, trigger it on `pull_request`, never on
   `pull_request_target` with a checkout of the PR head and access to secrets — that is the
   classic supply-chain RCE. Keep the suites secret-free.
 

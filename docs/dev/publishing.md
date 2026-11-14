@@ -190,7 +190,8 @@ can leave it behind. Read the pin from core's `peerDependencies.eve`, as that se
 
 ## The order of the checks
 
-Run all seven. Each answers a different question, and the preview is the only one a human reads.
+Run all six before the version bump. Each answers a different question, and the preview is the only
+one a human reads. Then the tag publishes: see [Publishing through the workflow](#publishing-through-the-workflow).
 
 ```bash
 npm run build:packages             # every library needs a fresh dist/ before it is packed
@@ -199,7 +200,7 @@ npm run test:publish-cold-install  # the CONSUMER question: does a cold install 
 npm run test:quickstart            # the STRANGER question: does the scaffolded app install, patch and build?
 npm run test:upgrade-rehearsal     # the OPERATOR question: does an app on the previous release upgrade, build and boot?
 npm run publish:preview            # the OPEN question: is there anything in these bytes we would regret?
-npm publish --workspace <name>     # by hand, one package at a time, after reading the preview
+# then the bump lands on main, the release process pushes v<version>, and the workflow publishes
 ```
 
 ### `lint:publish` — the gate
@@ -459,16 +460,118 @@ bumping it, so an app scaffolded at 0.1.3 or earlier does not stay pinned to the
 Every publishable manifest sets `publishConfig.access: public`. A scoped package defaults to
 restricted, and a restricted publish on a free account fails rather than shipping privately.
 
-## Provenance waits for the public repo
+## Publishing through the workflow
 
-npm provenance (`npm publish --provenance`) attaches a signed attestation linking a tarball to
-the public source commit and the build that produced it. It needs a **public** repository and a
-supported CI runner.
+The workflow `.github/workflows/npm-publish.yml` publishes through **npm trusted publishing**
+(OPE-2538). npm trusts that one workflow file in the repository
+`open-everywhere/open-everywhere`. When the workflow runs, GitHub gives the job a signed,
+short-lived identity token. npm checks it and issues a publish credential for that run only. No npm
+token exists anywhere, and each version gets signed provenance that names the commit and the
+workflow.
 
-Neither holds today: the repository is private, and this repo runs no workflow at all
-(see [AGENTS.md](../../AGENTS.md) § Build/test/typecheck). So the first publishes carry no
-provenance, and that is the correct state rather than a gap to work around. Revisit it after the
-public cut, together with whatever runs the build.
+then, every tag the release process pushes gives a red `npm-publish` run, and that red run is
+
+### What starts it, and what never does
+
+- **A pushed tag `v<version>`** in `open-everywhere/open-everywhere`. The release process pushes the
+  tag, and a GitHub Release, when core's version changes.
+- **A manual run from `main` that names an existing tag.** Use it to finish a release whose run
+  failed part-way.
+- **Nothing else.** A branch push, a pull request, a fork, another repository or a manual run from
+  another branch never publishes. Each job is guarded on `github.repository`, so in a fork or any
+  other repository both jobs are skipped. `scripts/release-publish.ts` checks the same rules again
+  before it publishes anything.
+
+
+### What it does
+
+Two jobs, so that no dependency's install script runs while the identity token exists.
+
+1. **`pack`** holds no identity token. It checks out the tag, runs `npm ci` (which builds every
+   `dist/`), runs `npm run publish:preview` (a BLOCK row stops the release), then runs
+   `scripts/release-plan.ts`. That script refuses a tag that is not `v` + core's version, and a
+   checkout whose HEAD is not the tag's commit. It packs every publishable package in dependency
+   order with `--ignore-scripts`, so the tarballs come from the same `dist/` that the preview
+   scanned, and writes `plan.json` with each tarball's sha512.
+2. **`publish`** holds `id-token: write`. It runs no `npm ci` and no dependency code: only three
+   first-party actions (checkout, setup-node, download-artifact), each pinned to a full commit sha,
+   then npm and the script. Node 24 runs
+   `scripts/release-publish.ts` directly, and that script imports only `node:` modules. It checks
+   the run context, the npm version and every tarball's sha512. Then, in the plan's order, it asks
+   the registry for each `name@version`. It skips a version npm holds and publishes the rest with
+   `npm publish <tarball> --provenance --access public --ignore-scripts`. It first checks that its
+   own checkout is the commit that `pack` packed, so a tag moved between the two jobs publishes
+   nothing. It refuses the whole run,
+   before the first publish, when a version it must publish is lower than the registry's `latest`
+   dist-tag, because `npm publish` would move `latest` backwards. Publish such a version by hand
+   with an explicit `--tag`.
+
+🔴 **The split does not make the bytes trustworthy.** A compromised dependency in `pack` can still
+change the tarballs and `plan.json` before the upload, and `publish` then ships them with valid
+provenance. The sha512 check proves only that the artifact did not change between the two jobs.
+The split keeps the identity token away from dependency code, nothing more.
+
+It is not CI. It runs no test suite: run the checks above before the bump. A re-run with the same
+tag publishes only what the registry does not hold, so a failure part-way is finished by a manual
+run. Runs for one tag never overlap, and runs for two tags never cancel each other. `npm run test:release-publish` proves the rules offline, including the workflow file's
+triggers, guards and permissions.
+
+The workflow sets no schedule of its own. It publishes as soon as the
+tag arrives, and a manual run publishes when you start it.
+
+### npm's rules (read from docs.npmjs.com on 2026-10-19)
+
+- npm CLI **11.5.1** or later and Node **22.14.0** or later. The workflow uses the latest Node 24, and
+  the script refuses an npm older than 11.5.1.
+- The job needs `permissions: id-token: write`.
+- **GitHub-hosted runners only.** npm does not accept a self-hosted runner.
+- The trusted-publisher fields are case-sensitive and must match exactly. npm checks them only at
+  publish time, not when you save them.
+- `repository.url` in each `package.json` must match the GitHub repository exactly. The test
+  checks this for all eleven packages.
+- **Provenance needs a public repository and a public package.** npm generates no provenance for a
+  private repository. The workflow passes `--provenance` explicitly, so a private repository
+  fails the publish instead of shipping without provenance, and the script refuses one first.
+- A new trusted-publisher configuration **expires unless its first publish succeeds within 2 days.**
+  Configure the packages only when a tag is ready to publish.
+- Each package has at most 10 trusted publishers. A configuration cannot be edited: delete it and
+  create a new one.
+- For a `workflow_dispatch` or `workflow_call` run, npm checks the name of the calling workflow. The
+  manual run starts this same file, so the name matches.
+- **Tokens.** npm revoked every classic token on 2025-12-09. A granular token with write access
+  needs two-factor authentication unless it bypasses it, and lives at most 90 days. `npm login` now
+  gives a two-hour session. Trusted publishing replaces all of these for a release.
+
+### Set up each package once (the maintainer, signed in to npmjs.com)
+
+Every package already exists on npm, which trusted publishing requires. For each package, open its
+**Settings** page on npmjs.com, find **Trusted Publisher**, choose **GitHub Actions**, and enter:
+
+| Field | Value |
+|---|---|
+| Organization or user | `open-everywhere` |
+| Repository | `open-everywhere` |
+| Workflow filename | `npm-publish.yml` |
+| Environment name | *(leave empty)* |
+
+The eleven packages: `@open-everywhere/core`, `@open-everywhere/adapters`,
+`@open-everywhere/provider-discord`, `@open-everywhere/provider-email`,
+`@open-everywhere/provider-github`, `@open-everywhere/provider-google-chat`,
+`@open-everywhere/provider-linear`, `@open-everywhere/provider-notion`,
+`@open-everywhere/provider-slack`, `@open-everywhere/provider-teams` and `@open-everywhere/create`.
+
+The CLI does the same from npm 11.15.0, with two-factor authentication on the first call:
+
+```bash
+npm trust github @open-everywhere/core --repo open-everywhere/open-everywhere --file npm-publish.yml --allow-publish
+```
+
+After the first release publishes through the workflow, lock each package down: **Settings →
+Publishing access → Require two-factor authentication and disallow tokens.** Trusted publishing
+still works, because it uses no token.
+
+🔴 **Do not rename the workflow file.** npm trusts it by its file name. A rename stops every
+publish until each package's trusted publisher is deleted and created again.
 
 ## Before you publish — the checklist
 
@@ -520,6 +623,9 @@ public cut, together with whatever runs the build.
     is missing or refused, the network or proxy failed, Slack rate-limited it twice, or Slack
     answered with an error that is not about the manifest. Exit 2 says
     nothing about the manifest, so run it again.
-12. `npm publish --workspace <name>` per package. Publish `@open-everywhere/core` first: every
-    other package pins it.
+12. Land the version bump on `main`. The release process pushes `v<version>`. Once the trusted
+    publishers are configured, the workflow publishes every package in dependency order, core first,
+    and nobody publishes by hand. Until then, the workflow run fails, so publish by hand:
+    `npm publish --workspace <name>` per package, core first. See
+    [Publishing through the workflow](#publishing-through-the-workflow).
 13. Install the result somewhere clean and run it, before announcing anything.
