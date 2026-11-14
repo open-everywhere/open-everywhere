@@ -303,7 +303,7 @@ export const SECTION_DEV: readonly DocEntry[] = [
       "",
       "| id | name | env var | claimed by | note |",
       "| --- | --- | --- | --- | --- |",
-      "| `1a000000-0000-4000-8000-000000000011` | the base e2e workspace (TOM) | `E2E_LINEAR_TEAM_ID` | e2e-unified | — |",
+      "| `1a000000-0000-4000-8000-000000000011` | base e2e workspace (E2E) | `E2E_LINEAR_TEAM_ID` | e2e-unified | — |",
       "| `1a000000-0000-4000-8000-000000000012` | Addressed (E2E) | `E2E_ADDRESSED_LINEAR_TEAM_ID` | e2e-engaged | id from this repository (`TRACKED_ROOM_IDS.E2E_ADDRESSED_LINEAR_TEAM_ID`), not from the environment |",
       "| `1a000000-0000-4000-8000-000000000013` | Soak (SOAK) | `E2E_SOAK_LINEAR_TEAM_ID` | soak | — |",
       "| `oe-deploy-smoke-*` | — | — | e2e-linear-signed-delivery | container claim — a same-level glob, not one room |",
