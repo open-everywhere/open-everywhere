@@ -1,3 +1,5 @@
+// proves: TOOL-waiting_on_me
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,7 +53,7 @@ const deliver = async (input: DeliverInput) => {
   return { surfaceId: "D-1", messageId: `m-${sent.length}` };
 };
 const permalink = async (_platform: string, ref: { channelId: string; messageId: string }) => `https://example.slack.com/archives/${ref.channelId}/p${ref.messageId.replace(".", "")}`;
-let clock = Date.parse("2026-10-11T09:00:00Z");
+let clock = Date.now() - 24 * 60 * 60_000;
 const now = () => new Date((clock += 60_000));
 const deps = { deliver, permalink, now };
 
@@ -172,6 +174,10 @@ function pending(over: Partial<PendingActionRow>): PendingActionRow {
   const asAdmin = await waitingOnPerson({ org: ORG, platform: "slack", workspace: "T1", personId: "U_ADMIN" }, { permalink, now: () => new Date() });
   ok(asAdmin.items.some((i) => i.status.startsWith("you can decide (admin)") && i.sentence.includes("#ops")), "an org admin's queue lists the admin-tier card their roster entry can decide");
   ok(!asAdmin.items.some((i) => i.kind === "attention"), "an admin's queue does not list another person's blocked jobs");
+
+  const { ATTENTION_ROW_TTL_DAYS } = await import("../agent/operational/store.js");
+  const aged = await waitingOnPerson({ org: ORG, platform: "slack", workspace: "T1", personId: "U_ME" }, { permalink, now: () => new Date(Date.now() + ATTENTION_ROW_TTL_DAYS * 24 * 60 * 60_000) });
+  ok(aged.items.some((i) => i.kind === "attention") === false, "a blocked job older than the attention TTL is not in my queue");
 
   const empty = await waitingOnPerson({ org: ORG, platform: "slack", workspace: "T1", personId: "U_NOBODY" }, { permalink, now: () => new Date() });
   ok(empty.items.length === 0 && empty.message.startsWith("Nothing is waiting on you"), "an empty queue says so plainly");

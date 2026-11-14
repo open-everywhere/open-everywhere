@@ -209,7 +209,7 @@ type TaintTolerance = "gate" | "disclose";
 
 export type JudgeDeferSwitch = "personal-browser.judge";
 
-export function judgeDeferSwitchState(sw: JudgeDeferSwitch): "off" | "shadow" | "enforce" {
+function judgeDeferSwitchState(sw: JudgeDeferSwitch): "off" | "shadow" | "enforce" {
   switch (sw) {
     case "personal-browser.judge":
       return personalBrowserJudgeMode();
