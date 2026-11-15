@@ -39,7 +39,6 @@ const { postDiscordApprovalCard, postDiscordJudgeLiftNotice, parseDiscordCompone
 const { judgeLiftNoticeBlocks } = await import("@open-everywhere/core/agent/approvals/card.js");
 const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
 const { shortUtc } = await import("@open-everywhere/core/agent/approvals/session-grant.js");
-const { TAINT_CARD_WARNING } = await import("@open-everywhere/core/agent/approvals/taint-disclosure.js");
 const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest, discordAuthorRoles, _resetDiscordAuthorRolesCache } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-admin.js"
 );
@@ -169,10 +168,10 @@ function clickPayload(
   ok(card.content.split("\n").at(-1) === `-# Asked by <@${r.requestedBy}> · expires ${shortUtc(r.expiresAt)}`, "the footer names the requester and the short expiry");
   ok(card.content.includes(`<@${r.requestedBy}>`), "pending card @-mentions the requester");
   ok(!card.content.includes(r.expiresAt), "pending card shows the expiry in short form, not the ISO string");
-  ok(!card.content.includes("⚠"), "an untainted card carries no warning");
-  const taintedCard = pendingDiscordCard(r, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]);
-  ok(taintedCard.content.includes(TAINT_CARD_WARNING), "a tainted proposal shows the one warning line");
-  ok(!taintedCard.content.includes("ingested external content"), "…and not the full disclosure line");
+  ok(!card.content.includes("⚠"), "a card carries no warning line");
+  const legacyRow = { ...r, argsJson: JSON.stringify({ ...(JSON.parse(r.argsJson) as Record<string, unknown>), tainted: true }) };
+  const legacyCard = pendingDiscordCard(legacyRow, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]);
+  ok(legacyCard.content === pendingDiscordCard(r, ["line one"]).content, "a legacy tainted card renders the clean card's visible text");
   const noClock = pendingDiscordCard(row({ kind: "routine.permission", expiresAt: ROUTINE_PERMISSION_NO_EXPIRY }), ["permission"]);
   ok(!noClock.content.includes("9999"), "🔴 OPE-2162: a no-clock card's footer never prints the 9999 sentinel");
   ok(

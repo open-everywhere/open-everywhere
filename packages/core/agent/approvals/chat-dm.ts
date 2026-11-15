@@ -14,6 +14,7 @@ export interface ChatDmArgs {
   readonly text: string;
   readonly footer: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
 
@@ -29,7 +30,6 @@ function summarizeDm(args: ChatDmArgs): string[] {
     `They will also see: ${args.footer.trim()}`,
     "Approving this also lets later messages to this person go without a card. They can stop it from their own DM at any time.",
   ];
-  if (args.tainted) lines.push("⚠ proposed in a turn that read external content — review before approving");
   return lines;
 }
 
@@ -52,7 +52,6 @@ const chatDm: ActionKind<ChatDmArgs> = {
       requestedBy: args.requestedBy,
       attributedTo: decidedBy,
       first: true,
-      ...(args.tainted === undefined ? {} : { tainted: args.tainted }),
     });
     return `sent a direct message to ${recipientWords(args)}`;
   },

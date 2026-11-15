@@ -76,7 +76,6 @@ function pendingRowBlocks(row: PendingActionRow, layout: PendingCardLayout, head
   return [
     headline,
     ...(layout.consequence !== undefined ? [consequenceSection(layout.consequence)] : []),
-    ...(layout.warning !== undefined ? [contextBlock(layout.warning)] : []),
     contextBlock(cardFooter(footerRequester(row, "slack"), layout.expiry)),
     { type: "actions", block_id: `oe_approval_actions:${row.id}`, elements: optionButtons(row, layout.options) },
   ];

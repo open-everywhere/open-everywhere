@@ -131,7 +131,6 @@ export function connectorOpArgsFromOffer(offer: ConnectorOpCardOffer, room: { re
     inputPreview: offer.inputPreview,
     ...(offer.input === undefined ? {} : { input: offer.input }),
     requestedBy: room.requestedBy,
-    ...(offer.tainted ? { tainted: true } : {}),
     ...(offer.credential === undefined ? {} : { credential: offer.credential }),
   };
 }

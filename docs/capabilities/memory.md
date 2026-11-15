@@ -657,8 +657,7 @@ edit that silo, since the card exists to defeat injection, not to gate privilege
 
 One path skips the card, and it is the same one every carded verb carries: an **approver chain**
 that lowers this verb erases at once and posts a notice instead. Taint does not close that path —
-`purge_memory` declares `taint: "disclose"`, so a tainted turn discloses its provenance and the
-verdict is unchanged. See
+`purge_memory` declares `taint: "disclose"`, so a tainted turn leaves the verdict unchanged. See
 [The control plane: In-Slack approvals](../security/control-plane.md#in-slack-approvals) for the
 propose → card → click mechanics shared with the other admin-mutation tools.
 

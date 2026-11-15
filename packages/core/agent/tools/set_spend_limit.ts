@@ -4,7 +4,6 @@ import { z } from "zod";
 import { PersonFacingError } from "../channels/person-text.js";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel, type Domain } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
@@ -210,6 +209,7 @@ export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
   const workspaceKey = `${binding.platform}/${binding.workspace}`;
   if (level === "workspace") return workspaceKey;
   if (level === "user") {
+    // principal-gate: presence — "my own allowance" means the HUMAN speaking on this turn, so a
     const me = actingPrincipalId(binding);
     if (!me) {
       throw new Error(
@@ -258,6 +258,7 @@ export function assertScopeKeyShapeForLevel(tool: string, level: Level, scopeKey
 }
 
 export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitInput, current: CurrentCaps, domain: string | null): SpendSetPlan {
+  // principal-gate: presence — a budget proposal is the credential/config plane; a fire holds no
   if (!actingPrincipalId(binding)) {
     throw new Error("set_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose a spend-limit change in that person's name. Ask a person in this conversation to propose it.");
   }
@@ -341,8 +342,6 @@ export default defineTool({
 
     const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
 
-    const tainted = untrustedIngestedThisTurn();
-
     const coverageReport = await readSpendCoverage(plan.args.org, plan.args.level, plan.args.scopeKey, plan.args.monthlyUsd);
     const coverage = coverageReport === undefined ? undefined : frozenCoverage(coverageReport);
 
@@ -350,7 +349,7 @@ export default defineTool({
       {
         org: plan.args.org,
         kind: plan.kind,
-        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), ...(coverage ? { coverage } : {}), tainted },
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), ...(coverage ? { coverage } : {}) },
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
@@ -382,7 +381,7 @@ export default defineTool({
           coverageNote,
       };
     }
-    const subject = `${plan.args.level} limit ${proposed} on ${placeBesideKey(plan.args.scopeKey)}${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `${plan.args.level} limit ${proposed} on ${placeBesideKey(plan.args.scopeKey)}`;
     if (posted.autoApproved) {
       return {
         requested: false,

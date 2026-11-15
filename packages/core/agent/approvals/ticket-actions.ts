@@ -13,6 +13,7 @@ interface TicketActionArgs {
   readonly entityId: string;
   readonly organizationId?: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
   readonly capabilities?: readonly RepoCapability[];
 }
@@ -23,10 +24,6 @@ export interface TicketSetStateArgs extends TicketActionArgs {
 
 export interface TicketAssignArgs extends TicketActionArgs {
   readonly assignee: string;
-}
-
-function taintedLine(tainted: boolean | undefined): string[] {
-  return tainted ? ["⚠ proposed in a turn that read external content — review before approving"] : [];
 }
 
 async function executeTicketVerb(
@@ -44,7 +41,7 @@ async function executeTicketVerb(
     ...whereFromScope(args.org, args.scopeKey),
     principalId: decidedBy,
     action: auditAction,
-    detail: { platform: args.platform, entityId: args.entityId, value: args.value, requestedBy: args.requestedBy, tainted: Boolean(args.tainted) },
+    detail: { platform: args.platform, entityId: args.entityId, value: args.value, requestedBy: args.requestedBy },
   });
   return outcome;
 }
@@ -56,7 +53,7 @@ const ticketSetState: ActionKind<TicketSetStateArgs> = {
     return `Move ${platformName(args.platform)} ${plainValue(args.entityId)} to "${plainValue(args.state)}"`;
   },
   summarize(args) {
-    return [`Set ${args.platform} ${args.entityId} state → "${args.state}"`, ...taintedLine(args.tainted)];
+    return [`Set ${args.platform} ${args.entityId} state → "${args.state}"`];
   },
   execute(args, decidedBy) {
     return executeTicketVerb({ ...args, value: args.state }, "setState", decidedBy, "ticket.set_state");
@@ -70,7 +67,7 @@ const ticketAssign: ActionKind<TicketAssignArgs> = {
     return `Assign ${platformName(args.platform)} ${plainValue(args.entityId)} to ${plainValue(args.assignee)}`;
   },
   summarize(args) {
-    return [`Assign ${args.platform} ${args.entityId} → ${args.assignee}`, ...taintedLine(args.tainted)];
+    return [`Assign ${args.platform} ${args.entityId} → ${args.assignee}`];
   },
   execute(args, decidedBy) {
     return executeTicketVerb({ ...args, value: args.assignee }, "assign", decidedBy, "ticket.assign");

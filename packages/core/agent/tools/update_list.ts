@@ -4,7 +4,6 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
@@ -59,7 +58,7 @@ async function namedCells(cells: readonly ListCell[], nameOf: PersonName): Promi
 
 export async function buildListWrite(
   input: z.infer<typeof inputSchema>,
-  p: { readonly org: string; readonly scopeKey: string; readonly channelId: string; readonly requestedBy: string; readonly tainted: boolean },
+  p: { readonly org: string; readonly scopeKey: string; readonly channelId: string; readonly requestedBy: string; readonly tainted?: boolean },
   call: SlackDocCall,
   nameOf: PersonName = bridgeFetchUserDisplayName,
 ): Promise<ListWriteArgs> {
@@ -95,7 +94,6 @@ export async function buildListWrite(
     listTitle: file.title,
     rows,
     requestedBy: p.requestedBy,
-    ...(p.tainted ? { tainted: true } : {}),
   };
 }
 
@@ -135,7 +133,7 @@ const updateListEntry = defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "make that change"));
     }
     const venue = venueResult.venue;
-    const args = await buildListWrite(input, { org: p.org, scopeKey, channelId, requestedBy, tainted: untrustedIngestedThisTurn() }, liveSlackDocCall);
+    const args = await buildListWrite(input, { org: p.org, scopeKey, channelId, requestedBy }, liveSlackDocCall);
     const posted = await requestApproval(
       {
         org: p.org,

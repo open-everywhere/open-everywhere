@@ -4,7 +4,6 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { assertChatWriteAllowed, chatWriteMount, CONTAINER_RESOURCE_TYPE } from "../access/chat-write-grant.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
@@ -62,6 +61,7 @@ const postMessageEntry = defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "post that message"));
     }
     const venue = venueResult.venue;
+    // principal-gate: accountability — somebody NAMEABLE must exist (a card needs an "asked by" line). A fire's attested creator satisfies this, correctly.
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("post_message needs a verified sender to gate the post — no principal id resolved, so there's no requester to show on the approval card.");
@@ -75,7 +75,6 @@ const postMessageEntry = defineTool({
       grant: target.address,
       text: input.text,
       requestedBy,
-      tainted: untrustedIngestedThisTurn(),
     };
 
     const posted = await requestApproval(

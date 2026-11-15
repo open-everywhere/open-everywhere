@@ -144,9 +144,12 @@ function domainRulePrEnabled(): boolean {
   }
 }
 
+const ALLOW_RULE_TOOL_KINDS: ReadonlySet<string> = new Set(["pr.open", "routine.create"]);
+
 function subjectForRow(row: PendingActionRow, args: Record<string, unknown>): AllowRuleSubject | undefined {
   if (row.kind === "op.connector") {
-    const tool = judgedConnectorOpTool(row.kind, args, { unattended: false, tainted: false, ...(row.domain ? { domain: row.domain } : {}) });
+    const { tainted: _legacyTaint, ...opArgs } = args;
+    const tool = judgedConnectorOpTool(row.kind, opArgs, { unattended: false, tainted: false, ...(row.domain ? { domain: row.domain } : {}) });
     return tool === undefined ? undefined : connectorSubject(tool);
   }
   const tool = toolForActionKind(row.kind);
@@ -166,8 +169,7 @@ export function allowRuleProposalForRow(row: PendingActionRow): AllowRuleProposa
   } catch {
     return undefined;
   }
-  if (args.tainted === true) return undefined;
-  if (row.kind !== "op.connector" && args.tainted !== false) return undefined;
+  if (row.kind !== "op.connector" && !ALLOW_RULE_TOOL_KINDS.has(row.kind)) return undefined;
   const where = allowRuleVenueOf(row);
   if (where === undefined) return undefined;
   if (where.venue === "domain" && !domainRulePrEnabled()) return undefined;

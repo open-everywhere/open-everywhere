@@ -672,7 +672,7 @@ console.log("6b. a failed tap names its reason on the audit row (OPE-1588):");
   }
 }
 
-console.log("7. the ask verb: a tainted turn may not ask, and a delegated WORKER holds it while the seat does not:");
+console.log("7. the ask verb: a turn that read outside content asks as a clean turn does (OPE-2717), and a delegated WORKER holds it while the seat does not:");
 {
   ok(
     !allowedOnLeanSeat("request_credential_grant"),
@@ -684,28 +684,25 @@ console.log("7. the ask verb: a tainted turn may not ask, and a delegated WORKER
   );
   ok(WORKER_ONLY_TOOLS_STANDING.includes("request_credential_grant"), "…so the worker-capability index TELLS the seat to delegate it — without that line the seat has no route to name");
 
-  const askCountBefore = (await store.credentialGrantsForScope(ORG, "sess-taint")).length;
-  const ctx = new FakeEveContext();
-  const tainted = await inEveContext(ctx, async () => {
-    markUntrustedIngestedThisTurn("connector");
-    ok(untrustedIngestedThisTurn(), "the fixture really did mark the turn — without this the leg below would pass on an unmarked turn");
-    return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
-      { connector: "notion", owner: OWNER, purpose: "read it for me", requested_mode: "once", target_label: "A page", tool: "notion-fetch" },
-      {},
-    )) as { asked: boolean; message: string };
-  });
-  eq(tainted.asked, false, "a TAINTED turn is refused");
-  ok(tainted.message.includes("read external content"), "…and the refusal names the boundary");
-  eq((await store.credentialGrantsForScope(ORG, "sess-taint")).length, askCountBefore, "…and nothing was written");
-
-  const clean = await inEveContext(new FakeEveContext(), async () => {
-    ok(!untrustedIngestedThisTurn(), "the control turn is genuinely clean");
-    return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(
-      { connector: "notion", owner: OWNER, purpose: "read it for me", requested_mode: "once", target_label: "A page", tool: "notion-fetch" },
-      {},
-    )) as { asked: boolean; message: string };
-  });
-  ok(!clean.message.includes("read external content"), "a CLEAN turn is NOT refused for taint — it reaches the ordinary gates below it");
+  const ask = { connector: "notion", owner: OWNER, purpose: "read it for me", requested_mode: "once", target_label: "A page", tool: "notion-fetch" };
+  const runAsk = async (mark: boolean) =>
+    inEveContext(new FakeEveContext(), async () => {
+      if (mark) {
+        markUntrustedIngestedThisTurn("connector");
+        ok(untrustedIngestedThisTurn(), "the fixture really did mark the turn — without this the leg below would pass on an unmarked turn");
+      } else {
+        ok(!untrustedIngestedThisTurn(), "the control turn is genuinely clean");
+      }
+      return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(ask, {})) as {
+        asked: boolean;
+        message: string;
+      };
+    });
+  const clean = await runAsk(false);
+  const marked = await runAsk(true);
+  ok(!marked.message.includes("read external content"), "a turn that read outside content is NOT refused for taint");
+  eq(marked.asked, clean.asked, "…it gets the clean turn's outcome");
+  eq(marked.message, clean.message, "…with the clean turn's exact message, so no taint condition survives below the old gate");
 
   const wrongConnector = await inEveContext(new FakeEveContext(), async () =>
     (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(

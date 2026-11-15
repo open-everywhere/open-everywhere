@@ -178,36 +178,24 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
 }
 
 {
-  const { withTaintDisclosure, taintDisclosureLine, TAINT_DISCLOSURE_PREFIX } = await import("../agent/approvals/taint-disclosure.js");
   const { summarizeFrozenRow } = await import("../agent/approvals/actions.js");
-  const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
-
-  ok(taintDisclosureLine(false) === undefined, "disclosure: an untainted proposal renders NO line (positive-only, so a clean card is unchanged)");
-  ok(taintDisclosureLine(true)!.startsWith(TAINT_DISCLOSURE_PREFIX), "disclosure: the line opens with the one exported prefix");
-  ok(taintDisclosureLine(true, ["web", "github"])!.includes("from web, github"), "disclosure: the line NAMES the source kinds when the turn recorded them");
-  ok(!taintDisclosureLine(true)!.includes("from "), "disclosure: …and degrades to the bare fact when it has no breakdown (a seeded taint knows the bit, not the sources)");
-
-  const plain = withTaintDisclosure(["Open a PR against acme/web"], { tainted: true }, { live: false });
-  ok(plain.length === 2 && plain[1]!.startsWith(TAINT_DISCLOSURE_PREFIX), "disclosure: a kind with no ⚠ prose of its own gains the generic line");
-  const clean = withTaintDisclosure(["Open a PR against acme/web"], { tainted: false }, { live: false });
-  ok(clean.length === 1, "disclosure: negative control — a clean proposal's lines are untouched");
-
-  const bespoke = ["Set a cap", "⚠ proposed in a turn that read external content — confirm a person actually asked"];
-  ok(withTaintDisclosure(bespoke, { tainted: true }, { live: false }).length === 2, "disclosure: a kind that already discloses is NOT given a second, redundant line");
-  const enriched = withTaintDisclosure(bespoke, { tainted: true }, { live: false, kinds: ["notion"] });
-  ok(enriched.length === 3 && enriched[2]!.includes("notion"), "disclosure: …but the SOURCE breakdown is still added, because its own line cannot carry it");
-
+  const { pendingCardLayout, pendingCardLines } = await import("../agent/approvals/card-layout.js");
+  const { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
   await inSession(async () => {
     markUntrustedIngestedThisTurn("web");
-    const live = withTaintDisclosure(["Forget one bullet"], { siloName: "eng" });
-    ok(live.length === 2 && live[1]!.includes("from web"), "disclosure: a kind that freezes NO tainted flag still discloses at propose time, naming the live source");
-    const frozenOnly = withTaintDisclosure(["Forget one bullet"], { siloName: "eng" }, { live: false });
-    ok(frozenOnly.length === 1, "disclosure: …and a RE-RENDER (live:false) shows nothing — a clicker's own turn must never leak onto someone else's card");
-
-    const rendered = summarizeFrozenRow(row({ kind: "test.member", argsJson: JSON.stringify({ tainted: true }) }));
-    ok(rendered.some((l) => l.startsWith(TAINT_DISCLOSURE_PREFIX)), "disclosure: summarizeFrozenRow (the click/control-plane renderer) carries the line from the FROZEN flag");
-    const renderedClean = summarizeFrozenRow(row({ kind: "test.member", argsJson: JSON.stringify({}) }));
-    ok(!renderedClean.some((l) => l.startsWith(TAINT_DISCLOSURE_PREFIX)), "disclosure: …and a clean frozen row renders none, in the same tainted turn (frozen beats live on a re-render)");
+    ok(untrustedIngestedThisTurn(), "no disclosure: the fixture really did mark the turn");
+    for (const frozen of [{ tainted: true }, { tainted: false }]) {
+      const legacy = row({ kind: "test.member", argsJson: JSON.stringify(frozen) });
+      const plain = row({ kind: "test.member", argsJson: JSON.stringify({}) });
+      ok(JSON.stringify(summarizeFrozenRow(legacy)) === JSON.stringify(summarizeFrozenRow(plain)), `no disclosure: a card frozen with tainted:${String(frozen.tainted)} renders the clean detail`);
+      const lines = pendingCardLines(pendingCardLayout(legacy, summarizeFrozenRow(legacy)));
+      ok(JSON.stringify(lines) === JSON.stringify(pendingCardLines(pendingCardLayout(plain, summarizeFrozenRow(plain)))), `no disclosure: …and the same visible card lines (tainted:${String(frozen.tainted)})`);
+      ok(!lines.some((l) => l.startsWith("⚠") || /outside content|external content|tainted/iu.test(l)), "no disclosure: no visible line warns about taint");
+    }
+    const shim = await import("../agent/approvals/taint-disclosure.js");
+    ok(shim.taintDisclosureLine(true, ["web"]) === undefined, "shim: taintDisclosureLine is a no-op");
+    ok(JSON.stringify(shim.withTaintDisclosure(["a"], { tainted: true })) === '["a"]', "shim: withTaintDisclosure returns the lines unchanged, even live in a marked turn");
+    ok(shim.taintCardWarning([shim.TAINT_DISCLOSURE_PREFIX], { tainted: true }) === undefined, "shim: taintCardWarning is a no-op");
   });
 }
 
@@ -783,7 +771,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       {
         org: "default",
         kind: "spend.set",
-        args: { org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, tainted: false, ...extra },
+        args: { org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, ...extra },
         scopeKey: scope,
         requestedBy: "U_REQUESTER",
         channelId: "C2066",
@@ -808,8 +796,6 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(otherFigure.deduped !== true && otherFigure.id !== first.id, "🔴 OPE-2066 NEGATIVE CONTROL: a DIFFERENT $ figure is a new proposal with its own card");
   const addedTokens = await propose("Also cap tokens.", { monthlyTokens: 1 });
   ok(addedTokens.deduped !== true && addedTokens.id !== first.id, "🔴 OPE-2066 NEGATIVE CONTROL: adding a token component is a new proposal with its own card");
-  const tainted = await propose("Same ask, tainted turn.", { tainted: true });
-  ok(tainted.deduped !== true && tainted.id !== first.id, "🔴 OPE-2066 NEGATIVE CONTROL: a TAINTED repeat never folds onto an untainted card — the approver must see the ⚠");
 
   await handleApprovalPayload(payloadFor(`oe_approval:reject:${first.id}`, { user: "U_ORG_ADMIN", channel: "C2066", ts: "1700.0" }), { post });
   ok((await store.getPendingAction("default", first.id))?.status === "rejected", "OPE-2066 fixture: the reject decides the first card to rejected");
@@ -829,7 +815,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   };
   const cards = () => calls.filter((c) => c.method === "chat.postMessage" && !(bodyField(c.body, "text") ?? "").startsWith("❌ Rejected by")).length;
   const scope = "slack/T2071/C2071";
-  const argsFor = (reason: string, extra: Record<string, unknown> = {}) => ({ org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, tainted: false, ...extra });
+  const argsFor = (reason: string, extra: Record<string, unknown> = {}) => ({ org: "default", scopeKey: scope, level: "surface", monthlyUsd: 1609, reason, currentCap: null, currentUsd: 50, ...extra });
   const propose = (reason: string, extra: Record<string, unknown> = {}, over: { scopeKey?: string; channelId?: string } = {}) =>
     requestApproval(
       {
@@ -2538,9 +2524,9 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       { post: async () => ({ ok: true, ts: "999.000" }) as never },
     ),
   );
-  const tainted = await inSession(() =>
+  const legacyTainted = await inSession(() =>
     requestApproval(
-      { org: "default", kind: "pr.open", args: { sessionId: routineKey("fanout"), what: "read a hostile page first", tainted: true }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, chain: { unattended: false } },
+      { org: "default", kind: "pr.open", args: { sessionId: routineKey("fanout"), what: "read a hostile page first", tainted: true }, scopeKey: "slack/T1/C1", domain: null, requestedBy: "U_REQUESTER", channelId: "C1", threadTs: null, postedTo: "slack/T1/C1", chain: { unattended: false } },
       { post: async () => ({ ok: true, ts: "999.000" }) as never },
     ),
   );
@@ -2561,16 +2547,16 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   });
   ok(first.outcome === "decided", "OPE-251: the clicked card is decided");
   ok(
-    prExecuted.length === fanOut.length && new Set(prExecuted).size === fanOut.length,
-    `🔴 OPE-251: ONE "approve for this routine" click executes EVERY worker of the concurrent fan-out — the grant reaches the workers already carded, not only the next one (saw: ${JSON.stringify(prExecuted)})`,
+    prExecuted.length === fanOut.length + 1 && new Set(prExecuted).size === fanOut.length + 1,
+    `🔴 OPE-251: ONE "approve for this routine" click executes EVERY worker of the concurrent fan-out, and the legacy tainted card — the grant reaches the cards already minted, not only the next one (saw: ${JSON.stringify(prExecuted)})`,
   );
   const rest = await Promise.all(posted.slice(1).map(async (p) => (await store.getPendingAction("default", p.id))?.status));
   ok(rest.every((s) => s === "approved"), "🔴 OPE-251: …and their cards are DECIDED, so nobody is left clicking a card for a session that was already granted");
 
-  ok(releaseRedraws.length === fanOut.length - 1, `🔴 OPE-2490: every released card is redrawn in place to its decided line (saw ${String(releaseRedraws.length)})`);
+  ok(releaseRedraws.length === fanOut.length, `🔴 OPE-2490: every released card is redrawn in place to its decided line (saw ${String(releaseRedraws.length)})`);
   ok(
-    releaseNotices.length === fanOut.length - 1,
-    `🔴 OPE-251: every released row posts its own decision notice into its own conversation (saw ${String(releaseNotices.length)} for ${String(fanOut.length - 1)} released rows)`,
+    releaseNotices.length === fanOut.length,
+    `🔴 OPE-251: every released row posts its own decision notice into its own conversation (saw ${String(releaseNotices.length)} for ${String(fanOut.length)} released rows)`,
   );
   ok(
     releaseNotices.every((body) => body.includes("U_RANDOM_MEMBER")),
@@ -2582,8 +2568,8 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     "🔴 OPE-251 NEGATIVE CONTROL: a card of the SAME kind in a DIFFERENT session is UNTOUCHED — the release is keyed on the memo's own key",
   );
   ok(
-    (await store.getPendingAction("default", tainted.id))?.status === "pending",
-    "🔴 OPE-251 NEGATIVE CONTROL: a TAINTED proposal in the GRANTED session keeps its own human card — the same defence the propose-time memo bypass makes",
+    (await store.getPendingAction("default", legacyTainted.id))?.status === "approved",
+    "🔴 OPE-2717 (OPE-2715 row 6): a card frozen with tainted:true in the GRANTED session is released, as a clean card is",
   );
 
   ok(
@@ -2594,7 +2580,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const releaseRows = (await readAudit({ org: "default", action: SESSION_GRANT_RELEASED_ACTION })).filter((e) => e.detail?.id === posted[0]!.id);
   ok(releaseRows.length === 1, "OPE-251: the release writes ONE audit row joining the click to the cards it decided");
   ok(
-    Array.isArray(releaseRows[0]?.detail?.released) && (releaseRows[0]!.detail!.released as string[]).length === fanOut.length - 1,
+    Array.isArray(releaseRows[0]?.detail?.released) && (releaseRows[0]!.detail!.released as string[]).length === fanOut.length,
     "OPE-251: …naming every card it released, and only those",
   );
 
@@ -2876,4 +2862,4 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   );
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 one click reaches the concurrent fan-out, OPE-1709 the release is off the ack path and capped)\n`);
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-2717 no taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 one click reaches the concurrent fan-out, OPE-1709 the release is off the ack path and capped)\n`);

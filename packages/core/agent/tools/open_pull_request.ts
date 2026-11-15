@@ -5,7 +5,6 @@ import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
 import { principalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { resolvePrWriteToken } from "../scm/write-token.js";
@@ -33,8 +32,13 @@ import { markCardPostedThisTurn } from "../approvals/card-signal.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 
-export function sessionMemoAdmissible(input: { readonly sessionId?: string; readonly tainted: boolean; readonly halted: boolean }): boolean {
-  return Boolean(input.sessionId) && !input.tainted && !input.halted;
+export function sessionMemoAdmissible(input: {
+  readonly sessionId?: string;
+  /** @deprecated Ignored since OPE-2717 (OPE-2715 row 5). OPE-2721 removes it. */
+  readonly tainted?: boolean;
+  readonly halted: boolean;
+}): boolean {
+  return Boolean(input.sessionId) && !input.halted;
 }
 
 async function postSessionNote(platform: string, channelId: string, threadTs: string | null, text: string): Promise<void> {
@@ -91,6 +95,7 @@ export default windowGated("open_pull_request", defineTool({
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
     const proposeScopeKey = await proposalScopeKey(ctx, p);
+    // principal-gate: accountability — the card's PROPOSER line. A routine that opens a PR is a shipped
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("open_pull_request needs a verified sender to gate the publish — no principal id resolved, so there's no proposer to show on the approval card.");
@@ -156,7 +161,6 @@ export default windowGated("open_pull_request", defineTool({
       );
     }
 
-    const tainted = untrustedIngestedThisTurn();
     const sessionId = proposingGrantKey(ctx);
     const args: PrOpenArgs = {
       org: p.org,
@@ -168,14 +172,13 @@ export default windowGated("open_pull_request", defineTool({
       body: input.body,
       headSha,
       requestedBy,
-      tainted,
       ...(repoCapabilities.length ? { capabilities: repoCapabilities } : {}),
       ...(sessionId ? { sessionId } : {}),
     };
 
     const halt = await resolveHalt(haltScopeFor({ org: p.org, scopeKey: proposeScopeKey, principalId: requestedBy }));
     const store = getOperationalStore();
-    const memo = sessionMemoAdmissible({ sessionId, tainted, halted: halt.halted })
+    const memo = sessionMemoAdmissible({ sessionId, halted: halt.halted })
       ? await store.getSessionApproval(p.org, sessionId!, "pr.open", new Date().toISOString()).catch(() => null)
       : null;
     if (memo) {
@@ -209,7 +212,7 @@ export default windowGated("open_pull_request", defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})`;
     if (posted.autoApproved) {
       return {
         ok: true,

@@ -10,7 +10,6 @@ import { autoApprovedNote, requestApproval } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { readTurnClock } from "../observability/turn-clock.js";
@@ -118,6 +117,7 @@ export default defineTool({
     const text = input.message.trim();
     if (text.length === 0) throw new Error("The task text is empty — say what the agent should do.");
 
+    // principal-gate: presence — the task leaves this deployment with a person's identity attached, so a
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(`${TOOL} needs a verified sender — a triggered routine fire has no acting sender, and a delegation carries the asker's identity to another organisation's agent. Ask a person in this conversation.`);
@@ -152,7 +152,6 @@ export default defineTool({
     const venue = venueResult.venue;
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error(`${TOOL} couldn't resolve this conversation's id — try again from a real channel or DM.`);
-    const tainted = untrustedIngestedThisTurn();
     const args: A2aDelegateArgs = {
       org: p.org,
       scopeKey: proposeScopeKey,
@@ -162,7 +161,6 @@ export default defineTool({
       sessionKey: scope.key,
       memoKind,
       requestedBy,
-      ...(tainted ? { tainted: true } : {}),
       answerIn: binding.threadTs ? `${p.surfaceKey} (thread ${binding.threadTs})` : p.surfaceKey,
     };
     const posted = await requestApproval(

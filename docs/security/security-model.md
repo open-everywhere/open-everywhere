@@ -558,10 +558,10 @@ old behaviour because a *declared* room never reaches it.
 registry is not a `public` declaration, and the two produce different audit rows: a declaration
 produces `declared`, silence keeps producing `assumed`.
 
-**Taint is marking, not gating**, and the transform is the exception that proves it. A turn
-that has ingested external content is *disclosed*: the approval card it proposes says so and
-names what was read, and the `approval.chain` audit row carries the same. **Memory is where the
-disclosure stops.** A bullet the turn writes carries no mark of its own: since the memory verbs
+**Taint is marking, not gating**, and the transform is the exception that proves it. Since OPE-2717
+no approval card discloses taint: the card warning line is gone (the maintainer's ruling,
+OPE-2715 row 10). The `approval.chain` audit row still carries the turn's taint until OPE-2716
+removes it. **Memory carries no taint disclosure either.** A bullet the turn writes carries no mark of its own: since the memory verbs
 were retired, a write is a freehand file edit captured at session end, and the capture seam sees
 file diffs rather than the turn that made them — so there is nothing to attribute, and
 re-deriving a mark would mean marking a whole SESSION, which this model deliberately refuses to
@@ -586,8 +586,7 @@ This one cannot.
 **What `gate` does is floor the verdict at `ask` — it does not refuse.** A tainted turn may still
 propose one of those acts; what it may not do is have the act *auto-approved*. No lowering
 reaches below the floor: not a custom approver, not a config allow, not the judge, not a
-`DANGEROUSLY_BYPASS` domain. Attended, a human reads a card that names what the turn ingested and
-decides. Unattended, the `unattended` transform reads that `ask` and denies it, which is exactly
+`DANGEROUSLY_BYPASS` domain. Attended, a human reads the card and decides. Unattended, the `unattended` transform reads that `ask` and denies it, which is exactly
 the old behaviour in the case that actually carries risk.
 
 The reasoning for that shape, since it replaced a hard refusal: a wall a tainted turn cannot climb
@@ -596,8 +595,10 @@ A card a human reads is a control that survives contact, and it carries strictly
 than a blank refusal ever did. The relaxation is paid for only where a human is present to be
 asked; where nobody is, the answer is unchanged. **The residual is stated rather than hidden:** an
 approval card converts a deterministic barrier into a human judgement at the moment injected text is
-trying to shape that judgement. The card's mechanical provenance line is the counterweight, and it is
-rendered by code — never by a summary of the tainted content itself.
+trying to shape that judgement. Since OPE-2717 (OPE-2715 row 10, ruled) the card carries
+no provenance line. The only counterweight is the act itself, rendered by code from the frozen
+arguments (the quoted body, the figures, the target) — never by a summary of the tainted content.
+The routine kinds keep their own ⚠ line in the card detail until OPE-2718.
 
 **And the whole model is opt-out-able, in one reviewed line.** A governed seam nobody can decline
 is a tax, not a feature — so `taint.mode: "off"` in `agent/settings/settings.ts` retires the marking model

@@ -13,12 +13,12 @@ export interface ChatPostArgs {
   readonly grant: string;
   readonly text: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
 
 function summarizePost(args: ChatPostArgs): string[] {
   const lines = [`Post a message into ${args.platform} container ${args.container} (granted by ${args.grant})`, args.text];
-  if (args.tainted) lines.push("⚠ proposed in a turn that read external content — review before approving");
   return lines;
 }
 
@@ -47,7 +47,6 @@ const chatPost: ActionKind<ChatPostArgs> = {
         grant: args.grant,
         messageId,
         requestedBy: args.requestedBy,
-        tainted: Boolean(args.tainted),
       },
     });
     return `message posted in ${channelWords(args.platform, args.container)}`;

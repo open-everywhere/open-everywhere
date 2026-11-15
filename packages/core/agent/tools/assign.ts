@@ -5,7 +5,6 @@ import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
 import { workDestinationPlatforms } from "../channels/work-destinations.js";
@@ -72,6 +71,7 @@ export const assignEntry = defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "assign that ticket"));
     }
     const venue = venueResult.venue;
+    // principal-gate: accountability — a routine that triages and re-assigns work is the PRODUCT, not an
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("assign needs a verified sender to gate the change — no principal id resolved, so there's no requester to show on the approval card.");
@@ -85,7 +85,6 @@ export const assignEntry = defineTool({
       ...(ref.organizationId ? { organizationId: ref.organizationId } : {}),
       assignee: input.assignee,
       requestedBy,
-      tainted: untrustedIngestedThisTurn(),
       ...(capabilities.length ? { capabilities } : {}),
     };
 

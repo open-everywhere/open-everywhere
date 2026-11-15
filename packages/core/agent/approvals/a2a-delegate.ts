@@ -20,6 +20,7 @@ export interface A2aDelegateArgs {
   readonly sessionKey: string;
   readonly memoKind: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
   readonly answerIn?: string;
 }
@@ -34,7 +35,6 @@ function summarizeDelegate(args: A2aDelegateArgs): string[] {
     `Task: ${args.message}`,
     ...(args.answerIn !== undefined ? [`The agent's answer will be posted in: ${args.answerIn}`] : []),
   ];
-  if (args.tainted) lines.push("⚠ proposed in a turn that read external content — review before approving");
   return lines;
 }
 
@@ -62,7 +62,7 @@ const a2aDelegate: ActionKind<A2aDelegateArgs> = {
       ...whereFromScope(args.org, args.scopeKey),
       principalId: decidedBy,
       action: "a2a.delegate_approved",
-      detail: { agent: args.agent, host: args.host, requestedBy: args.requestedBy, tainted: Boolean(args.tainted) },
+      detail: { agent: args.agent, host: args.host, requestedBy: args.requestedBy },
     });
     return decidedBy.startsWith("chain:")
       ? `the task goes to ${args.agent} once, with exactly this text`

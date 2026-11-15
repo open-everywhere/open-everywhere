@@ -1382,18 +1382,16 @@ person reads, in this order:
    Discord caps a whole message at 2,000. A longer quote is never cut silently: the line ends with
    "(N more characters not shown)", so the approver knows the card does not show all of what the click
    approves.
-3. **A one-line warning** when the proposing turn read outside content: "⚠ Asked for after reading
-   outside content. Check that someone here wants it."
-4. **A footer**: "Asked by @name · expires 13 October, 14:00 UTC". A `routine.permission` card has no
+3. **A footer**: "Asked by @name · expires 13 October, 14:00 UTC". A `routine.permission` card has no
    clock, so its footer reads "open until the routine changes": the card ends when the routine's
    instruction is edited or the routine is deleted. Teams prints the expiry alone, because a Teams
    card cannot name the requester without a display name the row does not hold.
-5. **The options**, as one ordered list.
+4. **The options**, as one ordered list.
 
 **No visible line carries a kind label, a model or route name, a backend, a ledger, a figure label
 (`$:`, `tokens:`), talk about pricing coverage, a raw platform id, an internal row id or restated
 policy prose.** Those are machine keys. The kind and the full code-rendered detail
-(`ActionKind.summarize`, with the taint disclosure) move to the card's **metadata** (`CardMeta`,
+(`ActionKind.summarize`) move to the card's **metadata** (`CardMeta`,
 `card-layout.ts`). A spend card's pricing coverage caveat is part of that detail, so the approver
 does not see it on the visible lines ([spend and cost](./spend-and-cost.md)). On Slack that is the message `metadata`
 (`event_type: "oe_approval_card"`, with the kind, the row id and every detail line) and the first
@@ -1811,9 +1809,9 @@ trail reads continuously across a follow-up.
 **`pr.update`** — the pull-request gate opens a pull request from the frozen title, body and head
 sha. When the create resolves as an update — a follow-up push to an already-open branch — the same
 gate writes `pr.update` instead of `pr.open`. The row carries the repository, the head, the base,
-the frozen sha, the pull request number and URL, who requested it, and whether the turn was tainted.
+the frozen sha, the pull request number and URL, and who requested it.
 
 **`skill.update`** — an approved skill edit writes `skill.update` where a first authoring writes
 `skill.create`. The row carries the domain, the skill name, the body's author, the approver who
-armed it, and the taint flag. The frozen body itself is kept in the skill revision log above, not in
+armed it. The frozen body itself is kept in the skill revision log above, not in
 the audit row.

@@ -380,7 +380,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "a2a.delegate_approved",
-    fields: ["agent", "host", "requestedBy", "tainted"],
+    fields: ["agent", "host", "requestedBy"],
     proves: "a member's click on an a2a.delegate card, or an approver-chain lift (principalId `chain:<element>`), approved ONE delegation of one exact task to one declared A2A agent (OPE-2425) — ids only, never the task text",
     notExercised:
       "RED-until-leg: the e2e scenario S-A2A-DELEGATE drives a delegation against a public reference agent only when a deployment declares one; tests/integration/connectors/a2a-delegation.test.ts reads this row on the integration tier.",

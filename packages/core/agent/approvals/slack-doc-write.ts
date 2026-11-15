@@ -54,7 +54,6 @@ export function freeTeamTabTakenWords(channelId: string): string {
   return `This Slack workspace is on the free plan, which allows one canvas tab per channel, and ${channelWords("slack", channelId)} already has one (${FREE_TEAM_TAB_TAKEN}).`;
 }
 
-const TAINT_LINE = "⚠ proposed in a turn that read external content — review before approving";
 export function canvasPlainSummary(args: CanvasWriteArgs): string {
   return `${CANVAS_VERB[args.op]} the canvas "${plainValue(args.title)}" in ${channelWords("slack", args.channelId)}`;
 }
@@ -68,7 +67,6 @@ const canvasWrite: ActionKind<CanvasWriteArgs> = {
   doneSummary: (args) => `${CANVAS_DONE[args.op]} the canvas "${plainValue(args.title)}" in ${channelWords("slack", args.channelId)}`,
   summarize(args) {
     const lines = [`${canvasPlainSummary(args)} (${args.op}${args.canvasId ? ` ${args.canvasId}` : ""})`, args.markdown];
-    if (args.tainted) lines.push(TAINT_LINE);
     return lines;
   },
   async execute(args, decidedBy) {
@@ -110,7 +108,6 @@ const canvasWrite: ActionKind<CanvasWriteArgs> = {
         ...(canvasId ? { canvasId } : {}),
         chars: args.markdown.length,
         requestedBy: args.requestedBy,
-        tainted: Boolean(args.tainted),
       },
     });
     return `canvas "${plainValue(args.title)}" ${CANVAS_DONE[args.op]} in ${channelWords("slack", args.channelId)}`;
@@ -157,7 +154,6 @@ const listWrite: ActionKind<ListWriteArgs> = {
   doneSummary: (args) => `${listChangeWords(args.rows).done} in the List "${plainValue(args.listTitle)}" in ${channelWords("slack", args.channelId)}`,
   summarize(args) {
     const lines = [`${listPlainSummary(args)} (${args.listId})`, ...args.rows.map((r) => `${r.rowId ? `change ${r.rowId}` : "add"}: ${rowWords(r.title, r.cells)}`)];
-    if (args.tainted) lines.push(TAINT_LINE);
     return lines;
   },
   async execute(args, decidedBy) {
@@ -187,7 +183,6 @@ const listWrite: ActionKind<ListWriteArgs> = {
         added: args.rows.filter((r) => r.rowId === undefined).length,
         changed: args.rows.filter((r) => r.rowId !== undefined).length,
         requestedBy: args.requestedBy,
-        tainted: Boolean(args.tainted),
       },
     });
     return `${listChangeWords(args.rows).done} in the List "${plainValue(args.listTitle)}"`;

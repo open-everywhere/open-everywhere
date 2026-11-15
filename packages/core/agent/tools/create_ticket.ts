@@ -5,7 +5,6 @@ import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveTicketCreate, supportedTicketCreatePlatforms } from "../channels/ticket-create.js";
 import { workDestinationPlatforms } from "../channels/work-destinations.js";
@@ -75,6 +74,7 @@ export const createTicketEntry = defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "file that ticket"));
     }
     const venue = venueResult.venue;
+    // principal-gate: accountability — a routine that files work is the PRODUCT (the daily-triage recipe is
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("create_ticket needs a verified sender to gate the filing — no principal id resolved, so there's no requester to show on the approval card.");
@@ -89,7 +89,6 @@ export const createTicketEntry = defineTool({
       title: input.title,
       body: input.body,
       requestedBy,
-      tainted: untrustedIngestedThisTurn(),
     };
 
     const posted = await requestApproval(

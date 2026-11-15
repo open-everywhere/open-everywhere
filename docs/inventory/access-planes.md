@@ -649,7 +649,7 @@ An **exempt** row is a resolver file the model never sees by name, carried by `U
 | AP-MOD-core-access-untrusted-projection | Holds all policy for the carried eve toolset patch and mutates tool objects in place, because eve keys tool approvals on the built tool object. | `projectToolSet` — `packages/core/agent/access/untrusted-projection.ts:79` | docs/security/control-plane.md#the-honest-bound-on-all-egress-is-denied | ? |
 | AP-MOD-core-access-worker-continuation | Fences worker continuation by `taskId` to the room that opened the task, carries the wake's attachment ids into the worker's brief, and drops a caller output schema. | `guardTaskContinuations` — `packages/core/agent/access/worker-continuation.ts:149` | docs/glossary.md#2-delegation | ? |
 | AP-MOD-core-access-nullable-optional-fields | Advertises every optional tool input field as nullable to the model, and removes such a null before the tool validates, so the tool receives the field as absent. | `nullableOptionalToolSet` — `packages/core/agent/access/nullable-optional-fields.ts:154` | docs/extending/tools.md#add-your-own-tool | ? |
-| AP-MOD-core-approvals-taint-disclosure | Renders the taint disclosure line at the three summarize call sites rather than inside a kind, so it survives a re-render and no new kind can forget it. | `withTaintDisclosure` — `packages/core/agent/approvals/taint-disclosure.ts:25` | docs/glossary.md#3-taint | ? |
+| AP-MOD-core-approvals-taint-disclosure | Deprecated no-op shim since OPE-2717: no card discloses taint. It stays one release because it is a public subpath export (OPE-2721 removes it). | `withTaintDisclosure` — `packages/core/agent/approvals/taint-disclosure.ts:15` | docs/glossary.md#3-taint | ? |
 
 ## Egress policy
 

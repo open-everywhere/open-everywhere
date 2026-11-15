@@ -1,10 +1,10 @@
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { assertChatDmAllowed, chatDmMount, PERSON_RESOURCE_TYPE } from "../access/chat-dm-grant.js";
 import { deliverProactiveDm, dmDeliveryFooter } from "../channels/dm-audience.js";
@@ -114,7 +114,6 @@ const dmPersonEntry = defineTool({
       text: input.text,
       footer,
       requestedBy,
-      tainted: untrustedIngestedThisTurn(),
     };
 
     const posted = await requestApproval(

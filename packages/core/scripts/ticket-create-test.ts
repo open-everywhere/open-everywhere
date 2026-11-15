@@ -254,15 +254,14 @@ function createArgs(over: Partial<TicketCreateArgs> = {}): TicketCreateArgs {
   ok(lines[0].includes("test-kind-platform") && lines[0].includes("ENG"), "the card names the destination platform + target");
   ok(lines.some((l) => l.includes("Login 500s on retry")), "the card renders the exact title that will be published");
   ok(lines.some((l) => l.includes("Steps: …")), "the card renders the body too — a human reads the text before it reaches watchers");
-  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a clean proposal");
-  const tainted = kind.summarize(createArgs({ tainted: true }));
-  ok(tainted.some((l) => l.includes("⚠") && l.includes("external content")), "a tainted proposal gets the reviewer-scrutiny banner (flagged, never auto-rejected — the sibling doctrine)");
+  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a proposal");
+  ok(JSON.stringify(kind.summarize(Object.assign(createArgs(), { tainted: true }))) === JSON.stringify(lines), "a legacy tainted card renders exactly the clean card");
 }
 
 {
-  const row = (tainted: boolean) => ({ kind: "ticket.create", argsJson: JSON.stringify(createArgs({ tainted })) });
+  const row = (tainted: boolean) => ({ kind: "ticket.create", argsJson: JSON.stringify({ ...createArgs(), tainted }) });
   ok(sessionGrantKind(row(false)) === null, "ticket.create is NOT session-grantable even untainted — an 'approve for this routine' click can never arm standing issue-filing");
-  ok(sessionGrantKind(row(true)) === null, "…and a tainted one certainly isn't");
+  ok(sessionGrantKind(row(true)) === null, "…and a legacy card frozen with tainted:true is not either");
   ok(sessionGrantKind({ kind: "pr.open", argsJson: "{}" }) === "pr.open", "control: pr.open IS the session-grantable kind (so the null above is a real property, not a broken call)");
 }
 
@@ -279,7 +278,7 @@ function createArgs(over: Partial<TicketCreateArgs> = {}): TicketCreateArgs {
   const detail = entry!.detail as Record<string, unknown>;
   ok(detail.platform === "test-kind-platform" && detail.target === "ENG" && detail.requestedBy === "U_PROPOSER", "audit detail carries platform/target/requestedBy");
   ok(detail.entityId === "ENG#7", "audit detail records the id of the item that was actually created");
-  ok(detail.tainted === false, "audit detail stamps tainted:false on a clean proposal");
+  ok(!("tainted" in detail), "audit detail carries no taint field (OPE-2717)");
 }
 
 {

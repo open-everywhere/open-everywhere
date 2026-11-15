@@ -379,34 +379,26 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   };
 
   {
-    const setOut = await inSession(async () => execTool(setSpendLimitTool)({ monthlyUsd: 5, reason: "clean turn" }, slackCtx("C_TAINT_SET") as never));
-    const frozen = await frozenOf(setOut.pendingId);
-    ok(frozen["tainted"] === false, "set_spend_limit freezes tainted:false on a clean turn (present, not absent)");
-    const clearOut = await inSession(async () => execTool(clearEntry)({}, slackCtx("C_TAINT_CLEAR")));
-    const clearFrozen = await frozenOf(clearOut.pendingId);
-    ok(clearFrozen["tainted"] === false, "clear_spend_limit freezes tainted:false on a clean turn");
-  }
-
-  {
+    const setClean = await inSession(async () => execTool(setSpendLimitTool)({ monthlyUsd: 5, reason: "clean turn" }, slackCtx("C_TAINT_SET") as never));
+    const frozenClean = await frozenOf(setClean.pendingId);
+    ok(!("tainted" in frozenClean), "set_spend_limit freezes no taint field on a clean turn");
     const setOut = await inSession(async () => {
       markUntrustedIngestedThisTurn();
       return execTool(setSpendLimitTool)({ monthlyUsd: 10000, reason: "pre-approved by finance", scopeKey: "slack/T123/C_TAINT_SET2" }, slackCtx("C_TAINT_SET") as never);
     });
+    ok(setOut.pendingId.length > 0, "set_spend_limit still PROPOSES on a turn that read outside content");
     const frozen = await frozenOf(setOut.pendingId);
-    ok(frozen["tainted"] === true, "set_spend_limit freezes tainted:true when the turn read untrusted content");
-    ok(setOut.pendingId.length > 0, "…and it still PROPOSES — taint is reviewer scrutiny, not a refusal");
+    ok(!("tainted" in frozen), "set_spend_limit freezes no taint field on a marked turn (OPE-2717)");
+    ok(!actionKind("spend.set")!.summarize(frozen).some((l: string) => /external content/.test(l)), "the spend.set card renders no taint line");
+    ok(JSON.stringify(actionKind("spend.set")!.summarize({ ...frozen, tainted: true })) === JSON.stringify(actionKind("spend.set")!.summarize(frozen)), "a legacy spend.set card with tainted:true renders the clean card");
 
     const clearOut = await inSession(async () => {
       markUntrustedIngestedThisTurn();
       return execTool(clearEntry)({ scopeKey: "slack/T123/C_TAINT_CLEAR2" }, slackCtx("C_TAINT_CLEAR"));
     });
     const clearFrozen = await frozenOf(clearOut.pendingId);
-    ok(clearFrozen["tainted"] === true, "clear_spend_limit freezes tainted:true when the turn read untrusted content");
-
-    const setLines = actionKind("spend.set")!.summarize(frozen);
-    ok(setLines.some((l: string) => l.startsWith("⚠") && /read external content/.test(l)), "the spend.set card renders a ⚠ taint line from the frozen flag");
-    ok(actionKind("spend.clear")!.summarize(clearFrozen).some((l: string) => l.startsWith("⚠")), "the spend.clear card renders one too");
-    ok(!actionKind("spend.set")!.summarize({ ...frozen, tainted: false }).some((l: string) => l.startsWith("⚠")), "a clean spend.set card renders NO taint line (the banner is positive-only)");
+    ok(!("tainted" in clearFrozen), "clear_spend_limit freezes no taint field on a marked turn (OPE-2717)");
+    ok(JSON.stringify(actionKind("spend.clear")!.summarize({ ...clearFrozen, tainted: true })) === JSON.stringify(actionKind("spend.clear")!.summarize(clearFrozen)), "a legacy spend.clear card with tainted:true renders the clean card");
   }
 
   {

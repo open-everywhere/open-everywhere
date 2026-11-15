@@ -3,7 +3,6 @@ import { actionKind } from "./actions.js";
 import { grantButtonLabel, pendingCardExpiryClause, sessionGrantKind } from "./session-grant.js";
 import { getSettings } from "../settings/settings.js";
 import { consequenceForRow, doneSummaryForRow, plainSummaryForRow } from "./plain-summary.js";
-import { taintCardWarning } from "./taint-disclosure.js";
 import { finishPlainLine } from "./plain-text.js";
 import { ALLOW_RULE_LABEL, ALLOW_RULE_VERB, allowRuleConfirmText, allowRuleProposalForRow } from "./allow-rule.js";
 
@@ -63,6 +62,7 @@ export function approvalCardMetadata(meta: CardMeta, status: string): { readonly
 export interface PendingCardLayout {
   readonly headline: string;
   readonly consequence?: string;
+  /** @deprecated Since OPE-2717 no card has a warning line, and the layout never sets this. OPE-2721 removes it. */
   readonly warning?: string;
   readonly requestedBy: string;
   readonly expiry: string;
@@ -83,7 +83,7 @@ export function cardFooter(requester: string, expiry: string): string {
 }
 
 export function pendingCardLines(layout: PendingCardLayout): string[] {
-  return [layout.headline, ...(layout.consequence !== undefined ? [layout.consequence] : []), ...(layout.warning !== undefined ? [layout.warning] : [])];
+  return [layout.headline, ...(layout.consequence !== undefined ? [layout.consequence] : [])];
 }
 
 function bareHeadline(row: Pick<PendingActionRow, "kind" | "argsJson">): string {
@@ -178,21 +178,11 @@ function optionLabelsForRow(row: Pick<PendingActionRow, "kind" | "argsJson">): {
   }
 }
 
-function parseArgs(argsJson: string): unknown {
-  try {
-    return JSON.parse(argsJson);
-  } catch {
-    return undefined;
-  }
-}
-
 export function pendingCardLayout(row: PendingActionRow, summaryLines: readonly string[]): PendingCardLayout {
   const consequence = consequenceForRow(row);
-  const warning = taintCardWarning(summaryLines, parseArgs(row.argsJson));
   return {
     headline: plainSummaryForRow(row),
     ...(consequence !== undefined ? { consequence } : {}),
-    ...(warning !== undefined ? { warning } : {}),
     requestedBy: row.requestedBy,
     expiry: pendingCardExpiryClause(row.expiresAt),
     options: pendingCardOptions(row),

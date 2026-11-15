@@ -49,7 +49,6 @@ import {
   noteRoutineRunPermissionRefusal,
   peekCardPostedThisTurn,
 } from "./card-signal.js";
-import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
 import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
@@ -679,7 +678,7 @@ export async function requestApproval(
       const outcome = await kindDef.execute(input.args, decidedBy);
       const noticePlatform = resolution.resolvedBy === "judge" ? platformOfScopeKey(input.postedTo) : undefined;
       if (noticePlatform !== undefined) {
-        await postJudgeLiftNotice(noticePlatform, deps.post ?? bridgeSlackForm, input, row, () => withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args), outcome);
+        await postJudgeLiftNotice(noticePlatform, deps.post ?? bridgeSlackForm, input, row, () => (input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args)), outcome);
       }
       await appendAudit({
         ...whereFromScope(input.org, input.scopeKey),
@@ -811,7 +810,7 @@ export async function requestApproval(
     }
   }
 
-  const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
+  const summaryLines = input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args);
 
   let messageTs = swallowRoomPost(`an approval-card post for "${input.kind}" (${input.scopeKey})`, "card");
   let postFailure: string | undefined;
@@ -1167,7 +1166,7 @@ function summaryLinesFor(row: PendingActionRow): string[] {
   if (!kindDef) return [`(no registered ActionKind for "${row.kind}")`];
   try {
     const args = JSON.parse(row.argsJson);
-    return withTaintDisclosure(kindDef.summarize(args), args, { live: false });
+    return kindDef.summarize(args);
   } catch {
     return ["(failed to render this pending's summary)"];
   }
@@ -1229,14 +1228,6 @@ async function auditClickerDenial(
   }).catch(() => undefined);
 }
 
-function taintedFrozenProposal(argsJson: string): boolean {
-  try {
-    return (JSON.parse(argsJson) as { tainted?: unknown }).tainted === true;
-  } catch {
-    return true;
-  }
-}
-
 export const MAX_SESSION_GRANT_RELEASES = 32;
 
 async function releaseSessionGrantedPendings(input: {
@@ -1253,8 +1244,7 @@ async function releaseSessionGrantedPendings(input: {
       (r) =>
         r.id !== input.grantedOn.id &&
         sessionIdFromFrozenArgs(r.argsJson) === input.sessionId &&
-        sessionGrantKind(r) === input.memoKind &&
-        !taintedFrozenProposal(r.argsJson),
+        sessionGrantKind(r) === input.memoKind,
     );
     const candidates = matched.slice(0, MAX_SESSION_GRANT_RELEASES);
     if (matched.length > candidates.length) {

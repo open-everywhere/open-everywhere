@@ -15,13 +15,13 @@ export interface TicketCreateArgs {
   readonly title: string;
   readonly body: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
 
 function summarizeCreate(args: TicketCreateArgs): string[] {
   const lines = [`File a new ${args.platform} work item in ${args.target}`, `Title: ${args.title}`];
   if (args.body.trim().length > 0) lines.push(args.body);
-  if (args.tainted) lines.push("⚠ proposed in a turn that read external content — review before approving");
   return lines;
 }
 
@@ -49,7 +49,6 @@ const ticketCreate: ActionKind<TicketCreateArgs> = {
         entityId: created.ref.id,
         ...(created.url ? { url: created.url } : {}),
         requestedBy: args.requestedBy,
-        tainted: Boolean(args.tainted),
       },
     });
     return created.url ? `${created.summary} ${created.url}` : created.summary;

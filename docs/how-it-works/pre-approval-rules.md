@@ -339,8 +339,10 @@ same verb. The instance lint (§1) checks it too.
 - the judge is in `enforce` mode;
 - the act reaches the judge: `open_pull_request`, a `create_routine` that declares no standing write,
   or a connector write or delete that passes every connector floor (§4);
-- the card froze `tainted: false`. A card that froze no taint flag reads as tainted, so
-  `request_access` (whose card does not freeze one today) gets no option;
+- the card's kind is `pr.open` or `routine.create` (`ALLOW_RULE_TOOL_KINDS` in
+  `approvals/allow-rule.ts`), or it is a connector card. Eligibility is by kind alone (OPE-2717): a
+  proposal raised after a read gets the option too, and a frozen `tainted` flag on an older card is
+  ignored. `request_access` is not an eligible kind, so it gets no option;
 - the room is the person's own Slack DM with the agent, or a Slack room of exactly one domain on a
   deployment with a config repo and an admin channel.
 

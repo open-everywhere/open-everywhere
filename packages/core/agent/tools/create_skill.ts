@@ -6,7 +6,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
 import { actingPrincipalIdOf, resolveAccessFor, unattendedOf } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
@@ -76,6 +75,7 @@ export default windowGated("create_skill", defineTool({
     }
 
     const binding = bindFrom(ctx);
+    // principal-gate: presence — a skill is standing trusted text every future turn of the domain is handed
     const authoredBy = actingPrincipalIdOf(ctx);
     if (!authoredBy) {
       throw new Error("create_skill needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not author standing instructions every later turn of the domain will follow. Ask a person in this conversation to propose it.");
@@ -88,12 +88,11 @@ export default windowGated("create_skill", defineTool({
     const venue = venueResult.venue;
 
     const action: "created" | "updated" = already ? "updated" : "created";
-    const tainted = untrustedIngestedThisTurn();
     const posted = await requestApproval(
       {
         org: p.org,
         kind: "skill.create",
-        args: { org: p.org, domain, name, content, action, ...(authoredBy ? { authoredBy } : {}), tainted },
+        args: { org: p.org, domain, name, content, action, ...(authoredBy ? { authoredBy } : {}) },
         scopeKey: proposeScopeKey,
         domain,
         requestedBy: authoredBy,
@@ -105,7 +104,7 @@ export default windowGated("create_skill", defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `skill "${name}" (${action})${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `skill "${name}" (${action})`;
     if (posted.autoApproved) {
       return {
         ok: true,

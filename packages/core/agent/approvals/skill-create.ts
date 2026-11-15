@@ -14,6 +14,7 @@ interface SkillCreateArgs {
   readonly content: string;
   readonly action: "created" | "updated";
   readonly authoredBy?: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
 
@@ -31,7 +32,6 @@ const skillCreate: ActionKind<SkillCreateArgs> = {
     const shown = args.content.length > CARD_BODY_MAX ? `${args.content.slice(0, CARD_BODY_MAX)}\n… (${args.content.length - CARD_BODY_MAX} more bytes)` : args.content;
     return [
       `${args.action === "updated" ? "Update" : "Create"} skill \`${args.name}\` in domain \`${args.domain}\` — the agent will LOAD and FOLLOW this by name`,
-      ...(args.tainted ? ["⚠ authored in a turn that read external content — read the body carefully before arming"] : []),
       "```",
       shown,
       "```",
@@ -49,7 +49,7 @@ const skillCreate: ActionKind<SkillCreateArgs> = {
       workspace: "-",
       action: args.action === "updated" ? "skill.update" : "skill.create",
       principalId: decidedBy,
-      detail: { domain: args.domain, name: args.name, authoredBy: args.authoredBy ?? null, armedBy: decidedBy, tainted: Boolean(args.tainted) },
+      detail: { domain: args.domain, name: args.name, authoredBy: args.authoredBy ?? null, armedBy: decidedBy },
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "skill_created", "oe.outcome": "ok" });
     return `skill ${args.name} ${args.action} in ${args.domain}; the agent follows it from its next turn`;

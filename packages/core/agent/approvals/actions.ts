@@ -5,7 +5,6 @@ import { parseScopeKey } from "../access/scope-key.js";
 import { principalKey } from "../identity/principal-key.js";
 import type { CapLevel } from "../operational/store.js";
 import type { ActionKind, PendingActionRow } from "./types.js";
-import { withTaintDisclosure } from "./taint-disclosure.js";
 import { placeWords } from "../channels/friendly-ids.js";
 import { plainValue } from "./plain-text.js";
 import type { AuditDetail } from "../audit/scrubbed-text.js";
@@ -29,7 +28,7 @@ export function summarizeFrozenRow(row: PendingActionRow): string[] {
   if (!kindDef) return [`(no registered ActionKind for "${row.kind}")`];
   try {
     const args = JSON.parse(row.argsJson);
-    return withTaintDisclosure(kindDef.summarize(args), args, { live: false });
+    return kindDef.summarize(args);
   } catch {
     return ["(failed to render this pending's summary)"];
   }
@@ -98,10 +97,6 @@ function plainScope(label: string | undefined, scopeKey: string): string {
   return scopeWords(label, scopeKey);
 }
 
-function spendTaintLines(tainted: boolean | undefined): string[] {
-  return tainted ? ["⚠ proposed in a turn that read external content — confirm a person actually asked for this budget change before approving"] : [];
-}
-
 export interface SpendSetArgs {
   readonly org: string;
   readonly scopeKey: string;
@@ -110,9 +105,9 @@ export interface SpendSetArgs {
   readonly monthlyUsd?: number;
   readonly reason?: string;
   readonly scopeLabel?: string;
+  readonly tainted?: boolean;
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
-  readonly tainted?: boolean;
   readonly coverage?: SpendCoverage;
 }
 
@@ -208,7 +203,6 @@ const spendSet: ActionKind<SpendSetArgs> = {
       ...spendChangeLines(args),
       ...spendCoverageLines(args.coverage),
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
-      ...spendTaintLines(args.tainted),
     ];
   },
   async execute(args, decidedBy) {
@@ -230,7 +224,6 @@ const spendSet: ActionKind<SpendSetArgs> = {
         ...(args.monthlyTokens != null ? { monthlyTokens: args.monthlyTokens } : {}),
         ...(args.monthlyUsd != null ? { monthlyUsd: args.monthlyUsd } : {}),
         ...(args.reason ? { reason: args.reason } : {}),
-        ...(args.tainted ? { tainted: true } : {}),
         ...spendCoverageDetail(args.coverage),
       },
     });
@@ -296,7 +289,6 @@ const spendClear: ActionKind<SpendClearArgs> = {
     return [
       `Clear spend limit override — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
       `${current.length ? current.join(" + ") : "none (uncapped)"} → ${after === undefined ? "the configured limit" : `${after} (the configured limit)`}`,
-      ...spendTaintLines(args.tainted),
     ];
   },
   async execute(args, decidedBy) {
@@ -306,7 +298,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
       ...whereFromScope(args.org, args.scopeKey),
       principalId: decidedBy,
       action: "admin.spend.clear_limit",
-      detail: { scopeKey: args.scopeKey, level: args.level, cleared, ...(args.tainted ? { tainted: true } : {}) },
+      detail: { scopeKey: args.scopeKey, level: args.level, cleared },
     });
     const scope = scopeWords(args.scopeLabel, args.scopeKey);
     return cleared

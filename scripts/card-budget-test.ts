@@ -14,8 +14,7 @@ registerConfig({ loadBundles: () => [], loadBindings: () => [], pluginRegistry: 
 await import("@open-everywhere/core/agent/approvals/flow.js");
 await import("@open-everywhere/core/agent/approvals/session-checkpoint.js");
 const { registeredActionKinds, actionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
-const { withTaintDisclosure } = await import("@open-everywhere/core/agent/approvals/taint-disclosure.js");
-const { pendingCardLayout, decidedCardLine, judgeLiftOutcome, CLICK_NOTICE, APPROVAL_CARD_METADATA_TYPE, APPROVAL_CARD_BLOCK_PREFIX, CARD_METADATA_DETAIL_MAX } = await import("@open-everywhere/core/agent/approvals/card-layout.js");
+const { pendingCardLayout, pendingCardLines, decidedCardLine, judgeLiftOutcome, CLICK_NOTICE, APPROVAL_CARD_METADATA_TYPE, APPROVAL_CARD_BLOCK_PREFIX, CARD_METADATA_DETAIL_MAX } = await import("@open-everywhere/core/agent/approvals/card-layout.js");
 const { decisionNoticeText } = await import("@open-everywhere/core/agent/approvals/flow.js");
 const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
 const { clickerFloorRefusalNotice } = await import("@open-everywhere/core/agent/approvals/clicker-floor.js");
@@ -39,7 +38,7 @@ const ok = (cond: boolean, label: string): void => {
   n++;
 };
 
-const MAX_PENDING_LINES = 4;
+const MAX_PENDING_LINES = 3;
 const MAX_PENDING_CHARS = 420;
 const MAX_DECIDED_CHARS = 240;
 
@@ -182,17 +181,27 @@ function checkVisible(label: string, lines: readonly string[], buttons: readonly
   const fixtureKinds = new Set(APPROVAL_KIND_FIXTURES.map((f) => f.kind));
   for (const kind of KINDS) ok(fixtureKinds.has(kind), `kind "${kind}" has a card fixture in approval-kind-fixtures.ts`);
 }
+
+const ROUTINE_KINDS_OPE_2718: ReadonlySet<string> = new Set(["routine.create", "routine.cancel", "routine.edit"]);
 for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
-  for (const tainted of [false, true]) {
-    const frozen = { ...args, tainted };
+  const legacyTaintStillRead = ROUTINE_KINDS_OPE_2718.has(kind);
+  const cleanDetail = actionKind(kind)!.summarize(args as never);
+  const cleanLines = pendingCardLines(pendingCardLayout(row(kind, args), cleanDetail));
+  for (const tainted of [undefined, false, true]) {
+    const frozen = tainted === undefined ? { ...args } : { ...args, tainted };
     const r = row(kind, frozen);
-    const detail = withTaintDisclosure(actionKind(kind)!.summarize(frozen as never), frozen, { live: false });
+    const detail = actionKind(kind)!.summarize(frozen as never);
     const layout = pendingCardLayout(r, detail);
-    const tag = `${kind}${tainted ? " (tainted)" : ""}`;
+    const tag = `${kind}${tainted === undefined ? "" : ` (legacy tainted:${String(tainted)})`}`;
     ok(layout.headline.length <= PLAIN_SUMMARY_MAX, `${tag}: the headline fits ${PLAIN_SUMMARY_MAX} characters`);
     const cap = actionKind(kind)!.consequenceQuotes === true ? QUOTE_MAX : CONSEQUENCE_MAX;
     ok(layout.consequence === undefined || (layout.consequence.length <= cap && !layout.consequence.includes("\n")), `${tag}: the consequence is one line of at most ${cap} characters`);
-    ok(tainted === (layout.warning !== undefined), `${tag}: the warning line shows exactly when the proposal was tainted`);
+    if (!legacyTaintStillRead || tainted !== true) {
+      ok(JSON.stringify(detail) === JSON.stringify(cleanDetail), `${tag}: the detail is the clean card's detail`);
+      ok(!detail.some((l) => /read external content|outside content/u.test(l)), `${tag}: no line of the detail warns about taint`);
+      ok(JSON.stringify(pendingCardLines(layout)) === JSON.stringify(cleanLines), `${tag}: the visible lines are the clean card's lines`);
+      ok(!pendingCardLines(layout).some((l) => /tainted|read external content|outside content/iu.test(l)), `${tag}: no visible line warns about taint`);
+    }
 
     const slack = pendingCardBlocks(r, detail);
     const s = slackLines(slack.blocks);
@@ -331,20 +340,11 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
 
 {
   const base = APPROVAL_KIND_FIXTURES.find((f) => f.kind === "chat.post")!.args;
-  const clean = { ...base, tainted: false, text: "FYI: this summary used external content from the vendor docs." };
-  const detail = withTaintDisclosure(actionKind("chat.post")!.summarize(clean as never), clean, { live: false });
-  ok(pendingCardLayout(row("chat.post", clean), detail).warning === undefined, "🔴 a phrase inside the quoted message does not raise the taint warning");
   const crossVenue = { ...base, platform: "slack", container: "C0EXAMPLE2", scopeKey: "discord/111111111111111111/222222222222222222" };
   const headline = pendingCardLayout(row("chat.post", crossVenue), ["detail"]).headline;
   ok(!headline.includes("<#") && headline.includes("a Slack conversation"), `🔴 a cross-platform post names its destination in words, not a raw mention (got "${headline}")`);
   const sameVenue = pendingCardLayout(row("chat.post", { ...base, platform: "slack", container: "C0EXAMPLE2", scopeKey: "slack/T0EXAMPLE1/C0EXAMPLE1" }), ["detail"]).headline;
   ok(sameVenue.includes("<#C0EXAMPLE2>"), "negative control: on its own platform the destination renders as a channel mention");
-  const es = APPROVAL_KIND_FIXTURES.find((f) => f.kind === "email.sender")!.args;
-  const esArgs = { ...es, why: "they send us external content we must triage" };
-  const live = withTaintDisclosure(actionKind("email.sender")!.summarize(esArgs as never), esArgs, { live: false, kinds: [] });
-  const liveTainted = withTaintDisclosure(actionKind("email.sender")!.summarize(esArgs as never), { ...esArgs, tainted: true }, { live: false });
-  ok(pendingCardLayout(row("email.sender", esArgs), liveTainted).warning !== undefined, "🔴 a tainted proposal whose reason names external content still shows the warning");
-  ok(pendingCardLayout(row("email.sender", esArgs), live).warning === undefined, "negative control: the same reason on a clean proposal raises no warning");
 }
 
 {

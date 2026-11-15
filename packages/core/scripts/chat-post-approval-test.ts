@@ -1,3 +1,5 @@
+// proves: chat.post
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -65,9 +67,8 @@ function args(over: Partial<ChatPostArgs> = {}): ChatPostArgs {
   ok(lines[0].includes("C_ELSEWHERE"), "the card names the DESTINATION container");
   ok(lines[0].includes(GRANT), "the card names the GRANT that allows the post");
   ok(lines.some((l) => l.includes("The release note body.")), "the card renders the FULL body — it is the injection gate");
-  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a clean proposal");
-  const tainted = kind.summarize(args({ tainted: true }));
-  ok(tainted.some((l) => l.includes("⚠") && l.includes("external content")), "a tainted proposal gets the reviewer-scrutiny banner");
+  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a proposal");
+  ok(JSON.stringify(kind.summarize(Object.assign(args(), { tainted: true }))) === JSON.stringify(lines), "a legacy tainted card renders exactly the clean card");
 }
 
 {
@@ -90,7 +91,7 @@ function args(over: Partial<ChatPostArgs> = {}): ChatPostArgs {
   ok(detail.grant === GRANT, "🔴 the audit row NAMES THE GRANT that allowed the post");
   ok(detail.messageId === "M-1", "the audit row carries the created message id");
   ok(detail.requestedBy === "U_PROPOSER", "the audit row carries the proposer alongside the approver");
-  ok(detail.tainted === false, "the audit row stamps tainted:false on a clean proposal");
+  ok(!("tainted" in detail), "the audit row carries no taint field (OPE-2717)");
 }
 
 {
@@ -137,3 +138,5 @@ function args(over: Partial<ChatPostArgs> = {}): ChatPostArgs {
 }
 
 console.log(`chat-post-approval: ${n} assertions passed`);
+
+// proves: AP-MOD-core-approvals-chat-post

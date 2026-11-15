@@ -1,3 +1,5 @@
+// proves: approval.rule.added, approval.rule.refused, approval.rule.removed, approval.rule.proposed
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -69,7 +71,7 @@ function row(over: Partial<PendingActionRow> & { args?: Record<string, unknown> 
     id: `row-${seq}`,
     org: ORG,
     kind: "pr.open",
-    argsJson: JSON.stringify(args ?? { what: `thing ${seq}`, tainted: false }),
+    argsJson: JSON.stringify(args ?? { what: `thing ${seq}` }),
     scopeKey: DM,
     domain: null,
     requestedBy: "U_ANA",
@@ -113,9 +115,11 @@ async function stored(r: PendingActionRow): Promise<PendingActionRow> {
   ok(dm !== undefined && dm.rule.startsWith("In this DM, open pull requests with open_pull_request when the person asked for it in this turn"), "proposal: code writes the rule from the tool, the action and the object");
   ok(dm !== undefined && ruleInstanceProblems(dm.rule).length === 0, "proposal: the rule passes the instance lint");
   ok(!allowRuleProposalForRow(row({ args: { what: "Notion page 7 for https://x.example/a", tainted: false } }))!.rule.includes("page 7"), "proposal: no argument text reaches the rule");
-  ok(allowRuleProposalForRow(row({ args: { what: "x", tainted: true } })) === undefined, "proposal: a tainted proposal gets no option");
-  ok(allowRuleProposalForRow(row({ args: { what: "x" } })) === undefined, "proposal: a tool card that does not freeze `tainted: false` reads as tainted (fail-closed)");
-  ok(allowRuleProposalForRow(row({ kind: "access.request", args: { org: ORG, requestId: "r", requestedBy: "U_ANA" } })) === undefined, "proposal: an access.request card, which freezes no taint flag today, gets no option");
+  ok(allowRuleProposalForRow(row({ args: { what: "x", tainted: true } }))?.id === "dm.open-pull-request.open", "proposal: a card frozen with tainted:true still gets the option (the field is ignored)");
+  ok(allowRuleProposalForRow(row({ args: { what: "x", tainted: false } }))?.id === "dm.open-pull-request.open", "proposal: a card frozen with tainted:false gets the same option");
+  ok(allowRuleProposalForRow(row({ args: { what: "x" } }))?.id === "dm.open-pull-request.open", "proposal: a card with no taint field gets the option (eligibility is by kind)");
+  ok(allowRuleProposalForRow(row({ kind: "access.request", args: { org: ORG, requestId: "r", requestedBy: "U_ANA" } })) === undefined, "proposal: an access.request card gets no option (not an eligible kind)");
+  ok(allowRuleProposalForRow(row({ kind: "access.request", args: { org: ORG, requestId: "r", requestedBy: "U_ANA", tainted: false } })) === undefined, "proposal: an access.request card gets no option even with a forged tainted:false");
   ok(allowRuleProposalForRow(row({ kind: "spend.set" })) === undefined, "proposal: an admin act gets no option (human-only)");
   ok(allowRuleProposalForRow(row({ kind: "memory.purge" })) === undefined, "proposal: a memory erasure gets no option (human-only)");
   ok(allowRuleProposalForRow(row({ kind: "routine.create", args: { permissions: ["pr.open"], tainted: false } })) === undefined, "proposal: a routine with a standing write gets no option");
@@ -146,6 +150,23 @@ async function stored(r: PendingActionRow): Promise<PendingActionRow> {
   const widened = widenAllowRuleSubject({ tool: "linear", action: "create", objects: ["issues"], ops: ["create_issue"] }, { tool: "linear", action: "create", objects: ["projects"], ops: ["create_project"] });
   ok(widened.objects.join(",") === "issues,projects" && widened.ops!.join(",") === "create_issue,create_project", "merge: a second object widens the subject");
   ok(allowRuleText("domain", widened).includes("issues and projects"), "merge: the widened rule names both kinds of object");
+}
+
+{
+  const { TOOL_CONSEQUENCE, NON_TOOL_ACTION_KINDS } = await import("../agent/access/consequence.js");
+  const kinds = new Set<string>(Object.keys(NON_TOOL_ACTION_KINDS));
+  for (const entry of Object.values(TOOL_CONSEQUENCE)) if (entry.via.kind === "action-kind") kinds.add(entry.via.action);
+  ok(kinds.size > 30, "eligibility: the sweep reads every registered action kind");
+  const eligible = (frozen: Record<string, unknown>): string =>
+    [...kinds].filter((kind) => allowRuleProposalForRow(row({ kind, args: { what: "x", permissions: [], ...frozen } })) !== undefined).sort().join(",");
+  ok(eligible({}) === "pr.open,routine.create", `eligibility: with no taint field, exactly pr.open and routine.create (got "${eligible({})}")`);
+  ok(eligible({ tainted: false }) === "pr.open,routine.create", "eligibility: a legacy tainted:false card changes nothing (a forged flag widens nothing)");
+  ok(eligible({ tainted: true }) === "pr.open,routine.create", "eligibility: a legacy tainted:true card changes nothing");
+  accessRequests = { adminChannel: "C_ADMIN", configRepo: "acme/app-config", dryRun: false };
+  const op = { tool: "linear__create_issue", connection: "linear", grain: "per-call", opTier: "write", credential: "domain", inputPreview: "{}", sessionKey: "s", memoKind: "m", requestedBy: "U_ANA", org: ORG, scopeKey: ROOM };
+  ok(allowRuleProposalForRow(row({ kind: "op.connector", scopeKey: ROOM, domain: "eng", args: { ...op, tainted: true } }))?.subject.tool === "linear", "eligibility: a connector card frozen with tainted:true gets the option (OPE-2715 row 4)");
+  ok(allowRuleProposalForRow(row({ kind: "op.connector", scopeKey: ROOM, domain: "eng", args: { ...op, tainted: true, credential: "personal" } })) === undefined, "eligibility (negative control): the connector's own floor still refuses a personal credential");
+  accessRequests = null;
 }
 
 {

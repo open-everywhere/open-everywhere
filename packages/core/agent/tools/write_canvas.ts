@@ -4,7 +4,6 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
@@ -51,7 +50,7 @@ const inputSchema = z.object({
 
 export async function buildCanvasWrite(
   input: z.infer<typeof inputSchema>,
-  p: { readonly org: string; readonly scopeKey: string; readonly channelId: string; readonly requestedBy: string; readonly tainted: boolean },
+  p: { readonly org: string; readonly scopeKey: string; readonly channelId: string; readonly requestedBy: string; /** @deprecated Ignored since OPE-2717. */ readonly tainted?: boolean },
   call: SlackDocCall,
 ): Promise<CanvasWriteArgs> {
   if (input.markdown.length > CANVAS_MARKDOWN_MAX) {
@@ -59,7 +58,7 @@ export async function buildCanvasWrite(
   }
   if (quotesMemoryCanvasMarker(`${input.title ?? ""}\n${input.markdown}`)) throw new Error(`${TOOL}: ${MEMORY_CANVAS_MARKER_REFUSAL}`);
   const markdown = defuseDocText(input.markdown);
-  const base = { org: p.org, scopeKey: p.scopeKey, channelId: p.channelId, markdown, requestedBy: p.requestedBy, ...(p.tainted ? { tainted: true } : {}) };
+  const base = { org: p.org, scopeKey: p.scopeKey, channelId: p.channelId, markdown, requestedBy: p.requestedBy };
   if (input.canvas === undefined) {
     if (!input.title) throw new Error(`${TOOL}: a new canvas needs a title.`);
     return { ...base, op: "create", title: input.title };
@@ -100,6 +99,7 @@ const writeCanvasEntry = defineTool({
     }
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error(`${TOOL}: I could not tell which Slack conversation this is. Ask again from the channel or DM.`);
+    // principal-gate: accountability — somebody NAMEABLE must exist (a card needs an "asked by" line). A fire's attested creator satisfies this, correctly.
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(`${TOOL}: no verified person asked for this, so there is nobody to show on the approval card.`);
@@ -112,7 +112,7 @@ const writeCanvasEntry = defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "make that change"));
     }
     const venue = venueResult.venue;
-    const args = await buildCanvasWrite(input, { org: p.org, scopeKey, channelId, requestedBy, tainted: untrustedIngestedThisTurn() }, liveSlackDocCall);
+    const args = await buildCanvasWrite(input, { org: p.org, scopeKey, channelId, requestedBy }, liveSlackDocCall);
     const posted = await requestApproval(
       {
         org: p.org,

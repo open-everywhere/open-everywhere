@@ -635,7 +635,9 @@ say "trusted": nothing here is about how the connection is reached.
 
 That table is **enforced** for the connector-discovery list, so the word has an effect there: an
 `"internal"` connector's rows are still fenced as data but no longer mark the turn, which changes
-what a later approval card discloses. A declared `"external"` connector, and an undeclared one, both
+whether a later `taint: "gate"` sink floors the proposal at a person's decision, whether a
+connector write in that turn can reach the approval judge, whether a routine's standing `tool:`
+grant lifts a connector write in an unattended run, and what the `approval.chain` row records. A declared `"external"` connector, and an undeclared one, both
 still mark it.
 
 **The word also applies to an operation's own result.** Since eve 0.69.0 the model reaches every
@@ -1234,8 +1236,7 @@ What bounds the ask, each one enforced rather than written:
   re-plans on a refusal from paging a person on every retry.
 - A pending ask **expires on its own short TTL**, which is not the grant's. A late click
   loses the approve compare-and-set; it is not caught by a screen state.
-- A turn that has already **read external content may not ask at all**. The purpose line is
-  the one thing the owner reads to decide, and fetched content must never author it.
+- A turn that has already read external content **may ask too** (OPE-2717). The owner's own card is the gate: the owner reads the quoted purpose line and decides.
 
 The owner's card arrives in **their own direct messages**, never in the requesting room.
 Consent must not be socially observed: a card in a shared room makes a person's "no" a

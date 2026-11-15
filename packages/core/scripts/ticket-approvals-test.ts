@@ -1,3 +1,5 @@
+// proves: ticket.assign, ticket.set_state
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -52,9 +54,8 @@ function assignArgs(over: Partial<TicketAssignArgs> = {}): TicketAssignArgs {
   const kind = actionKind("ticket.set_state")!;
   const lines = kind.summarize(setStateArgs());
   ok(lines[0].includes("test-ticket-platform") && lines[0].includes("TP-1") && lines[0].includes('"Done"'), "card names platform, entity id, and target state");
-  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a clean proposal");
-  const tainted = kind.summarize(setStateArgs({ tainted: true }));
-  ok(tainted.some((l) => l.includes("⚠") && l.includes("external content")), "tainted proposal gets the reviewer-scrutiny banner");
+  ok(!lines.some((l) => l.includes("⚠")), "no taint banner on a proposal");
+  ok(JSON.stringify(kind.summarize(Object.assign(setStateArgs(), { tainted: true }))) === JSON.stringify(lines), "a legacy tainted card renders exactly the clean card");
 }
 {
   const kind = actionKind("ticket.assign")!;
@@ -74,19 +75,19 @@ function assignArgs(over: Partial<TicketAssignArgs> = {}): TicketAssignArgs {
   ok(entry!.principalId === "U_APPROVER", "audit principal is the DECIDER (approver), not the proposer");
   const detail = entry!.detail as Record<string, unknown>;
   ok(detail.platform === "test-ticket-platform" && detail.entityId === "TP-1" && detail.value === "Done" && detail.requestedBy === "U_PROPOSER", "audit detail carries platform/entityId/value/requestedBy");
-  ok(detail.tainted === false, "audit detail stamps tainted:false on a clean proposal");
+  ok(!("tainted" in detail), "audit detail carries no taint field (OPE-2717)");
 }
 
 {
   calls.length = 0;
   const kind = actionKind("ticket.assign")!;
-  const outcome = await kind.execute(assignArgs({ tainted: true }), "U_APPROVER2");
+  const outcome = await kind.execute(Object.assign(assignArgs(), { tainted: true }), "U_APPROVER2");
   ok(outcome.includes("assigned to alice"), `execute() returns the adapter fn's outcome string (${outcome})`);
   ok(calls.length === 1 && calls[0].value === "alice", "the adapter fn was called with the frozen assignee");
   const audit = await readAudit({ org: "default", limit: 3 });
   const entry = audit.find((a) => a.action === "ticket.assign");
   ok(entry !== undefined && entry!.principalId === "U_APPROVER2", "audits ticket.assign, principal = the approver");
-  ok((entry!.detail as Record<string, unknown>).tainted === true, "a tainted proposal's audit row carries tainted:true even after approval");
+  ok(!("tainted" in (entry!.detail as Record<string, unknown>)), "the audit row carries no taint field (OPE-2717, OPE-2715 row 10)");
 }
 
 {
@@ -111,3 +112,5 @@ function assignArgs(over: Partial<TicketAssignArgs> = {}): TicketAssignArgs {
 }
 
 console.log(`✓ ${n} ticket-approvals assertions passed`);
+
+// proves: AP-MOD-core-approvals-ticket-actions

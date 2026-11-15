@@ -22,6 +22,7 @@ export interface PrOpenArgs {
   readonly body: string;
   readonly headSha: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
   readonly capabilities?: readonly RepoCapability[];
   readonly sessionId?: string;
@@ -110,7 +111,6 @@ export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: P
       number: pr.number,
       url: pr.url,
       requestedBy: args.requestedBy,
-      tainted: Boolean(args.tainted),
       ...(opts.sessionApproved ? { sessionApproved: true } : {}),
     },
   });
@@ -137,7 +137,6 @@ const prOpen: ActionKind<PrOpenArgs> = {
     const body = args.body.length > CARD_BODY_MAX ? `${args.body.slice(0, CARD_BODY_MAX)}\n… (${args.body.length - CARD_BODY_MAX} more bytes)` : args.body;
     return [
       `Open pull request — \`${args.repo}\`: \`${args.head}\` → \`${args.base}\` (commit \`${args.headSha.slice(0, 12)}\`)`,
-      ...(args.tainted ? ["⚠ proposed in a turn that read external content — review the diff before approving"] : []),
       ...mintGradeLines(args.capabilities ?? []),
       `*${args.title}*`,
       "```",

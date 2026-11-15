@@ -5,7 +5,6 @@ import type { BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
 import { workDestinationPlatforms } from "../channels/work-destinations.js";
@@ -67,6 +66,7 @@ export const setStateEntry = defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "change that ticket's status"));
     }
     const venue = venueResult.venue;
+    // principal-gate: accountability — same as create_ticket beside it: a routine moving a ticket's state
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("set_state needs a verified sender to gate the change — no principal id resolved, so there's no requester to show on the approval card.");
@@ -80,7 +80,6 @@ export const setStateEntry = defineTool({
       ...(ref.organizationId ? { organizationId: ref.organizationId } : {}),
       state: input.state,
       requestedBy,
-      tainted: untrustedIngestedThisTurn(),
       ...(capabilities.length ? { capabilities } : {}),
     };
 

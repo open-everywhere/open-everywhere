@@ -1556,15 +1556,17 @@ internal Notion/Linear workspace, a connector granted `contentOrigin: "internal"
 on a member-authored surface are read without marking; the open web, webhooks, uploads, image
 descriptions, a **public** repo, and anything whose deciding fact can't be read all mark. That
 marking
-is disclosure, not a gate: it puts a provenance line on any approval card the turn proposes and
-a field on the `approval.chain` audit row. It does **not** reach a memory bullet — memory writes
+is disclosure, not a gate: it puts a field on the `approval.chain` audit row (until OPE-2716).
+Since OPE-2717 no approval card shows it, except the routine kinds until OPE-2718. It does **not** reach a memory bullet — memory writes
 are freehand file edits captured at session end, so nothing attributes a diff back to the turn
 that made it; the durable record there is the `memory.write` audit row, and saying where a fact
 came from is prose the agent writes on the bullet
-([Memory](../capabilities/memory.md#the-shape-memory-keeps)). It changes a *verdict* in exactly one
-place — the sinks that **arm, rewrite or remove instruction and execution surface a later run
+([Memory](../capabilities/memory.md#the-shape-memory-keeps)). It changes a *verdict* in three
+places. The first is the sinks that **arm, rewrite or remove instruction and execution surface a later run
 obeys**: routines, skills, resident agents, routine rules and webhook ingress. There it FLOORS the
-verdict at `ask` rather than refusing, so a human still decides and an unattended run denies. Each
+verdict at `ask` rather than refusing, so a human still decides and an unattended run denies. The
+second is a connector write: a tainted turn keeps the card from the approval judge. The third is the
+unattended connector fence: no standing grant lifts a connector write on a tainted fire. Each
 of those tools declares that property on its registry row, and a build lint fails on any tool that
 writes such surface without declaring it — the set follows the code, never a hand-kept list. See
 [the security model](../security/security-model.md).

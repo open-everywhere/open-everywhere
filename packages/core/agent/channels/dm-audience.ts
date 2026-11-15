@@ -237,7 +237,7 @@ export async function deliverProactiveDm(input: {
       messageId: delivery.messageId,
       requestedBy: input.requestedBy,
       first: Boolean(input.first),
-      tainted: Boolean(input.tainted),
+      ...(input.tainted === undefined ? {} : { tainted: input.tainted }),
     },
   }).catch((err: unknown) => console.warn(`[open-everywhere:audit] ${DM_DELIVERY_ACTION} row was not written: ${String(err)}`));
   return delivery;

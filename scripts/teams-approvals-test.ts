@@ -20,7 +20,6 @@ const { requestApproval, sweepExpiredPendings, hasApprovalCardPath, judgeLiftNot
 const { registerActionKind } = await import("@open-everywhere/core/agent/approvals/actions.js");
 const { plainSummaryForRow } = await import("@open-everywhere/core/agent/approvals/plain-summary.js");
 const { shortUtc } = await import("@open-everywhere/core/agent/approvals/session-grant.js");
-const { TAINT_CARD_WARNING } = await import("@open-everywhere/core/agent/approvals/taint-disclosure.js");
 const { cardPosterFor, judgeLiftNoticePosterFor, decisionFeedbackSurfaceFor, registerDecisionFeedbackSurface, clickerFloorRefusalNotice } = await import(
   "@open-everywhere/core/agent/adapter-api.js"
 );
@@ -141,8 +140,9 @@ ok(decisionFeedbackSurfaceFor("teams") !== undefined, "the Teams decision-feedba
   ok(first.type === "TextBlock" && first.text === plainSummaryForRow(r) && first.weight === "Bolder", "OPE-2434: the Teams card's first block is the plain sentence");
   const last = pending.body.at(-1) as unknown as { text: string; isSubtle?: boolean };
   ok(last.text === `Expires ${shortUtc(r.expiresAt)}` && last.isSubtle === true, "the small footer shows the short expiry, capitalised");
-  const tainted = JSON.stringify(pendingTeamsCard(r, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]).body);
-  ok(tainted.includes(TAINT_CARD_WARNING) && !tainted.includes("ingested external content"), "a tainted proposal shows the one warning line, not the full disclosure");
+  const legacyRow = { ...r, argsJson: JSON.stringify({ ...(JSON.parse(r.argsJson) as Record<string, unknown>), tainted: true }) };
+  const legacy = JSON.stringify(pendingTeamsCard(legacyRow, ["line one", "⚠ proposed on a turn that had ingested external content — read the payload above on its own merits; nothing outside this room asked for it."]).body);
+  ok(legacy === JSON.stringify(pendingTeamsCard(r, ["line one"]).body) && !legacy.includes("⚠"), "a legacy tainted card renders the clean card's visible text, with no warning");
   const decided = decidedTeamsCard({ ...r, status: "approved", decidedBy: "29:x" }, ["line one"], "done", "Ada");
   ok(decided.body.length === 1 && (decided.body[0] as unknown as { text: string }).text === "✅ Approved by Ada: done", "OPE-2481: the decided Teams card is one line that names the decider and the outcome");
   ok(decided.actions === undefined, "the decided card has no actions");

@@ -72,11 +72,10 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
     all.includes("without a card"),
     "the card states the REAL scope of the click: approving also opens the flowing path for later messages",
   );
-  ok(!all.includes("⚠"), "an untainted proposal carries no warning banner");
+  ok(!all.includes("⚠"), "a proposal carries no warning banner");
 
-  const tainted = (kind.summarize(args({ tainted: true })) as string[]).join("\n");
-  ok(tainted.includes("⚠") && tainted.includes("external content"), "a tainted proposal carries the reviewer-scrutiny banner");
-  ok(tainted.includes("The build is fixed, you can re-run your deploy."), "the tainted card still renders the full body — taint discloses, it never truncates");
+  const legacy = (kind.summarize(Object.assign(args(), { tainted: true })) as string[]).join("\n");
+  ok(legacy === all, "a legacy tainted card renders exactly the clean card, with no banner");
 }
 
 {
@@ -99,6 +98,7 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
   ok(detail.recipient === "U_SARAH", "the audit row names the recipient");
   ok(detail.grant === GRANT, "the audit row names the grant that allowed it");
   ok(detail.first === true, "a carded delivery is recorded as the FIRST one");
+  ok(!("tainted" in detail), "a carded delivery's audit row claims no taint value (OPE-2717: the card freezes none, so the row never says false)");
   ok(detail.messageId === "M-1" && detail.surfaceId === "D-1", "the audit row carries the delivered ids");
   ok(rows[0]!.principalId === "U_APPROVER", "the row is attributed to the human who clicked");
   ok(detail.requestedBy === "U_PROPOSER", "and it still names who asked for it");
@@ -143,16 +143,19 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
     requestedBy: "U_PROPOSER",
     attributedTo: "U_PROPOSER",
     first: false,
+    tainted: true,
   });
   const rows = (await readAudit({ org: "default" })).filter((r) => r.action === "chat.dm");
   ok(rows.length === before + 1, "the flowing arm writes one row under the SAME action as the carded arm");
   const flowing = rows.find((r) => (r.detail as Record<string, unknown>).first === false)!;
   ok(flowing !== undefined, "a flowing delivery is recorded with first:false");
   const carded = rows.find((r) => (r.detail as Record<string, unknown>).first === true)!;
-  ok(
-    Object.keys(flowing.detail as object).sort().join(",") === Object.keys(carded.detail as object).sort().join(","),
-    "the flowing row and the carded row carry IDENTICAL fields — a reviewer asks the same questions of both",
-  );
+  ok((flowing.detail as Record<string, unknown>).tainted === true, "the flowing row carries the turn's taint stamp");
+  const { readFileSync } = await import("node:fs");
+  const dmPersonSource = readFileSync(new URL("../agent/tools/dm_person.ts", import.meta.url), "utf8");
+  ok(/first: false,[\s\S]{0,200}tainted: untrustedIngestedThisTurn\(\),\s*\}\);/u.test(dmPersonSource), "dm_person's flowing call stamps the live turn's taint");
+  const keys = (d: unknown) => Object.keys(d as object).filter((k) => k !== "tainted").sort().join(",");
+  ok(keys(flowing.detail) === keys(carded.detail), "apart from `tainted`, the flowing row and the carded row carry IDENTICAL fields");
   ok(sent[sent.length - 1]!.text.endsWith(renderFriendlyText(FOOTER, { platform: PLATFORM })), "the flowing arm appends the same host footer");
 }
 

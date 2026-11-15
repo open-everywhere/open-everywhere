@@ -108,8 +108,8 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   ok(lines.some((l) => l.includes("Fix the widget")), "card carries the frozen title");
 }
 {
-  const lines = kind!.summarize(args({ tainted: true }));
-  ok(lines.some((l) => l.includes("⚠") && l.includes("external content")), "tainted proposal gets the reviewer-scrutiny banner");
+  const lines = kind!.summarize(Object.assign(args(), { tainted: true }));
+  ok(JSON.stringify(lines) === JSON.stringify(kind!.summarize(args())) && !lines.some((l) => l.includes("external content")), "a legacy tainted card renders exactly the clean card");
 }
 {
   const long = "x".repeat(2000);

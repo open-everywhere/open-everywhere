@@ -2,7 +2,6 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
@@ -37,6 +36,7 @@ export interface SpendClearPlan {
 }
 
 export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, current: CurrentCaps, domain: string | null, after?: CurrentCaps): SpendClearPlan {
+  // principal-gate: presence — the sharper half of the pair. A clear does not merely move a cap, it
   if (!actingPrincipalId(binding)) {
     throw new Error("clear_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a spend override in that person's name. Ask a person in this conversation to propose it.");
   }
@@ -95,13 +95,11 @@ const clearSpendLimitEntry = defineTool({
 
     const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
 
-    const tainted = untrustedIngestedThisTurn();
-
     const posted = await requestApproval(
       {
         org: plan.args.org,
         kind: plan.kind,
-        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), tainted },
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
@@ -124,7 +122,7 @@ const clearSpendLimitEntry = defineTool({
           (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here."),
       };
     }
-    const subject = `clear ${plan.args.level} override on ${placeBesideKey(plan.args.scopeKey)}${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `clear ${plan.args.level} override on ${placeBesideKey(plan.args.scopeKey)}`;
     if (posted.autoApproved) {
       return {
         requested: false,

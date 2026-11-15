@@ -200,7 +200,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
   ok(frozen.platform === "tool-create-platform" && frozen.target === "T-9", "the FROZEN args carry the RESOLVED destination, never the raw request shape");
   ok(frozen.title === "Login 500s on retry" && frozen.body === "Steps: …", "the frozen args carry the exact text that will be published");
   ok(frozen.requestedBy === "U_PROPOSER", "the frozen args carry the verified proposer");
-  ok(frozen.tainted === false, "a clean turn freezes tainted:false");
+  ok(!("tainted" in frozen), "a clean turn freezes no taint field (OPE-2717)");
   __setTestValveForTest("egress-spoof", false);
 }
 
@@ -213,10 +213,10 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
       slackCtx() as never,
     );
   });
-  ok(out.pending === true, "a turn that ingested untrusted content STILL proposes — taint is reviewer scrutiny, not a refusal (the pr.open / ticket.set_state doctrine)");
+  ok(out.pending === true, "a turn that ingested untrusted content proposes, as a clean turn does");
   const row = await getOperationalStore().getPendingAction("default", out.pendingId!);
   const frozen = JSON.parse(row!.argsJson) as { tainted?: boolean };
-  ok(frozen.tainted === true, "…and the taint flag is FROZEN onto the row so the card can warn the reviewer");
+  ok(!("tainted" in frozen), "…and it freezes no taint field (OPE-2717, OPE-2715 row 10)");
   __setTestValveForTest("egress-spoof", false);
 }
 
