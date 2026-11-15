@@ -474,8 +474,7 @@ before the reply is posted rather than at an edge:
   when a durable memory write LANDED for the turn, and retires the ask after four posts that ran the
   persist and landed nothing. A persist that failed or threw spends none of those four, so such an
   ask stays armed and re-offers the write on every post.
-  The diff arms on the write plan alone. `taint.mode` does not disarm it (OPE-2719), so this
-  point fires on a deployment with `taint.mode: "off"` too.
+  The diff arms on the write plan alone, so no setting disarms this point.
 - **A session ends**, on success *and* on failure. The last resort, and on the shipped build only
   the failure half of it runs: the agent framework does not signal the end of a session that
   completes normally.
@@ -542,7 +541,7 @@ instructions and seeded into every new silo's `MEMORY.md`:
   turn the untrusted-content envelope wrapped content. It does *not* claim the read came first — a bullet written earlier in
   the same turn than the read carries the mark too. Nor does either carrier claim the bullet came
   *from* what the turn read; that is a causal claim the baseline cannot prove. The claim is
-  deliberately turn-scoped: marking a whole *session* is what the taint model refuses to do, because
+  deliberately turn-scoped: marking a whole *session* is what the mark refuses to do, because
   a bullet written on a clean turn would then carry a claim the trail can disprove.
 
   **How it is derived.** The host keeps a per-turn baseline of the writable memory tree — the line
@@ -553,8 +552,8 @@ instructions and seeded into every new silo's `MEMORY.md`:
   **The turn signal is memory's own flag** (`packages/core/agent/memory/turn-provenance.ts`,
   OPE-2719). The envelope (`packages/core/agent/access/untrusted.ts`) sets it on every wrap of
   outside bytes. The memory hook clears it at `turn.started`, and the mark reads it only for the turn
-  it belongs to, so it never survives into the next turn. It has no source tiers: a wrap counts
-  whatever the ingestion table says of the source. It reads no taint setting. It has no
+  it belongs to, so it never survives into the next turn. It has no source tiers: every wrap counts,
+  whatever the source. No setting disarms it. It has no
   cross-process carriage: a wrap outside the turn (an ingress render) sets nothing, and a worker's
   read marks only the worker's own writes, never the parent's.
 
@@ -589,16 +588,15 @@ instructions and seeded into every new silo's `MEMORY.md`:
     the mark too.
   - only as completely as the **envelope** wraps. Content that reaches the turn with no wrap in
     that turn produces an unmarked bullet, silently. That covers a body the ingress process wrapped
-    before the turn (a wake from a non-member), a taint seed carried in by an auth attribute, a
-    held question a non-member answered, and a worker's read seen from the parent. Before OPE-2719
-    the taint bit marked those turns; the memory flag does not.
-  - a turn that wraps only trusted-tier content takes the mark too. The flag has no source tiers,
+    before the turn (a wake from a non-member), a held question a non-member answered, and a
+    worker's read seen from the parent.
+  - a turn that wraps only a member's content takes the mark too. The flag has no source tiers,
     so a member's channel read marks a bullet the same as a web page does.
 
   A marking pass that marks at least one bullet writes a `memory.provenance_marked` audit row — the
   count, the files and the edge, never the marked line. A pass that marks nothing writes
   no row. The durable, forensic half is still the audit trail (a
-  `memory.write` row per persist) plus the turn-scoped taint fences; the mark is what carries the
+  `memory.write` row per persist) plus the envelope's fences; the mark is what carries the
   fact into the store itself, where the dream cycle and the next reader see it.
 - **A standing INSTRUCTION is heavier than a fact**, because future turns are told to follow it.
   It is written only when a human asked for a rule — never from inferred behaviour and never
@@ -656,8 +654,8 @@ any member of the channel can click to confirm — the same trust tier whose wor
 edit that silo, since the card exists to defeat injection, not to gate privilege.
 
 One path skips the card, and it is the same one every carded verb carries: an **approver chain**
-that lowers this verb erases at once and posts a notice instead. Taint does not close that path —
-`purge_memory` declares `taint: "disclose"`, so a tainted turn leaves the verdict unchanged. See
+that lowers this verb erases at once and posts a notice instead. No approval verdict reads what the
+turn read (OPE-2716), so a turn that read untrusted content does not close that path. See
 [The control plane: In-Slack approvals](../security/control-plane.md#in-slack-approvals) for the
 propose → card → click mechanics shared with the other admin-mutation tools.
 
@@ -1071,7 +1069,7 @@ theirs; nothing rewrites or retires them behind their back.)
   bullets, canonicalising `[[wikilinks]]`, reordering index lists by how well-connected
   a note is — are applied automatically. Anything **destructive** (merging near-duplicates,
   resolving a contradiction, retiring a superseded fact) is only ever **proposed**: it
-  lands in the proposal review queue for a human to review — with a taint-clean row in
+  lands in the proposal review queue for a human to review — with a content-free row in
   the audit trail alongside it — never applied by the cycle.
   **A merge survivor keeps the disclosure.** When a consolidation merges a bullet carrying an
   external-provenance mark with an unmarked one, the proposed survivor carries the mark, so a
@@ -1168,7 +1166,7 @@ pull request with a fresh draft — carrying whatever you said when you closed i
 
 The proposal carries the member's own request line, because that is what a reviewer needs to
 judge whether the drafted skill matches the ask — the same ruling that puts a proposal's content
-in the review queue rather than the audit log. The audit row stays taint-clean: the repo, the
+in the review queue rather than the audit log. The audit row stays content-free: the repo, the
 branch, the pull-request number, the counts, and the workflow signature's digest.
 
 The pull request opens through the **same broker, credential and config repo** the
@@ -1467,7 +1465,7 @@ host copy always wins.
 
 When the untrusted-content envelope wrapped content in a turn, **every bullet absent from that turn's
 baseline takes a provenance mark**. The turn signal is memory's own per-turn flag
-(`packages/core/agent/memory/turn-provenance.ts`, OPE-2719), not the taint bit. `markAddedBullets` (`packages/core/agent/memory/provenance-mark.ts`) compares each
+(`packages/core/agent/memory/turn-provenance.ts`, OPE-2719). `markAddedBullets` (`packages/core/agent/memory/provenance-mark.ts`) compares each
 line's digest against the baseline and marks what is new. It skips fenced code blocks, non-bullet
 lines, and a bullet that already carries the mark.
 
@@ -1510,7 +1508,7 @@ that references a silo with a connector backing. A domain with no resolvable gra
 failure, and so is one whose connector and container grants do not cover what the silo reaches — memory
 rides the same route as connector access, so the two must agree at config time.
 
-**A timing row that fails the taint allowlist is dropped with a warning, never written.**
+**A timing row that fails the content-free allowlist is dropped with a warning, never written.**
 `emitMemorySyncTiming` (`packages/core/agent/memory/sync-timing.ts`) projects the record to names,
 paths and counts, and refuses to append anything that does not pass. Fail-closed is the right direction
 here, because the payload would otherwise be org data in an audit row.

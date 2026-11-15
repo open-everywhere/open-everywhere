@@ -190,7 +190,7 @@ export const SECTION_INTRODUCTION: readonly DocEntry[] = [
       "**Connector** — a host-side integration (an Eve MCP/OpenAPI connection), addressed by its Eve",
       "connection slug: the model calls the connection's tools and Eve attaches the token *host-side*, so",
       "the call never enters the sandbox and the model never sees the token. A bundle grants one with the",
-      "single grant grammar `{name, credential, contentOrigin}`. `credential` is **mandatory** and has no",
+      "single grant grammar `{name, credential}` (the old `contentOrigin` field is deprecated and ignored). `credential` is **mandatory** and has no",
       "default — it names which configured identity this scope reaches the connector as, so N domains",
       "reach one vendor with N different keys (narrowest-wins). A bare slug is not valid config. The",
       "connector self-scopes and refuses an ungranted surface before any credential resolves. See",

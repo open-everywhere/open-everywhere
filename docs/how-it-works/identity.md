@@ -1072,8 +1072,8 @@ extra API call. Notion has no group concept, so a Notion entry uses principal ke
 
 🔴 **Arming is per tenant and explicit.** A tenant with no entry is **undeclared**, and the leg does
 nothing there — behaviour is identical to not having the file. Adding an entry **arms** that tenant:
-from then on an author it does not name grades `external`, and their messages mark the turn as
-carrying non-member content. An author with no readable id grades `external` too. So an entry is a
+from then on an author it does not name grades `external`, and their messages carry the non-member
+stamp. An author with no readable id grades `external` too. So an entry is a
 real commitment, not a hint — list everyone who belongs, or leave the tenant out.
 
 **Fail-loud at boot.** A malformed tenant key, a member on another platform, a membership naming
@@ -1121,14 +1121,14 @@ pseudo-domain's.
 
 | Knob | Values | Shipped | Grain |
 |---|---|---|---|
-| `externalPolicy.authorGrain` | `withhold` · `envelope` (`taint` is its deprecated alias) | `withhold` | one excluded **author's** message |
+| `externalPolicy.authorGrain` | `withhold` · `envelope` (the old spelling is its deprecated alias) | `withhold` | one excluded **author's** message |
 | `externalPolicy.roomGrain` | `silent` · `engage` | `silent` | a whole **room** the classification calls external |
 
 **Both grains ship strict**: the shipped defaults are maximally locked
 down for guests and external rooms. `envelope` and `engage` are the deliberate opt-outs. `envelope` admits an excluded author's text. A rendered
 wake envelope and a read result fence it. A raw `direct` DM or @mention body passes verbatim: OE does
 not escape, cap or fence it (W4, `channels/normalized-wake.ts`). Under `envelope` the wake still carries the non-member stamp `oe_chat_nonmember`, which the guest
-controls read; no read marks the turn since OPE-2721. `taint` is the deprecated
+controls read. The old spelling `taint` is the deprecated
 alias of `envelope` (OPE-2722): config load accepts it, it resolves as `envelope`, the process reports
 it once, and OPE-2724 removes it. Each strict
 value acts only where a leg refutes an author or classifies a room external. A member's own new
@@ -1139,7 +1139,7 @@ before OPE-1747 carries no author grade, so it shows as the arrived-marker too, 
 included. An existing deployment that wants the old behaviour sets the opt-out
 values in its own `agent/settings/settings.ts` (see `packages/core/UPGRADING.md`).
 
-### The author grain — `withhold` (shipped) or `taint`
+### The author grain — `withhold` (shipped) or `envelope`
 
 Who counts as **excluded** is exactly the existing evidence, and nothing new: the platform's own
 positive refutation (Slack's `is_restricted` / `is_ultra_restricted` / `is_stranger`, Teams' Bot
@@ -1148,9 +1148,9 @@ register above on a tenant the operator has **armed**. Where the register is the
 and Notion — an unarmed tenant excludes nobody, so turning `withhold` on there without arming a register
 changes nothing at all. A machine (`relay`) author is never excluded.
 
-**`envelope`** (alias `taint`) is the opt-out: the text enters the context inside the untrusted-content
+**`envelope`** (with its deprecated alias) is the opt-out: the text enters the context inside the untrusted-content
 envelope, and the approval chain, the egress firewall and the outbound filter carry the consequence.
-Nothing marks the turn since OPE-2721. Choose it only where an
+Choose it only where an
 excluded author's text must reach the model.
 
 **`withhold`** (shipped) stops the text *entering*. Four behaviours:
@@ -1169,10 +1169,9 @@ excluded author's text must reach the model.
    conversation. Without this the grain would suppress a body on the wake and hand the same body
    back the moment the agent read the channel.
 
-🔴 **A withheld body never keys taint.** The chat-taint bit means *a non-member's bytes entered the
-context*. Under `withhold` they did not, so the join is never told they did. This holds on the read
-path as well: a read whose only refuted author was withheld leaves the turn clean, because nothing of
-that author reached the model. The bit keeps discriminating instead of marking every withheld wake.
+🔴 **A withheld body never reaches the model.** Under `withhold` the excluded author's bytes do not
+enter the context, on the wake or on the read path. A read whose only refuted author was withheld
+still fences the lines it returns, so the turn still sets the memory provenance flag.
 
 🔴 **Withhold does not replace the untrusted-content envelope, and the two are not the same
 mechanism.** The envelope is **provenance**-based — "a trusted person asked me about this text, so
@@ -1215,7 +1214,7 @@ the envelope would leave a member unable to quote an outsider at the agent.
     non-single-window channel, where eve's own `slackChannel` owns the turn — the gate sits above the
     forward, because there is no seam inside eve the policy could reach. That leg resolves no author
     facts of its own, so it checks first whether the policy can suppress anything at all and skips
-    the probe entirely on the `taint` / `engage` opt-out pair. On the shipped grains it runs the
+    the probe entirely on the `envelope` / `engage` opt-out pair. On the shipped grains it runs the
     probe. The native door eve hands the turn to (`channels/slack.ts`) runs the same probe again,
     TTL-cached, on every grain, and stamps a refuted author `oe_chat_nonmember` (OPE-2572). So on the
     opt-out pair a guest's @mention still reaches the turn with the non-member stamp, as on every
@@ -1227,15 +1226,14 @@ the envelope would leave a member unable to quote an outsider at the agent.
   person's classification to the room, so a channel @mention is a silent drop. The author evidence is
   the Bot Connector **roster probe** plus the operator's author-trust register. The gate runs before
   the webhook ack, so it buys the roster answer **only when a grain could act on it** — on the
-  `taint` / `engage` opt-out pair it skips the probe entirely, exactly as Slack's native `app_mention`
+  `envelope` / `engage` opt-out pair it skips the probe entirely, exactly as Slack's native `app_mention`
   forward does. On the shipped grains it buys the answer. The two dispatch paths (the shared window and the DM divert) run after the ack, so they always
   resolve it.
 - **The chat READ verbs** apply behaviour 4 on every wired surface at once. `read_channel` and
   `read_thread` share one grade-and-project body, and the per-author evidence comes from the same
-  join the turn mark uses — Slack's `users.info`, plus the operator's register on Slack, Teams and
+  join the non-member stamp uses — Slack's `users.info`, plus the operator's register on Slack, Teams and
   Discord. EVERY chat reader routes through that one body — the delegated worker's
-  `read_work_channel` / `read_work_thread` (OPE-938) included — so the author-taint mark and the read
-  half of `withhold` are declared once and no reader can declare them differently. Since OPE-1145 no
+  `read_work_channel` / `read_work_thread` (OPE-938) included — so the read half of `withhold` is declared once and no reader can declare it differently. Since OPE-1145 no
   PER-SURFACE chat reader stands beside them.
 - **GitHub** (OPE-533) reads the comment's own `author_association`, which rides free on every
   `issue_comment` webhook. `OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant
@@ -1272,9 +1270,13 @@ the envelope would leave a member unable to quote an outsider at the agent.
 
 A chat wake whose ingested set holds a refuted author, or that fires in a room the operator
 declared `public`, carries the host-set auth attribute `oe_chat_nonmember`. The model cannot set
-it. The stamp and its join live in `packages/core/agent/identity/non-member.ts` (moved from
-`access/taint-signal.ts` by OPE-2711). Five guest controls read it: the connector member plane, the
-A2A room gate, `propose_mcp_server`, domain questions and the Notion channel.
+it. The stamp and its join live in `packages/core/agent/identity/non-member.ts` (moved from the
+access plane by OPE-2711). Five guest controls read it: the connector member plane, the
+A2A room gate, `propose_mcp_server`, domain questions and the Notion channel. The requester-message
+capture fence reads it too: it refuses a stamped wake, so the words of a stamped wake never count as
+the requester's own ask. A wake carries no stamp when no leg refutes any of its authors and its
+room does not mark. The non-member stamp then does not stop the fence, so an unrefuted non-member's
+words can count as the requester's own ask.
 
 An undeclared room follows `identity.undeclaredSurface`. `clean` (shipped) stamps nothing for the
 room, and `mark` stamps every wake in it. A DM never takes the room leg. The old key

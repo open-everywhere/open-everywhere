@@ -141,11 +141,12 @@ The card also says where the answer will be posted: the asking conversation.
 - **The token stays host-side.** The bearer token resolves through its credential broker for each
   delegation and goes only to the declared origin. It never reaches the model or the sandbox.
 - **The answer is untrusted.** What the remote agent returns — its text, its task id, its error
-  text — is fenced through the untrusted-content boundary as a `connector` ingestion with an
-  external content origin, so the turn that reads it is tainted.
-- **A tainted turn is not floored.** No approval verdict reads taint (OPE-2716), and since OPE-2717
-  the card shows no taint line. The chain decides as on a clean turn, so a pre-approval rule or the
-  approval judge can lift a delegation in a tainted turn, exactly as it can lift a connector write.
+  text — is fenced through the untrusted-content boundary, and a memory bullet written on that turn takes
+  the memory provenance mark.
+- **A turn that read the answer is not floored.** No approval verdict reads what the turn read
+  (OPE-2716), and since OPE-2717 the card shows no provenance line. The chain decides as on any other
+  turn, so a pre-approval rule or the approval judge can lift a delegation after such a read, exactly
+  as it can lift a connector write.
   With no rule and no judge lift, a person decides. An unattended run is
   refused: the tool needs an acting person, and the chain turns `ask` into `deny` on a fire.
 - **Audit.** A click writes `a2a.delegate_approved`, a send writes `a2a.delegated`, and every
@@ -275,8 +276,8 @@ One call is one A2A task, and the task becomes ONE job:
   - the job is **unattended**: no person is acting, so a gate that needs a person refuses, and the
     approval chain turns `ask` into `deny`;
   - the invoker posture is `untrusted-remote`, the narrowest class, the one a webhook fire takes;
-  - the caller's text rides inside the untrusted fence (ingestion kind `a2a-inbound`), and the job's
-    turn is tainted from its first byte.
+  - the caller's text rides inside the untrusted fence (source label `a2a-inbound:<name>`) from its
+    first byte.
 
   🔴 **The external binding narrows MEMORY, not tools.** The surface resolves to the caller's declared
   domain, so every grant bound to that domain — its tools, its connectors (a Notion workspace, for

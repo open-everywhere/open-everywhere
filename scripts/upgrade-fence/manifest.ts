@@ -12,7 +12,7 @@ export const PROTECTED_PATH_RULES: readonly ProtectedPathRule[] = [
     id: "core-access-plane",
     paths: ["packages/core/agent/access/"],
     why:
-      "The access plane itself — the bundle resolver, capability sets, taint tiers, the seat shape, " +
+      "The access plane itself — the bundle resolver, capability sets, the untrusted-content envelope, the seat shape, " +
       "the egress fence and the human-only-invariants manifest. An edit here changes what the agent may reach.",
   },
   {

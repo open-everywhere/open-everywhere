@@ -303,8 +303,8 @@ before. At `shadow` the card still posts, and the judge runs beside it with the 
 decides one frozen step (the op, the host, a submit, a key) against the scope's pre-approval rules. An
 allow runs that one step only. It grants no act window, so the next step asks again. The judge keeps no
 verdict cache for this row, in shadow or enforce, so an identical later step is a new consult. A card with no
-frozen step grants a window, so it is human-only and the chain does not consult the judge. The judge
-reads no taint, for this row or any other (OPE-2716), so a page read does not by itself hold a step
+frozen step grants a window, so it is human-only and the chain does not consult the judge. No approval
+verdict reads what the turn read (OPE-2716), so a page read does not by itself hold a step
 on its card. The residual risk is a page
 that steers the agent into a step a rule allows. A rule written at site and op grain bounds it. The
 [browser never tier](../capabilities/personal-browser.md#the-never-tier) stays in front of the judge.
@@ -386,11 +386,10 @@ is degraded to `ask`.
 
 ### What counts as external content
 
-**🔴 The taint plane is removed (OPE-2721).** No turn is marked, no source-tier table decides a read,
-and no `taint.verdict`, `taint.forward` or `taint.mode` audit row is written. `taint.mode` and
-`taint.tierMode` are accepted and ignored for one release. Where a sentence below still describes a
-turn "marked" by a read, read it as history: the OPE-2727 sweep rewrites those sentences. What stays is
-the **fence**: an outside body — a chat message from someone other than a vouched member in a rendered
+**No approval verdict reads what a turn read** (OPE-2683). Since OPE-2721 no turn carries a mark and
+no source-tier table decides a read; the old settings are listed in
+[the configuration reference](../deploy/configuration-reference.md#the-removed-taint-settings). What
+stays is the **fence**: an outside body — a chat message from someone other than a vouched member in a rendered
 wake or a read result, a Notion page, a GitHub PR, a connector result, a fetched web page, an uploaded
 file, a webhook payload, an image description, `aws` output — is wrapped as data before the model sees
 it, with a per-render nonce and the escalation notice. Two bodies are NOT wrapped: a raw `direct` DM or
@@ -399,7 +398,7 @@ has no in-tree seam to fence. What defends against a consequential act is the ap
 and the outbound sensitive-data filter.
 
 **Stated plainly for chat, since it is the most-asked-about source:** in a **wake envelope** the
-author's standing decides both whether a message body is fenced and whether it marks the turn. A
+author's standing decides whether a message body is fenced. A
 message from a `principal` or `peer` author — a verified teammate who addressed the agent, or one
 who did not — reaches the model as plain escaped text: no `<untrusted_external_data>` wrapper, no
 do-not-follow notice. Those two grades differ only in addressing, so the split between them never
@@ -434,41 +433,40 @@ a chat READ withholds a body  ⟸  `authorGrain: "withhold"` and that DISTINCT a
 The **wake** leg runs in the ingress process, outside any turn, so it travels to the reading turn as a
 host-set auth attribute (`oe_chat_nonmember`), which the guest controls read. The **read** leg
 (`read_channel`, `read_thread`) runs inside the turn and fences every line it returns; under `withhold`
-it also replaces a refuted author's body. Nothing marks the turn since OPE-2721, and a meeting recap's
-provenance mark (OPE-2464) is removed with it: OE's own post is fenced on every later read.
+it also replaces a refuted author's body. A meeting recap's old provenance mark (OPE-2464) is
+removed: OE's own post is fenced on every later read, like any other chat line.
 
 **The wake leg runs on all six surfaces** — Slack, Discord, Teams, Notion, GitHub and Linear. Each
 resolves its own per-author evidence, then asks the one shared join
 (`stampNonMemberChatAuth`), which is what keeps "non-member" meaning the same thing everywhere.
 
 🔴 **Both legs refute; neither infers.** A probe that could not answer, a tenant nobody armed, a bot
-author with no recorded post and a message with no readable author id all mark **nothing**. Marking on silence would set
-the bit on every read-heavy turn in an ordinary members-only workspace, and a bit that is always set
-is one nobody can act on.
+author with no recorded post and a message with no readable author id all refute **nobody**. Refutation on silence would stamp or
+withhold on every read-heavy turn in an ordinary members-only workspace, and a signal that is always
+on is one nobody can act on.
 
 Read coverage follows what each platform can answer (the table below). Slack refutes through its own
 `users.info` probe, cached per author and asked once per *person* in the page rather than once per
 message. Discord and Teams have only the author-trust register on a read, so a tenant nobody has
-armed never marks — under-marking, which is the direction this whole plane fails in.
+armed never withholds on a read — under-refutation, which is the direction this whole plane fails in.
 
-**Marking is one answer, not the only one, and it is not the shipped one.** The shipped policy keeps
+**Fencing an excluded author's text is one answer, not the only one, and it is not the shipped one.** The shipped policy keeps
 an excluded author's text out entirely — `externalPolicy.authorGrain: "withhold"` — and keeps the
 agent from engaging in an external room at all — `externalPolicy.roomGrain: "silent"`, which suppresses
 wakes on Slack, Discord, Teams, GitHub and Linear (see
 [Identity § where each grain is wired](../how-it-works/identity.md)).
-Both ship ON. The marking this section describes is what a deployment
-gets when it opts out to `envelope` / `engage` (`taint` is the deprecated alias of `envelope`,
-OPE-2722), and what still runs for every author the policy does not
-exclude.
+Both ship ON. The fence alone is what a deployment gets when it opts out
+to `envelope` / `engage` (the old spelling of `envelope` is its deprecated alias, OPE-2722), and
+what still runs for every author the policy does not exclude.
 `withhold` binds the READ verbs as well as the wakes: `read_channel` and `read_thread` replace an
 excluded author's text with the arrived-marker, so a body a wake suppressed cannot be fetched back by
-reading the channel. A withheld body never keys taint, because it never ingested. See
+reading the channel. A withheld body never reaches the model, so it sets no memory provenance flag. See
 [The external-participant policy](../how-it-works/identity.md#the-external-participant-policy--what-follows-from-the-classification).
 
 **The room leg** reads the operator's own declaration (`agent/identity/surfaces.ts`). A community
 Slack workspace, an open Discord guild and a published Notion page are all rooms the world can type
 into, and no per-author probe can help there — so the operator says so once, and every human-authored
-turn on that room marks.
+wake on that room carries the non-member stamp.
 
 **The author leg** covers the other case: a **non-member sitting inside an internal room**. A Slack
 multi-channel or single-channel guest and a Slack-Connect stranger are the sharp examples — Slack
@@ -487,9 +485,9 @@ difference matters:
 🔴 **That table is about the WAKE.** On a **read**, only Slack refutes for itself. Teams' Entra
 probe is keyed by conversation and needs the Bot Connector handle off an inbound activity, so a read
 tool cannot reach it — and a read may target a different channel from the turn's own conversation
-anyway. Reaching it would mean a new tenant-wide Graph permission (`User.Read.All`) for one taint
-bit, which is deliberately not spent. So a Teams or Discord read marks only where the author-trust
-register is armed.
+anyway. Reaching it would mean a new tenant-wide Graph permission (`User.Read.All`) for one read
+verdict, which is deliberately not spent. So a Teams or Discord read withholds only where the
+author-trust register is armed.
 
 **On the two surfaces that cannot refute anyone, you declare the authors yourself.** The
 author-trust register (`agent/identity/authors.ts`) is the second source of refutation: the operator
@@ -503,49 +501,49 @@ public room safe to print into, so a register hit never cancels the room leg.
 
 🔴 **An unarmed tenant refutes nobody.** The register is armed per tenant, explicitly. A guild with no
 entry behaves exactly as it did before the register existed. Silence is not a declaration: reading it
-as "everyone here is an outsider" would set the bit on every human message in every undeclared guild,
-which is the always-on-bit failure the ingestion rule exists to avoid.
+as "everyone here is an outsider" would stamp every human message in every undeclared guild, which is
+the always-on-signal failure the refutation rule exists to avoid.
 
 Four properties bound the whole leg. It keys on **ingestion, not presence** — a guest in the room
 changes nothing until a message they wrote enters the wake or its backscroll, and a first wake that
-hydrates a guest's earlier message marks just as their own message would. It covers **people, not
-machines**: a bot or webhook poster is `relay`, and marking every app post would set the bit on most
+hydrates a guest's earlier message is stamped just as their own message would be. It covers **people, not
+machines**: a bot or webhook poster is `relay`, and stamping every app post would stamp most
 conversational turns. It **fails open**: an unresolvable probe is not a refutation, because failing
-closed would set the bit on every chat wake in a workspace whose token lacks `users:read`. And it is
+closed would stamp every chat wake in a workspace whose token lacks `users:read`. And it is
 **per turn**: the signal rides the one wake that carried those bytes, so the next message in the same
 thread starts clean.
 
-🔴 **A surface the operator has never declared marks nothing, by default, and the residual is real.**
+🔴 **A surface the operator has never declared stamps nothing, by default, and the residual is real.**
 Between install and the first declaration a genuinely public chat room reads clean. Three things
 bound it. The ACL plane already fences an undeclared room to the read-only `public` pseudo-domain.
 The approval plane is the defence against a consequential act. And `preflight` reports an
 undeclared surface **with traffic** as a red, naming the surface and the line to add — the complaint
 moved from every turn, where it was unreadable, to config time, where it is actionable. A deployment
-that prefers per-turn pressure sets `identity.undeclaredSurface: "mark"` (the deprecated alias
-`taint.undeclaredSurface` still works, OPE-2711), which is far narrower than the
+that prefers per-turn pressure sets `identity.undeclaredSurface: "mark"` (the old key is a deprecated
+alias, OPE-2711), which is far narrower than the
 old behaviour because a *declared* room never reaches it.
 
 🔴 **"We could not ask" must never read as "we asked and it was fine."** Silence in the trust
 registry is not a `public` declaration, and the two produce different audit rows: a declaration
 produces `declared`, silence keeps producing `assumed`.
 
-**Taint is marking, not gating — and since OPE-2716 the approver chain does not read it at all.**
-Since OPE-2717 no approval card discloses taint either: the card warning line is gone (Rowan's
-ruling, OPE-2715 row 10). **Memory carries no taint disclosure either.** A bullet the
-turn writes carries no mark of its own: since the memory verbs were retired, a write is a freehand
-file edit captured at session end, and the capture seam sees file diffs rather than the turn that
-made them — so there is nothing to attribute, and re-deriving a mark would mean marking a whole
-SESSION, which this model deliberately refuses to do. What is durable there is the `memory.write`
-audit row, not the bullet; naming a fact's origin in the bullet's own prose is the agent's job (see
-[Memory](../capabilities/memory.md#the-shape-memory-keeps)).
+**The fence is a signal, not a gate.** No approval verdict reads whether a turn read untrusted
+content (OPE-2716, under OPE-2715). The chain once floored fifteen arm/disarm
+sinks at `ask` on such a turn, and the judge read the turn's mark in its prompt and its cache key.
+Both are gone, with the registry's turn-mark and `postTurnSurface` columns. A turn that read untrusted
+content now decides exactly as any other turn: each sink follows its consequence tier, and the
+`mode`, `floor` and `unattended` arrows, the judge and config allows apply as they do anywhere. The
+`approval.chain` row carries no turn-mark field; older rows that carry one still parse. Since
+OPE-2717 no approval card shows a provenance line, and since OPE-2718 the routine kinds show none
+either. What a person reads is the act itself, rendered by code from the frozen arguments (the quoted
+body, the figures, the target) — never a summary of the content the turn read.
 
-**No verdict moves on taint (OPE-2716, the maintainer's ruling on OPE-2715, 2026-11-15).** The chain once
-floored fifteen arm/disarm sinks at `ask` on a tainted turn (the `taint:ask` arrow), and the judge
-read the bit in its prompt and its cache key. Both are gone, with the registry's `taint` and
-`postTurnSurface` columns. A turn that read untrusted content now decides exactly as a clean turn:
-each sink follows its consequence tier, and the `mode`, `floor` and `unattended` arrows, the judge
-and config allows apply as they do anywhere. The `approval.chain` row no longer carries `tainted`,
-`taintKinds` or `taintMode`; older rows that carry them still parse.
+**Memory keeps one provenance signal: the memory provenance mark** (OPE-2719). A bullet written on a turn that wrapped outside content takes the `[external-provenance:]`
+suffix. An assertion-shaped bullet also takes an `[unverified claim; …]` lead inside its sentence
+(`provenance-mark.ts` `recastAsAttributedClaim`). A question, a task or an already-hedged bullet keeps
+the suffix alone. Injection eval leg 3 measures whether a marked bullet still steers a later turn. It
+is a signal, not a gate. Every in-turn wrap of outside bytes sets memory's own per-turn flag. The flag reads clear on the next turn, no setting disarms it, and nothing carries it to
+another session. See [Memory](../capabilities/memory.md#the-shape-memory-keeps).
 
 **What this loosens, stated rather than hidden.** A lowering — a custom approver, a config allow, an
 armed judge's allow, a `DANGEROUSLY_BYPASS` domain — now lands on a turn that read a hostile page,
@@ -555,21 +553,24 @@ stands between injected text and those acts: the registry's own `ask` (a person 
 egress firewall, the outbound sensitive-data filter and the seat cuts. A deployment that lowers one of
 those verbs has chosen that the lowering applies on every turn.
 
-Since OPE-2717 the card carries no provenance line either. What a person reads is the act itself,
-rendered by code from the frozen arguments (the quoted body, the figures, the target) — never a
-summary of the tainted content. Since OPE-2718 the routine kinds carry no ⚠ line either.
+**The posture per injection vector** (OPE-2715 and OPE-2719):
+
+| Vector | Defended by | What the removal changed |
+|---|---|---|
+| 1. Route creation (a routine, rule, webhook or skill that a later run obeys) | The consequence tier's `ask` (a person reads the card), the `unattended` arrow, and the unattended clamp, which denies the routine and skill verbs on a fire unless a config lowering covers them. Job ledger notes and follow-ups come back inside the untrusted fence on every re-entry (OPE-2718). | The turn-mark `ask` floor on the fifteen arm/disarm sinks is gone. A lowering now applies on a turn that read a hostile page. |
+| 2. Exfiltration | The egress firewall, the domain binding and the outbound sensitive-data filter. | Nothing. None of them ever read what a turn read. |
+| 3. Memory poisoning | The memory provenance mark, for a bullet written on a turn that wrapped outside content. | Narrower trigger. A wrap outside the turn sets no flag: a non-member's wake body that the ingress fences, and a webhook or event payload that a fire's ingress renders into the prompt (`webhooks/dispatch.ts`, `routines/ingress.ts`). A worker's read does not mark its parent's memory writes. Every in-turn wrap sets the flag, a member's channel read included. |
+| 4. Consequential world actions | The approval chain (consequence tiers, the `mode`, `floor` and `unattended` arrows, the judge, approve-and-allow, routine permission cards, the unattended connector fence), the egress firewall and the outbound filter. | The turn-mark conditions are gone: a judge may lift a connector op after a read, a credential-grant ask goes to a card, approve-and-allow answers any matching proposal, the session memo covers `open_pull_request`, declared routine permissions arm on every approved creation, and a fire's declared connector write lifts after a read. The destructive-never rule stays. |
 
 **There is no model left to opt out of.** `taint.mode: "off"` was the reviewed one-line opt-out. Since
-OPE-2721 the key is accepted and ignored: there are no marks to turn off. Every behaviour setting still
-costs a diff — no environment variable reaches one (OPE-411, OPE-2411). The **fence** keys on the
-source and refuses nothing, and the **approval system** no longer depends on the mark (OPE-2716). See
-[the configuration reference](../deploy/configuration-reference.md#the-removed-taint-settings).
+OPE-2721 the key is accepted and ignored. Every behaviour setting still costs a diff — no environment
+variable reaches one (OPE-411, OPE-2411). The **fence** keys on the source and refuses nothing.
 
 The reasoning for the narrower shape, since it is a deliberate loosening: the guard that
 actually holds is the *turn-independent* one — a standing memory rule pauses for a human on
 every turn, clean or not. A gate keyed on ingestion only stops an attacker who acts in the
 same turn they planted the instruction; one who waits a turn gets the identical verdict. What
-a broad taint gate reliably produced instead was a card for every ordinary "I read the docs,
+a broad turn-mark gate reliably produced instead was a card for every ordinary "I read the docs,
 now remember this" — an always-on signal, which is a signal nobody reads.
 
 Every resolution writes an `approval.chain` audit row carrying every element's verdict, the
@@ -579,8 +580,7 @@ the repo-side `npm run explain:permission` script) runs the same chain prospecti
 prints the same trace: the audit row's retrospective twin, rendered by one shared formatter.
 Its `unattended` input is a hypothetical, and it has no marker: the chain requires a value, so the
 call site always resolves one, and the trace cannot tell a supplied `unattended` from a measured one.
-Do not read the trace's `unattended:` as evidence about the turn. It takes no taint input, because the
-chain reads no taint (OPE-2716).
+Do not read the trace's `unattended:` as evidence about the turn.
 
 Those rows are also what makes a grant's *fit* measurable rather than assumed: `permission_fit_report`
 reads them over a window and proposes both widenings (a grant too narrow for the work that keeps
@@ -648,8 +648,8 @@ delivery the host stamps `oe_non_requester` (an ambient seat wake, a thread sess
 result, an email remainder, the auto-redrive's corrective wake). It also refuses the inherited delivery
 of a turn that brought no delivery of its own, such as a task-settlement wake. That detector fails
 toward "a delivery arrived" on a session's first turn, on every session off the unified window, and
-on an absent or unreadable stamp, so it narrows that case but does not close it. The capture fence reads those host-set signals and no taint symbol, so text planted in a
-document cannot stand in for a member's ask through any listed kind, with or without the taint plane. A bare "yes" names nothing, so the hold tells the agent to ask the member to name the
+on an absent or unreadable stamp, so it narrows that case but does not close it. The capture fence reads only those host-set signals, so text planted in a
+document cannot stand in for a member's ask through any listed kind. A bare "yes" names nothing, so the hold tells the agent to ask the member to name the
 data when they confirm. An ask never lifts the `strictest` tier.
 
 **Why deterministic detectors, measured.** Each shipped detector tests the format's own check: a
@@ -714,7 +714,7 @@ Every section above states a control and where it is enforced. This one states w
 
 - **An instruction is not a gate, and this system ships both.** A gate is code that refuses — the consequence table, the approver chain, the compiled egress policy. An instruction is text in the model's prompt, and the model can lose track of it or be talked out of it. Read any sentence about agent behaviour and ask which of the two carries it. Two places rely on an instruction by design and say so: provider-executed `web_search` results are consumed inside the model call, so no in-tree wrapper can fence them; and the untrusted-content envelope tells the model how to treat what it wraps, while what actually bounds an induced attempt is egress scoping and the approval gates.
 - **An approval gate proves a human pressed the button. It does not prove the action was wise.** The tier is an annotation a PR author and reviewer assign in `packages/core/agent/access/consequence.ts`; **the runtime never classifies**. So a tool tiered `open` by mistake is not gated, and no runtime check notices — `npm run lint:consequence` proves the table is total and that a declared tier still matches its mechanism, never that the tier is the right one. The `gate:member` tier allows self-approval on purpose: it gates the model's proposal, not the member. And the **egress plane shows no card at all** — a `curl` from inside the sandbox reaches no tool, so the review for that plane happens in the bundle diff rather than at the moment of the write.
-- **Taint marks only what a platform lets it see, and it only ever loosens.** The external-content mark needs an author positively refuted, or a room the operator declared external. Discord and Notion cannot refute an author at all, Teams only when a roster lookup answers, and on a **read** only Slack refutes for itself — so the plane fails by **under**-marking. Enforcement is relaxation-only: the reviewed table can drop a mark a call site would have set, never add one, so the call sites that still do not mark stay a counted gap rather than a closed one, counted by a `taint.verdict` audit row whose `detail.divergence` reads `under-taint` — one row per source kind per turn, never one per call site. The stricter answers ship ON: the shipped policy keeps an excluded author's text out entirely (`externalPolicy.authorGrain: "withhold"`) and does not engage in an external room at all (`roomGrain: "silent"`). `taint` and `engage` are the deliberate opt-outs. Neither strict answer widens what the plane can SEE: an author no platform refutes is still not excluded.
+- **The non-member stamp and the `withhold` grain see only what a platform lets them see.** Each needs an author positively refuted, or a room the operator declared external. Discord and Notion cannot refute an author at all, Teams only when a roster lookup answers, and on a **read** only Slack refutes for itself — so both fail by **under**-refutation, and an unrefuted outsider's text reaches the model inside the fence. The stricter answers ship ON: the shipped policy keeps an excluded author's text out entirely (`externalPolicy.authorGrain: "withhold"`) and does not engage in an external room at all (`roomGrain: "silent"`). `envelope` and `engage` are the deliberate opt-outs. Neither strict answer widens what the plane can SEE: an author no platform refutes is still not excluded. The memory provenance mark is a signal to the model, not a gate: a marked bullet still loads, and a body fenced before the turn marks nothing.
 - **Self-hosting isolates the sandbox, not the operator.** The sandbox tiers are not interchangeable. Vercel Sandbox gives a hardware-virtualised microVM. Off Vercel, Open Everywhere selects `docker` (the default) or the dev-only `justbash`, and nothing else — a `sandbox.selfHostBackend` setting naming any other value, `microsandbox` included, refuses to boot. Plain Docker gives container isolation only, and Docker's own network policy is allow-all or deny-all. The egress-proxy sidecar does not front it: eve starts the session container on the daemon's default network, so the app refuses to boot on `docker` with the proxy wired (OPE-2407). (Eve's own `microsandbox` enforces default-deny egress but **not** at-boundary credential injection, measured at OPE-917, which is why a read credential would be written into the sandbox there — a finding held open by the boot refusal above, not a posture this deployment can select.) And self-hosting moves trust to you rather than removing it: the audit chain proves tampering to the operator, never to an outside party, because nothing anchors the chain to a witness the operator does not control.
 - **Nothing here defends the store or the host.** Org partitioning and RLS bound what a *session* reads. A person with database credentials, a platform admin, or anyone who can change tracked config and get it merged is outside every control on this page — which is why grants, domains and the trust registry are config-as-code behind branch protection and CODEOWNERS, and why that merge is the real privilege gate.
 

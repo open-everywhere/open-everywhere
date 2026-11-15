@@ -343,7 +343,7 @@ domain in the org can still hand them nothing but the fact that it fired.
 
 It is **one axis with three points**:
 
-| posture | what enters the prompt | tainted? |
+| posture | what enters the prompt | fenced? |
 |---|---|---|
 | `trigger-only` | nothing — a fixed line built only from the hook's own declared id | no |
 | `projection` | only the fields named in `project` | **yes** |
@@ -389,9 +389,9 @@ of the model — so narrowing the render deliberately does not narrow what a sub
 match on. A projection is a render-time narrowing, not a routing change.
 
 > 🔴 **A projection bounds volume, not trust.** The values that survive are still an outside party's
-> bytes — fewer of them, chosen by you, not sanitised. So a `projection` fire is **tainted** exactly
-> as a `content-bearing` one is: anything the agent tries to persist off it asks a human first. Only
-> `trigger-only`, where no payload byte reaches the prompt at all, is untainted.
+> bytes — fewer of them, chosen by you, not sanitised. So a `projection` fire is **fenced** exactly
+> as a `content-bearing` one is. The fire is also unattended, so a gated verb's `ask` becomes a deny.
+> Only `trigger-only`, where no payload byte reaches the prompt at all, fences nothing.
 
 **`trigger-only` stays absolute.** Adding a third posture did not soften the first: the ingress
 derives at most one narrowing declaration from one posture value, and the normalizer applies

@@ -8,7 +8,7 @@ import {
 const args = process.argv.slice(2);
 const tool = args.find((a) => !a.startsWith("--"));
 if (tool === undefined) {
-  console.error("usage: explain-permission.ts <tool> [--domain <name>] [--unattended] [--tainted] [--mode <MODE>] [--allowlist a,b,c]");
+  console.error("usage: explain-permission.ts <tool> [--domain <name>] [--unattended] [--mode <MODE>] [--allowlist a,b,c]");
   process.exit(2);
 }
 function flagValue(name: string): string | undefined {
@@ -26,7 +26,6 @@ const request: ApprovalChainRequest = {
   tool,
   ...(flagValue("domain") !== undefined ? { domain: flagValue("domain") } : {}),
   unattended: args.includes("--unattended"),
-  tainted: args.includes("--tainted"),
   ...(modeName !== undefined ? { mode: { mode: modeName as ApprovalModeName, ...(allowlist !== undefined ? { allowlist } : {}) } } : {}),
 };
 

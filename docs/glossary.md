@@ -383,8 +383,7 @@ opens this way; a seat may then continue it from the same room (see **task conti
 **task continuation (`taskId`)** — eve 0.70 makes every agent tool a resumable task, so a correction
 or a follow-up can reach an idle worker by its `taskId`. A conversation seat sends one with `work`
 and the task id that the job's result named, and the work session continues the task. **OE
-allows it** (OPE-2251, ruling C). Until OPE-2720 the worker's taint was session-sticky; that slot
-is deleted, so a continued worker's turn starts clean. The worker re-resolves its requester and reply
+allows it** (OPE-2251, ruling C). The worker re-resolves its requester and reply
 address for each later turn from the admitted continuation. The one OE rule on top is the **provenance
 fence**: a `taskId` call is admitted only from the same room (channel, issue or DM) that opened the
 task, and only once the task has reported back; every other continuation is refused. The fence
@@ -432,7 +431,7 @@ Source: `packages/core/agent/access/window-gate-manifest.ts#agent`, `packages/co
 session that spawned it. Host-written and model-unreachable.
 Source: `packages/core/agent/identity/binding.ts#subagentParentSessionId`, `packages/core/agent/identity/binding.ts#isSubagentChildContext`.
 Not to be confused with: the **root session** (the top of the chain, which has no parent pointer),
-or a **parent turn** (one turn of the parent session — a taint stamp rides the TURN, the pointer
+or a **parent turn** (one turn of the parent session — a delivery stamp such as `oe_non_requester` rides the TURN, the pointer
 names the SESSION).
 
 **`canDelegateFromSeat`** — is there a window to mint a worker into? A seat that answers false keeps
@@ -442,104 +441,71 @@ Source: `packages/core/agent/access/delegation-mount.ts#canDelegateFromSeat`, co
 
 ---
 
-## 3. Taint
+## 3. Untrusted content and provenance
 
-> 🔴 **Removed (OPE-2721).** The taint plane is gone: no per-turn slot, no source-tier table, no `taint.*`
-> audit rows, and `taint.mode` / `taint.tierMode` are accepted and ignored for one release. The public
-> taint exports are deprecated no-op shims until OPE-2724. The entries below describe the removed plane;
-> OPE-2727 rewrites them. The fence (§ untrusted-content envelope) and the non-member stamp survive.
-
-**taint** (a **tainted turn**) — this TURN ingested untrusted external content. On a root session the
-flag is per-turn and monotonic within the turn, on every session. (Until OPE-2720 a worker's taint was
-session-sticky; that slot went with the worker taint carriage.) The turn boundary clears it, but only on positive proof of a
-new eve turn id; an unreadable turn id KEEPS the old value.
-Source: `packages/core/agent/access/taint-signal.ts#beginTaintTurn`, `packages/core/agent/access/taint-signal.ts#markUntrustedIngestedThisTurn`, `packages/core/agent/access/taint-signal.ts#untrustedIngestedThisTurn`.
-Not to be confused with: a session-durable or generation-durable mark. 🔴 **OE never marks a seat
-session or a generation as tainted**; the worker's sticky slot above is the one session-scoped mark. Storage is a durable eve slot, which is why the reset is explicit.
+> **The taint plane is removed (OPE-2683, slices OPE-2711 to OPE-2723).** No turn, session or child
+> carries a mark, no source-tier table decides a read, and no approval verdict reads what a turn read.
+> What stays is the **envelope** (both halves: the chat-message half and the tool/connector-seam half),
+> the **non-member stamp**, the **memory provenance mark** and the **skill envelope**. The retired
+> terms are the tainted turn, the source tier, the ingestion kind and route, the forward and return
+> legs, and the card disclosure. [The upgrading notes](../packages/core/UPGRADING.md) list what each
+> slice removed.
 
 **envelope** (also **wrapping**) — the instruction-resistant fence around external content.
 `wrapUntrusted` caps the body, defangs any delimiter inside it, closes it with a nonce-matched tag,
 and appends one data-only notice after it. Wrapping keys on the SOURCE: every tool, connector and web result is wrapped, and so is
-every wake-envelope `<message>` except one — a `principal` or `peer` author's, which reaches the
+every line of a chat read, and every wake-envelope `<message>` except one — a `principal` or `peer` author's, which reaches the
 model escaped and capped but unfenced, because the `trust` attribute already states that a vouched
 member typed it. An unresolved author's message is wrapped; that is the fail direction. A raw
 `direct` DM/@mention body carries no envelope and no fence at any grade, as it always did.
 Source: `packages/core/agent/access/untrusted.ts#wrapUntrusted`; delimiters at `packages/core/agent/access/untrusted.ts#UNTRUSTED_OPEN`; the chat exception
 at `packages/core/agent/channels/wake-envelope.ts` (`authorTrustAdmitsUnfencedBody`).
-Not to be confused with: **gates**. Wrapping never refuses anything, and since OPE-2716 no verdict
-reads the taint mark either.
+Not to be confused with: **gates**. Wrapping never refuses anything, and no approval verdict reads
+whether a turn wrapped content.
 
-**ingestion** — the one funnel that does both jobs: it wraps, and it marks the turn if the source
-tier says untrusted.
-Source: `packages/core/agent/access/untrusted.ts#ingestUntrusted` (the fence funnel, which survives; OPE-2721 removed the marking decision it once called).
-Not to be confused with: `wrapUntrusted`, which fences without marking.
+**ingestion** — the fence funnel a read site calls. It caps and reduces the result, then wraps it.
+A site passes a `source` label for the fence and a `toolName` for the result reducer, and nothing else.
+Source: `packages/core/agent/access/untrusted.ts#ingestUntrusted`.
+Not to be confused with: `wrapUntrusted`, which only fences.
 
-**source tier** — `trusted` or `untrusted`, decided per ingestion KIND by one code table.
-Source: `packages/core/agent/access/deprecated-taint-exports.ts#classifyIngestion` (a no-op shim since OPE-2721; the table is removed).
-🔴 **The SOURCE decides, not read-tool-versus-backscroll.** `kind: "chat-message"` returns
-**trusted**, so reading a channel or a thread does not taint a turn merely because it was a read.
-Source: removed by OPE-2721 (the table had this case).
+**memory provenance mark** — the `[external-provenance:]` suffix a memory bullet takes when the turn
+that wrote it wrapped outside content (OPE-2719: keep a reduced mark).
+Every in-turn wrap of outside bytes sets memory's own per-turn flag. The flag reads clear on the next turn, it has no
+setting, and no auth attribute, child slot or forward stamp carries it to another session. A body the
+ingress process fences before the turn (a wake from a non-member) does not set it, and a worker's
+read does not mark its parent's memory writes.
+Source: `packages/core/agent/memory/turn-provenance.ts` (the flag), `packages/core/agent/memory/provenance-mark.ts#markAddedBullets` (the suffix).
+Not to be confused with: an approval signal. The mark changes how the model reads a bullet. No
+verdict reads it.
 
-🔴 **The one exception is the AUTHOR, and it is a positive refutation.** `read_channel` and
-`read_thread` grade the distinct authors of the page they fetched. If any of them is refuted as a
-non-member — by the surface's own probe, or by the author-trust register — the read declares
-`authoredByNonMember: true` and the row returns **untrusted**. An absent or `false` fact is trusted:
-"the probe could not answer" is never "a stranger wrote it", and marking on silence would set the bit
-on every read-heavy turn. EVERY chat reader — `read_channel` / `read_thread` and the delegated
-worker's `read_work_channel` / `read_work_thread` (OPE-938) — routes through ONE grade-and-project
-body (`readChannelResult` / `readThreadResult`), so the taint leg and the `withhold` grain below are
-declared once and no reader can declare them differently.
-Source: `packages/core/agent/channels/read-author-trust.ts` (`refutedReadAuthorIds`).
+🔴 **A chat read fences every author, and the AUTHOR GRAIN decides whose text it keeps.**
+`read_channel` and `read_thread` grade the distinct authors of the page they fetched. If any of them
+is refuted as a non-member — by the surface's own probe, or by the author-trust register — and
+`externalPolicy.authorGrain` is `withhold` (shipped), the read replaces those authors' message text
+with the arrived-marker. A withheld body never reaches the model. On the `envelope` opt-out grain
+(and its deprecated alias, OPE-2722) nothing is withheld, and the text reaches the model inside the
+fence like every other line. An absent or `false` fact is not a refutation: "the probe could not
+answer" is never "a stranger wrote it". EVERY chat reader — `read_channel` / `read_thread` and the
+delegated worker's `read_work_channel` / `read_work_thread` (OPE-938) — routes through ONE
+grade-and-project body, so no reader can declare the `withhold` grain differently.
+Source: `packages/core/agent/channels/read-author-trust.ts` (`refutedReadAuthorIds`), `packages/core/agent/channels/channel-read.ts` (`gradeAndProject`).
 
-🔴 **The same join answers the AUTHOR GRAIN, and under `withhold` the read does not mark.** The join
-returns the refuted author IDS, and `read_channel` / `read_thread` read that one answer twice: they
-declare `authoredByNonMember` for the table, and — on `externalPolicy.authorGrain: "withhold"` — they
-replace those authors' message text with the arrived-marker. A withheld body never reached the model,
-so the read declares nothing and the turn stays clean. On the `envelope` opt-out grain (and its
-deprecated alias `taint`, OPE-2722) nothing is withheld and the mark is unchanged.
-Source: `packages/core/agent/channels/channel-read.ts` (`gradeAndProject`).
-
-Fail-closed: a row whose deciding metadata is absent returns `untrusted` with `assumed: true` — with
-`chat-message`'s author fact the deliberate exception, for the reason above.
-
-**forward leg** (parent ⇒ child) — **retired (OPE-2720).** A worker, a work session or a fired
-session dispatched from a tainted turn started tainted: the parent stamped its auth attributes
-(`oe_spawn_tainted`, `oe_parent_turn_tainted`, `oe_tainted_fire`, `oe_job_tainted`) and the child
-seeded its turn from the stamp. OPE-2720 deleted that carriage. No producer writes the stamps and no
-reader seeds from them; a stamp an older build left in a live session's auth bag is ignored. A turn's
-mark now stays with that turn. The auth-bag carriage itself still exists for other stamps (the
-own-account and requester stamps), and `packages/core/scripts/native-subagent-test.ts` §D9.1 pins
-the eve facts it rests on.
-Source: removed by OPE-2721 (the hook that seeded the mark from the guest stamp).
-
-**native-delegation withdrawal** — **withdrawn as a concept (OPE-471). A tainted turn keeps eve's
-built-in `agent`.** The projection seam removes the tool only when the SEAT was not positively
-classified as a delegating conversational seat.
-The withdrawal rested on one condition: no taint mark reached a native child, so a tainted seat would
-dispatch a child that ran CLEAN. The **forward leg** then marked that child; OPE-2720 deleted the
-forward leg, and since OPE-2716 and OPE-2718 no approval verdict reads the mark, so the withdrawal
-stays withdrawn.
+**native-delegation withdrawal** — **withdrawn as a concept (OPE-471). A seat keeps eve's built-in
+`agent` whatever its turn read.** The projection seam removes the tool only when the SEAT was not
+positively classified as a delegating conversational seat.
 🔴 **The tool plane was never the reason, and stating it as one was false.** A worker's gated tools
 take the same approval chain as a seat's: the registry's `ask` cards them, and an unattended run
-denies. Since OPE-2716 no approval verdict reads taint. `bash`, `write_file` and `read_file` are `open`
+denies. `bash`, `write_file` and `read_file` are `open`
 rows by the ratified in-sandbox cut — their durable effects leave only via the gated verbs — and `aws`
 is bounded by its bundle grant, its IAM role and the host-side argv screen at L2.
 Source: `packages/core/agent/access/native-delegation-state.ts` (`nativeAgentAllowedNow`), applied
 at `packages/core/agent/access/untrusted-projection.ts`.
 
-**return leg** (child ⇒ parent) — **retired (OPE-2720).** A child's taint was carried back onto the
-turn that read its result, through a durable marker row (`oe-subagent-taint:*`) the parent read at
-settlement and failed CLOSED on. OPE-2720 deleted the marker module and the read. The old rows expire
-unread within six hours.
-Not to be confused with: the `delegation-result` row of the source-tier table. That row has no
-declaring site left and defers to nothing; it answers `untrusted` on provenance alone.
-
 **background-task settlement** — the seat's side of a delegated task, on eve's own task edges. eve
 runs the `agent` call as a durable task inside the parent's open turn: the call returns a receipt at
 once, the turn waits at `turn.waiting`, and the child's output reaches the parent as a `task.result`
 message in that same turn. OE settles on eve's `task.settled` EVENT, which eve emits once per settled
-call and which no member can author. (Until OPE-2720 this edge also adopted the child's taint; that
-"background-task return leg" is deleted with the worker taint carriage.)
+call and which no member can author.
 🔴 **At eve 0.70 that is the ONLY settlement edge** (OPE-2250). eve sends no task NOTIFICATIONS, and
 there is no task VIEW — `task_peek` is deleted and `task_cancel` answers one rendered sentence
 (`execution/tasks/render.js` `renderTaskCancelResult`) with no `tasks` array and no `lastOutput`.
@@ -617,8 +583,7 @@ unreadable turn id installs nothing and reads as absent — the turn keeps the i
 🔴 **A task-settlement wake does NOT re-run OE's ingress gates, and that is the ruling.** The
 window-topology gate admits a SURFACE into a shared window, and a settlement enters no surface.
 Wake-origin classification and attendedness describe a HUMAN's message, and a framework settlement
-has no author. Ingestion taint seeding is the one gate with content behind it, and the taint plane's
-own settlement branch already covers it. What was missing was IDENTITY, and identity is what this
+has no author. What was missing was IDENTITY, and identity is what this
 adds.
 🔴 **A settlement step installs its address from eve's EVENT, not from a tool call.** Through 0.54
 eve gave authored code no STRUCTURED signal on the wake — `taskDeliveryId` never left the hook
@@ -636,13 +601,26 @@ own `task-wake-unread` reason and names `no_reply`, and the turn's closing prose
 audited. No tool call can recover that address, and the copy no longer pretends one can. The `no-row`
 outcome on the `unified.task_wake` row is where those turns are counted.
 
+**non-member stamp** (`oe_chat_nonmember`) — the host-set auth attribute a chat wake carries when a
+non-member's words entered it: an author the surface or the author-trust register positively refuted,
+or a room the operator declared `public` (or an undeclared room under
+`identity.undeclaredSurface: "mark"`). The ingress sets it outside the turn, and the model cannot set
+it. Five guest controls read it: the connector member plane, the A2A room gate, `propose_mcp_server`,
+domain questions and the Notion channel. The requester-message capture fence
+(`packages/core/agent/hooks/requester-messages.ts`) reads it too: it refuses a stamped wake, so the
+words of a stamped wake never reach the approval judge's `requesterMessages` consent signal. A
+wake carries no stamp when no leg refutes any of its authors and its room does not mark, so the fence
+can capture an unrefuted non-member's words. It is not a
+turn mark, and the judge does not read it directly.
+Source: `packages/core/agent/identity/non-member.ts#OE_CHAT_NONMEMBER_ATTR`, `packages/core/agent/identity/non-member.ts#stampNonMemberChatAuth`.
+
 **non-requester stamp** (`oe_non_requester`) — the host-set auth attribute a delivery carries when no
 person wrote its text. Its value names the delivery kind: `seat-wake` (every ambient seat wake),
 `task-brief` (a thread session's opening brief), `work-result` (the work session's result wake to the
 seat), `email-remainder` (an email wake with quoted or forwarded text) or `redrive` (the auto-redrive's
 corrective wake). The requester-message capture
 fence refuses a delivery that carries it, so the approval judge never reads that text as the
-requester's own words. It is not taint: the host sets it on every turn and with any `taint.mode`.
+requester's own words. The host sets it on every turn, and no setting disarms it.
 Source: `packages/core/agent/identity/non-requester.ts#OE_NON_REQUESTER_ATTR`, read by
 `packages/core/agent/hooks/requester-messages.ts#captureEligible`.
 
@@ -694,37 +672,13 @@ markers. A stale `oe_wake_id` is the cross-conversation address the wake-identit
 a stale routine marker would widen a live seat to the fire posture. Only the platform's own capture
 (`team_id`, `channel_id`, `guild_id`, `user_id`, …) rides.
 🔴 **A child that still has no surface is REFUSED, never run on the org default.** The heal depends
-on a mutation of an eve-owned object surviving into the child — the same carriage the taint forward
-leg uses, pinned by `scripts/native-subagent-test.ts` §D9. When it does not land, the hook fails the
+on a mutation of an eve-owned object surviving into the child — the same carriage the own-account and
+requester stamps use, pinned by `scripts/native-subagent-test.ts` §D9. When it does not land, the hook fails the
 child at `session.started` with a `binding.refused` audit row (`reason: subagent-binding-lost`).
 That backstop is not the egress identical-binding invariant: the invariant asserts nothing when the
 parent published no fingerprint, and a mis-bound child in that case used to run. The refusal fires
 only when the child resolves a REGISTERED platform and still names no surface, so the local
 stand-in stays reachable for `eve dev`, evals and unit contexts.
-
-**ingestion kind** — the provenance label an ingestion site declares, and the only thing
-`classifyIngestion` reads to decide a source tier. The vocabulary is closed in code, and a site passes
-a kind rather than inlining a tier. Four kinds are worth naming here because their sources are easy to
-misread:
-
-- **`web`** — the fetch, search and browser verbs. Anything the open web returned.
-- **`routine-event`** — a routine's event body: the hydrated entity a triggered fire is about, and the
-  transcript read of an earlier fire.
-- **`image-description`** — a model-authored description plus OCR of an image. It is the **model's**
-  reading of a picture, not the picture, and it is untrusted for that reason.
-- **`skill-declared`** — a sandbox skill script's self-declared external fetch: bytes the script says
-  it pulled from outside.
-
-Source: `packages/core/agent/access/deprecated-taint-exports.ts` (`IngestionKind`, a deprecated alias since OPE-2721).
-Not to be confused with: a **source tier**, which is what a kind resolves to.
-
-**ingestion route** — removed by OPE-2721. A route was one site that bound inbound content to an
-ingestion kind, named `<file>#<label>`, and a generated inventory and an ingestion lint kept the list.
-Both are deleted. A read site now passes only a `source` label for the fence and a `toolName` for the
-result reducer; `packages/core/scripts/core-route-fence-test.ts` drives each core read route.
-Not to be confused with: an ingestion **kind**, which several routes can share — the browser verbs and
-the fetch verb both bind to `web`, and a routine's event body and its transcript read both bind to
-`routine-event`.
 
 **skill envelope** — the one sandbox-to-host envelope delimiter contract. A skill script wraps bytes it
 fetched, and the host extracts those segments out of the script's own standard output.
@@ -735,19 +689,10 @@ than swallowing the rest. A forged close fails, because the nonce is minted afte
 already in hand.
 Not to be confused with: the **envelope** above, which is the host's own fence around external content.
 
-**content origin** (declared) — what a connection declares about where its results come from, carried
-from the access resolve to the model-call seam. `declaredContentOriginForConnection`
-(`packages/core/agent/access/connector-content-origin-state.ts`) is keyed per connection, then per
-tool, and answers `undefined` on any gap. Resolving a qualified tool name matches the **longest**
-declared connection prefix rather than the first `__` separator, because a connection slug may itself
-contain one; the federated search tool never matches, because one call can aggregate several
-connections.
-
-**taint disclosure** — retired by OPE-2717 (the maintainer's ruling, OPE-2715 row 10). No approval
-card shows a taint line on its visible lines. A card frozen before the deploy with `tainted` in its
-arguments renders as a clean card. Since OPE-2718 that includes the routine kinds (`routine.create`,
-`routine.cancel`, `routine.edit`). `withTaintDisclosure` (`packages/core/agent/approvals/taint-disclosure.ts`) stays one
-release as a deprecated no-op shim, because the module is a public subpath export (OPE-2721).
+**content origin** (declared) — deprecated and ignored since OPE-2723. A grant may still declare
+`contentOrigin`, and config load accepts it, but nothing reads it. `declaredContentOriginForConnection`
+(`packages/core/agent/access/connector-content-origin-state.ts`) is a no-op shim that answers
+`undefined` for every connection. OPE-2724 removes the field and the shim.
 
 **result reduction** — the deployment-registered arm that shortens an oversized tool result.
 `reduceResultBody` (`packages/core/agent/access/result-reduce.ts`) returns a body already inside the
@@ -764,9 +709,8 @@ the host previews that show model text (Linear's activity previews, the Slack ta
 the inbound A2A answer.
 Source: `packages/core/agent/access/sensitive-data.ts#SensitiveTier`, `packages/core/agent/access/sensitive-data.ts#SHIPPED_DETECTORS`,
 the sink table at `packages/core/agent/access/outbound-filter.ts#OUTBOUND_INTERNAL_TOOLS`.
-Not to be confused with: a **source tier** (is an INGESTED read untrusted), or a **consequence tier**
-(what a tool costs on any turn). The
-sensitivity tier reads the bytes LEAVING, and it reads no taint.
+Not to be confused with: a **consequence tier** (what a tool costs on any turn). The sensitivity
+tier reads the bytes LEAVING.
 
 ---
 
@@ -861,9 +805,9 @@ flipped `ask → defer`, only in `enforce` mode (the shipped `approvals.judgeMod
 failure resolves to `ask`. An enforced allow must cite one of the scope's authored pre-approval
 rules; an uncited allow resolves to `ask`. Admin acts and memory erasure never reach it. A cached allow
 answers only for the same arguments, requester and attendance. Of the connector ops, only a
-write on the domain's credential in an attended turn reaches it (no taint condition since OPE-2716), and an allow covers that one call.
+write on the domain's credential in an attended turn reaches it, and an allow covers that one call.
 A personal-browser step reaches it only when the personal-browser policy's `judge` switch is `enforce`
-(shipped `off`), and the judge does not read taint for that step.
+(shipped `off`).
 Source: `packages/core/agent/access/approval-judge.ts#approvalJudgeMode`;
 `packages/core/agent/access/consequence.ts#judgeDeferredTool`.
 
@@ -895,7 +839,7 @@ a judge consult.
 fixed order: `mode` → `floor` → `unattended`. A `deny` skips the pipeline entirely.
 `unattended` runs LAST on purpose: it turns any surviving `ask` into a `deny`, including one the
 beneficiary-clicker floor has just produced, so no run without a human can be left holding a card
-nobody can click. The `taint` stage is gone (OPE-2716): the chain reads no taint.
+nobody can click.
 Source: `packages/core/agent/access/approver-chain.ts#TransformStage`, `packages/core/agent/access/approver-chain.ts#TRANSFORM_STAGE_ORDER` (the order, and its doc comment says it in prose), `packages/core/agent/access/approver-chain.ts#TRANSFORM_TABLE`.
 Not to be confused with: an **element**. An element holds an opinion at a level; a transform edits
 the resolved answer.
@@ -1035,7 +979,7 @@ refuses a second one for the same slug.
 Source: `packages/core/agent/access/connector-credentials.ts` (`ConnectorCredentials`),
 `agent/access/connector-credentials.ts` (this deployment's).
 
-**connector grant** — `{ name, credential, contentOrigin }` on `Bundle.connectors`. The ONE grant
+**connector grant** — `{ name, credential }` on `Bundle.connectors` (the old `contentOrigin` field is deprecated and ignored). The ONE grant
 grammar. `credential` is **mandatory** and has no default: a connector with exactly one configured
 credential still names it, and a grant whose credential does not resolve grants **nothing at all** —
 not the connector without its identity.

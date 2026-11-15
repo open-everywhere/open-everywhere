@@ -7,7 +7,7 @@ trusted.
 A **connector** is the unit you connect: one host-side MCP connection
 (`agent/connections/<slug>.ts`), with a **credential catalogue** listing the identities you
 have configured against it. A **bundle** grants
-`connectors: [{ name, credential, contentOrigin }]` to a scope. The resolver binds the named
+`connectors: [{ name, credential }]` to a scope. The resolver binds the named
 credential to each surface, **narrowest-wins**, so ten domains can reach one connector with ten
 different keys.
 
@@ -50,7 +50,7 @@ names a key the broker resolves.
 A bundle grants the connector, and names which of its credentials this scope reaches it as:
 
 ```ts
-connectors: [{ name: "notion", credential: "team-key", contentOrigin: "external" }]
+connectors: [{ name: "notion", credential: "team-key" }]
 ```
 
 When the resolver expands that grant it checks the allowlist (does the connection
@@ -61,9 +61,8 @@ greyed out. A grant whose credential does not resolve contributes **nothing at a
 connector without its identity — and emits a warning rather than throwing: **fail-closed by
 omission**.
 
-`contentOrigin` is the third field and it is required on every operator-authored grant. It says
-who writes the bytes the connector returns; see [Declaring a connector's content
-origin](#declaring-a-connectors-content-origin) below.
+A third field, `contentOrigin`, is deprecated and ignored; see
+[`contentOrigin` — deprecated and ignored](#contentorigin--deprecated-and-ignored) below.
 
 ## The credential axis: who the agent acts as
 
@@ -340,9 +339,8 @@ settlement records what moved in a `delegation.provenance_carried` row, whose `o
 `carried`, `not-completed` (the worker died before it answered) or `wake-unprovable` (the settling
 turn's address names another conversation, so the sources are withheld rather than named in the
 wrong room). The carriage joins worker to seat through the task-to-call join row, which every
-deployment writes whatever `taint.mode` says (OPE-2712). So the move needs one thing: the seat must
-answer on the turn the settlement woke it. The worker's **taint** verdict never travels that way — it rides its own
-marker, and the two planes share nothing.
+deployment writes (OPE-2712). So the move needs one thing: the seat must
+answer on the turn the settlement woke it.
 
 **A borrowed read is named too.** A credential-grant call arrives under the reserved
 `grant__<owner>_<connector>__…` namespace, which the connector hook skips, so the **mount** records
@@ -361,10 +359,10 @@ and three routes reach a source without filling the ledger. Do not read a bare r
 "consulted nothing":
 
 - a **delegated** read whose settlement the seat could not place in a room, or whose dispatch has
-  no join row — the carriage joins worker to seat through that row. Every deployment writes it,
-  whatever `taint.mode` says (OPE-2712). The row is missing when the best-effort write at dispatch
+  no join row — the carriage joins worker to seat through that row. Every deployment writes it
+  (OPE-2712). The row is missing when the best-effort write at dispatch
   failed, when its six-hour TTL lapsed before the settle (a continuation does not refresh it), or
-  when a taint-off deployment dispatched the task before that change;
+  when an older build dispatched the task before OPE-2712 made the write unconditional;
 - a **cross-turn edit**, since the ledger is turn-stamped;
 
 The direction is deliberate and it runs one way: the footer can fail to name a source the turn
@@ -578,7 +576,7 @@ A bundle can move an operation *up* that ladder:
 ```ts
 defineBundle({
   name: "finance-notion",
-  connectors: [{ name: "notion", credential: "team-key", contentOrigin: "internal" }],
+  connectors: [{ name: "notion", credential: "team-key" }],
   connectorOps: [{
     connector: "notion",
     gated: ["search"],          // this workspace is sensitive: even reads draw an approval
@@ -607,105 +605,20 @@ of that breadth is friction, never exposure. And this plane sets an operation's
 **consequence** tier — it never changes *who may approve*; approver standing is a property
 of the action kind, decided in code and reviewed in a diff.
 
-### Declaring who authors a connector's content
+### `contentOrigin` — deprecated and ignored
 
-Every connector grant must say who writes the bytes the connection hands back:
+A connector grant once had to say who writes the bytes the connection hands back, as
+`contentOrigin: "internal"` or `"external"`. The answer fed the source-tier table, which decided
+whether a read marked the turn. OPE-2721 removed that table, and since OPE-2723 the field is
+**optional and ignored**. A grant that still declares it loads and behaves exactly as one that does
+not. OPE-2724 removes the field at the next breaking core release; see
+`packages/core/UPGRADING.md`.
 
-```ts
-defineBundle({
-  name: "finance-notion",
-  connectors: [
-    // our own workspace: org membership gates who types in it
-    { name: "notion", credential: "team-key", contentOrigin: "internal" },
-    // a public intake form — strangers author every row
-    { name: "acme-forms", credential: "forms-key", contentOrigin: "external" },
-  ],
-})
-```
+**What a connector result gets instead, whoever wrote it:** the untrusted-content envelope fences
+every result, on every connection and every tool. The approval chain, the egress firewall and the outbound sensitive-data filter decide
+what the turn may then do. The declaration never granted anything, so its removal widens no access.
 
-`contentOrigin` is `"internal"` or `"external"`, and it feeds exactly one consumer: the
-source-tier table that decides whether reading from a source marks the turn as having
-ingested untrusted content. `"internal"` means the bound connection reaches only content org
-members authored; `"external"` means anyone can author into it.
-
-**It is a question about authorship, not about authentication.** An authenticated,
-org-owned, VPN-only support desk is a system you trust completely, and its ticket bodies are
-still typed by strangers — that connector is `"external"`. The name deliberately does not
-say "trusted": nothing here is about how the connection is reached.
-
-That table is **enforced** for the connector-discovery list, so the word has an effect there: an
-`"internal"` connector's rows are still fenced as data but no longer mark the turn. The mark moves
-no approval verdict since OPE-2716, and since OPE-2718 it does not change whether a routine's
-standing `tool:` grant lifts a connector write in an unattended run. A declared `"external"` connector, and an undeclared one, both
-still mark it.
-
-**The word also applies to an operation's own result.** Since eve 0.69.0 the model reaches every
-operation through one `connection_execute` verb. OE reads each call's `{connection, tool}` target
-(`access/untrusted-projection.ts`, `declaredContentOriginForExecuteTarget` in
-`access/connector-content-origin-state.ts`), and the connection's declared `contentOrigin` for that
-tool then applies to the result. So an `"internal"` declaration leaves the turn clean, and a declared
-`"external"` connector, or an undeclared one, marks it.
-
-`connection_search` belongs to no one connection, so its name matches no declaration. Its
-**result** answers instead: each discovered tool answers with its own connection's declaration
-for that tool, and the result is as trusted as its least-trusted tool. A search that finds only
-tools on `"internal"` connections leaves the turn clean. One tool from an `"external"` or an
-undeclared connection marks it. This matters on an MCP connection, where an operation mounts
-only after the search finds it: a search that always marked the turn would taint every fire
-that reaches the operation.
-
-#### Per-tool overrides
-
-One MCP server often mounts dozens of tools where only *one* reaches outside content. Rather
-than under-declaring that tool or over-declaring the rest, give the connection a default and
-name the exceptions:
-
-```ts
-connectors: [
-  {
-    name: "helpdesk",
-    credential: "desk-key",
-    contentOrigin: {
-      default: "internal",                  // schemas, queues, agent rosters — all ours
-      except: { search_tickets: "external" }, // …but ticket bodies are typed by customers
-    },
-  },
-]
-```
-
-`except` keys are **bare tool names** — the tool as the MCP server names it, *without* the
-`helpdesk__` prefix Eve mounts it under. Writing the qualified name is a config error rather
-than a silent no-match. An exception only ever applies to its own connection, so a
-`search` override on one connector never touches a `search` tool on another. It works in
-both directions: `{ default: "external", except: { our_runbook: "internal" } }` is the
-mirror case.
-
-Three properties are worth stating plainly, because each of them is a deliberate choice:
-
-- **It is required, and still never inferred.** Open Everywhere will not guess an origin for
-  you — omitting the field is a config error naming the connection and both accepted shapes,
-  not a default. A defaulted `"external"` would be indistinguishable from a considered one,
-  and a defaulted `"internal"` would be a security hole with a convenience story. The one
-  exception: connectors written by an **access request** or an **agent-creation** codemod,
-  whose vocabularies write `{ name, credential }` and refuse a `contentOrigin` precisely so that
-  no *assertion* on those paths is model-authored. Those grants declare no origin and stay on
-  the fail-closed default. They still name their credential — that was the requester's choice at
-  propose time, not an assertion the codemod invented.
-- **Silence is not `"external"`.** A connector that reaches a session undeclared — through a
-  plugin or one of those codemod overlays — resolves the table's fail-closed
-  default (untrusted), but the verdict is marked *assumed*, which is how the log can tell
-  "this deployment never declared" apart from "this deployment declared external". Both read
-  as untrusted; only one of them is a claim.
-- **It grants nothing.** A `contentOrigin: "internal"` declaration cannot widen access, reach
-  a credential, or lift an approval. Every gate in *[A grant is a boundary, not a
-  hint](#a-grant-is-a-boundary-not-a-hint)* below applies unchanged.
-
-A connector granted through a **plugin** carries no declaration — that vocabulary is a bare slug
-list with no field for one — so those grants stay on the fail-closed default. And two bundles
-bound to the same scope that declare *different* origins for the same connection are
-contradicting each other rather than overriding each other (an Eve connection is one global
-instance): that resolves to a flat `"external"` and warns. Two per-tool declarations count as
-the same claim only when they answer identically for every tool.
+### The `connector` tool
 
 `connector` is the tool the agent uses to hand *you* the connect options for a connector — a
 Block Kit card on Slack, links elsewhere. It stores no secret and grants nothing by itself.
@@ -763,7 +676,7 @@ runbook (read-only) and open PRs on one repo; nothing else, nowhere else:
 ```ts
 defineBundle({
   name: "payments-tools",
-  // Notion: a connector grant — { name: "notion", credential: "team-key", contentOrigin: "external" }
+  // Notion: a connector grant — { name: "notion", credential: "team-key" }
   //   (host-side MCP connection, read-only key, gated per surface)
   // GitHub: an egress connection to api.github.com, token scoped to one repo
   // Every connection names its home broker: an absent `broker` fails the secret read closed.
@@ -892,10 +805,8 @@ What the grant buys, and what it does not:
 - Every **result** the vendor returns reaches the model inside the **untrusted-content
   envelope** — the same fence a channel read or a Notion read carries. The fence **names the
   origin**: the vendor tool, the owner whose credential fetched the bytes, the connector and the
-  target. A granted read always **marks the turn** as having read external content, because
-  no reviewed config declares a trust tier for a lent vendor tool, and silence never reads as an
-  assurance. A refusal is fenced but does not mark the turn: the broker sent nothing, so there
-  are no vendor bytes in it.
+  target. A granted read is fenced like every connector result. A refusal is fenced too, and it
+  carries no vendor bytes: the broker sent nothing.
 - **The tool's input schema is the one exception, and it sits OUTSIDE that envelope.** The
   schema the mounted tool offers is the vendor's own, read from the owner's live connection at
   approve time and snapshotted onto the grant row. Its property `description` strings are

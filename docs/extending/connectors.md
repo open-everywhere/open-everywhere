@@ -26,7 +26,7 @@ connector credentials "notion" {
 }
 ```
 
-A bundle grants `connectors: [{ name: "notion", credential: "team-key", contentOrigin: "external" }]`; the
+A bundle grants `connectors: [{ name: "notion", credential: "team-key" }]`; the
 [resolver](../how-it-works/access-and-scoping.md) checks the allowlist and the universe gate
 and binds that credential **to this surface**, narrowest-wins.
 
@@ -129,9 +129,8 @@ never applies the change itself, and nothing is set up until the merge.
   a group that lists them.
 - The tool refuses an external conversation (a shared channel, a guest, an outside account), a turn
   that a non-member's message woke, and a routine fire. A message the worker reads during the turn
-  from an author refuted as a non-member taints the turn instead. While `taint.mode` is on (the
-  shipped default), the approver chain then floors the card at a person's decision, and an
-  unattended run is denied.
+  is fenced, and under the shipped `withhold` grain a refuted author's text is replaced. The card
+  then takes the ordinary approval chain, and an unattended run is denied.
 - The tool needs the access-request config (an admin channel and a config repo) and the
   `baseMcpServers` baseline in `agent/access/access-requests.ts`. Without them it refuses and names
   the hand edit. With `dryRun: true` it validates and reports, and opens nothing.

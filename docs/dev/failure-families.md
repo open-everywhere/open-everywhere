@@ -88,7 +88,7 @@ real count was eight.
 
 ### `containment`
 
-An access, grant, taint or tenancy decision came out wrong. A pass that should have refused, or a
+An access, grant, fence or tenancy decision came out wrong. A pass that should have refused, or a
 refusal that should have passed. A carve-in that routes but does not contain sits here too. ("Decision"
 is deliberate: `docs/glossary.md` reserves "verdict" for the approver chain's four answers.)
 
@@ -125,7 +125,7 @@ zero rows behind a write that really happened, which reds this gate on a healthy
 A defect carries exactly ONE family. Read the trajectory, then take the first row that matches:
 
 1. The measuring apparatus failed → `harness`.
-2. An access, grant, taint or tenancy decision came out wrong → `containment`.
+2. An access, grant, fence or tenancy decision came out wrong → `containment`.
 3. The host's turn or session state machine lost or mis-ordered a decision → `lifecycle`.
 4. The door decided wrong, or the wake misdescribed the event → `wake`.
 5. A tool call or a tool contract failed → `tool-use`.

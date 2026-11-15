@@ -36,7 +36,7 @@ are two, and the seam has to choose. Do not read "answers text" as "add-only": t
 seam answers text too, and its arm REPLACES the body rather than adding to it. What decides the shape
 is the property the seam protects (no credential survives; no result grows), not the return type.
 
-🔴 **The tiering seam lets an arm lower, and floors the lowering at `write`** (ruled). The
+🔴 **The tiering seam lets an arm lower, and floors the lowering at `write`** (ruled 2026-09-01). The
 reasoning is worth carrying to the next verdict seam. The shipped classifier is itself the thing that
 loosens — its read-verb list is what puts `get`/`list`/`search` in the open tier at all, and its own
 default is `destructive`. So "raise-only" was a default posture, never a principle. What IS a
@@ -553,7 +553,7 @@ overturn a policy drop; and no arm is offered a message on a surface that declin
 arm is handed the message text before two gates the route runs later: the spend gate, and the
 **external-participant policy** (`applySlackExternalPolicy` — OPE-507/OPE-504), which decides an
 excluded author is owed nothing. Neither can be overturned by an arm, so no wake gets past them; but
-on a deployment that has opted out to the `envelope` grain (or its deprecated alias `taint`), an excluded author's message text does
+on a deployment that has opted out to the `envelope` grain (or its deprecated alias), an excluded author's message text does
 reach the arm — and, for a model arm, a model vendor — before that policy refuses it. The tenant
 fence is the one moved ahead of the consult, because an unadmitted workspace is the posture that
 says no turn may run at any price. A deployment arming this seam should decide whether the external

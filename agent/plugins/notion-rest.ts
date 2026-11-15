@@ -1022,12 +1022,12 @@ async function appendBatches(id, batches, opts) {
   }
 }
 
-// --- The taint envelope -----------------------------------------------------------------
+// --- The skill envelope -----------------------------------------------------------------
 
 // A page body and its comments are text other people wrote, so they are untrusted content. The
-// script prints them inside the skill taint envelope that the host's \`bash\` tool reads
-// (packages/core/agent/access/skill-envelope.ts): the host fences the span and writes a
-// \`skill-declared\` taint verdict labelled with the source below. This file cannot import that
+// script prints them inside the skill envelope that the host's \`bash\` tool reads
+// (packages/core/agent/access/skill-envelope.ts): the host fences the span under the
+// source label below. This file cannot import that
 // module, because it runs alone in the sandbox, so it prints the same wire format itself; the
 // package test round-trips it through the host's parser. The nonce is minted here, AFTER the
 // content was fetched, so a page cannot carry the close marker. Titles, ids, errors and usage

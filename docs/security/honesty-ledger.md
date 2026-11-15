@@ -109,7 +109,7 @@ agent would be authorising itself.
   shipped default. A fresh self-host starts single-surface until an operator turns it on.
 - **Positively identifying a non-member author is uneven across surfaces.** Whether a chat
   message's author can be *positively* confirmed as an outsider — which decides whether shared
-  memory engages and whether a read marks a turn as having touched external content — depends on
+  memory engages and whether a read withholds that author's text — depends on
   what the platform's API can answer. Slack, Linear and GitHub can each refute a non-member
   positively; Microsoft Teams can, when a roster lookup succeeds; Discord and Notion cannot refute
   an author at all. On the surfaces that can't, the deployment relies on an operator's own

@@ -93,6 +93,7 @@ function barrierTrace(fields: Record<string, string | number | boolean>): void {
     at = expect.getState().currentTestName ?? "?";
   } catch {
   }
+  // eslint-disable-next-line no-console
   console.error(`[oe-barrier-trace] ${body} at="${at}"`);
 }
 
@@ -230,6 +231,7 @@ async function drainOutstandingSettlements(): Promise<void> {
       }
       await sleep(BARRIER_POLL_MS);
     }
+    // eslint-disable-next-line no-console
     console.warn(
       `[oe-barrier] ${BARRIER_CEILING_MS}ms expired with settlement rows still arriving (${lastSeen} since the barrier opened). ` +
         "The next test may inherit a straggler — see harness.ts drainOutstandingSettlements.",

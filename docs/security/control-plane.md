@@ -1637,8 +1637,7 @@ captures** the delivery kinds below, because no person wrote them. It refuses tw
 five host-set stamps and one turn shape (the last paragraph below):
 
 - a delivery inside a native delegation child, by its delegation identity (`isSubagentChildContext`):
-  the child's brief is the parent model's words. The retired forward stamp (`oe_parent_turn_tainted`,
-  deleted by OPE-2720) plays no part;
+  the child's brief is the parent model's words. No stamp from the parent's turn plays a part;
 - a delivery inside the work session, because its every delivery wraps the seat model's brief;
 - `oe_fire_unattended`: a routine, webhook, schedule, job or inbound A2A fire;
 - `oe_job_fire`: a durable-job fire;
@@ -1656,8 +1655,8 @@ delivery of its own (`inheritedDeliveryThisTurn`, `packages/core/agent/access/ta
 A person's message that eve hands to that same turn later carries a fresh delivery nonce, so the
 fence captures it. **A known gap:** the detector fails toward "a delivery arrived" on a session's
 first turn, on every session off the unified window (it carries no delivery stamp), and on an absent
-or unreadable stamp. On those turns the fence can still capture a settlement wake's text. The fence reads no taint
-symbol, so it decides the same way with `taint.mode: "off"`. A turn that captures nothing leaves the
+or unreadable stamp. On those turns the fence can still capture a settlement wake's text. The fence reads only
+host-set stamps, so no setting changes how it decides. A turn that captures nothing leaves the
 previous turn's messages standing as backscroll, and the reader answers empty outside a session
 context.
 

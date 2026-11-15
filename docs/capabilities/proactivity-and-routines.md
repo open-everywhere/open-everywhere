@@ -1329,12 +1329,11 @@ Five rules hold, and each one is checked rather than promised:
   broke" must never be the same sentence — that is how a routine reports "no new incidents"
   off a read that returned a 500.
 - **The output is untrusted.** Collected bytes sit inside an untrusted fence, below the
-  routine's own prompt, and the fire is stamped tainted. The failure lines sit *outside*
+  routine's own prompt. The failure lines sit *outside*
   the fence: they are ours, and the run must be able to read them as fact. A failure line
   therefore names the collector and a **closed-set reason**, and never any upstream text —
   what a failing read threw goes to the audit row, capped, and reaches no model. An error
-  body is an outside party's bytes, and this region has neither a fence nor a taint stamp
-  behind it.
+  body is an outside party's bytes, and this region has no fence behind it.
 
 **The reader is a seam, and core ships none.** The dispatcher tick is not a session, so it
 holds no mounted connector tools. A deployment wires the read itself, through
@@ -1540,8 +1539,8 @@ triggers](#inbound-webhook-triggers)): the platform's registered DM resolver, th
 the DM's window or a native send. A target that does not resolve to a 1:1 DM is refused, so a
 calendar never reaches a room. The fire is unattended, names the person as its attested principal
 (never an acting one, so it does not borrow their personal connectors), carries the DM standing
-grain, and is **tainted**: an event title is text that anybody who sends an invite can write, so the
-facts sit inside the untrusted fence. The spend gate applies the person's own DM allowance. A person who stopped proactive DMs
+grain, and its facts sit inside the untrusted fence: an event title is text that anybody who sends
+an invite can write. The spend gate applies the person's own DM allowance. A person who stopped proactive DMs
 ([DM seats and the DM audience](../how-it-works/agent-and-loop.md#dm-seats-and-the-dm-audience)) is not messaged.
 
 ### Every silence has an audit row
@@ -2880,18 +2879,19 @@ Posture is the honest answer to *"why is a cron fine without a webhook's ceremon
 ingress: a cron's prompt and a webhook's prompt are both member-authored, in-channel and fixed. The
 difference is that a content-bearing hook's **payload** is written by someone outside your org,
 every time it fires, forever. Any fire that puts payload bytes in a prompt — **`content-bearing`
-*and* `projection`** — is therefore treated as **tainted**: the turn is marked. No card discloses the mark since OPE-2717.
+*and* `projection`** — puts those bytes inside the untrusted fence.
 A fire is also **unattended**, so every gated verb's `ask` becomes a deny — a
 hostile payload cannot arm a routine, a skill, a resident agent, a standing rule or a webhook through
-a card, whoever wrote it. That deny is the unattended clamp's, not taint's (OPE-2716): a config
+a card, whoever wrote it. That deny is the unattended clamp's (OPE-2716): a config
 lowering that covers one of those verbs applies to a fire as well. A projection bounds how *much* of an outside party's text arrives, never how much
-it is trusted. A `trigger-only` fire carries no such bytes and is not tainted.
+it is trusted. A `trigger-only` fire carries no such bytes and fences nothing.
 
-**Taint does not gate memory.** A memory write is an ordinary file edit with no write verb to
-mark. No verb carries a taint floor since OPE-2716. The routine and skill verbs are denied on a fire by
-the unattended clamp, unless a config lowering covers them (above), because they produce text a later unwitnessed run reads as instruction. A tainted fire is therefore not "exactly as if a person had pasted that
-text into the channel" — a human-authored chat message is trusted content and marks nothing;
-taint only exists because this payload did not come from a person in the room.
+**No approval gate guards memory.** A memory write is an ordinary file edit with no write verb to
+gate. The routine and skill verbs are denied on a fire by
+the unattended clamp, unless a config lowering covers them (above), because they produce text a later unwitnessed run reads as instruction. A fenced fire is therefore not "exactly as if a person had pasted that
+text into the channel" — a vouched member's chat message reaches the model unfenced; the fence
+exists only because this payload did not come from a person in the room. The fire's payload is
+fenced at ingress, outside the turn, so it sets no memory provenance flag.
 
 **Which systems you can connect is a config decision, not a per-webhook one.** A source is
 available once this deployment can both authenticate it (a signature verifier) and route it
@@ -3159,7 +3159,7 @@ LIVE `readableBy`. A vendor event (no declared grant) is checked by its source's
 reads live config already. The test then checks `checkEventReadGrant` and `checkFireDisclosure`, after
 the halt and before the creator check, and re-reads the event's
 entity with `hydratePointer` (a refused read stops the test). It renders the message with
-`eventPrompt`, the event plane's one prompt builder, and stamps the taint signal as the event fan-out
+`eventPrompt`, the event plane's one prompt builder, which fences the event body as the event fan-out
 does. A filter that no longer matches the kept event is told in the opening post, not obeyed.
 
 The bag is the real fire bag from `routineFireAttributes`, plus `thread_ts` on Slack and three host-set
@@ -3315,8 +3315,8 @@ teaches, never as a guarantee about what a routine's schedule can be.
 (`jobStateWithinCap`, `routines/job.ts`). `applyJobStateObservation` answers `accepted: false` with an
 empty patch, so the row keeps its previous state rather than half of a new one.
 
-**No ledger write records a taint flag** (OPE-2718). Every fire reads the ledger inside an untrusted
-fence instead, and a legacy row's `jobTainted` decides nothing: such a row loads and fires like any
+**No ledger write records a turn-mark flag** (OPE-2718). Every fire reads the ledger inside an untrusted
+fence, and a legacy row's turn-mark field decides nothing: such a row loads and fires like any
 other.
 
 `applyWatchObservation` (`routines/watch.ts`) hashes the observed state. **An unchanged hash records

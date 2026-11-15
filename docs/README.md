@@ -28,7 +28,7 @@ model, or jump straight to a section. New here? Start with
 - [Your agent, your ground](./introduction/your-agent-your-ground.md) — what stays under your control (data, models, gateway), the limits, and the page that backs each claim.
 - [Quick start](./introduction/quick-start.md) — from deploy button to a talking agent.
 - [Core concepts](./introduction/core-concepts.md) — the glossary: surface, domain, bundle, grant, silo, adapter, broker, routine.
-- [Glossary](./glossary.md) — the ratified runtime vocabulary: seat vs worker, grain vs posture, taint, tier vs verdict vs judge, the scope ladder — each anchored to the code that decides it.
+- [Glossary](./glossary.md) — the ratified runtime vocabulary: seat vs worker, grain vs posture, untrusted content and provenance, tier vs verdict vs judge, the scope ladder — each anchored to the code that decides it.
 
 ## 2. How it works — the fixed spine
 

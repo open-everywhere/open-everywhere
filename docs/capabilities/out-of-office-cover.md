@@ -12,7 +12,7 @@ A person turns cover on from their own direct message with the agent:
 | Command | What it does |
 | --- | --- |
 | `/oe cover on` | Turns cover on until the person turns it off. |
-| `/oe cover on until 2026-10-21` | Turns cover on until the start of that day (UTC). The date must be within 90 days. |
+| `/oe cover on until 2026-10-20` | Turns cover on until the start of that day (UTC). The date must be within 90 days. |
 | `/oe cover off` | Turns cover off at once. The recap follows within a few minutes. |
 | `/oe cover` | Says whether cover is on, until when, and how many questions it covered so far. |
 
@@ -106,7 +106,7 @@ name resolver finds (for example `#Launch`), or as "a Microsoft Teams conversati
 
 - The recap goes to a 1:1 DM only. A target that resolves to any other room is refused.
 - It passes the spend gate under the person's own DM allowance.
-- The questions are text other people wrote, so they sit inside the untrusted fence and the fire is tainted.
+- The questions are text other people wrote, so they sit inside the untrusted fence.
 - The tick claims the recap before it sends, so two ticks never send it twice. A refused send is tried
   again on the next tick. After 3 refused tries the tick drops the log and files `cover.recap_refused`.
 

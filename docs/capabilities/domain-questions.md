@@ -73,11 +73,10 @@ The delivery tells the domain's seat not to post in its own room about the quest
 not block such a post: the delivery wake carries the domain's room as its reply target, as every seat
 wake does.
 
-## Taint
+## Untrusted words
 
-Taint rides both ways. A question from a DM turn that read untrusted content wakes the domain's seat
-tainted. An answer from a domain turn that read untrusted content wakes your DM seat tainted. Each
-side quotes the other side's words as data, never as instructions.
+Each side quotes the other side's words as data inside the untrusted fence, never as instructions.
+No mark of what either turn read crosses to the other seat.
 
 ## Turn it off
 
@@ -112,7 +111,7 @@ carry ids, names and counts, never the question or the answer.
 - **The answering turn reads the domain seat's own session.** Under the shipped external policy
   (`externalPolicy.authorGrain: "withhold"`), the body of a message from an author the platform refuted
   as a member (a guest, a stranger) never reaches the seat. A domain that sets `authorGrain: "envelope"`
-  (or its deprecated alias `"taint"`) lets those words into the seat's session. `admission: "members-only"` keeps them out of the catch-up
+  (or its deprecated alias) lets those words into the seat's session. `admission: "members-only"` keeps them out of the catch-up
   read only, not out of a turn that their own mention starts. A person the platform neither confirmed
   nor refuted can still add text through a mention. The host does not filter what that context steers.
 - **No answer, no message.** If the domain's seat does not answer in the turn the question woke, the

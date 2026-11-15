@@ -21,8 +21,8 @@ it, the endpoint answers every delivery with `503`.
   would deliver the rest; this surface does not use one yet.)
 - **Trust comes from the policy, never from a name.** A sender binds `internal` only when Google's event names a
   Workspace domain id (`sender.domainId`) that the policy lists in `internalDomainIds`. Everyone else binds
-  `external`: shared memory routes to the read-only `public` layer, and the turn is marked as carrying a
-  non-member's words. ⚠ The mapping from your Workspace to its domain id is not documented as stable by Google.
+  `external`: shared memory routes to the read-only `public` layer, and the wake carries the non-member
+  stamp. ⚠ The mapping from your Workspace to its domain id is not documented as stable by Google.
   Read the id from a real event: every `google-chat.admitted` and `google-chat.refused` audit row records the
   sender's `domainId`. A DM-only deployment can start with an empty list: the first internal person's DM is refused
   `external-dm`, and its refused row carries their domain id.

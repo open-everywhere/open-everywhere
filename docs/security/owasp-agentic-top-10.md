@@ -12,12 +12,12 @@ that a deployment is "OWASP compliant", and no such status exists. Read the
 
 | ID | Risk | The control that answers it | The gap |
 | --- | --- | --- | --- |
-| ASI01 | Agent goal hijack | Untrusted content is fenced as data, and a turn that read it is tainted | A fence is a signal to the model, not a proof |
+| ASI01 | Agent goal hijack | Untrusted content is fenced as data, and a memory bullet written after a read carries the memory provenance mark | A fence is a signal to the model, not a proof |
 | ASI02 | Tool misuse and exploitation | Every agent tool has a declared consequence, a connector operation is tiered by its verb or its server's read-only hint, and the approver chain routes a consequential act to a human | A standing grant or a pre-approval rule skips the fresh decision; a connector card has no approver-standing check |
 | ASI03 | Identity and privilege abuse | Per-person bindings, credentials outside the sandbox, credentials fenced to their hosts | A credential with no declared `endpoints` reaches the vendor's whole API |
 | ASI04 | Agentic supply chain vulnerabilities | The roster lock refuses an unreviewed contribution, and MCP servers are declared in Git | No signature check on packages or on model weights |
 | ASI05 | Unexpected code execution | Code runs in a sandbox with default-deny egress | The enforcement depends on the host and two settings |
-| ASI06 | Memory and context poisoning | Memory is partitioned per domain, writes are fenced, and edits carry provenance | No content check on what an authorised writer stores |
+| ASI06 | Memory and context poisoning | Memory is partitioned per domain, writes are fenced, edits carry provenance, and a bullet written after a read carries the memory provenance mark | No content check on what an authorised writer stores |
 | ASI07 | Insecure inter-agent communication | Inbound A2A callers are declared and authenticated; a peer's answer is untrusted | Only declared peers; no message-level signature |
 | ASI08 | Cascading failures | Spend caps, a fail-closed halt, the stall guard and the loop breaker | Caps fail open and bound cost only |
 | ASI09 | Human-agent trust exploitation | Approval cards are host-rendered with cleaned values, and the audit log records what the agent did | Model-authored values still appear; a card cannot make a person read it |
@@ -27,15 +27,15 @@ that a deployment is "OWASP compliant", and no such status exists. Read the
 
 **The control.** Content from outside the trust boundary is wrapped in an
 `<untrusted_external_data>` envelope with a fresh nonce, so the model reads it as data
-(`packages/core/agent/access/untrusted.ts`). Nothing marks the turn since OPE-2721. A
+(`packages/core/agent/access/untrusted.ts`). A
 consequential tool asks a human through its registry tier on every turn; no approval verdict reads
 what the turn read (OPE-2716). The tool-set projection applies the same fence to connector and MCP results before each model
 call (`packages/core/agent/access/untrusted-projection.ts`).
 
 - Proved by: `npm run test:untrusted`, `npm run test:untrusted-projection`, `npm run test:core-route-fence`.
 - **The gap.** An envelope tells the model what is data. It does not stop a model that ignores it,
-  which is why the approval chain exists beside it. Since OPE-2716 that chain does not tighten on a
-  tainted turn: a lowering (a config allow, an armed judge) applies whatever the turn read. Provider-executed web search runs at the provider, so
+  which is why the approval chain exists beside it. Since OPE-2716 that chain does not tighten after a
+  read of untrusted content: a lowering (a config allow, an armed judge) applies whatever the turn read. Provider-executed web search runs at the provider, so
   no in-tree seam can fence its results.
 
 ## ASI02 — Tool misuse and exploitation
@@ -101,13 +101,20 @@ default-deny, and an empty allow set compiles to deny-all (`packages/core/agent/
 at the tool (`packages/core/agent/memory/write-fence.ts`). A human edit carries a provenance mark, so
 the dream cycle does not propose to correct it away (`packages/core/agent/memory/provenance.ts`).
 Every memory write that changes a silo goes through one road that writes an audit row
-(`packages/core/agent/memory/write-road.ts`).
+(`packages/core/agent/memory/write-road.ts`). A bullet written on a turn that wrapped outside
+content takes the `[external-provenance:]` suffix, the memory provenance mark
+(`packages/core/agent/memory/turn-provenance.ts`, OPE-2719). An assertion-shaped bullet also takes an `[unverified claim; …]` lead inside its sentence
+(`provenance-mark.ts` `recastAsAttributedClaim`). A question, a task or an already-hedged bullet keeps
+the suffix alone. Injection eval leg 3 measures whether a marked bullet still steers a later turn. It
+is a signal, not a gate.
 
-- Proved by: `npm run test:memory-write-fence`, `npm run test:memory-provenance`, `npm run test:audit`.
+- Proved by: `npm run test:memory-write-fence`, `npm run test:memory-provenance`, `npm run test:memory-turn-provenance`, `npm run test:audit`.
 - **The gap.** Nothing checks the truth of what an authorised writer stores. A false fact written by
   a person with write access persists until someone corrects it. The audit log tells you who wrote it,
   but its row is best-effort: a write that lands while the audit store fails keeps the bytes and loses
-  the row.
+  the row. The memory provenance mark is a signal, not a gate: a marked bullet still loads. A body
+  fenced outside the turn (a non-member's wake body, a fire's webhook or event payload) sets no mark, and a worker's
+  read does not mark its parent's memory writes.
 
 ## ASI07 — Insecure inter-agent communication
 
@@ -115,7 +122,7 @@ Every memory write that changes a silo goes through one road that writes an audi
 against that caller's declared key set or by a bearer secret compared in constant time
 (`packages/core/agent/a2a/inbound/auth.ts`). Outbound, each request is pinned to the declared card's
 origin and passes the reach decision and the SSRF guard (`packages/core/agent/a2a/egress.ts`). A
-remote agent's answer is fenced as untrusted content and taints the turn
+remote agent's answer is fenced as untrusted content
 (`packages/core/agent/a2a/output.ts`). Subagents run inside the same deployment and the same audit
 log.
 

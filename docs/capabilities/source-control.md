@@ -132,8 +132,8 @@ rights:
   clicker — see the [security model](../security/security-model.md)):
   the call **proposes**, a card posts, and the branch + PR publish only when a human in
   the channel approves. One path skips the card: an **approver chain** that lowers this verb
-  publishes at once and posts a notice instead. Taint does not close that path — no approval verdict reads taint
-  (OPE-2716). Under the hood it's two phases: at propose time the host mints a
+  publishes at once and posts a notice instead. A turn that read untrusted content does not close that path —
+  no approval verdict reads what the turn read (OPE-2716). Under the hood it's two phases: at propose time the host mints a
   **write** token (`contents:write`, `pull_requests:write`, `metadata:read`) and
   stage-pushes the head branch's exact commit to a hidden `refs/oe-pending/…` ref in a
   single one-shot command — no branch appears, no CI runs, no watcher is notified, and

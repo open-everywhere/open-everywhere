@@ -136,7 +136,7 @@ keep a workspace's people out of the member set, do not declare the Grid above t
 
 🔴 **It fixes who counts as a member, and that is the point of the rung.** On a Grid a person's home
 `team_id` is their own workspace, not the workspace the message sits in. Without the enterprise line
-every Grid colleague reads as an outside author: their message marks the turn a non-member turn, their
+every Grid colleague reads as an outside author: their message carries the non-member stamp, their
 words render inside the untrusted fence, and the member plane refuses their personal credential. With
 the line they read as members. A workspace under a **different** Grid, or under no declaration, is
 still an outside author.
@@ -836,9 +836,9 @@ re-promote a room that spans another organisation.
 > does. Grant `mpim:read` (Step 1) if you use group DMs and rely on this demotion. A **channel** does
 > not have this gap: an unconfirmed channel fails closed on its own.
 
-**A guest or an outside person who WRITES marks that turn.** Open Everywhere probes the author of the
-message that woke it (`users.info`). A positively refused author makes the turn a non-member turn, and
-the plane refuses a personal credential on it. **Sitting in the room marks nothing** — the mark keys
+**A guest or an outside person who WRITES stamps that wake.** Open Everywhere probes the author of the
+message that woke it (`users.info`). A positively refused author stamps the wake, and
+the plane refuses a personal credential on it. **Sitting in the room stamps nothing** — the stamp keys
 on whose words entered the conversation, not on who is present. Open Everywhere reads no roster for
 this, and an unreadable probe refuses nobody.
 
@@ -847,7 +847,7 @@ is a member. An author from a **different** workspace is a member only if you de
 workspace, or the [Grid](#enterprise-grid-declare-the-organisation-once) it belongs to. This is what
 admits an Enterprise Grid colleague, whose home workspace is a sibling of the one they are writing
 in. A guest grade still refuses on either path: `is_restricted`, `is_ultra_restricted`, `is_stranger`
-and a deleted account all mark the turn, whatever workspace the person sits in.
+and a deleted account all stamp the wake, whatever workspace the person sits in.
 
 **An app is judged by its workspace, like a person.** A bot that writes in a room is a member when it
 is your own workspace's app, and an outside author when it belongs to another workspace you have not

@@ -63,10 +63,8 @@ nothing else: it never mints a key, and it never sees one. Its `readChannel`/`re
 platform's own container id, exactly as before. See the [glossary](../glossary.md#5-scope).
 
 **A chat read adapter also grades its page's authors.** `ReadAdapter.refutedAuthorIds` answers
-"which of these authors is positively refuted?" as a `readonly string[]`, and TWO consumers read that
-one answer: the turn mark (a non-empty set marks the reading turn — see
-[Security model → chat marks on the author](../security/security-model.md)) and the
-`externalPolicy.authorGrain: "withhold"` read consequence (those authors' message text is replaced by
+"which of these authors is positively refuted?" as a `readonly string[]`, and ONE consumer reads that
+answer: the `externalPolicy.authorGrain: "withhold"` read consequence (those authors' message text is replaced by
 the arrived-marker). Implement it by handing your platform's own per-author evidence to the shared
 join, never by writing a second one:
 

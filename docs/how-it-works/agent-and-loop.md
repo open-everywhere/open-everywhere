@@ -515,8 +515,8 @@ thread, puts a done reaction on the thread's first message, releases the thread'
 wakes the standing seat again, and hands the thread back to that seat. `task_cancel` stands a worker down mid-flight (see
 [Stopping a turn](#stopping-a-turn)). A worker's answer needs no verb at all: the framework carries
 the child's last message back as the task's output. Delegation widens *hands*, never *authority*: every consequential
-action a child attempts re-gates inside the child. No untrusted-content mark crosses the boundary:
-OPE-2720 deleted the worker taint carriage.
+action a child attempts re-gates inside the child. No untrusted-content mark crosses the boundary,
+and a worker's read does not mark its parent's memory writes.
 
 **A conversation seat forwards instead of delegating.** Every conversation seat (a domain seat, a
 thread seat and a DM seat) runs its jobs through its own conversation's **work session**: it holds
@@ -797,13 +797,10 @@ What it means to be on the native route:
   the key of the conversation that asked, and a child reads that key off the binding of the
   conversation it works for, never off the work session's token. So an approval given in one thread
   is never spent by a child working for another thread.
-- **A turn that has read untrusted content still delegates, and the mark stays with that turn.**
-  Open Everywhere marks a turn that has ingested outside content — a fetched page, a connector
-  result, an inbound webhook body. Until OPE-2720 the parent stamped that mark onto its own auth
-  attributes and the child adopted it; that carriage is deleted. No mark crosses to a worker, a work
-  session or a fired session, and a stamp an older build left in a live session's auth bag is
-  ignored. Since OPE-2716 and OPE-2718 no approval verdict reads the mark, so the carriage closed no
-  gate. The content itself still reaches each model inside the untrusted fence.
+- **A turn that has read untrusted content still delegates, and nothing of what it read crosses to
+  the child.** No mark crosses to a worker, a work session or a fired session, and a stamp an older
+  build left in a live session's auth bag is ignored. No approval verdict reads what a turn read
+  (OPE-2716). The content itself still reaches each model inside the untrusted fence.
 
 ### Background delegation
 
@@ -849,9 +846,7 @@ setting that changes this. There is only one delegation verb, `agent`:
   passes one sends a correction or a follow-up to the same worker, which keeps what it already read
   and found. The seat is taught this in its delegation copy.
 
-Continuation is safe because these properties hold. (Until OPE-2720 two more did: a session-sticky
-worker taint and a taint stamp on the continuing call. Both were the worker taint carriage, which is
-deleted.)
+Continuation is safe because these properties hold.
 
 - **The worker runs as the continuing caller.** A worker restores its binding, requester and reply
   address from the dispatch row of the call that opened it. An admitted continuation re-points that
@@ -1080,7 +1075,7 @@ Each settled task wakes the seat once with a **result wake**: a host note plus t
 eve can deliver a settlement more than once, and the host posts the wake once per settlement. The
 seat resolves who asked, and which wake to answer, from its own request row, never from the work
 session's words. It answers under the wake that asked. The seat wakes on results only: no progress
-wake costs a seat turn. A result whose job read untrusted content marks the turn that adopts it.
+wake costs a seat turn.
 
 The result wake carries more host facts:
 
@@ -1402,7 +1397,7 @@ only — never the brief, never the message, and never the closing report's text
 
 | Action | When the code writes it | What the row carries |
 | --- | --- | --- |
-| `thread_seat.spawned` | A thread seat is minted for a thread. | The seat id, the window id, the channel key, the thread key, the **length** of the brief, the taint verdict, and the child's wake id. |
+| `thread_seat.spawned` | A thread seat is minted for a thread. | The seat id, the window id, the channel key, the thread key, the **length** of the brief, the child's wake id, the parent wake id and the parent session id. |
 | `thread_seat.messaged` | A standing seat delivers a message to the thread seat it opened. | The channel key, the thread key, the seat id, whether the words were also mirrored into the room, whether delivery succeeded, the character **count** of the text, the wake id and the session id. |
 | `thread_seat.completed` | A thread seat finishes its thread with `complete_thread`. | The close reason, the channel key, the thread key, the seat id, whether a record existed (`recorded`), whether this call closed it (`closedNow`), whether a newer seat holds the thread (`foreign`), whether the ownership record was cleared, whether the seat gave a report (`hasReport`), whether the host's hand-back reached the parent (`handedBack`), the done reaction's outcome (`reaction`), where the completion was posted (`posted`: `seat`, `host` or `failed`), the wake id and the session id. |
 | `thread_seat.closed` | The host closes a thread seat: its thread went quiet (`expired`), or it could no longer be routed to (`closed`). | The same fields as `thread_seat.completed` except `posted`, the wake id and the session id. Its `reaction` is always `not-owed`: an unfinished thread gets no done mark. |
@@ -1535,25 +1530,16 @@ instructions teach the same rule from the other side, so the *absence* of a fenc
 statement about who typed the bytes, never as permission to obey them. The rule is about the
 SOURCE, not the words: a teammate quoting a hostile message they received is still a teammate
 typing, so their message stays unfenced and the reach-bounding layers above are what hold. Nothing
-a *tool* brings back moves with this — every connector, web and read-tool result is fenced by
-provenance whoever asked for it.
+a *tool* brings back moves with this — every connector, `web_fetch` and read-tool result is fenced by
+provenance whoever asked for it (provider-executed `web_search` is the exception below).
 
-Wrapping a body may also **mark the turn** as having ingested external content — and *may* is
-the operative word: the fence follows the source, the mark follows the table, and the two are
-decided separately. Which sources mark is decided
-by one reviewed [source-tier table](../security/security-model.md#4-approval-gates-are-governance-not-a-crutch),
-not by each read tool, on a source-instance-binary rule: a **private** repo, a *vouched*
-internal Notion/Linear workspace, a connector granted `contentOrigin: "internal"`, and ordinary chat
-on a member-authored surface are read without marking; the open web, webhooks, uploads, image
-descriptions, a **public** repo, and anything whose deciding fact can't be read all mark. That
-marking
-is disclosure, not a gate, and since OPE-2716 the `approval.chain` row no longer carries it (older rows still parse).
-Since OPE-2717 no approval card shows it, and since OPE-2718 the routine kinds show it neither. It does **not** reach a memory bullet — memory writes
-are freehand file edits captured at session end, so nothing attributes a diff back to the turn
-that made it; the durable record there is the `memory.write` audit row, and saying where a fact
-came from is prose the agent writes on the bullet
-([Memory](../capabilities/memory.md#the-shape-memory-keeps)). It changes no approval verdict
-(OPE-2716). Each sink follows its consequence tier, the judge reads no taint, and since OPE-2718 the
+**Wrapping a body marks no turn** (OPE-2721). Every connector, `web_fetch` and read-tool result is fenced,
+whatever its source (the one exception, provider-executed `web_search`, is below): no source-tier table decides a read, and the deprecated `contentOrigin` field
+changes nothing. One signal follows a wrap: a memory bullet written on a turn that wrapped outside
+content takes the memory provenance mark
+([Memory](../capabilities/memory.md#the-shape-memory-keeps)). No approval card or
+`approval.chain` row carries what the turn read (older rows that carry it still parse). What a turn read changes
+no approval verdict (OPE-2716). Each sink follows its consequence tier, the judge reads nothing of what the turn read, and since OPE-2718 the
 unattended connector fence lifts a fire's declared write whatever the fire read. See
 [the security model](../security/security-model.md).
 
@@ -1577,7 +1563,7 @@ transcript), not whether the wrap happens:
 | Notion | the triggering comment plus sibling backscroll on the same page |
 | Browser (agent-browser) | every browser tool's page content — snapshot DOM text, read markdown, console output, network-request detail, JS-eval results, tab titles, and navigation results — fenced with `browser <op> <domain>` provenance. Only the binary screenshot **path** ref and the `close` teardown are left unfenced (no page-derived text) |
 | GitHub PR feedback | in a `get_pr_feedback` digest, each third-party review/comment body and each failing-check CI output excerpt is fenced individually; the host-derived structure around them (counts, review states, check names/SHAs, comment paths/lines) stays trusted so the model can still tell which item is which |
-| GitHub issue by target | in a `read_github_issue` result, the title, the opening body and each comment body are fenced individually; the header (repo, number, kind, state, author) and the comment counts stay trusted. One extra `GET /repos/{repo}` reads the repository's visibility: a private org repo does not taint, a public one does, and a failed read falls closed to untrusted |
+| GitHub issue by target | in a `read_github_issue` result, the title, the opening body and each comment body are fenced individually; the header (repo, number, kind, state, author) and the comment counts stay trusted. No call reads the repository's visibility (OPE-2721): every body is fenced, private repository or public |
 | AWS CLI | both `aws` output streams are fenced individually (`aws cli stdout` / `aws cli stderr` provenance); the host-derived scaffold around them — exit code, the role actually assumed, the identity mode — stays trusted. An AWS account is a *substrate*, not an authoring surface: nothing gates who writes a CloudWatch log line, a DynamoDB item or an S3 object body, so org ownership of the account says nothing about who wrote the bytes |
 | Any surface | connector/MCP tool results, and any `web_fetch`-style page content |
 
@@ -1597,8 +1583,8 @@ reports an error, the line says that instead and names no id.
 per-operation connector tools into one `connection_execute` verb at 0.69.0, and the host line is
 selected by the old `<connection>__<operation>` naming, which the single verb does not carry — so
 the fence arrives with no trusted line above it, and the stale "have not executed" note below is
-exactly the confusion the line was written to end. The payload is still fenced, still capped and
-still marks the turn; only the reassurance is missing. Restoring it needs the call's own
+exactly the confusion the line was written to end. The payload is still fenced and still
+capped; only the reassurance is missing. Restoring it needs the call's own
 `{connection, operation}` target at a seam that is handed the result alone, which is a follow-up. The line exists because eve
 writes a durable "[Pending approvals] … awaiting approval and have not executed" note when a
 call parks, and eve does not remove that note after the approval. Without the line, that note
@@ -1888,8 +1874,8 @@ untrusted fences after `</wake>`, with the fixed `source` labels `approval-decis
 `approval-decision:result`. The note names those labels and never quotes the fenced text. Both texts
 are XML-escaped before the fence, so neither can forge a `<message>` element for the wake parsers.
 Escaping alone did not make the old shape safe: it stops a structural break-out, not prose inside a
-note the model trusts. The fences do not taint the woken seat's turn, because the notice renders
-outside any turn and sets no taint stamp. The wake keeps its host-minted
+note the model trusts. The fences set no memory provenance flag on the woken seat's turn, because the notice renders
+outside any turn. The wake keeps its host-minted
 `wake-id`, `reason="dispatch"` and `addressing="channel-watch"`, so a `reply` that names the wake still
 reaches the anchor thread. OE's own instruction is envelope skeleton, never a message body: as a fenced
 `relay` body, the "stay silent" instruction read to an instruction-following model as an injection.
@@ -2068,7 +2054,7 @@ mix several authors' words into one text that has no honest single author grain.
 also adds no model call to the rotate leg, which runs before the wake is delivered, and it cannot
 state a fact that nobody said.
 
-**A non-member's words never enter the summary.** The DM wake paths judge the taint join on the
+**A non-member's words never enter the summary.** The DM wake paths judge the non-member join on the
 trigger message alone, and they pass the carried messages as backscroll with no withhold pass. So a
 carried message is not judged the way its original was. The summary admits only the seat's own posts
 and messages from an author who is graded and not refuted, by the surface or by the operator's
@@ -2296,7 +2282,7 @@ reducer arm the deployment may register, then a hard cap of 120,000 characters
 (`tools.maxResultChars`), then the loop breaker. This deployment registers no arm, so a large result
 is truncated rather than summarised, and it spends the whole cap.
 
-The result controls are their own step, outside the untrusted-content envelope and the taint mark.
+The result controls are their own step, outside the untrusted-content envelope.
 Each of the five funnels in `packages/core/agent/access/untrusted.ts` calls one entry point of the
 result controls and then fences the body:
 

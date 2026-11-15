@@ -110,7 +110,7 @@ exact file. The manifest holds no globs.
 
 | Rule | Paths | Why |
 |---|---|---|
-| `core-access-plane` | `packages/core/agent/access/` | The bundle resolver, capability sets, taint tiers, the seat shape, the egress fence, the human-only-invariants manifest. |
+| `core-access-plane` | `packages/core/agent/access/` | The bundle resolver, capability sets, the untrusted-content envelope, the seat shape, the egress fence, the human-only-invariants manifest. |
 | `core-approvals-plane` | `packages/core/agent/approvals/` | The gate that requires a human. One file decides which pending kinds may carry a standing grant. |
 | `core-audit-chain` | `packages/core/agent/audit/` | The hash-chained record of what the agent did. |
 | `github-permission-sets` | `packages/core/agent/scm/mint.ts` | The mint bodies that decide what the agent's own GitHub credential may do. |

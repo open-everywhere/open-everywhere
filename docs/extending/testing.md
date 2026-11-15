@@ -14,10 +14,10 @@ new test follows from what the test must prove.
 - **Default to a script test.** If the behaviour is one module's — a resolver, a gate, a codec —
   drive the module directly. It is the cheapest tier and the whole `npm test` chain stays fast.
 - **Write an integration test when the claim spans seams.** The tell: the words "when the turn
-  actually runs" appear in the claim. Toolset assembly, delegation, taint travel, approval-chain
+  actually runs" appear in the claim. Toolset assembly, delegation, provenance carriage, approval-chain
   audit rows, the reply choke point — a script test can only fake the context around these, and a
   faked context is how a green suite hides a dead event handler. (The tier's first sample test
-  found exactly that: a taint-adoption hook listening on an event eve never delivers to hooks.)
+  found exactly that: a delegation hook listening on an event eve never delivers to hooks.)
 - **Live e2e is for the deployment, not the code.** Vendor contracts, model behaviour, the deployed
   config. Do not reach for it to test logic — it is the most expensive and least deterministic tier.
 
@@ -154,7 +154,7 @@ running in one of the other three concurrent workers.
 
 ## Writing an integration test
 
-Start from `tests/integration/taint/taint-delegation.test.ts` — it is the worked example — and
+Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is the worked example — and
 `tests/integration/harness.ts`, which owns boot and every seam. The short version:
 
 - `await bootAgent()` boots the BUILT agent (`.output/server/index.mjs`) **in-process** in this
@@ -763,7 +763,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
      process-global. A stub a section installs and uninstalls per test composes; one installed at
      module or `beforeAll` scope changes the host for every other section.
   4. **No differing file-wide `overrideSettingsForTest` posture.** A per-test override with an
-     `afterThisTest` restore composes; one set for the whole file (`taint.mode`, `window.topology`,
+     `afterThisTest` restore composes; one set for the whole file (`window.topology`,
      `approvals.judgeMode`) is the fork's posture and every section inherits it.
   5. 🔴 **At most ONE spec may hold a scripted-model handle past its own test, and it goes LAST.**
      `registerScript` REFUSES a second script for the wildcard key `"*"` while one is live — "two
@@ -870,7 +870,7 @@ untrusted-content envelope and the memory provenance mark. Their mechanisms are 
 tiers above; this suite asks the behavioural question those tiers cannot reach — given the fence
 bytes the deployment renders, does the model obey hostile text anyway? Three legs: instruction
 resistance (leg 1), the two-turn memory launder (leg 3), and the lean standing seat against a real
-delegated worker (leg 5). OPE-2726 removed legs 2 and 4 with the taint plane. It runs with
+delegated worker (leg 5). OPE-2726 removed legs 2 and 4 when the turn-mark gates went. It runs with
 no key at all (`--model scripted`), which drives each leg's instrument controls, or against a live
 model for the rates. Read `scripts/eval/INJECTION-EVAL.md` before quoting any number from it — it
 states which halves the offline tier cannot prove. **Check the leg reached its subject before you

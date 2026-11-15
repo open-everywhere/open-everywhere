@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 import { formatSkillEnvelope } from "../agent/access/skill-envelope.js";
 
 export function runWrapUntrusted(argv: readonly string[], stdin: string): string {

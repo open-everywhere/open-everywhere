@@ -26,7 +26,7 @@ A bundle (`defineBundle`, `packages/core/agent/access/bundle.ts`) can grant:
 | Field | Grants |
 |---|---|
 | `connections` | **Egress plane** — a static credential, the hosts it may reach, the only hosts it's sent to. Injected at the firewall; the secret never enters the sandbox. |
-| `connectors` | **Connector plane** — a host-side Eve (MCP) connection, by name, with a required declaration of who authors what it returns (`{ name, contentOrigin }`). The model calls its tools; auth resolves host-side. |
+| `connectors` | **Connector plane** — a host-side Eve (MCP) connection, by name, and the credential this scope reaches it as (`{ name, credential }`; the old `contentOrigin` field is deprecated and ignored). The model calls its tools; auth resolves host-side. |
 | `connectorOps` | **Connector-op plane** — raise the consequence tier of named operations on a granted connector. Raise-only: there is no field that means "open". |
 | `repos` | GitHub repositories the agent may clone and work in. Written as `"owner/name"`, or as `{ repo, capabilities }` to opt one repo into a named capability set — see [Source control](../capabilities/source-control.md#per-binding-capability-sets). |
 | `domains` | A credential-*less* egress allowlist — hosts reachable without a credential. |
@@ -654,8 +654,8 @@ It is a narrow arm, not a relaxed resolver — every one of these must hold:
   never promotes a room the platform positively reports as external. A group DM reaches this gate
   too. Nobody declares its own per-conversation key, but any rung above it vouches it — the tenant
   rung included — so a workspace-wide declaration admits the plane there. The refutation leg reaches
-  a group DM too: a guest or an outside person who **writes** there marks that turn, through the same
-  per-author probe a channel uses. Presence marks nothing — no roster is read;
+  a group DM too: a guest or an outside person who **writes** there stamps that wake as a non-member wake, through
+  the same per-author probe a channel uses. Presence stamps nothing — no roster is read;
 - the operation is a **read**. A write would carry your name at the provider, so it is refused
   outside a DM.
 
@@ -762,7 +762,7 @@ and open PRs on one repo — nothing else, nowhere else.
 defineBundle({
   name: "payments-tools",
   // host-side; gated per surface. `credential` names the identity this scope reaches it as.
-  connectors: [{ name: "notion", credential: "team-readonly", contentOrigin: "external" }],
+  connectors: [{ name: "notion", credential: "team-readonly" }],
   connections: [{ id: "gh", credentialType: "github-app",
                   secretRef: "GH_PAYMENTS", allowedWebsites: ["api.github.com"] }],
 })
@@ -871,8 +871,7 @@ on `ask_question` and resumes on the answer stays in the same turn, so its count
 answer. Each write stores a fresh map, because eve's step delta drops an in-place change to a stored
 `Map`. The loop breaker runs inside the result controls
 (`packages/core/agent/access/result-controls.ts`), with the result cap and the reducer arm. That step
-knows nothing of the untrusted-content envelope or the taint mark, so the three controls do not
-depend on either.
+knows nothing of the untrusted-content envelope, so the three controls do not depend on it.
 
 ## Work destinations — where a work verb may land
 
