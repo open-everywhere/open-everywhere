@@ -5,6 +5,7 @@ export interface RoutineFollowUp {
   readonly name: string;
   readonly note: string;
   readonly at: string;
+  /** @deprecated OPE-2718: never written now, and ignored on read. An entry written before the deploy */
   readonly tainted?: boolean;
 }
 

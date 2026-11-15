@@ -302,6 +302,10 @@
       "types": "./dist/agent/access/delta.d.ts",
       "default": "./dist/agent/access/delta.js"
     },
+    "./agent/access/deprecated-taint-exports.js": {
+      "types": "./dist/agent/access/deprecated-taint-exports.d.ts",
+      "default": "./dist/agent/access/deprecated-taint-exports.js"
+    },
     "./agent/access/dispatch-origin-signal.js": {
       "types": "./dist/agent/access/dispatch-origin-signal.d.ts",
       "default": "./dist/agent/access/dispatch-origin-signal.js"
@@ -393,14 +397,6 @@
     "./agent/access/human-only-invariants-manifest.js": {
       "types": "./dist/agent/access/human-only-invariants-manifest.d.ts",
       "default": "./dist/agent/access/human-only-invariants-manifest.js"
-    },
-    "./agent/access/ingestion-binding-manifest.js": {
-      "types": "./dist/agent/access/ingestion-binding-manifest.d.ts",
-      "default": "./dist/agent/access/ingestion-binding-manifest.js"
-    },
-    "./agent/access/ingestion-route-inventory.generated.js": {
-      "types": "./dist/agent/access/ingestion-route-inventory.generated.d.ts",
-      "default": "./dist/agent/access/ingestion-route-inventory.generated.js"
     },
     "./agent/access/instructions.js": {
       "types": "./dist/agent/access/instructions.d.ts",
@@ -602,9 +598,9 @@
       "types": "./dist/agent/access/settlement-dispatch-signal.d.ts",
       "default": "./dist/agent/access/settlement-dispatch-signal.js"
     },
-    "./agent/access/skill-taint-envelope.js": {
-      "types": "./dist/agent/access/skill-taint-envelope.d.ts",
-      "default": "./dist/agent/access/skill-taint-envelope.js"
+    "./agent/access/skill-envelope.js": {
+      "types": "./dist/agent/access/skill-envelope.d.ts",
+      "default": "./dist/agent/access/skill-envelope.js"
     },
     "./agent/access/source-gate-manifest.js": {
       "types": "./dist/agent/access/source-gate-manifest.d.ts",
@@ -618,17 +614,9 @@
       "types": "./dist/agent/access/surface-work-grant.d.ts",
       "default": "./dist/agent/access/surface-work-grant.js"
     },
-    "./agent/access/taint-enforcement.js": {
-      "types": "./dist/agent/access/taint-enforcement.d.ts",
-      "default": "./dist/agent/access/taint-enforcement.js"
-    },
     "./agent/access/taint-signal.js": {
       "types": "./dist/agent/access/taint-signal.d.ts",
       "default": "./dist/agent/access/taint-signal.js"
-    },
-    "./agent/access/taint-tiers.js": {
-      "types": "./dist/agent/access/taint-tiers.d.ts",
-      "default": "./dist/agent/access/taint-tiers.js"
     },
     "./agent/access/task-call-link.js": {
       "types": "./dist/agent/access/task-call-link.d.ts",
@@ -2110,10 +2098,6 @@
       "types": "./dist/agent/hooks/stall-guard.d.ts",
       "default": "./dist/agent/hooks/stall-guard.js"
     },
-    "./agent/hooks/taint-turn.js": {
-      "types": "./dist/agent/hooks/taint-turn.d.ts",
-      "default": "./dist/agent/hooks/taint-turn.js"
-    },
     "./agent/hooks/telemetry.js": {
       "types": "./dist/agent/hooks/telemetry.d.ts",
       "default": "./dist/agent/hooks/telemetry.js"
@@ -2369,10 +2353,6 @@
     "./agent/meetings/policy.js": {
       "types": "./dist/agent/meetings/policy.d.ts",
       "default": "./dist/agent/meetings/policy.js"
-    },
-    "./agent/meetings/provenance.js": {
-      "types": "./dist/agent/meetings/provenance.d.ts",
-      "default": "./dist/agent/meetings/provenance.js"
     },
     "./agent/meetings/recap.js": {
       "types": "./dist/agent/meetings/recap.d.ts",
@@ -4015,7 +3995,6 @@
     "test:exit-kit": "tsx scripts/exit-kit-test.ts",
     "test:meetings": "tsx scripts/meetings-test.ts",
     "test:meetings-native": "tsx scripts/meetings-native-test.ts",
-    "test:meeting-provenance": "tsx scripts/meeting-provenance-test.ts",
     "test:meeting-speakers": "tsx scripts/meeting-speakers-test.ts",
     "test:voice-clips": "NODE_NO_WARNINGS=1 tsx scripts/voice-clips-test.ts",
     "test:meetings-discord": "tsx scripts/meetings-discord-test.ts",
@@ -4211,16 +4190,13 @@
     "test:surface-trust": "NODE_NO_WARNINGS=1 tsx scripts/surface-trust-test.ts",
     "test:surface-trust-preflight": "NODE_NO_WARNINGS=1 tsx scripts/surface-trust-preflight-test.ts",
     "test:author-trust": "NODE_NO_WARNINGS=1 tsx scripts/author-trust-test.ts",
-    "test:taint": "NODE_NO_WARNINGS=1 tsx scripts/taint-signal-test.ts",
-    "test:taint-tiers": "NODE_NO_WARNINGS=1 tsx scripts/taint-tiers-test.ts",
-    "test:core-route-taint": "NODE_NO_WARNINGS=1 tsx scripts/core-route-taint-test.ts",
-    "test:taint-mode": "NODE_NO_WARNINGS=1 tsx scripts/taint-mode-test.ts",
     "test:external-policy": "NODE_NO_WARNINGS=1 tsx scripts/external-policy-test.ts",
     "test:chat-nonmember-stamp": "NODE_NO_WARNINGS=1 tsx scripts/chat-nonmember-stamp-test.ts",
-    "test:chat-nonmember-taint": "NODE_NO_WARNINGS=1 tsx scripts/chat-nonmember-taint-test.ts",
     "test:read-nonmember-author": "NODE_NO_WARNINGS=1 tsx scripts/read-nonmember-author-test.ts",
     "test:dated-read": "NODE_NO_WARNINGS=1 tsx scripts/dated-read-test.ts",
-    "test:skill-taint-envelope": "NODE_NO_WARNINGS=1 tsx scripts/skill-taint-envelope-test.ts",
+    "test:skill-envelope": "NODE_NO_WARNINGS=1 tsx scripts/skill-envelope-test.ts",
+    "test:core-route-fence": "NODE_NO_WARNINGS=1 tsx scripts/core-route-fence-test.ts",
+    "test:deprecated-taint-shims": "NODE_NO_WARNINGS=1 tsx scripts/deprecated-taint-shims-test.ts",
     "test:surface-tool-gate": "NODE_NO_WARNINGS=1 tsx scripts/surface-tool-gate-test.ts",
     "test:propose-venue": "NODE_NO_WARNINGS=1 tsx scripts/propose-venue-test.ts",
     "test:observability": "tsx scripts/observability-test.ts",
@@ -4339,7 +4315,6 @@
     "test:work-mount-lint": "NODE_NO_WARNINGS=1 tsx scripts/work-mount-lint-test.ts",
     "test:resource-grant-mount-lint": "NODE_NO_WARNINGS=1 tsx scripts/resource-grant-mount-lint-test.ts",
     "test:principal-gate-lint": "NODE_NO_WARNINGS=1 tsx scripts/principal-gate-lint-test.ts",
-    "test:ingestion-binding-lint": "NODE_NO_WARNINGS=1 tsx scripts/ingestion-binding-lint-test.ts",
     "test:unattended-derivation": "NODE_NO_WARNINGS=1 tsx scripts/unattended-derivation-test.ts",
     "test:principal-key-lint": "NODE_NO_WARNINGS=1 tsx scripts/principal-key-lint-test.ts",
     "test:window-routing": "NODE_NO_WARNINGS=1 tsx scripts/window-routing-test.ts",

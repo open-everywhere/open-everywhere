@@ -19,7 +19,6 @@ const githubIssueOutputSchema = z.object({
   author: z.string(),
   url: z.string().optional(),
   body: z.string(),
-  repoPrivate: z.boolean().optional(),
   comments: z.array(z.object({ author: z.string(), createdAt: z.string(), body: z.string() })),
   totalComments: z.number(),
   truncation: z.object({

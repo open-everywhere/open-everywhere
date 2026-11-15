@@ -10,7 +10,7 @@ import {
   type OperatorApprover,
 } from "../agent/access/approver-chain.js";
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
-import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
+import { noteEnvelopeWrapThisTurn, envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 
 let passed = 0;
@@ -75,8 +75,8 @@ for (const sink of FORMER_TAINT_SINKS) {
     ok(decision(supplied) === decision(clean), `1/${sink} (${shape.name}): a supplied tainted:true decides as the clean turn (${decision(supplied)} vs ${decision(clean)})`);
 
     const live = await inEveContext(new FakeEveContext(), async () => {
-      markUntrustedIngestedThisTurn("web");
-      ok(untrustedIngestedThisTurn(), `1/${sink} (${shape.name}): precondition — the live turn really is marked`);
+      noteEnvelopeWrapThisTurn();
+      ok(envelopeWrappedThisTurn(undefined), `1/${sink} (${shape.name}): precondition — the live turn really is marked`);
       return await resolveApproverChain(shape.request, { approvers: shape.approvers });
     });
     ok(decision(live) === decision(clean), `1/${sink} (${shape.name}): a live-marked turn decides as the clean turn (${decision(live)} vs ${decision(clean)})`);
@@ -128,12 +128,12 @@ for (const [tool, row] of Object.entries(TOOL_CONSEQUENCE)) {
 {
   const request = req("create_ticket", { action: "ticket.create", tainted: true });
   const res = await inEveContext(new FakeEveContext(), async () => {
-    markUntrustedIngestedThisTurn("web");
+    noteEnvelopeWrapThisTurn();
     return await resolveApproverChain(request);
   });
   ok(!("tainted" in res), "5: the resolution carries no `tainted` field");
   const detail = await inEveContext(new FakeEveContext(), async () => {
-    markUntrustedIngestedThisTurn("web");
+    noteEnvelopeWrapThisTurn();
     return chainAuditDetail(request, res);
   });
   ok(!("tainted" in detail) && !("taintKinds" in detail) && !("taintMode" in detail), "5: the approval.chain row writes no tainted, taintKinds or taintMode");

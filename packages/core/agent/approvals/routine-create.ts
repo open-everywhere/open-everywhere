@@ -36,6 +36,7 @@ export interface RoutineCreateArgs {
   readonly prompt: string;
   readonly watchFor?: string;
   readonly createdBy?: string;
+  /** @deprecated OPE-2718: ignored. A card frozen before OPE-2718 may still carry it; it changes nothing on the card or at arm time. `create_routine` no longer freezes it. */
   readonly tainted?: boolean;
   readonly sessionMode?: "job";
   readonly boundPolicy?: string;

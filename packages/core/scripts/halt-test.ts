@@ -507,13 +507,13 @@ registerConfig({
 {
   const { sessionMemoAdmissible } = await import("../agent/tools/open_pull_request.js");
   const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
-  const { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+  const { noteEnvelopeWrapThisTurn, envelopeWrappedThisTurn } = await import("../agent/memory/turn-provenance.js");
   ok(sessionMemoAdmissible({ sessionId: "s1", halted: false }) === true, "🔴 §7b NEGATIVE CONTROL: a live session with a memo still takes the shortcut — the halt is what closes it");
   ok(sessionMemoAdmissible({ sessionId: "s1", halted: true }) === false, "§7b a HALT closes the bypass — the call falls through to the chain, which denies it with the halt arrow's own reason and one audit shape");
   ok(sessionMemoAdmissible({ halted: false }) === false, "§7b no session, no memo to read");
   const marked = await inEveContext(new FakeEveContext(), async () => {
-    markUntrustedIngestedThisTurn("connector");
-    ok(untrustedIngestedThisTurn(), "§7b the fixture really did mark the turn");
+    noteEnvelopeWrapThisTurn();
+    ok(envelopeWrappedThisTurn(undefined), "§7b the fixture really did mark the turn");
     return sessionMemoAdmissible({ sessionId: "s1", halted: false });
   });
   ok(marked === true, "§7b a turn that read outside content takes the shortcut, as a clean turn does");

@@ -8,6 +8,7 @@ import { browserEvaluateHosts } from "./browser-hosts.js";
 import { resolveSandboxBackend } from "../sandbox/backend-select.js";
 import { registerExtraEgressHosts } from "./extra-hosts.js";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export interface BrowserToolEntry {
   readonly description: string;
   readonly inputSchema: unknown;
@@ -91,7 +92,7 @@ export function browserContentModelOutput(name: string, output: unknown): Promis
   const text = typeof output === "string" ? output : JSON.stringify(output ?? null);
   return ingestUntrustedModelOutput(text, {
     source: domain ? `browser ${op} ${domain}` : `browser ${op}`,
-    ingestion: { kind: "web", label: `browser_${op}` },
+    toolName: `browser_${op}`,
   });
 }
 

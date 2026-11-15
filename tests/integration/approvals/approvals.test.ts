@@ -19,6 +19,7 @@ import {
   type AuditRow,
   type ScriptedHandle,
   type ScriptedStep,
+  UNTRUSTED_OPEN,
 } from "../harness";
 
 const STARTER_ROUTINE_RULE = "routine-reports-here";
@@ -155,7 +156,7 @@ test("enforce + a judge ALLOW auto-approves a gated verb: chain allow via judge,
 
   const { handle, cursor } = await driveProposal({ ids: "a1", prompt: "summarise the numbers every weekday morning (a1)" });
   const rows = await approvalRows(cursor);
-  expect(await taintMarksSince(cursor), "①: a clean turn wrote a taint mark").toEqual([]);
+  expect(await taintRowsSince(cursor), "①: a taint.* row landed after OPE-2721").toEqual([]);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -214,7 +215,8 @@ test("a judge ALLOW on a turn that read an upload auto-approves exactly as on a 
     readUpload: true,
   });
   const rows = await approvalRows(cursor);
-  await expectTurnMarked(cursor, "②");
+  expectFencedRead(handle, "read_file_upload");
+  expect(await taintRowsSince(cursor), "②: a taint.* row landed after OPE-2721").toEqual([]);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -319,13 +321,11 @@ test("judgeMode off: the judge transport is never called, neither judge row is w
   expect(result.output["pending"]).toBe(true);
 });
 
-async function taintMarksSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
-  return (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark");
+async function taintRowsSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
+  return await rowsSinceCursor(cursor, ["taint.forward", "taint.verdict", "taint.mode"], { limit: 200 });
 }
-async function expectTurnMarked(cursor: AuditCursor, label: string): Promise<void> {
-  const marks = await waitFor(async () => {
-    const m = await taintMarksSince(cursor);
-    return m.length > 0 ? m : undefined;
-  }, `${label}: the tainted turn's taint.forward mark row`, 60_000);
-  expect(marks.length).toBeGreaterThan(0);
+function expectFencedRead(handle: { readonly requests: readonly { readonly toolResults: readonly { readonly name: string; readonly output: unknown }[] }[] }, tool: string): void {
+  const result = handle.requests.flatMap((r) => r.toolResults).find((t) => t.name === tool);
+  expect(result, `no request carried a ${tool} result — the turn did not read the outside content`).toBeDefined();
+  expect(JSON.stringify(result!.output), `the ${tool} result reached the model unfenced`).toContain(UNTRUSTED_OPEN);
 }

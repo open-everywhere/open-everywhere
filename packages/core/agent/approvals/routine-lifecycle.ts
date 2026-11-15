@@ -42,6 +42,7 @@ interface RoutineEditArgs {
   readonly trigger: RoutineTrigger;
   readonly report?: RoutineReport;
   readonly sessionMode?: "job";
+  /** @deprecated OPE-2718: ignored. A card frozen before OPE-2718 may still carry it; the */
   readonly tainted?: boolean;
   readonly generation: number;
 }

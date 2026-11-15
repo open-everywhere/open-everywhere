@@ -19,7 +19,6 @@ import {
 import { recordThreadOwner, resolveThreadOwner, isLiveThreadSeatOwner } from "../channels/thread-ownership.js";
 import { recordThreadSeatOpen } from "../channels/thread-seat-state.js";
 import { unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { liveAuthIsAnotherPrincipal } from "../access/turn-opening-principal.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
@@ -133,7 +132,6 @@ export default windowGated("spawn_thread_session", defineTool({
     if (liveAuthIsAnotherPrincipal(c)) {
       throw new Error("spawn_thread_session: a later message inside this turn carried a different person's identity than the message that started it, so this turn cannot say whose thread seat to open. Ask for it again in a message of your own.");
     }
-    const tainted = untrustedIngestedThisTurn();
     const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
     const childWakeId = callId ? deterministicChildWakeId(callId) : mintWakeId();
     const doDispatch = () =>
@@ -179,7 +177,6 @@ export default windowGated("spawn_thread_session", defineTool({
         channelKey: ref.channelKey,
         threadKey,
         briefLen: input.brief.length,
-        tainted,
         wakeId: childWakeId,
         parentWakeId: wakeId ?? null,
         parentSessionId: c.session && "id" in (c.session as Record<string, unknown>) ? (c.session as { id?: string }).id ?? null : null,

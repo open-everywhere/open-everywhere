@@ -64,7 +64,6 @@ console.log("posix-path:");
     ["tests/integration/prepare-cache.ts", "toPosixPath(", 1],
     ["tests/integration/prepare-cache.ts", "posixJoin(", 2],
     ["packages/core/scripts/principal-gate-lint-test.ts", "posixRelative(", 6],
-    ["packages/core/scripts/ingestion-binding-lint-test.ts", "posixRelative(", 1],
     ["packages/core/scripts/external-policy-test.ts", "toPosixPath(", 1],
     ["packages/core/scripts/config-repo-mint-test.ts", "toPosixPath(", 1],
     ["packages/core/scripts/standing-seat-test.ts", "toPosixPath(", 1],

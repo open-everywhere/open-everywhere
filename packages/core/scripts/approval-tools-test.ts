@@ -354,7 +354,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
   registerSlackFixtureMapper();
   const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
-  const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+  const { noteEnvelopeWrapThisTurn } = await import("../agent/memory/turn-provenance.js");
   const { actionKind } = await import("../agent/approvals/actions.js");
   await import("../agent/approvals/flow.js");
 
@@ -383,7 +383,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     const frozenClean = await frozenOf(setClean.pendingId);
     ok(!("tainted" in frozenClean), "set_spend_limit freezes no taint field on a clean turn");
     const setOut = await inSession(async () => {
-      markUntrustedIngestedThisTurn();
+      noteEnvelopeWrapThisTurn();
       return execTool(setSpendLimitTool)({ monthlyUsd: 10000, reason: "pre-approved by finance", scopeKey: "slack/T123/C_TAINT_SET2" }, slackCtx("C_TAINT_SET") as never);
     });
     ok(setOut.pendingId.length > 0, "set_spend_limit still PROPOSES on a turn that read outside content");
@@ -393,7 +393,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     ok(JSON.stringify(actionKind("spend.set")!.summarize({ ...frozen, tainted: true })) === JSON.stringify(actionKind("spend.set")!.summarize(frozen)), "a legacy spend.set card with tainted:true renders the clean card");
 
     const clearOut = await inSession(async () => {
-      markUntrustedIngestedThisTurn();
+      noteEnvelopeWrapThisTurn();
       return execTool(clearEntry)({ scopeKey: "slack/T123/C_TAINT_CLEAR2" }, slackCtx("C_TAINT_CLEAR"));
     });
     const clearFrozen = await frozenOf(clearOut.pendingId);

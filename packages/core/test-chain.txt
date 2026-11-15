@@ -246,17 +246,14 @@ test:eve-delivery-gate
 test:eve-tool-schema-strip
 test:eve-tasks-flag
 test:eve-turn-concurrency
-test:taint
-test:taint-tiers
-test:core-route-taint
-test:taint-mode
 test:author-trust
 test:chat-nonmember-stamp
-test:chat-nonmember-taint
 test:read-nonmember-author
 test:dated-read
 test:external-policy
-test:skill-taint-envelope
+test:skill-envelope
+test:deprecated-taint-shims
+test:core-route-fence
 test:describe-image
 test:post-file
 test:read-file-upload
@@ -379,7 +376,6 @@ test:work-mount-lint
 test:resource-grant-mount-lint
 test:principal-gate-lint
 test:own-account-gate-lint
-test:ingestion-binding-lint
 test:unattended-derivation
 test:principal-key-lint
 test:window-routing
@@ -524,7 +520,6 @@ test:output-language
 test:audit-export
 test:meetings
 test:meetings-native
-test:meeting-provenance
 test:meeting-speakers
 test:meetings-discord
 test:tool-usage

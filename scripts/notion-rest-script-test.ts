@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { SKILL_CONTENT } from "../agent/plugins/skill-content.js";
 import { NOTION_SCRIPT_SOURCE, NOTION_REFERENCE_SOURCE, notionRestSessionFiles } from "../agent/plugins/notion-rest.js";
-import { extractSkillEnvelopes, formatSkillEnvelope } from "../packages/core/agent/access/skill-taint-envelope.js";
+import { extractSkillEnvelopes, formatSkillEnvelope } from "../packages/core/agent/access/skill-envelope.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

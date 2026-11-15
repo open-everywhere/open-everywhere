@@ -14,10 +14,8 @@ import {
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
-  declaredWorkspaceTrust,
   ageAtRead,
   noteAuthoredRecordRead,
-  type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -78,7 +76,6 @@ export const readNotionCommentsEntry = defineTool({
     truncated: z.boolean(),
     text: z.string(),
     readAt: z.string().optional(),
-    workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
     try {
@@ -104,12 +101,6 @@ export const readNotionCommentsEntry = defineTool({
       maxBlockScans: MAX_BLOCK_SCANS,
     });
     const readAt = new Date().toISOString();
-    let workspaceTrust: SurfaceTrust | undefined;
-    try {
-      workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
-    } catch {
-      workspaceTrust = undefined;
-    }
     if (input.block) {
       noteAuthoredRecordRead(ctx2 as BindableContext, { kind: "notion-page", op: "read_notion_comments", id: input.block });
     } else {
@@ -131,7 +122,6 @@ export const readNotionCommentsEntry = defineTool({
       truncated: res.truncated,
       text: renderComments(res.comments, readAt),
       readAt,
-      ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
     };
   },
   toModelOutput(output) {
@@ -147,11 +137,7 @@ export const readNotionCommentsEntry = defineTool({
     const body = output.comments === 0 ? header : `${header}\n${output.text}${suffix}${asOf}`;
     return ingestUntrustedModelOutput(body, {
       source: `notion comments ${output.page}`,
-      ingestion: {
-        kind: "notion",
-        label: "read_notion_comments",
-        ...(output.workspaceTrust !== undefined ? { workspaceTrust: output.workspaceTrust } : {}),
-      },
+      toolName: "read_notion_comments",
     });
   },
 });

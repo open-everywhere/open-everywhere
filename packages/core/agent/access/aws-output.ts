@@ -96,13 +96,12 @@ export interface AwsModelResult {
 }
 
 export function renderAwsResultForModel(r: AwsModelResult): string {
-  const ingestion = { kind: "aws", label: "aws" } as const;
   const out: string[] = [`aws exited ${r.exitCode} (identity: ${r.identity}, role: ${r.roleArn})`];
 
   out.push("", "stdout:");
-  out.push(r.stdout.length === 0 ? "  (empty)" : ingestUntrusted(r.stdout, { source: "aws cli stdout", ingestion }));
+  out.push(r.stdout.length === 0 ? "  (empty)" : ingestUntrusted(r.stdout, { source: "aws cli stdout" }));
   out.push("", "stderr:");
-  out.push(r.stderr.length === 0 ? "  (empty)" : ingestUntrusted(r.stderr, { source: "aws cli stderr", ingestion }));
+  out.push(r.stderr.length === 0 ? "  (empty)" : ingestUntrusted(r.stderr, { source: "aws cli stderr" }));
 
   const hits = r.redactions ?? [];
   if (hits.length > 0) {

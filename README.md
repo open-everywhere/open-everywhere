@@ -60,8 +60,7 @@ No single feature is the point. The parts work together:
    widen its own grants on request, to add a channel agent (`create_agent`) or to declare a webhook.
    A report reads the audit log and proposes wider grants from repeated refusals and narrower
    grants from disuse. A human merges every pull request. By default, a new skill lands only when a
-   human confirms its card. Only the operator's own config can waive that card, and never on a
-   tainted turn.
+   human confirms its card. Only the operator's own config can waive that card.
    [Access requests](./docs/how-it-works/access-requests.md) · [permission homeostasis](./docs/security/permission-homeostasis.md)
 4. **Governance you can verify.** The rules are config in your own repository.
    `lint:human-only-invariants` fails if any agent tool imports the code that decides an approval.

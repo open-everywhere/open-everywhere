@@ -2,7 +2,7 @@ import {
   admitInboundEmail,
   emailSeatRoute,
   planReplyRecipients,
-  remainderTaints,
+  remainderIsNonRequester,
   splitEmailBody,
   emailDomainOf,
   mkMessageTrigger,
@@ -36,7 +36,7 @@ export type EmailFrontOutcome =
   | { readonly kind: "ignored" }
   | { readonly kind: "duplicate" }
   | { readonly kind: "refused"; readonly reason: EmailFrontRefusal }
-  | { readonly kind: "admitted"; readonly route: "room" | "dm"; readonly surfaceKey: string; readonly tainted: boolean };
+  | { readonly kind: "admitted"; readonly route: "room" | "dm"; readonly surfaceKey: string; readonly nonRequester: boolean };
 
 export interface EmailWakePlan {
   readonly surfaceKey: string;
@@ -46,7 +46,7 @@ export interface EmailWakePlan {
   readonly trigger: WakeMessageInput;
   readonly remainder: string;
   readonly subject: string;
-  readonly tainted: boolean;
+  readonly nonRequester: boolean;
   readonly trust: "internal" | "external";
   readonly dropped: number;
   readonly ingested: readonly IngestedChatMessage[];
@@ -116,7 +116,7 @@ export function planEmailWake(input: {
   const route = emailSeatRoute(admission.inbox, sender);
   const recipients = planReplyRecipients({ policy, inbox: admission.inbox, principals: input.principals, sender, mail });
   const body = splitEmailBody(mail, policy.maxInboundChars);
-  const tainted = remainderTaints(body);
+  const nonRequester = remainderIsNonRequester(body);
   const bindTrust: "internal" | "external" = admission.trust === "internal" && !recipients.outsider ? "internal" : "external";
   const surfaceSeg = route.surfaceKey.split("/")[2]!;
   const base = buildEmailAuth({
@@ -129,7 +129,7 @@ export function planEmailWake(input: {
     threadId: mail.threadId,
     messageId: mail.messageId,
   });
-  const stamped: OpenEverywhereEmailAuth = { ...base, attributes: { ...base.attributes, ...nonRequesterAttrsIf(tainted, "email-remainder") } };
+  const stamped: OpenEverywhereEmailAuth = { ...base, attributes: { ...base.attributes, ...nonRequesterAttrsIf(nonRequester, "email-remainder") } };
   const trust = input.wakeTrust(stamped, sender);
   const ingested: IngestedChatMessage[] = [{ trust, refuted: admission.trust === "external" }];
   const auth = stampNonMemberChatAuth(stamped as OpenEverywhereEmailAuth & { attributes: Record<string, unknown> }, ingested, route.kind === "dm" ? { dm: true } : { surfaceKey: route.surfaceKey }) as OpenEverywhereEmailAuth;
@@ -157,7 +157,7 @@ export function planEmailWake(input: {
     },
     remainder: body.remainder,
     subject: body.subject,
-    tainted,
+    nonRequester,
     trust: bindTrust,
     dropped: recipients.dropped,
     ingested,
@@ -220,10 +220,10 @@ export async function processVerifiedEmail(
       to: plan.origin.to.length,
       cc: plan.origin.cc?.length ?? 0,
       dropped: plan.dropped,
-      tainted: plan.tainted,
+      nonRequester: plan.nonRequester,
     },
   });
-  return { kind: "admitted", route: plan.route, surfaceKey: plan.surfaceKey, tainted: plan.tainted };
+  return { kind: "admitted", route: plan.route, surfaceKey: plan.surfaceKey, nonRequester: plan.nonRequester };
 }
 
 export async function handleEmailDelivery(headers: Readonly<Record<string, string>>, rawBody: string, deps: EmailFrontDeps): Promise<EmailFrontOutcome> {

@@ -11,7 +11,7 @@ import { windowGatedKit } from "../access/window-gated.js";
 import { ingestUntrusted, ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { withEgressFence } from "../access/web-fetch-reach.js";
 import { withMemoryWriteFence } from "../memory/write-fence.js";
-import { extractSkillEnvelopes, sanitizeSkillEnvelopeSource } from "../access/skill-taint-envelope.js";
+import { extractSkillEnvelopes, sanitizeSkillEnvelopeSource } from "../access/skill-envelope.js";
 
 interface WebFetchOutput {
   content: string;
@@ -33,10 +33,7 @@ export function bashModelOutput(output: unknown): { type: "json"; value: unknown
     .map((s) => {
       if (!s.untrusted) return s.text;
       const label = sanitizeSkillEnvelopeSource(s.source);
-      return ingestUntrusted(s.content, {
-        source: `skill-declared ${label}`,
-        ingestion: { kind: "skill-declared", label },
-      });
+      return ingestUntrusted(s.content, { source: `skill-declared ${label}` });
     })
     .join("");
   return { type: "json", value: { ...o, stdout: rebuiltStdout } };
@@ -57,7 +54,7 @@ export default windowGatedKit("sandbox_tools", {
       const o = output as WebFetchOutput;
       return ingestUntrustedModelOutput(o.content, {
         source: `web_fetch ${o.url}${o.truncated ? " (truncated)" : ""}`,
-        ingestion: { kind: "web", label: "web_fetch" },
+        toolName: "web_fetch",
       });
     },
   }),

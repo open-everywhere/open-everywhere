@@ -273,7 +273,7 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
         const ingestionLabel = target === undefined ? name : qualifiedConnectorToolName(target);
         return ingestUntrustedModelOutput(text, {
           source: `connector ${ingestionLabel}`,
-          ingestion: { kind: "connector", label: ingestionLabel },
+          toolName: ingestionLabel,
         });
       };
       tool.toModelOutput = async (args) => {

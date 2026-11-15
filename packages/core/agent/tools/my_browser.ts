@@ -290,7 +290,7 @@ export default defineTool({
   async toModelOutput(output: MyBrowserOutput) {
     const content = output.taught ?? (output.page !== undefined ? renderPage(output.page) : undefined);
     if (content === undefined) return { type: "text", value: output.message };
-    const fenced = await ingestUntrustedModelOutput(content, { source: "my_browser", ingestion: { kind: "web", label: "my_browser" } });
+    const fenced = await ingestUntrustedModelOutput(content, { source: "my_browser", toolName: "my_browser" });
     return { type: "text", value: `${output.message}\n\n${fenced.value}` };
   },
 });

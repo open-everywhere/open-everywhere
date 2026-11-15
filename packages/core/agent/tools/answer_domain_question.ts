@@ -4,7 +4,6 @@ import { windowGated } from "../access/window-gated.js";
 import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -86,7 +85,6 @@ export default windowGated(
       }
       const declined = input.declined === true;
       const answer = input.answer.trim();
-      const tainted = untrustedIngestedThisTurn();
 
       let route: DomainAnswerRoute = "failed";
       const dmSeat = await dmSeatForSurface(store, org, q.dmSurfaceKey);
@@ -109,7 +107,7 @@ export default windowGated(
       }
 
       await rememberDomainAnswerOutcome(store, org, q.id, route, domainAnswerDigest(answer, declined), nowIso);
-      const detail = { questionId: q.id, domain: q.domain, asker: q.asker, declined, route, chars: answer.length, tainted };
+      const detail = { questionId: q.id, domain: q.domain, asker: q.asker, declined, route, chars: answer.length };
       await auditToolAction(c, DOMAIN_QUESTION_ANSWERED_ACTION, detail);
       await appendAudit({
         org,

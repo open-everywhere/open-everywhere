@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { readThreadResult, chatReadIngestion, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
+import { readThreadResult, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
 import { resolveWakeChannel, requireWakeThreadRoot } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -38,8 +38,6 @@ const readWorkThreadEntry = defineTool({
     thread_ts: z.string(),
     count: z.number(),
     messages: z.array(z.object({ author: z.string(), ts: z.string(), text: z.string(), files: READ_FILES_SCHEMA })),
-    authoredByNonMember: z.boolean().optional(),
-    carriesUntrustedPost: z.boolean().optional(),
     possiblyIncomplete: z.boolean().optional(),
     partialReason: z.string().optional(),
     spool: z.object({ path: z.string().optional(), shown: z.number(), total: z.number() }).optional(),
@@ -66,7 +64,7 @@ const readWorkThreadEntry = defineTool({
     const keyed = keyedReadResult(output);
     return ingestUntrustedModelOutput(renderThreadBody(keyed), {
       source: threadReadSource(keyed),
-      ingestion: chatReadIngestion(`read_work_thread:${output.platform}`, output),
+      toolName: `read_work_thread:${output.platform}`,
     });
   },
 });

@@ -15,9 +15,7 @@ import {
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
-  declaredWorkspaceTrust,
   noteAuthoredRecordRead,
-  type SurfaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -47,7 +45,6 @@ export const readNotionPageEntry = defineTool({
           truncated: z.boolean(),
           text: z.string(),
           readAt: z.string().optional(),
-          workspaceTrust: z.enum(["internal", "public"]).optional(),
         }),
         async execute(input, ctx2) {
           const domains = getConfig().loadDomains();
@@ -98,14 +95,6 @@ export const readNotionPageEntry = defineTool({
           }
           const res = await readNotionPage(page, { ...cred, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
           const readAt = new Date().toISOString();
-          let workspaceTrust: SurfaceTrust | undefined;
-          if (!workGrant) {
-            try {
-              workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
-            } catch {
-              workspaceTrust = undefined;
-            }
-          }
           const identity = await readNotionPageIdentity(page, { ...cred });
           noteAuthoredRecordRead(ctx2 as BindableContext, {
             kind: "notion-page",
@@ -122,7 +111,6 @@ export const readNotionPageEntry = defineTool({
             truncated: res.truncated,
             text: res.text,
             readAt,
-            ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
           };
         },
         toModelOutput(output) {
@@ -135,11 +123,7 @@ export const readNotionPageEntry = defineTool({
           const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}${asOf}`;
           return ingestUntrustedModelOutput(body, {
             source: `notion page ${output.page}`,
-            ingestion: {
-              kind: "notion",
-              label: "read_notion_page",
-              ...(output.workspaceTrust !== undefined ? { workspaceTrust: output.workspaceTrust } : {}),
-            },
+            toolName: "read_notion_page",
           });
         },
 });

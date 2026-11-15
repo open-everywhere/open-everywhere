@@ -57,7 +57,6 @@ agent/hooks/sandbox-lifecycle.ts	mounted @open-everywhere/adapters
 agent/hooks/session-park.ts	mounted @open-everywhere/core
 agent/hooks/spend.ts	mounted @open-everywhere/core
 agent/hooks/stall-guard.ts	mounted @open-everywhere/core
-agent/hooks/taint-turn.ts	mounted @open-everywhere/core
 agent/hooks/telemetry.ts	mounted @open-everywhere/core
 agent/hooks/tool-usage.ts	mounted @open-everywhere/core
 agent/hooks/turn-anchor.ts	mounted @open-everywhere/core

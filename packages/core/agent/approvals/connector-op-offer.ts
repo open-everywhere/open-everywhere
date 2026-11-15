@@ -18,7 +18,6 @@ export interface ConnectorOpCardOffer {
   readonly input?: Readonly<Record<string, unknown>>;
   readonly auth: unknown;
   readonly session?: unknown;
-  readonly tainted: boolean;
   readonly credential?: "domain" | "personal";
 }
 

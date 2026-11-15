@@ -7,7 +7,6 @@ import {
   renderAwsResultForModel,
 } from "../agent/access/aws-output.js";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
-import { classifyIngestion } from "../agent/access/taint-tiers.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -149,13 +148,6 @@ console.log("4. disclosure:");
   ok(!disclosed.includes("Open Everywhere"), "…and the model-visible note names no brand (OPE-2334)");
 }
 
-console.log("5. the tier row:");
-{
-  const v = classifyIngestion({ kind: "aws", label: "aws" });
-  eq(v.tier, "untrusted", "aws: the CLI's own output is untrusted — an AWS account is a SUBSTRATE, not an authoring surface");
-  eq(v.assumed, false, "🔴 aws: …as a POSITIVE ruling, not the fail-closed default wearing a row's clothes (nothing missing could have decided it otherwise)");
-  ok(v.reason.includes("substrate") || v.reason.includes("SUBSTRATE"), "aws: the row's reasoning rides on the verdict, so a dry-run LOG ROW carries it without reading the table");
-  eq(classifyIngestion({ kind: "aws", workspaceTrust: "internal", repoPrivate: true, grantContentOrigin: "internal" }).tier, "untrusted", "aws: NO metadata branch — no field declared for another row can flip it to trusted");
-}
-
 console.log(`✓ aws-output: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-aws-output

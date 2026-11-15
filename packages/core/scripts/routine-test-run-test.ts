@@ -528,7 +528,7 @@ const REPLAY_SENTINEL = "Build 7 of acme/web failed on main";
   ok(!evRoot!.text.includes(REPLAY_SENTINEL) && !evRoot!.text.includes("filter would not match"), "event: the root carries no payload text, and the filter still matches");
   ok(evSends[0]!.message.includes(REPLAY_SENTINEL) && evSends[0]!.message.includes("Explain the failed build."), "🔴 event: the fire message is the event plane's prompt over the kept event");
   ok(evSends[0]!.attrs[testRun.ROUTINE_TEST_ATTR] !== undefined && evSends[0]!.attrs["thread_ts"] === evSends[0]!.target["threadTs"], "event: the fire carries the test stamp, and the bag names the thread the delivery does");
-  const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
+  const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/deprecated-taint-exports.js");
   ok(evSends[0]!.attrs[OE_TAINTED_FIRE_ATTR] === undefined, "🔴 OPE-2720: event: a replayed event's fire carries no taint stamp");
   const evAfter = await routineStore.getRoutine(ORG, SURFACE, EV_ID);
   ok(evAfter?.testRun === undefined && evAfter?.lastEvent !== undefined && evAfter?.lastRunAt === undefined, "event: the request is consumed, the kept event stays, and no run is recorded");

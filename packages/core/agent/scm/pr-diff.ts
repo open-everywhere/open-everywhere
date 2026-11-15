@@ -14,7 +14,6 @@ export interface PrDiffSnapshot {
   readonly diffChars: number;
   readonly files: readonly string[];
   readonly filesCapped: boolean;
-  readonly repoPrivate?: boolean;
 }
 
 export function filesFromUnifiedDiff(diff: string): string[] {
@@ -32,17 +31,16 @@ async function fetchPrRefs(opts: {
   token: string;
   fetchFn: PrFetchFn;
   apiBase: string;
-}): Promise<{ headSha: string; baseRef: string; repoPrivate?: boolean }> {
+}): Promise<{ headSha: string; baseRef: string }> {
   const res = await opts.fetchFn(`${opts.apiBase}/repos/${opts.repo}/pulls/${opts.number}`, {
     method: "GET",
     headers: prApiHeaders(opts.token),
   });
   if (!res.ok) throw new Error(`GitHub PR lookup failed for ${opts.repo}#${opts.number}: ${res.status} ${await res.text()}`);
-  const pr = (await res.json()) as { head?: { sha?: string }; base?: { ref?: string; repo?: { private?: boolean } } };
+  const pr = (await res.json()) as { head?: { sha?: string }; base?: { ref?: string } };
   const headSha = pr.head?.sha;
   if (!headSha) throw new Error(`GitHub returned no head sha for ${opts.repo}#${opts.number} — the facts artifact cannot be located without it`);
-  const repoPrivate = pr.base?.repo?.private;
-  return { headSha, baseRef: pr.base?.ref ?? "(unknown)", ...(typeof repoPrivate === "boolean" ? { repoPrivate } : {}) };
+  return { headSha, baseRef: pr.base?.ref ?? "(unknown)" };
 }
 
 export async function fetchPrDiff(opts: {
@@ -54,7 +52,7 @@ export async function fetchPrDiff(opts: {
 }): Promise<PrDiffSnapshot> {
   const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
   const apiBase = opts.apiBase ?? "https://api.github.com";
-  const { headSha, baseRef, repoPrivate } = await fetchPrRefs({ repo: opts.repo, number: opts.number, token: opts.token, fetchFn, apiBase });
+  const { headSha, baseRef } = await fetchPrRefs({ repo: opts.repo, number: opts.number, token: opts.token, fetchFn, apiBase });
 
   const res = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls/${opts.number}`, {
     method: "GET",
@@ -78,6 +76,5 @@ export async function fetchPrDiff(opts: {
     diffChars: raw.length,
     files: files.slice(0, MAX_DIFF_FILES),
     filesCapped: files.length > MAX_DIFF_FILES,
-    ...(repoPrivate !== undefined ? { repoPrivate } : {}),
   };
 }

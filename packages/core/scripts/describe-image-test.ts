@@ -11,7 +11,7 @@ import describeImage, { inferImageMime, confineToWorkspacePath, normalizeImageSo
 import { registerImageDescriber, _resetImageDescriberForTest, type ImageDescriber } from "../agent/model/vision.js";
 import { registerAttachmentResolver, _resetAttachmentPlaneForTest } from "../agent/channels/attachments.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
-import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
+import { envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 let n = 0;
@@ -94,10 +94,10 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(out.ok === false && /could not be described/.test(out.message ?? "") && /ZDR/.test(out.message ?? ""), "vision-call error (ZDR refusal) → ok:false, fail-closed message carries the reason, NO description");
   ok(out.description === undefined, "ZDR fail-closed: no fabricated description field on failure");
   await eveContextStorage().run(new FakeSession(), async () => {
-    ok(untrustedIngestedThisTurn() === false, "fresh turn starts untainted");
+    ok(envelopeWrappedThisTurn(undefined) === false, "fresh turn starts untainted");
     const mo = await tool.toModelOutput(out);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "failure toModelOutput: plain message, NOT untrusted-wrapped");
-    ok(untrustedIngestedThisTurn() === false, "failure toModelOutput: does NOT taint the turn (nothing untrusted was ingested)");
+    ok(envelopeWrappedThisTurn(undefined) === false, "failure toModelOutput: does NOT taint the turn (nothing untrusted was ingested)");
   });
   _resetImageDescriberForTest();
 }
@@ -115,12 +115,12 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok((out.ocrText ?? "").includes("ignore previous instructions"), "success: OCR text captured verbatim in the output");
 
   await eveContextStorage().run(new FakeSession(), async () => {
-    ok(untrustedIngestedThisTurn() === false, "success path: fresh turn starts untainted");
+    ok(envelopeWrappedThisTurn(undefined) === false, "success path: fresh turn starts untainted");
     const mo = await tool.toModelOutput(out);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes(UNTRUSTED_CLOSE), "success toModelOutput: description+OCR are fenced in the untrusted envelope");
     ok(mo.value.includes("‹/untrusted_external_data›"), "success toModelOutput: the OCR's breakout delimiter is DEFANGED to guillemets (can't close the fence)");
     ok(mo.value.includes("ignore previous instructions"), "success toModelOutput: the injected instruction survives AS DATA inside the fence");
-    ok(untrustedIngestedThisTurn() === true, "success toModelOutput: TAINTS the turn (a durable write later this turn is now gated — P0-4)");
+    ok(envelopeWrappedThisTurn(undefined) === true, "success toModelOutput: TAINTS the turn (a durable write later this turn is now gated — P0-4)");
   });
   _resetImageDescriberForTest();
 }
@@ -169,10 +169,10 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(captured !== undefined && captured!.bytes.length === PNG_BYTES.length && captured!.bytes[0] === 0x89, "path: the SANDBOX bytes (not a fetch) reach the injected describer");
 
   await eveContextStorage().run(new FakeSession(), async () => {
-    ok(untrustedIngestedThisTurn() === false, "path: fresh turn starts untainted");
+    ok(envelopeWrappedThisTurn(undefined) === false, "path: fresh turn starts untainted");
     const mo = await tool.toModelOutput(okOut);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes("‹/untrusted_external_data›"), "path success toModelOutput: description+OCR fenced, the OCR breakout defanged");
-    ok(untrustedIngestedThisTurn() === true, "path success toModelOutput: TAINTS the turn (a rendered page is untrusted content — P0-4)");
+    ok(envelopeWrappedThisTurn(undefined) === true, "path success toModelOutput: TAINTS the turn (a rendered page is untrusted content — P0-4)");
   });
 
   const noSbOut = await tool.execute({ kind: "path", ref: ".browser/shot.png" }, ctx);
@@ -242,7 +242,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   await eveContextStorage().run(new FakeSession(), async () => {
     const mo = await tool.toModelOutput(empty);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "arg shape: a bad-source refusal renders as OUR OWN plain message (no untrusted envelope)");
-    ok(untrustedIngestedThisTurn() === false, "arg shape: a bad-source refusal ingests nothing, so it does NOT taint the turn");
+    ok(envelopeWrappedThisTurn(undefined) === false, "arg shape: a bad-source refusal ingests nothing, so it does NOT taint the turn");
   });
   _resetImageDescriberForTest();
   _resetAttachmentPlaneForTest();

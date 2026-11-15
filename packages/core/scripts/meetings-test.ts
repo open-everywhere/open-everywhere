@@ -17,7 +17,6 @@ const { standardWebhookSignature } = await import("../agent/webhooks/oe-standard
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { isRuntimeUsageKind } = await import("../agent/spend/usage-events.js");
 const storeMod = await import("../agent/meetings/store.js");
-const provenance = await import("../agent/meetings/provenance.js");
 const { getMeetingRecord, MEETING_ID } = storeMod;
 import type { MeetingPolicy } from "../agent/meetings/policy.js";
 import type { BoxListing, BoxSpec, LongLivedBoxBackend } from "../agent/sandbox/long-lived-box.js";
@@ -280,9 +279,6 @@ async function auditActions(): Promise<{ action: string; detail?: Record<string,
   const actions = await auditActions();
   ok(actions.some((r) => r.action === "meeting.ended" && typeof r.detail?.usdMicros === "number" && (r.detail.usdMicros as number) > 0), "meeting.ended records the billed seconds and dollars on a metered backend");
   ok(actions.some((r) => r.action === "meeting.recap_posted" && r.detail?.posted === true && r.detail?.decisions === 1 && r.detail?.actions === 1), "meeting.recap_posted records the counts");
-  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", threadRoot: "1700159720.000100", botMessageIds: [] }), "🔴 the bot recap MARKS the thread it went into");
-  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", botMessageIds: ["ts-1"] }), "🔴 the bot recap MARKS its own post id");
-  ok(await provenance.turnLocusCarriesMeetingPost(ORG, { platform: "slack", container: "C1", threadRoot: "1700159720.000100" }), "🔴 a later turn in that thread is marked");
 
   const again = signed(rec.secret, { type: "ended", chunks: 3, reason: "meeting-ended" });
   await lifecycle.handleMeetingCallback(ORG, a.meetingId, again.raw, again.headers, deps);

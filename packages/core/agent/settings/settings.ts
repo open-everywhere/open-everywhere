@@ -4,12 +4,30 @@ import { sandboxRegionProblem } from "../sandbox/vercel-create.js";
 import { dataPolicyRows, validateDataPolicy, type ModelDataPolicy } from "../model/data-policy.js";
 import { SHIPPED_MODEL_TARGETS, modelTargetWords, validateModelTargets, type ModelTargets } from "../model/targets.js";
 
+/** @deprecated OPE-2721: the value of the ignored `taint.tierMode` key. The source-tier table is removed. OPE-2724 removes the type. */
 export type TaintTierMode = "enforced" | "dryrun";
 
+/** @deprecated OPE-2721: the value of the ignored `taint.mode` key. The taint plane is removed. OPE-2724 removes the type. */
 export type TaintMode = "on" | "off";
+
+export const TAINT_SETTINGS_IGNORED_NOTICE =
+  "[open-everywhere:settings] taint.mode and taint.tierMode are deprecated and IGNORED (OPE-2721): the taint plane is removed. " +
+  "Delete them from agent/settings/settings.ts; a later release removes the keys (OPE-2724). Untrusted content is still fenced.";
+
+const taintSettingsReported = processRegistrySlot<boolean>("settings.taintSettingsIgnored.reported.v1");
+
+export function reportIgnoredTaintSettings(overrides: AgentSettingsOverrides): boolean {
+  const t = overrides.taint;
+  if (t === undefined || (t.mode === undefined && t.tierMode === undefined)) return false;
+  if (taintSettingsReported.get() === true) return false;
+  taintSettingsReported.set(true);
+  console.warn(TAINT_SETTINGS_IGNORED_NOTICE);
+  return true;
+}
 
 export type UndeclaredSurfacePosture = "clean" | "mark";
 
+/** @deprecated The old name of {@link UndeclaredSurfacePosture} (OPE-2711). OPE-2724 removes it. */
 export type TaintUndeclaredSurface = UndeclaredSurfacePosture;
 
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
@@ -287,8 +305,11 @@ export interface AgentSettings {
     readonly extraPatterns: readonly SensitivePatternSetting[];
   };
   readonly taint: {
+    /** @deprecated OPE-2721: accepted and IGNORED. The taint plane is removed. OPE-2724 removes the key. */
     readonly mode: TaintMode;
+    /** @deprecated OPE-2721: accepted and IGNORED. The source-tier table is removed. OPE-2724 removes the key. */
     readonly tierMode: TaintTierMode;
+    /** @deprecated The alias of `identity.undeclaredSurface` (OPE-2711). It resolves to the SAME value */
     readonly undeclaredSurface: UndeclaredSurfacePosture;
   };
   readonly teams: {
@@ -987,7 +1008,7 @@ export const SETTINGS = {
           ? undefined
           : 'must be "withhold" or "envelope" ("taint" is the deprecated alias of "envelope")',
       summary:
-        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `envelope` is the deliberate OPT-OUT: it lets the text enter the context and leaves the consequence to the approval plane. In a rendered wake envelope and in a read result the text is fenced with a do-not-follow notice the body cannot close; a raw `direct` DM or @mention body (Discord, Notion, GitHub, Linear) passes verbatim: OE does not escape, cap or fence it (W4, channels/normalized-wake.ts). The grain decides only whether the body is withheld. Under `envelope` the turn is still marked as before: the non-member stamp `oe_chat_nonmember` and the `authoredByNonMember` flag on a read both fire. The taint-removal slices (OPE-2716, OPE-2721) own those marks. Choose it only where an excluded author\'s text must reach the model. `taint` is the DEPRECATED ALIAS of `envelope` (OPE-2722): it loads, it behaves as `envelope`, the process reports it once at the first resolution, and OPE-2724 removes it. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the author-taint mark and the `withhold` read half are declared once and no reader can declare them differently.',
+        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `envelope` is the deliberate OPT-OUT: it lets the text enter the context and leaves the consequence to the approval plane. In a rendered wake envelope and in a read result the text is fenced with a do-not-follow notice the body cannot close; a raw `direct` DM or @mention body (Discord, Notion, GitHub, Linear) passes verbatim: OE does not escape, cap or fence it (W4, channels/normalized-wake.ts). The grain decides only whether the body is withheld. Nothing marks the turn under either grain (OPE-2721); the non-member stamp `oe_chat_nonmember` still feeds the guest controls. Choose it only where an excluded author\'s text must reach the model. `taint` is the DEPRECATED ALIAS of `envelope` (OPE-2722): it loads, it behaves as `envelope`, the process reports it once at the first resolution, and OPE-2724 removes it. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the `withhold` read half is declared once and no reader can declare it differently.',
     } satisfies SettingSpec<ExternalAuthorGrain>,
     roomGrain: {
       path: "externalPolicy.roomGrain",
@@ -1135,7 +1156,7 @@ export const SETTINGS = {
       shipped: "clean",
       validate: (v) => (v === "clean" || v === "mark" ? undefined : 'must be "clean" or "mark"'),
       summary:
-        "What a chat wake does on a surface the operator has NEVER declared in the trust registry (`agent/identity/surfaces.ts`) — the room leg of the non-member stamp `oe_chat_nonmember` (`agent/identity/non-member.ts`). `clean` (shipped) stamps nothing for the room and relocates the complaint to preflight, where it names the surface once and is actionable — a declared room is judged by its declaration and a refuted author still stamps. `mark` stamps every wake on an undeclared surface as non-member at ROOM grain, and a DM is never stamped by this leg. The stamp feeds the guest controls (the connector member plane, the A2A room gate, `propose_mcp_server`, domain questions and the Notion channel), and the tainted-turn model seeds its mark from the same stamp. A DECLARED surface never reaches this setting. The residual under `clean` is real and bounded: between install and the first declaration a genuinely public chat room reads clean, the ACL plane still fences it to the read-only `public` pseudo-domain, and the approval plane is the defence against a consequential act. Moved from `taint.undeclaredSurface` (OPE-2711), which stays accepted as a deprecated alias.",
+        "What a chat wake does on a surface the operator has NEVER declared in the trust registry (`agent/identity/surfaces.ts`) — the room leg of the non-member stamp `oe_chat_nonmember` (`agent/identity/non-member.ts`). `clean` (shipped) stamps nothing for the room and relocates the complaint to preflight, where it names the surface once and is actionable — a declared room is judged by its declaration and a refuted author still stamps. `mark` stamps every wake on an undeclared surface as non-member at ROOM grain, and a DM is never stamped by this leg. The stamp feeds the guest controls (the connector member plane, the A2A room gate, `propose_mcp_server`, domain questions and the Notion channel). A DECLARED surface never reaches this setting. The residual under `clean` is real and bounded: between install and the first declaration a genuinely public chat room reads clean, the ACL plane still fences it to the read-only `public` pseudo-domain, and the approval plane is the defence against a consequential act. Moved from `taint.undeclaredSurface` (OPE-2711), which stays accepted as a deprecated alias.",
     } satisfies SettingSpec<UndeclaredSurfacePosture>,
   },
   language: {
@@ -1578,14 +1599,14 @@ export const SETTINGS = {
       shipped: "on",
       validate: (v) => (v === "on" || v === "off" ? undefined : 'must be "on" or "off"'),
       summary:
-        "Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach both delegation legs. It moves no approval verdict: the approver chain, the consequence registry and the approval judge read no taint (OPE-2716). It does not gate memory: a memory write is an ordinary file edit with no write verb to mark (OPE-389). `off` is a deployer's reviewed opt-out: no marks, and no mark travels to a delegated worker in either direction — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **No environment variable can reach `off`** — it is a one-line diff in `agent/settings/settings.ts`, which is the bar disabling a security model deserves.",
+        "DEPRECATED and IGNORED (OPE-2721). The taint plane is removed: no turn is marked, so `off` and `on` behave the same. Config load still accepts the key, and the process reports it once. Untrusted content is still FENCED whatever this says. OPE-2724 removes the key.",
     } satisfies SettingSpec<TaintMode>,
     tierMode: {
       path: "taint.tierMode",
       shipped: "enforced",
       validate: (v) => (v === "enforced" || v === "dryrun" ? undefined : 'must be "enforced" or "dryrun"'),
       summary:
-        "Whether the reviewed source-tier table DECIDES a read's untrusted-content marking (`enforced`) or only logs what it would have decided (`dryrun`). Enforcement is relaxation-only.",
+        "DEPRECATED and IGNORED (OPE-2721). The source-tier table is removed, so nothing reads this key. Config load still accepts it, and the process reports it once. OPE-2724 removes the key.",
     } satisfies SettingSpec<TaintTierMode>,
     undeclaredSurface: {
       path: "taint.undeclaredSurface",
@@ -1815,6 +1836,7 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
   if (coupling !== undefined) problems.push(coupling);
   const alias = undeclaredSurfaceAliasProblem(overrides);
   if (alias !== undefined) problems.push(alias);
+  if (problems.length === 0) reportIgnoredTaintSettings(overrides);
   if (problems.length > 0) {
     throw new Error(
       `open-everywhere: invalid agent settings (agent/settings/settings.ts) —\n  • ${problems.join("\n  • ")}\n` +

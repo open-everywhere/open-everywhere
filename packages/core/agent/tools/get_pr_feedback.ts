@@ -35,7 +35,6 @@ const prFeedbackOutputSchema = z.object({
   }),
   title: z.string().optional(),
   url: z.string().optional(),
-  repoPrivate: z.boolean().optional(),
 });
 
 export const getPrFeedbackEntry = defineTool({

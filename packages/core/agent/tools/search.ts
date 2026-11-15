@@ -107,7 +107,7 @@ export const searchEntry = defineTool({
     }
     return ingestUntrustedModelOutput(lines.join("\n"), {
       source: "search",
-      ingestion: { kind: "work-search", label: "search" },
+      toolName: "search",
     });
   },
 });

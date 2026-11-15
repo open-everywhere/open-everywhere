@@ -22,12 +22,9 @@ Two properties had to hold before a deployment could turn meetings on. Both hold
   voice credentials and the one-meeting-per-server claim) in its own operational-store table, `meeting_data`. Each row carries its own expiry time. A read never returns a row
   after that time, a write deletes only rows already past their own expiry, and the 15-minute meeting sweep
   deletes the expired rows from the disk. No other feature's write can delete a live meeting row.
-- **The recap carries untrusted provenance (OPE-2464).** The recap is the bot's own post, written by a model
-  from an untrusted transcript. When OE posts it, OE records the post, the thread it went into and, for
-  seven days, its channel. A later turn that reads that post or that thread, or that wakes in that thread
-  or (within the seven days) anywhere in that channel, is marked as having read untrusted content, so its
-  cards carry the taint disclosure. The limits are listed under [What does not work](#what-does-not-work). See [The recap, and why the transcript is
-  untrusted](#the-recap-and-why-the-transcript-is-untrusted).
+- **A later turn reads the recap inside the untrusted fence.** The recap is the bot's own post, written by a
+  model from an untrusted transcript, so every later wake and read fences it (OPE-2721 removed the old
+  provenance mark). See [The recap, and why the transcript is untrusted](#the-recap-and-why-the-transcript-is-untrusted).
 
 ## The flow
 
@@ -49,8 +46,7 @@ Two properties had to hold before a deployment could turn meetings on. Both hold
    host, where the audio goes, the sandbox and the spend ride the card's detail (its metadata and the
    pending row). A member's tap approves it. Nothing joins before the tap, with one exception: when the approver chain lowers
    `meeting.join` (an approve-all or bypass domain, or an enforced judge allow that cites a pre-approval
-   rule), the bot is sent with no tap. On a tainted turn the chain cannot lower it below a person's
-   decision.
+   rule), the bot is sent with no tap.
 4. **The box.** The tap opens the bot's box through the long-lived box seam and writes a `meeting.join`
    audit row. The box carries the meeting link, the bot's name, the cap and a per-meeting callback key.
    It carries no deployment credential.
@@ -327,7 +323,7 @@ line is tied to a real Discord account id, so the name cannot be borrowed by tim
 ### Discord's Developer Policy
 
 Discord's [Developer Policy](https://support-dev.discord.com/hc/en-us/articles/8563934450327-Discord-Developer-Policy)
-(effective July 8, 2024, read 2026-10-12) has no clause that names voice or recording. These clauses apply:
+(effective July 8, 2024, read 2026-10-11) has no clause that names voice or recording. These clauses apply:
 
 > 2. Do not initiate processes on a user or server's behalf without first obtaining their permission. The manner
 > of providing the option for permission must be clearly labeled and apparent, and contain an accurate
@@ -371,29 +367,16 @@ Anyone in the meeting can say anything, a guest included. So the transcript is *
   than whole tokens means a token split across two fields cannot re-form when code joins them.
 - Every line the model wrote is posted as a quote. The post is short: a one-line header ("Meeting recap:
   General, 6 min"), the summary, and the Decisions and Actions sections only when they hold something. It
-  has no preamble about untrusted content, because the provenance mark below is the guard and no person
-  needs to read about it.
-- 🔴 **The recap post carries an untrusted provenance mark (OPE-2464).** A chat read grades a bot's line as
-  trusted, so without a mark a later turn could act on an action item as if OE had said it. So the host
-  records the recap when it posts it (`meetings/provenance.ts`): the thread it goes into BEFORE the post, and
-  the post's own message id after. The record is a fact about the message id, never about its words. Two
-  readers use it:
-  - every chat read verb (`read_thread`, `read_channel`, `read_work_thread`, `read_work_channel`): a page
-    with a marked post, or a read of a marked thread, marks the turn untrusted (`chat-message`);
-  - the turn itself: a turn that woke in a marked thread is marked untrusted before its first action runs,
-    because its wake context (a backscroll, a catch-up, the thread context) can carry the recap. The check
-    runs at `actions.requested`, and every consequential tool reads the mark at execute time.
-
-  Every recap also marks EVERY turn in its channel (top level or in any thread) for seven days, the
-  reach-back of a seat's catch-up read: a wake's backscroll can carry the recap from anywhere in the
-  channel, and Slack's top-level backscroll also pulls the replies of recent threads. A recap posted at the
-  top level also marks the thread it roots. A turn that the check marked stays marked when its step is
-  redelivered, even if the seven days end in between, as long as its turn record was written (the record
-  is keyed by session and turn, and lasts one day). Only Slack
-  carries the asking thread, so a recap asked for on Discord or Teams always posts at the top level. A
-  Discord thread is its own channel, so a recap asked for inside Discord thread X also marks X as a thread,
-  and a turn in X stays marked after the seven days. The post and thread marks last ten years. While
-  meetings are on, a store error reads as "marked".
+  has no preamble about untrusted content, because the fence on every later read is the guard and no
+  person needs to read about it.
+- 🔴 **A later turn reads the recap FENCED, not as OE's own word.** The recap is OE's post, written by a
+  model from an untrusted transcript. A rendered wake envelope fences every line that a human did not
+  write (`channels/wake-envelope.ts`, `authorTrustAdmitsUnfencedBody`), so a recap in a wake's backscroll,
+  catch-up or thread context reaches the model inside the untrusted fence. Every chat read verb
+  (`read_thread`, `read_channel`, `read_work_thread`, `read_work_channel`) fences every line it returns.
+  The host's provenance mark on the post (OPE-2464, `meetings/provenance.ts`) was removed with the taint
+  plane (OPE-2721): its only readers were the turn mark and the source-tier table. An action item in a
+  recap still needs a person's approval through the ordinary approval chain before it becomes an act.
 - The transcript never reaches a conversation seat or a worker turn.
 
 The recap uses the deployment's `utility` model route.
@@ -471,11 +454,8 @@ The recap uses the deployment's `utility` model route.
   member routing inside `@discordjs/voice` has no test here. The e2e leg
   `S-MEETING-DISCORD-VOICE` (NON_LAUNCH) asks in the e2e guild and checks the card; it SKIPS while meetings are
   off.
-- **Known limits of the provenance mark:** a recap marks the other turns in its channel for seven days
-  only. After that, a wake whose bootstrap read reaches back to the recap is not marked by the turn leg
-  (a `read_channel` of a page with the recap still is). A recap whose post returned no message id, or whose
-  post mark failed to write twice, has no post mark: a recap in a thread keeps its thread mark, and a
-  top-level recap is then marked for seven days only (on Discord, also as its own thread).
+- **The recap's provenance mark is gone (OPE-2721).** No recap marks any turn. Every later read of a recap is
+  fenced, as the bullet on reading a recap back says.
 
 ## Recaps from the platform's own transcript
 
@@ -484,8 +464,8 @@ No bot joins, and the recap carries the speakers' names as the platform recorded
 ship: **Microsoft Teams**, **Google Meet** and **Zoom** (cloud recording). The bot stays the road for
 everything else: a meeting with no platform transcript, or another organisation's meeting.
 
-Native recaps are **off** as shipped. The recap post carries the same provenance mark as the bot's
-(OPE-2464), and the watch rows and the single-use claims are meeting rows with their own expiry (OPE-2461).
+Native recaps are **off** as shipped. A native recap is fenced on every later read, as the bot's recap is,
+and the watch rows and the single-use claims are meeting rows with their own expiry (OPE-2461).
 
 ### The flow
 
@@ -505,8 +485,7 @@ Native recaps are **off** as shipped. The recap post carries the same provenance
    transcript of one Google Meet meeting and post a recap here." and "Nobody in the meeting is told. OE
    keeps no transcript. It reads as <the Meet organiser>." The session (`past` or `next`), whose
    credential reads the transcript and the model route ride the card's detail. A member's tap approves it. As for `meeting.join`, the approver chain can lower the card (an
-   approve-all or bypass domain, or an enforced judge allow that cites a pre-approval rule), and on a
-   tainted turn it cannot lower it below a person's decision.
+   approve-all or bypass domain, or an enforced judge allow that cites a pre-approval rule).
 4. **The read.** The tap reads the transcript once, with the organisation's credential, and writes a
    `meeting.recap_requested` audit row. Then one of three things happens:
    - **ready:** OE writes the recap and posts it into the thread that asked (`meeting.recap_posted`, with
@@ -639,8 +618,7 @@ until `watchHours` runs out.
 - **The transcript is untrusted**, exactly as for the bot: fenced, read by a tool-less model, and rendered by
   code as quoted lines. Speaker names are display names anyone can set, so they are fenced and stripped of
   mention syntax too.
-- **The recap post carries the provenance mark** (OPE-2464), exactly as for the bot: a later turn that reads
-  it, or wakes in its thread, is marked untrusted.
+- **The recap post is fenced on every later read**, exactly as for the bot.
 - **Audit:** `meeting.recap_requested` (who approved reading which meeting), `meeting.recap_posted` with
   `source: "native"` and the speaker count, and `meeting.recap_refused` with the reason.
 - **Tier:** the `meeting.recap` card is member tier. The admin decision is the merged `native` block: which

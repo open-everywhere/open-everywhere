@@ -53,7 +53,6 @@ import {
   type MemberPlaneAuthLike,
 } from "../access/member-plane.js";
 import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { getSecretVia } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -343,6 +342,7 @@ export function userAwareProviderToken(
           assertCredentialEndpointHostAllowed(cred.endpoints, opts.directUrl, `connection "${opts.connector}" credential "${cred.credential}"`);
         }
         const { mode, principalId, platform, workspace, surface, org, trust, declaredTrust } = await resolveDmPrincipal(ctx.session.auth);
+        // principal-gate: presence — this id becomes the OAuth `subject.id` a personal token is minted
         if (!principalId) {
           throw new Error(
             `connection "${opts.connector}": cannot mint a per-user token — this surface has no ` +
@@ -534,6 +534,7 @@ export interface OeConnectorCardDeps {
   readonly store?: Pick<ReturnType<typeof getOperationalStore>, "getSessionApproval" | "markEventSeen" | "hasEventSeen" | "getPendingAction"> & ConnectorCardRetentionStore;
   readonly offer?: typeof offerConnectorOpCard;
   readonly grantScope?: (ctx: Parameters<ApprovalPolicy>[0]) => ConnectorGrantScope | undefined | Promise<ConnectorGrantScope | undefined>;
+  /** @deprecated OPE-2721: ignored. No card reads a turn mark. OPE-2724 removes it. */
   readonly tainted?: () => boolean;
   readonly credentialOf?: (connection: string, auth: unknown) => Promise<ConnectorOpCardOffer["credential"]>;
   readonly toolHints?: typeof connectorOpToolHints;
@@ -721,7 +722,6 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
       ...(replayInput === undefined ? {} : { input: replayInput }),
       auth: ctx.session?.auth,
       session: ctx.session,
-      tainted: taintedOrPoisoned(deps.tainted ?? untrustedIngestedThisTurn),
       ...(credential === undefined ? {} : { credential }),
     });
     if (offered.outcome === "approved") return "not-applicable";
@@ -733,9 +733,11 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
 export const ASK_UNATTENDED_SENTENCE =
   "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this.";
 
+/** @deprecated OPE-2718: no refusal emits this sentence now, on either plane. A fire that read outside */
 export const TAINTED_ASK_UNATTENDED_SENTENCE =
   "This turn read external content, so this action needs a person to confirm it — and this run is unattended, so there is nobody to ask. No standing grant lifts that; ask a person to do this, or raise it again in a turn that has not read anything external.";
 
+/** @deprecated No refusal emits this advice: the fence has no turn-mark condition (OPE-2718), and `contentOrigin` */
 export const TAINTED_CONNECTOR_ORIGIN_ADVICE =
   "A fire has no other turn. A connector read marks every fire untrusted while its grant declares `contentOrigin: \"external\"` or declares nothing. Only `contentOrigin: \"internal\"` changes that, and it asserts that org members author everything the connection returns. Do not declare it to unblock a routine.";
 
@@ -757,6 +759,7 @@ export interface UnattendedConnectorFenceDeps {
   readonly surfaceContext?: typeof surfaceContextFromAuth;
   readonly grantExists?: (org: string, grantKey: string, kind: string, nowIso: string) => Promise<boolean>;
   readonly audit?: typeof appendAudit;
+  /** @deprecated OPE-2718: ignored. The fence never calls this read. OPE-2724 removes it. */
   readonly tainted?: () => boolean;
   readonly toolHints?: typeof connectorOpToolHints;
   readonly recordTestBlocked?: BlockedCallRecorder;
@@ -789,6 +792,7 @@ async function fencedTurnFacts(
     const binding = bindFrom(ctx);
     const partition = resolvePartition(ctx);
     return {
+      // principal-gate: presence — a card is the only other answer here, and a card needs somebody
       unattended: unattendedFrom(binding),
       org: partition.org,
       platform: partition.platform,
@@ -809,14 +813,6 @@ async function callAsync<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
     return await fn();
   } catch {
     return fallback;
-  }
-}
-
-function taintedOrPoisoned(read: () => boolean): boolean {
-  try {
-    return read();
-  } catch {
-    return true;
   }
 }
 

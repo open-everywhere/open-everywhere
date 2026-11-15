@@ -158,6 +158,7 @@ function contentLines(s: string): string[] {
 }
 
 function destructionVerdict(host: string, next: string): { hostLines: number; droppedLines: number } | null {
+  // hook-throw: INTERNAL(guardDestructiveWrites) — its catch turns this into a refusal, so the floor fails closed.
   if (typeof host !== "string" || typeof next !== "string") throw new TypeError("memory floor: non-string file content");
   const before = contentLines(host);
   if (before.length === 0) return null;

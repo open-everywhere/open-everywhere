@@ -14,7 +14,6 @@ test:linear-write-scope
 test:linear-work-search
 test:linear-event-normalizer
 test:dynamic-replay
-test:linear-route-taint
 test:linear-post-arm
 test:linear-webhook-verify
 test:linear-multi-org-reply
@@ -27,3 +26,4 @@ test:linear-read
 test:linear-wake-failure-audit
 test:linear-rate-limit
 test:linear-write-seam
+test:linear-route-fence

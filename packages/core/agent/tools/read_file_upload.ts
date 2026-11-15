@@ -143,7 +143,7 @@ export default defineTool({
     const header = output.name ? `File: ${output.name}${output.mimeType ? ` (${output.mimeType})` : ""}\n\n` : "";
     return ingestUntrustedModelOutput(`${header}${output.content ?? ""}`, {
       source: "read_file_upload",
-      ingestion: { kind: "file-upload", label: "read_file_upload" },
+      toolName: "read_file_upload",
     });
   },
 });

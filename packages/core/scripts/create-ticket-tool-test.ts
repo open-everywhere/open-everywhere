@@ -17,7 +17,7 @@ __setTestValveForTest("egress-spoof", false);
 const { registerTicketCreateAdapter } = await import("../agent/channels/ticket-create.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { registerConfig } = await import("../agent/access/config.js");
-const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+const { noteEnvelopeWrapThisTurn } = await import("../agent/memory/turn-provenance.js");
 const createTicketDefault = (await import("../agent/tools/create_ticket.js")).default;
 const { createTicketEntry } = await import("../agent/tools/create_ticket.js");
 await import("../agent/approvals/flow.js");
@@ -207,7 +207,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
 {
   __setTestValveForTest("egress-spoof", true);
   const out = await inFakeSession(async () => {
-    markUntrustedIngestedThisTurn();
+    noteEnvelopeWrapThisTurn();
     return execTool(createTicketEntry)(
       { platform: "tool-create-platform", target: "T-10", title: "From a web page", body: "…" },
       slackCtx() as never,

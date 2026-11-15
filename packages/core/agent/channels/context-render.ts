@@ -1,6 +1,4 @@
 import { ingestUntrusted } from "../access/untrusted.js";
-import { noteIngestionVerdict } from "../access/taint-enforcement.js";
-import { taintMarkLands } from "../access/taint-signal.js";
 import { UNAUTH_SYSTEM_NOTE, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
 import { redactMachineLinkCodes } from "../identity/link-challenge.js";
@@ -76,7 +74,6 @@ export function renderContext(
   }
   if (kept.length === 0) return null;
   const body = `Recent conversation (oldest first), for context:\n${kept.join("\n")}`;
-  noteIngestionVerdict({ kind: "chat-message", label: "context-render" }, taintMarkLands());
   const wrapped = ingestUntrusted(body, { source });
   const withNote = hasUnauth ? `${wrapped}\n\n${UNAUTH_SYSTEM_NOTE}` : wrapped;
   return kept.length === MAX_MESSAGES && opts.readMoreHint ? `${withNote}\n\n${opts.readMoreHint}` : withNote;

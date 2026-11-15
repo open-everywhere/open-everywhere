@@ -1,7 +1,5 @@
 import {
   ingestUntrusted,
-  noteIngestionVerdict,
-  taintMarkLands,
   type WakeAttachment,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { parseSlackFiles, type ParsedMessageEvent } from "./slack-events.js";
@@ -74,8 +72,7 @@ export function shortcutWakeKey(sc: ParsedSlackShortcut): string {
   return `oe-shortcut:${sc.triggerId}`;
 }
 
-function fenceAndDeclareShortcutIngestion(text: string): string {
-  noteIngestionVerdict({ kind: "chat-message", label: "slack:shortcut" }, taintMarkLands());
+function fenceShortcutIngestion(text: string): string {
   return ingestUntrusted(text, { source: "slack message shortcut" });
 }
 
@@ -97,7 +94,7 @@ export function shortcutMessageEvent(
   opts: { readonly admitAttachments?: boolean } = {},
 ): ParsedMessageEvent {
   const attachments = opts.admitAttachments === true ? sc.message?.attachments : undefined;
-  const text = sc.kind === "message" && sc.message ? fenceAndDeclareShortcutIngestion(sc.message.text) : globalShortcutText(sc);
+  const text = sc.kind === "message" && sc.message ? fenceShortcutIngestion(sc.message.text) : globalShortcutText(sc);
   return {
     channelId,
     ts: sc.kind === "message" && sc.message ? sc.message.ts : slackTsFromMs(nowMs),

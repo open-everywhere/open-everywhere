@@ -17,7 +17,7 @@ import {
   SILO_DETAIL_KEYS,
   SYNC_DETAIL_KEYS,
   byteSize,
-  isTaintCleanDetail,
+  isContentFreeDetail,
   memorySyncTimingEnabled,
   startMemorySyncTiming,
   toAuditDetail,
@@ -303,7 +303,7 @@ function leakSurfaceOf(row: unknown): string {
   ok(!serialised.includes(BRAIN_SECRET), "TAINT: a memory file's BODY appears nowhere in the row");
   ok(!serialised.includes(RO_SECRET), "TAINT: a read-only silo's body appears nowhere in the row either");
   ok(!serialised.includes("CANARY"), "TAINT: no canary content string of any kind survives into the row");
-  ok(isTaintCleanDetail(armedRow.detail), "TAINT: the emitted detail passes the independent verifier (allowlisted keys, scalar values only)");
+  ok(isContentFreeDetail(armedRow.detail), "TAINT: the emitted detail passes the independent verifier (allowlisted keys, scalar values only)");
 
   const hostile = {
     sessionId: "s1",
@@ -339,7 +339,7 @@ function leakSurfaceOf(row: unknown): string {
   ok(Object.keys(projected).every((k) => (SYNC_DETAIL_KEYS as readonly string[]).includes(k)), "TAINT: the row's top-level keys are exactly the allowlist");
   const pSilo = (projected["silos"] as Record<string, unknown>[])[0];
   ok(Object.keys(pSilo).every((k) => (SILO_DETAIL_KEYS as readonly string[]).includes(k)), "TAINT: a per-silo entry's keys are exactly the allowlist");
-  ok(isTaintCleanDetail(projected), "TAINT: the hostile record still projects to a taint-clean detail");
+  ok(isContentFreeDetail(projected), "TAINT: the hostile record still projects to a taint-clean detail");
 
   const smuggled = toAuditDetail({
     sessionId: `line1\nline2 ${BRAIN_SECRET}`,
@@ -352,9 +352,9 @@ function leakSurfaceOf(row: unknown): string {
   } as unknown as MemorySyncTiming);
   ok(smuggled["sessionId"] === undefined, "TAINT: a multi-line value in an identifier slot is REFUSED, not truncated-and-kept");
   ok((smuggled["silos"] as Record<string, unknown>[])[0]["silo"] === undefined, "TAINT: an over-long value in an identifier slot is refused too (identifiers are bounded)");
-  ok(!isTaintCleanDetail({ sessionId: "s", silos: [{ silo: "s", body: "x" }] }), "TAINT: the verifier REJECTS an unknown per-silo key — it is a second opinion, not a restatement");
-  ok(!isTaintCleanDetail({ sessionId: "s", silos: [{ silo: { nested: "x" } }] }), "TAINT: the verifier rejects a nested object in a silo slot");
-  ok(!isTaintCleanDetail({ notAKey: 1 }), "TAINT: the verifier rejects an unknown top-level key");
+  ok(!isContentFreeDetail({ sessionId: "s", silos: [{ silo: "s", body: "x" }] }), "TAINT: the verifier REJECTS an unknown per-silo key — it is a second opinion, not a restatement");
+  ok(!isContentFreeDetail({ sessionId: "s", silos: [{ silo: { nested: "x" } }] }), "TAINT: the verifier rejects a nested object in a silo slot");
+  ok(!isContentFreeDetail({ notAKey: 1 }), "TAINT: the verifier rejects an unknown top-level key");
 }
 
 {

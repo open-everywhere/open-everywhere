@@ -6,12 +6,10 @@ import {
   type BindableContext,
 } from "../identity/binding.js";
 import { z } from "zod";
-import { chatReadCarriesMeetingPost } from "../meetings/provenance.js";
 import type { Domain } from "../memory/domain.js";
 import { domainForChannel, domainRoster, externalPolicyOverrideFor } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import type { IngestionSource } from "../access/taint-tiers.js";
 import { resolveExternalPolicy, shippedExternalPolicy, WITHHELD_BODY_MARKER, type ExternalPolicy } from "../access/external-policy.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
@@ -59,8 +57,6 @@ export interface ChannelReadResult {
   readonly channel: string;
   readonly count: number;
   readonly messages: readonly RenderedLine[];
-  readonly authoredByNonMember?: boolean;
-  readonly carriesUntrustedPost?: boolean;
   readonly possiblyIncomplete?: boolean;
   readonly partialReason?: string;
   readonly spool?: ReadSpool;
@@ -72,8 +68,6 @@ export interface ThreadReadResult {
   readonly thread_ts: string;
   readonly count: number;
   readonly messages: readonly RenderedLine[];
-  readonly authoredByNonMember?: boolean;
-  readonly carriesUntrustedPost?: boolean;
   readonly possiblyIncomplete?: boolean;
   readonly partialReason?: string;
   readonly spool?: ReadSpool;
@@ -208,8 +202,6 @@ export interface ChannelReadOutput {
   channel: string;
   count: number;
   messages: ReadOutputLine[];
-  authoredByNonMember?: boolean;
-  carriesUntrustedPost?: boolean;
   possiblyIncomplete?: boolean;
   partialReason?: string;
   spool?: ReadSpool;
@@ -261,12 +253,8 @@ async function gradeAndProject(
   effectiveLimit: number,
   where: { readonly platform: string; readonly container: string; readonly threadRoot?: string },
   declared?: { possiblyIncomplete?: boolean; partialReason?: string },
-): Promise<{ count: number; messages: ReadOutputLine[]; authoredByNonMember?: boolean; carriesUntrustedPost?: boolean; possiblyIncomplete?: boolean; partialReason?: string }> {
+): Promise<{ count: number; messages: ReadOutputLine[]; possiblyIncomplete?: boolean; partialReason?: string }> {
   const refuted = await adapterRefutedAuthorIds(adapter, ctx, lines);
-  const carriesUntrustedPost = await chatReadCarriesMeetingPost(deploymentOrg(), {
-    ...where,
-    botMessageIds: lines.filter((m) => m.bot === true).map((m) => m.ts),
-  });
   const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
   const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
   const possiblyIncomplete = declared?.possiblyIncomplete !== undefined ? declared.possiblyIncomplete : lines.length >= effectiveLimit;
@@ -283,8 +271,6 @@ async function gradeAndProject(
       ...(m.live !== undefined ? { live: m.live } : {}),
       ...(filesOf(m).length > 0 ? { files: filesOf(m) } : {}),
     })),
-    ...(refuted.size > 0 && !withholding ? { authoredByNonMember: true } : {}),
-    ...(carriesUntrustedPost ? { carriesUntrustedPost: true } : {}),
     ...(possiblyIncomplete ? { possiblyIncomplete: true } : {}),
     ...(possiblyIncomplete && declared?.partialReason !== undefined ? { partialReason: declared.partialReason } : {}),
   };
@@ -322,15 +308,6 @@ export async function readThreadResult(
     channel,
     thread_ts: threadTs,
     ...(await gradeAndProject(ctx, adapter, fetched.lines, limit ?? DEFAULT_THREAD_LIMIT_ESTIMATE, { platform, container: channel, threadRoot: threadTs }, fetched)),
-  };
-}
-
-export function chatReadIngestion(label: string, out: { readonly authoredByNonMember?: boolean; readonly carriesUntrustedPost?: boolean }): IngestionSource {
-  return {
-    kind: "chat-message",
-    label,
-    ...(out.authoredByNonMember === true ? { authoredByNonMember: true } : {}),
-    ...(out.carriesUntrustedPost === true ? { carriesUntrustedPost: true } : {}),
   };
 }
 

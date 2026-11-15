@@ -143,19 +143,15 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
     requestedBy: "U_PROPOSER",
     attributedTo: "U_PROPOSER",
     first: false,
-    tainted: true,
   });
   const rows = (await readAudit({ org: "default" })).filter((r) => r.action === "chat.dm");
   ok(rows.length === before + 1, "the flowing arm writes one row under the SAME action as the carded arm");
   const flowing = rows.find((r) => (r.detail as Record<string, unknown>).first === false)!;
   ok(flowing !== undefined, "a flowing delivery is recorded with first:false");
   const carded = rows.find((r) => (r.detail as Record<string, unknown>).first === true)!;
-  ok((flowing.detail as Record<string, unknown>).tainted === true, "the flowing row carries the turn's taint stamp");
-  const { readFileSync } = await import("node:fs");
-  const dmPersonSource = readFileSync(new URL("../agent/tools/dm_person.ts", import.meta.url), "utf8");
-  ok(/first: false,[\s\S]{0,200}tainted: untrustedIngestedThisTurn\(\),\s*\}\);/u.test(dmPersonSource), "dm_person's flowing call stamps the live turn's taint");
-  const keys = (d: unknown) => Object.keys(d as object).filter((k) => k !== "tainted").sort().join(",");
-  ok(keys(flowing.detail) === keys(carded.detail), "apart from `tainted`, the flowing row and the carded row carry IDENTICAL fields");
+  ok(!("tainted" in (flowing.detail as Record<string, unknown>)), "the flowing row carries no taint stamp (OPE-2721)");
+  const keys = (d: unknown) => Object.keys(d as object).sort().join(",");
+  ok(keys(flowing.detail) === keys(carded.detail), "the flowing row and the carded row carry IDENTICAL fields");
   ok(sent[sent.length - 1]!.text.endsWith(renderFriendlyText(FOOTER, { platform: PLATFORM })), "the flowing arm appends the same host footer");
 }
 

@@ -12,7 +12,7 @@ delete process.env.OE_PLATFORM;
 import { _resetDynamicVariantsForTest, registerDynamicVariant, type ReplayableToolEntry } from "../agent/access/window-gated.js";
 import { projectToolSet, registeredProjectionNames, setVariantProjectedName, variantProjectedNameList } from "../agent/access/untrusted-projection.js";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
-import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
+import { envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import { grantToolEntry, mountGrantEntries } from "../agent/tools/grant_tools.js";
 import { credentialGrantDisclosureLine, type CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 
@@ -158,7 +158,7 @@ const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => 
 {
   const rendered = await inTurn(async () => {
     const out = await project(OK_OUTPUT);
-    ok(untrustedIngestedThisTurn() === true, "a granted read MARKS the turn — vendor bytes under the owner's credential are external content, and no reviewed config declares otherwise");
+    ok(envelopeWrappedThisTurn(undefined) === true, "a granted read MARKS the turn — vendor bytes under the owner's credential are external content, and no reviewed config declares otherwise");
     return String(out.value);
   });
   ok(rendered.startsWith(`${UNTRUSTED_OPEN} `), "the vendor bytes open the untrusted fence");
@@ -172,7 +172,7 @@ const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => 
 {
   const rendered = await inTurn(async () => {
     const out = await project(REFUSED_OUTPUT);
-    ok(untrustedIngestedThisTurn() === false, "🔴 a REFUSAL does not taint the turn — the broker sent nothing, so no external byte exists to mark");
+    ok(envelopeWrappedThisTurn(undefined) === false, "🔴 a REFUSAL does not taint the turn — the broker sent nothing, so no external byte exists to mark");
     return String(out.value);
   });
   ok(rendered.startsWith(`${UNTRUSTED_OPEN} `), "…and it is still FENCED: the fence is free, and a host string that interpolates a resource stays contained");
@@ -183,7 +183,7 @@ const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => 
 {
   await inTurn(async () => {
     const rendered = String((await project({ ok: false, refused: "revoked" })).value);
-    ok(untrustedIngestedThisTurn() === true, "NEGATIVE CONTROL: an unrecognised output shape falls to the TAINTING arm — over-taint is noise, under-taint is a breach");
+    ok(envelopeWrappedThisTurn(undefined) === true, "NEGATIVE CONTROL: an unrecognised output shape falls to the TAINTING arm — over-taint is noise, under-taint is a breach");
     ok(rendered.startsWith(`${UNTRUSTED_OPEN} `), "…and is fenced");
   });
 }

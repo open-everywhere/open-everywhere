@@ -169,7 +169,7 @@ async function createRoutineChainRow(cursor: AuditCursor): Promise<AuditRow> {
   });
 }
 
-test("B — a discovered-tool row (MCP-authored bytes) fences AND taints the turn", async () => {
+test("B — a discovered-tool row (MCP-authored bytes) is fenced, and the proposal still reaches the chain", async () => {
   await bootAgent();
 
   const { handle, cursor } = await driveConnectionSearchThenPropose({
@@ -180,14 +180,14 @@ test("B — a discovered-tool row (MCP-authored bytes) fences AND taints the tur
   });
 
   assertConnectionSearchFenced(handle);
-  await expectTurnMarked(cursor, "B");
 
   const chain = await createRoutineChainRow(cursor);
   expect(chain.detail).not.toHaveProperty("tainted");
   expect(chain.detail).not.toHaveProperty("taintKinds");
+  expect(await taintRowsSince(cursor), "B: a taint.* row landed after OPE-2721").toEqual([]);
 });
 
-test("C — negative control: an eve-authored STATUS row (needsAuthorization) fences but does NOT taint", async () => {
+test("C — an eve-authored STATUS row (needsAuthorization) is fenced too, and the proposal still reaches the chain", async () => {
   await bootAgent();
 
   const { handle, cursor } = await driveConnectionSearchThenPropose({
@@ -196,7 +196,7 @@ test("C — negative control: an eve-authored STATUS row (needsAuthorization) fe
   });
 
   assertConnectionSearchFenced(handle);
-  expect(await taintMarksSince(cursor), "C: a clean turn wrote a taint mark").toEqual([]);
+  expect(await taintRowsSince(cursor), "C: a taint.* row landed after OPE-2721").toEqual([]);
 
   const chain = await createRoutineChainRow(cursor);
   expect(chain.detail).not.toHaveProperty("tainted");
@@ -290,13 +290,6 @@ test("D — request_access grant-connector for an ungranted connector mints a re
   await awaitDelegationResult(negHandle, negForwarded, "the negative control delegation");
 });
 
-async function taintMarksSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
-  return (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark");
-}
-async function expectTurnMarked(cursor: AuditCursor, label: string): Promise<void> {
-  const marks = await waitFor(async () => {
-    const m = await taintMarksSince(cursor);
-    return m.length > 0 ? m : undefined;
-  }, `${label}: the tainted turn's taint.forward mark row`, 60_000);
-  expect(marks.length).toBeGreaterThan(0);
+async function taintRowsSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
+  return await rowsSinceCursor(cursor, ["taint.forward", "taint.verdict", "taint.mode"], { limit: 200 });
 }

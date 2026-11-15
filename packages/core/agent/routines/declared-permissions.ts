@@ -127,6 +127,7 @@ export async function armDeclaredRoutinePermissions(input: {
   readonly routine: PermissionedRoutine;
   readonly declared: readonly string[];
   readonly grantedBy: string;
+  /** @deprecated OPE-2718: ignored. Kept one release so a caller that still passes it compiles. */
   readonly tainted?: boolean;
   readonly nowIso: string;
 }): Promise<string[]> {

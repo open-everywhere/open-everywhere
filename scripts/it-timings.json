@@ -84,7 +84,7 @@
     "tests/integration/session-end/session-end-effects.test.ts": 10420,
     "tests/integration/spend/spend-and-model.test.ts": 10323,
     "tests/integration/step-boundary.test.ts": 12897,
-    "tests/integration/taint/chat-read-perimeter.test.ts": 21004,
+    "tests/integration/channels/chat-read-perimeter.test.ts": 21004,
     "tests/integration/approvals/requester-message-capture.test.ts": 17138,
     "tests/integration/approvals/routine-rule-cards.test.ts": 21393,
     "tests/integration/tasks/background-task-adoption.test.ts": 8426,

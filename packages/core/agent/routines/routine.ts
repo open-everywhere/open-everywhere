@@ -58,6 +58,7 @@ export interface Routine {
   readonly quietWhenEmpty?: true;
   readonly createdBy?: string;
   readonly createdAt: string;
+  /** @deprecated OPE-2718: never written now, and nothing decides on it. A row armed before the deploy */
   readonly taintedAtCreation?: boolean;
   readonly policy?: readonly RoutinePolicyRule[];
   readonly collectors?: readonly string[];
@@ -86,6 +87,7 @@ export interface Routine {
   sessionMode?: "job";
   jobSessionAnchor?: string;
   jobState?: string;
+  /** @deprecated OPE-2718: never written now, and nothing reads it. A job row written before the deploy */
   jobTainted?: boolean;
   prWatch?: { readonly repo: string; readonly number: number; readonly checksRemaining: number };
   bound?: RoutineBound;

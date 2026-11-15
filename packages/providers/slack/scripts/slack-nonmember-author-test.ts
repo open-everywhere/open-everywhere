@@ -225,7 +225,7 @@ _resetAuthorTrustForTest();
 
 {
   registerConfig({
-    loadDomains: () => [defineDomain({ name: "join-fixture", reach: ["slack/T1/C1"], externalPolicy: { authorGrain: "taint" } })],
+    loadDomains: () => [defineDomain({ name: "join-fixture", reach: ["slack/T1/C1"], externalPolicy: { authorGrain: "withhold" } })],
     loadSilos: () => [],
     loadBundles: () => [],
     loadBindings: () => [],
@@ -247,12 +247,15 @@ _resetAuthorTrustForTest();
       refutedAuthorIds: async (ctx: BindableContext, lines: readonly RenderedLine[]) => await slackReadAdapter.refutedAuthorIds(ctx, lines, PROBE),
     }) as unknown as ReadAdapter;
 
+  const { WITHHELD_BODY_MARKER } = await import("@open-everywhere/core/agent/adapter-api.js");
   const marked = await readChannelResult(readCtx, "slack", joined(page), "C1");
-  ok(marked.authoredByNonMember === true, "🔴 THE JOIN: the REAL slackReadAdapter's refuted ids reach readChannelResult and set the grading fact — the shape the two halves agree on is pinned here, not assumed");
-  ok(marked.count === 2, "the join: the page comes back whole (grading is additive, never a filter)");
+  const byAuthor = (a: string) => marked.messages.find((m) => m.author === a)?.text;
+  ok(byAuthor("U_GUEST") === WITHHELD_BODY_MARKER, "🔴 THE JOIN: the REAL slackReadAdapter's refuted ids reach readChannelResult, and the guest's text is withheld — the shape the two halves agree on is pinned here, not assumed");
+  ok(byAuthor("U_MEMBER") === "hello there", "the join: the member's line on the same page is untouched");
+  ok(marked.count === 2, "the join: the page comes back whole (a withheld line is replaced, never dropped)");
 
   const clean = await readChannelResult(readCtx, "slack", joined(memberOnly), "C1");
-  ok(!("authoredByNonMember" in clean), "🔴 NEGATIVE CONTROL: a member-only page joined the same way carries NO field — so the positive above is the guest, not an always-mark");
+  ok(clean.messages.every((m) => m.text !== WITHHELD_BODY_MARKER), "🔴 NEGATIVE CONTROL: a member-only page joined the same way withholds nothing — so the positive above is the guest, not an always-withhold");
 }
 
 console.log("7. an absent workspace at the live probe:");

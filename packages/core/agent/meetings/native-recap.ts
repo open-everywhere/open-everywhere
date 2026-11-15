@@ -6,7 +6,6 @@ import { meetingPolicy, type MeetingPolicy } from "./policy.js";
 import { meetingCompletion } from "./transcription.js";
 import { parseRecap, recapPrompt, renderRecapPost } from "./recap.js";
 import { claimMeetingRecap, deleteMeetingRow, getMeetingRow, putMeetingRowIfAbsent } from "./store.js";
-import { markMeetingPostTarget, markPostedRecap } from "./provenance.js";
 import { notifyThread, type FinishDeps } from "./lifecycle.js";
 import {
   nativeMeetingMinutes,
@@ -143,10 +142,8 @@ async function postRecap(args: NativeRecapArgs, result: Extract<NativeTranscript
     }
   }
   const post = renderRecapPost(recap, { platform: args.platform, minutes, missingChunks: 0, empty, source: "native" });
-  await markMeetingPostTarget(args.org, args.origin);
   if (!(await claimMeetingRecap(args.org, args.recapId, rowTtlMs(args)))) return { kind: "duplicate" };
   const messageId = await notifyThread({ id: args.recapId, origin: args.origin }, post, deps);
-  if (messageId !== undefined) await markPostedRecap(args.org, args.origin, messageId);
   const speakers = new Set(result.segments.map((s) => s.speaker).filter((s) => s.length > 0)).size;
   await appendAudit({
     ...auditWhere(args.partition),

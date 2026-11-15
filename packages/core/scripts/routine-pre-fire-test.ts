@@ -89,7 +89,7 @@ const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrus
 const { connectorToolPermissionKind } = await import("../agent/approvals/session-grant.js");
 const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
 const { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } = await import("../agent/access/window-gate-manifest.js");
-const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
+const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/deprecated-taint-exports.js");
 
 type Routine = import("../agent/routines/routine.js").Routine;
 type CollectedInput = import("../agent/routines/collector.js").CollectedInput;

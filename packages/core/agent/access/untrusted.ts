@@ -1,8 +1,6 @@
-import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
 import { randomBytes } from "node:crypto";
 import { appendLoopNudge, capResultBody, controlHostResult, controlToolResult } from "./result-controls.js";
-import { decideIngestion } from "./taint-enforcement.js";
-import type { IngestionSource } from "./taint-tiers.js";
+import type { IngestionSource } from "./deprecated-taint-exports.js";
 import { noteEnvelopeWrapThisTurn } from "../memory/turn-provenance.js";
 
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
@@ -39,6 +37,8 @@ const notice = (nonce: string): string =>
 
 export interface UntrustedOpts {
   source?: string;
+  toolName?: string;
+  /** @deprecated OPE-2721: the source-tier table is removed, so the declaration decides nothing. Only its `label` is still read, as a fallback for `toolName`. OPE-2724 removes the option. */
   ingestion?: IngestionSource;
 }
 
@@ -75,25 +75,22 @@ export function untrustedModelOutput(
 }
 
 export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): string {
-  markIngestion(opts);
   return wrapUntrusted(content, opts);
 }
 
-function markIngestion(opts: UntrustedOpts): void {
-  if (decideIngestion(opts.ingestion, true)) {
-    markUntrustedIngestedThisTurn(opts.ingestion?.kind);
-  }
+function reducerToolName(opts: UntrustedOpts): string | undefined {
+  return opts.toolName ?? opts.ingestion?.label;
 }
 
 export async function ingestUntrustedModelOutput(
   content: string,
   opts: UntrustedOpts = {},
 ): Promise<{ type: "text"; value: string }> {
+  const toolName = reducerToolName(opts);
   const controlled = await controlToolResult(content, {
     source: opts.source,
-    ...(opts.ingestion?.label !== undefined ? { toolName: opts.ingestion.label } : {}),
+    ...(toolName !== undefined ? { toolName } : {}),
   });
-  markIngestion(opts);
   noteEnvelopeWrapThisTurn();
   return { type: "text", value: appendLoopNudge(fenceBody(controlled.body, opts), controlled.nudge) };
 }

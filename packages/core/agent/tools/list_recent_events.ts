@@ -39,7 +39,7 @@ export default defineTool({
     if (!output.ok) return { type: "text" as const, value: output.message };
     return ingestUntrustedModelOutput(output.events, {
       source: "captured webhook deliveries",
-      ingestion: { kind: "webhook", label: "list_recent_events" },
+      toolName: "list_recent_events",
     });
   },
 });

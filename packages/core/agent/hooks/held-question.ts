@@ -1,7 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
 import { nonMemberAnsweredIds, QUESTION_REQUEST_KIND } from "../access/held-question.js";
-import { markUntrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { auditSurfaceModeFrom, currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { deploymentOrg } from "../identity/deployment-identity.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -30,7 +29,6 @@ export default defineHook({
         const org = deploymentOrg();
         const stamped = await nonMemberAnsweredIds(getOperationalStore(), org, ids);
         if (stamped.length === 0) return;
-        markUntrustedIngestedThisTurn("chat-message");
         const bind = ctx as unknown as BindableContext;
         const sessionId = currentSessionId(bind);
         const turnId = currentTurnId(bind);
@@ -49,8 +47,7 @@ export default defineHook({
           detail: { requestIds: [...stamped], ...(sessionId ? { sessionId } : {}), ...(turnId ? { turnId } : {}) },
         }).catch(() => undefined);
       } catch (err) {
-        markUntrustedIngestedThisTurn("chat-message");
-        console.warn(`[open-everywhere:held-question] nonmember read failed — the turn is marked (fail closed): ${String(err)}`);
+        console.warn(`[open-everywhere:held-question] nonmember read failed — no row is written: ${String(err)}`);
       }
     },
   },

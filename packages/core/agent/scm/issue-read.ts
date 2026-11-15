@@ -21,7 +21,6 @@ export interface GithubIssueDigest {
   readonly author: string;
   readonly url?: string;
   readonly body: string;
-  readonly repoPrivate?: boolean;
   readonly comments: readonly GithubIssueComment[];
   readonly totalComments: number;
   readonly truncation: {
@@ -72,17 +71,6 @@ async function getJson<T>(fetchFn: PrFetchFn, url: string, token: string): Promi
   return (await res.json()) as T;
 }
 
-async function fetchRepoPrivate(fetchFn: PrFetchFn, url: string, token: string): Promise<boolean | undefined> {
-  try {
-    const res = await fetchFn(url, { method: "GET", headers: prApiHeaders(token) });
-    if (!res.ok) return undefined;
-    const raw = (await res.json()) as { private?: unknown };
-    return typeof raw.private === "boolean" ? raw.private : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function fetchGithubIssue(opts: {
   repo: string;
   number: number;
@@ -97,7 +85,6 @@ export async function fetchGithubIssue(opts: {
   const clipped = { n: 0 };
 
   const issue = await getJson<RawIssue>(fetchFn, base, token);
-  const repoPrivate = await fetchRepoPrivate(fetchFn, `${apiBase}/repos/${repo}`, token);
   const totalComments = typeof issue.comments === "number" && issue.comments > 0 ? issue.comments : 0;
 
   let raw: RawComment[] = [];
@@ -126,7 +113,6 @@ export async function fetchGithubIssue(opts: {
     author: login(issue.user),
     ...(url ? { url } : {}),
     body: clip(str(issue.body), MAX_OPENING_BODY_CHARS, clipped),
-    ...(repoPrivate !== undefined ? { repoPrivate } : {}),
     comments,
     totalComments,
     truncation: {
@@ -140,15 +126,10 @@ export async function fetchGithubIssue(opts: {
 }
 
 export function renderGithubIssueForModel(d: GithubIssueDigest): string {
-  const ingestion = {
-    kind: "github",
-    label: `read_github_issue:${d.repo}`,
-    ...(d.repoPrivate !== undefined ? { repoPrivate: d.repoPrivate } : {}),
-  } as const;
   const kindWord = d.kind === "pull_request" ? "Pull request" : "Issue";
   const out: string[] = [`${kindWord} ${d.repo}#${d.number} — ${d.state}, opened by ${d.author}${d.url ? ` (${d.url})` : ""}`];
-  out.push("Title:", ingestUntrusted(d.title, { source: `github ${d.kind} title by ${d.author}`, ingestion }));
-  if (d.body) out.push("Body:", ingestUntrusted(d.body, { source: `github ${d.kind} body by ${d.author}`, ingestion }));
+  out.push("Title:", ingestUntrusted(d.title, { source: `github ${d.kind} title by ${d.author}` }));
+  if (d.body) out.push("Body:", ingestUntrusted(d.body, { source: `github ${d.kind} body by ${d.author}` }));
   else out.push("Body: (empty)");
 
   const older = d.truncation.commentsDropped > 0 ? `; ${d.truncation.commentsDropped} older not shown` : "";
@@ -156,7 +137,7 @@ export function renderGithubIssueForModel(d: GithubIssueDigest): string {
   if (d.comments.length === 0) out.push("  (none)");
   d.comments.forEach((c, i) => {
     const head = `  [${i + 1}] ${c.author}${c.createdAt ? ` at ${c.createdAt}` : ""}`;
-    if (c.body) out.push(`${head}:`, ingestUntrusted(c.body, { source: `github comment by ${c.author}`, ingestion }));
+    if (c.body) out.push(`${head}:`, ingestUntrusted(c.body, { source: `github comment by ${c.author}` }));
     else out.push(`${head} (empty)`);
   });
 

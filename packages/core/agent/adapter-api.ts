@@ -145,7 +145,7 @@ export { emailPolicy, findEmailInbox } from "./email/policy.js";
 export type { EmailPolicy } from "./email/policy.js";
 export { admitInboundEmail, planReplyRecipients, mayReceiveReply } from "./email/gate.js";
 export type { EmailAdmission, EmailRefusalReason } from "./email/gate.js";
-export { splitEmailBody, remainderTaints } from "./email/body.js";
+export { splitEmailBody, remainderIsNonRequester, remainderTaints } from "./email/body.js";
 export { emailSeatRoute } from "./email/route.js";
 export { normalizeEmailAddress, parseMailbox, parseMailboxList, emailDomainOf } from "./email/address.js";
 export type { Principal } from "./identity/principals.js";
@@ -370,13 +370,13 @@ export { ingestUntrustedModelOutput, untrustedCloseTag, normalizeFenceNonce, UNT
 
 export { ageAtRead } from "./access/dated-read.js";
 
-export type { IngestionSource, IngestionKind, IngestionTier, IngestionVerdict } from "./access/taint-tiers.js";
-export { classifyIngestion, INGESTION_KINDS } from "./access/taint-tiers.js";
-export { noteIngestionVerdict } from "./access/taint-enforcement.js";
-export { registerTaintVerdictSink, currentTaintVerdictSink } from "./access/taint-enforcement.js";
-export { taintMarkLands } from "./access/taint-signal.js";
-
-export { untrustedIngestedThisTurn, taintKindsThisTurn } from "./access/taint-signal.js";
+export type { IngestionSource, IngestionKind, IngestionTier, IngestionVerdict } from "./access/deprecated-taint-exports.js";
+export { classifyIngestion, INGESTION_KINDS } from "./access/deprecated-taint-exports.js";
+export { noteIngestionVerdict } from "./access/deprecated-taint-exports.js";
+export { registerTaintVerdictSink, currentTaintVerdictSink } from "./access/deprecated-taint-exports.js";
+export { taintMarkLands } from "./access/deprecated-taint-exports.js";
+export { untrustedIngestedThisTurn, taintKindsThisTurn } from "./access/deprecated-taint-exports.js";
+export { envelopeWrappedThisTurn } from "./memory/turn-provenance.js";
 
 export {
   nonMemberChatTrust,
@@ -386,7 +386,7 @@ export {
   OE_CHAT_NONMEMBER_ATTR,
 } from "./identity/non-member.js";
 export type { IngestedChatMessage, ChatWakeRoom } from "./identity/non-member.js";
-export { taintedFireAttrs } from "./access/taint-signal.js";
+export { taintedFireAttrs } from "./access/deprecated-taint-exports.js";
 export { nonRequesterAttrsIf, OE_NON_REQUESTER_ATTR } from "./identity/non-requester.js";
 
 export { sourceScopedMount, workerChatArmMount } from "./access/source-scoped-mount.js";
@@ -786,7 +786,8 @@ export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./ch
 export { recordReplyFeedback, REPLY_FEEDBACK_ACTION } from "./channels/reply-feedback.js";
 export type { ReplyFeedbackClick, ReplyFeedbackRating, ReplyFeedbackSurface } from "./channels/reply-feedback.js";
 
-export { assertSurfaceAllowed, chatReadIngestion, readChannelResult, readThreadResult } from "./channels/channel-read.js";
+export { assertSurfaceAllowed, readChannelResult, readThreadResult } from "./channels/channel-read.js";
+export { chatReadIngestion } from "./access/deprecated-taint-exports.js";
 export type { ReadFile, RenderedLine } from "./channels/channel-read.js";
 
 export { encodeChannelKey, decodeChannelKey, isChannelKey, CHANNEL_KEY_PREFIX } from "./channels/channel-key.js";

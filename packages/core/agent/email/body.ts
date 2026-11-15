@@ -66,6 +66,9 @@ export function splitEmailBody(mail: Pick<InboundEmail, "subject" | "newText" | 
   };
 }
 
-export function remainderTaints(body: SplitEmailBody): boolean {
+export function remainderIsNonRequester(body: SplitEmailBody): boolean {
   return body.remainder.length > 0 || body.quotedInOwn;
 }
+
+/** @deprecated OPE-2721: the old name of {@link remainderIsNonRequester}. OPE-2724 removes it. */
+export const remainderTaints = remainderIsNonRequester;

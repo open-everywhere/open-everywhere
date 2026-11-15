@@ -37,7 +37,7 @@ import { deploymentOrg } from "../agent/identity/binding.js";
 import { allowedOnLeanSeat } from "../agent/access/lean-seat.js";
 import { allowedOnWorkerSeat } from "../agent/access/worker-seat.js";
 import { WORKER_ONLY_TOOLS_STANDING } from "../agent/access/worker-capability-index.generated.js";
-import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
+import { noteEnvelopeWrapThisTurn, envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import { credentialGrantConnectors } from "../agent/access/credential-grant.js";
 import { classifyConnectorOpTier } from "../agent/access/consequence.js";
 import {
@@ -688,10 +688,10 @@ console.log("7. the ask verb: a turn that read outside content asks as a clean t
   const runAsk = async (mark: boolean) =>
     inEveContext(new FakeEveContext(), async () => {
       if (mark) {
-        markUntrustedIngestedThisTurn("connector");
-        ok(untrustedIngestedThisTurn(), "the fixture really did mark the turn — without this the leg below would pass on an unmarked turn");
+        noteEnvelopeWrapThisTurn();
+        ok(envelopeWrappedThisTurn(undefined), "the fixture really did mark the turn — without this the leg below would pass on an unmarked turn");
       } else {
-        ok(!untrustedIngestedThisTurn(), "the control turn is genuinely clean");
+        ok(!envelopeWrappedThisTurn(undefined), "the control turn is genuinely clean");
       }
       return (await (requestCredentialGrantEntry as unknown as { execute(i: unknown, c: unknown): Promise<{ asked: boolean; message: string }> }).execute(ask, {})) as {
         asked: boolean;

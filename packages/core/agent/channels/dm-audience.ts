@@ -203,7 +203,6 @@ export async function deliverProactiveDm(input: {
   readonly attributedTo: string;
   readonly first?: boolean;
   readonly actions?: readonly DirectMessageAction[];
-  readonly tainted?: boolean;
 }): Promise<DirectMessageDelivery> {
   const plane = proactiveDmPlaneRow(input.plane);
   await assertProactiveDmAllowed({
@@ -237,7 +236,6 @@ export async function deliverProactiveDm(input: {
       messageId: delivery.messageId,
       requestedBy: input.requestedBy,
       first: Boolean(input.first),
-      ...(input.tainted === undefined ? {} : { tainted: input.tainted }),
     },
   }).catch((err: unknown) => console.warn(`[open-everywhere:audit] ${DM_DELIVERY_ACTION} row was not written: ${String(err)}`));
   return delivery;

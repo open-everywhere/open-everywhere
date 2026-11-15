@@ -13,6 +13,7 @@ interface RoutineCancelArgs {
   readonly id: string;
   readonly description: string;
   readonly requestedBy?: string;
+  /** @deprecated OPE-2718: ignored. A card frozen before OPE-2718 may still carry it; the card shows no ⚠ line for it and the audit row records nothing. */
   readonly tainted?: boolean;
 }
 

@@ -208,13 +208,13 @@ test("authorGrain \"withhold\": a REFUTED author's Notion backscroll comment rea
   expectElementFenced(refutedElement);
   expectElementFenced(memberElement);
 
-  expect(await taintMarksSince(cursor), "withhold ④: a clean turn wrote a taint mark").toEqual([]);
+  expect(await taintRowsSince(cursor), "withhold ④: a taint.* row landed after OPE-2721").toEqual([]);
   const chain = await chainRow(cursor);
   expect(chain.detail).not.toHaveProperty("tainted");
   expect(chain.detail).not.toHaveProperty("taintKinds");
 });
 
-test("🔴 negative control: authorGrain \"taint\" (the opt-out) — the SAME refuted author's Notion comment reaches the model verbatim, and it MARKS the turn", async () => {
+test("🔴 negative control: authorGrain \"taint\" (the opt-out) — the SAME refuted author's Notion comment reaches the model verbatim", async () => {
   await armSeams();
   await armAuthorTrust();
   await setAuthorGrain("envelope");
@@ -229,18 +229,11 @@ test("🔴 negative control: authorGrain \"taint\" (the opt-out) — the SAME re
   expect(prompt, "the arrived-marker appeared on the shipped grain").not.toContain(WITHHELD_MARKER);
   expectElementFenced(refutedElement);
 
-  await expectTurnMarked(cursor, "opt-out ②");
+  expect(await taintRowsSince(cursor), "opt-out ②: a taint.* row landed after OPE-2721").toEqual([]);
   const chain = await chainRow(cursor);
   expect(chain.detail).not.toHaveProperty("tainted");
 });
 
-async function taintMarksSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
-  return (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark");
-}
-async function expectTurnMarked(cursor: AuditCursor, label: string): Promise<void> {
-  const marks = await waitFor(async () => {
-    const m = await taintMarksSince(cursor);
-    return m.length > 0 ? m : undefined;
-  }, `${label}: the tainted turn's taint.forward mark row`, 60_000);
-  expect(marks.length).toBeGreaterThan(0);
+async function taintRowsSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
+  return await rowsSinceCursor(cursor, ["taint.forward", "taint.verdict", "taint.mode"], { limit: 200 });
 }

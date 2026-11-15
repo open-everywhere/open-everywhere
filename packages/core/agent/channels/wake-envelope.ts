@@ -1,7 +1,5 @@
 import { ingestUntrusted, untrustedCloseTag, UNTRUSTED_OPEN } from "../access/untrusted.js";
 import { capResultBody } from "../access/result-controls.js";
-import { noteIngestionVerdict } from "../access/taint-enforcement.js";
-import { taintMarkLands } from "../access/taint-signal.js";
 import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
 import { nonMemberChatTrust } from "../identity/non-member.js";
@@ -158,7 +156,6 @@ function renderMessage(m: WakeMessageInput, sourcePlatform: string): string {
 
   const unfenced = authorTrustAdmitsUnfencedBody(m);
 
-  noteIngestionVerdict({ kind: "chat-message", label: `wake-envelope:${sourcePlatform}` }, unfenced ? false : taintMarkLands());
   const renderBody = (text: string, source: string): string => {
     const projected = m.from === "human" ? text : redactMachineLinkCodes(text);
     return unfenced ? capResultBody(escapeXml(projected)) : ingestUntrusted(escapeXml(projected), { source });

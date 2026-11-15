@@ -66,7 +66,7 @@ export function eventPrompt(
     ...(followUps.length > 0 ? [followUps] : []),
   ].join("\n\n");
   const collectedBlock = renderCollectedBlock(collected);
-  const fenced = ingestUntrusted(body, { source: "github event", ingestion: { kind: "routine-event", label: "github-event" } });
+  const fenced = ingestUntrusted(body, { source: "github event", toolName: "github-event" });
   return `${head}\n\n${routine.prompt}\n\n${fenced}${collectedBlock.length > 0 ? `\n\n${collectedBlock}` : ""}`;
 }
 

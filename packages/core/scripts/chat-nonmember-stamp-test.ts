@@ -12,14 +12,6 @@ import { defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
 import { defineSettings, getSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
 import type { WakeTrust } from "../agent/channels/wake-envelope.js";
-import {
-  OE_CHAT_NONMEMBER_ATTR as LEGACY_ATTR,
-  nonMemberChatAttrs as legacyAttrs,
-  nonMemberChatTrust as legacyTrust,
-  chatRoomMarks as legacyRoomMarks,
-  chatWakeIngestsNonMember as legacyJoin,
-  stampNonMemberChatAuth as legacyStamp,
-} from "../agent/access/taint-signal.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("chat-nonmember-stamp");
@@ -280,19 +272,10 @@ eq(OE_CHAT_NONMEMBER_ATTR, "oe_chat_nonmember", "🔴 the stamp's key is unchang
     return { OE_CHAT_NONMEMBER_ATTR, nonMemberChatAttrs, nonMemberChatTrust, chatWakeIngestsNonMember, stampNonMemberChatAuth };
   })();
   eq(builtHome["OE_CHAT_NONMEMBER_ATTR"], OE_CHAT_NONMEMBER_ATTR, "the built identity/non-member.js carries the same stamp key");
-  const legacy: Record<string, unknown> = {
-    OE_CHAT_NONMEMBER_ATTR: LEGACY_ATTR,
-    nonMemberChatAttrs: legacyAttrs,
-    nonMemberChatTrust: legacyTrust,
-    chatWakeIngestsNonMember: legacyJoin,
-    stampNonMemberChatAuth: legacyStamp,
-  };
   const moved = { OE_CHAT_NONMEMBER_ATTR, nonMemberChatAttrs, nonMemberChatTrust, chatWakeIngestsNonMember, stampNonMemberChatAuth } as const;
-  for (const [name, value] of Object.entries(moved)) {
+  for (const name of Object.keys(moved)) {
     ok(builtHome[name] !== undefined && api[name] === builtHome[name], `🔴 the built adapter-api.js still exports \`${name}\`, and it IS the identity/non-member.js value — a provider bundle that imports it still builds and still stamps`);
-    ok(legacy[name] === value, `the deprecated access/taint-signal.ts name \`${name}\` IS the same value (one release, OPE-2721 decides it)`);
   }
-  ok(legacyRoomMarks === chatRoomMarks, "the deprecated access/taint-signal.ts name `chatRoomMarks` IS the same value");
 }
 
 console.log(`\n✅ chat non-member stamp: ${passed} assertions passed`);

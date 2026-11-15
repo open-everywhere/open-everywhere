@@ -273,7 +273,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 {
   const { projectToolSet } = await import("../agent/access/untrusted-projection.js");
   const { setNativeDelegationSeat, nativeAgentAllowedNow } = await import("../agent/access/native-delegation-state.js");
-  const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+  const { noteEnvelopeWrapThisTurn } = await import("../agent/memory/turn-provenance.js");
 
   const makeToolset = () => ({ agent: { execute: () => undefined }, reply: { execute: () => undefined }, no_reply: { execute: () => undefined } });
 
@@ -287,7 +287,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 
   inSession(() => {
     setNativeDelegationSeat("allow");
-    markUntrustedIngestedThisTurn();
+    noteEnvelopeWrapThisTurn();
     eq(nativeAgentAllowedNow(), true, "🔴 D6 TAINT IS NOT A CONJUNCT (OPE-471): a tainted turn KEEPS its delegation verb, because taint is not a delegation condition — asserted `=== true`, not merely truthy");
     const toolset = makeToolset();
     projectToolSet(toolset as unknown as Record<string, unknown>);
@@ -297,7 +297,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 
   inSession(() => {
     setNativeDelegationSeat("no-seat");
-    markUntrustedIngestedThisTurn();
+    noteEnvelopeWrapThisTurn();
     eq(nativeAgentAllowedNow(), false, "🔴 D6 SEAT HALF STILL FIRES: an unclassified seat is refused `agent` on the same tainted turn — so (c) reads 'taint stopped gating', never 'the gate is dead'");
     const toolset = makeToolset();
     projectToolSet(toolset as unknown as Record<string, unknown>);

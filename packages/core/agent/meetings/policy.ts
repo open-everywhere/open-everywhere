@@ -249,6 +249,7 @@ export function meetingJoinRefusal(
     return "this conversation is not confirmed internal (a shared channel, a guest or an outside account), and a meeting bot records everyone in the room — so I won't join a meeting from here. Ask from an internal channel or DM";
   }
   if (ask.nonMember) return "a message from someone outside the workspace woke this turn, so I won't send a meeting bot from it";
+  // principal-gate: presence — a bot that records a meeting goes in a real person's name, and a triggered fire has nobody here to own the ask or admit the bot.
   if (ask.actingPrincipal === undefined) return "joining a meeting needs a person in the conversation — a triggered routine fire has nobody to ask on behalf of";
   const match = matchMeetingHost(policy, link);
   if ("refusal" in match) return match.refusal;
@@ -258,6 +259,7 @@ export function meetingJoinRefusal(
 export function meetingLeaveRefusal(ask: { readonly trust: Trust; readonly nonMember: boolean; readonly actingPrincipal: string | undefined }): string | undefined {
   if (ask.trust !== "internal") return "this conversation is not confirmed internal, so I can't stop a meeting bot from here — ask from the internal channel or DM that sent it";
   if (ask.nonMember) return "a message from someone outside the workspace woke this turn, so I won't act on a meeting bot from it";
+  // principal-gate: presence — stopping a recorder is done in a real person's name, and a triggered fire has nobody here to ask it.
   if (ask.actingPrincipal === undefined) return "stopping a meeting bot needs a person in the conversation — a triggered routine fire has nobody to ask on behalf of";
   return undefined;
 }
@@ -281,6 +283,7 @@ export function nativeRecapRefusal(
     return "this conversation is not confirmed internal (a shared channel, a guest or an outside account), and a meeting transcript holds everyone's words — so I won't post a recap here. Ask from an internal channel or DM";
   }
   if (ask.nonMember) return "a message from someone outside the workspace woke this turn, so I won't read a meeting transcript from it";
+  // principal-gate: presence — a transcript read with the org's credential is asked in a real person's name, and a triggered fire has nobody here to own it.
   if (ask.actingPrincipal === undefined) return "a meeting recap needs a person in the conversation — a triggered routine fire has nobody to ask on behalf of";
   const label = platformLabel(link.platform);
   const none = `this deployment has no ${label} credential for meeting transcripts — an admin declares native.${link.platform} in agent/meetings/policy.ts`;

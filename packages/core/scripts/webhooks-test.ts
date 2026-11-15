@@ -32,7 +32,7 @@ const { registerWebhookVerifier, WEBHOOK_AUTH_GRADES, webhookAuthCeiling, meetsW
 const { renderWebhookMessage, fireWebhook, webhookOrg } = await import("../agent/webhooks/dispatch.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
 const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE, normalizeFenceNonce } = await import("../agent/access/untrusted.js");
-const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
+const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/deprecated-taint-exports.js");
 
 const goodHook: FusedWebhookHook = defineWebhook({
   id: "deploy-status",

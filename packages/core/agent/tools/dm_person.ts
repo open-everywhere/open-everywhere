@@ -1,4 +1,3 @@
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
@@ -61,6 +60,7 @@ const dmPersonEntry = defineTool({
     const binding = bindFrom(ctx);
     const p = resolvePartition(ctx);
     const proposeScopeKey = await proposalScopeKey(ctx, p);
+    // principal-gate: accountability — somebody NAMEABLE must exist. PRESENCE would be the WRONG
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("dm_person needs a verified sender — no principal id resolved, so there is nobody to name as the person who asked for this message.");
@@ -86,7 +86,6 @@ const dmPersonEntry = defineTool({
         requestedBy,
         attributedTo: requestedBy,
         first: false,
-        tainted: untrustedIngestedThisTurn(),
       });
       return {
         pending: false,

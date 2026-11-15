@@ -287,7 +287,7 @@ function getDb(): DatabaseSync {
     );
     -- An org-scoped, TTL-pruned, OPAQUE key-value scratch table. The NAME is historical (see the
     -- store interface's note): minted for the deleted roll-own delegation regime, now shared by the
-    -- native-subagent taint markers, the question bridge and the task-wake join, each under its own
+    -- retired native-subagent marker rows, the question bridge and the task-wake join, each under its own
     -- key prefix.
     CREATE TABLE IF NOT EXISTS task_result (
       org_id       TEXT NOT NULL,

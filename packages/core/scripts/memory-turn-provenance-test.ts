@@ -5,8 +5,6 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beginMemoryProvenanceTurn, envelopeWrappedThisTurn, noteEnvelopeWrapThisTurn } from "../agent/memory/turn-provenance.js";
 import { hostAuthoredModelOutput, ingestUntrusted, ingestUntrustedModelOutput, wrapUntrusted } from "../agent/access/untrusted.js";
-import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
-import { decideIngestion } from "../agent/access/taint-enforcement.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("memory-turn-provenance");
@@ -82,30 +80,19 @@ await inSession(async () => {
 });
 
 const trustedSource = { kind: "chat-message", label: "read_channel:test" } as const;
-ok(decideIngestion(trustedSource, true) === false, "premise: the tier table does not taint a declared chat-message read");
 await inSession(async () => {
   beginMemoryProvenanceTurn("t1");
   await ingestUntrustedModelOutput("a member's channel message", { source: "slack", ingestion: trustedSource });
-  ok(untrustedIngestedThisTurn() === false, "premise: the taint bit stays clear for a trusted-tier read");
-  ok(envelopeWrappedThisTurn("t1") === true, "the memory flag ignores the tier table: a trusted-tier wrap still sets it");
+  ok(envelopeWrappedThisTurn("t1") === true, "the memory flag ignores a deprecated source declaration: a once-trusted-tier wrap still sets it");
 });
 
 overrideSettingsForTest({ taint: { mode: "off" } });
 await inSession(async () => {
   beginMemoryProvenanceTurn("t1");
   wrapUntrusted("a page", { source: "web" });
-  ok(untrustedIngestedThisTurn() === false, "premise: taint.mode off clears the taint bit");
-  ok(envelopeWrappedThisTurn("t1") === true, "taint.mode off does not disarm the memory flag");
+  ok(envelopeWrappedThisTurn("t1") === true, "the ignored taint.mode off does not disarm the memory flag");
 });
 overrideSettingsForTest({ taint: { mode: "on" } });
-
-await inSession(async () => {
-  beginMemoryProvenanceTurn("t1");
-  markUntrustedIngestedThisTurn("chat-message");
-  markUntrustedIngestedThisTurn();
-  ok(untrustedIngestedThisTurn() === true, "premise: the seed marked the taint bit");
-  ok(envelopeWrappedThisTurn("t1") === false, "LOOSENS (OPE-2719): a taint seed with no wrap does not set the memory flag");
-});
 
 await inSession(async () => {
   beginMemoryProvenanceTurn("t1");

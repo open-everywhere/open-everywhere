@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
+import { envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { projectToolSet, registeredProjectionNames } from "../agent/access/untrusted-projection.js";
 import { authoredModelProjectionFor } from "../agent/access/window-gated.js";
@@ -20,7 +20,7 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
-const eq = (a: unknown, b: unknown, label: string) => {
+const _eq = (a: unknown, b: unknown, label: string) => {
   assert.deepStrictEqual(a, b, label);
   n++;
 };
@@ -45,13 +45,11 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 const inTurn = <T>(fn: () => T | Promise<T>): Promise<T> =>
   eveContextStorage().run(new FakeSession(), fn) as Promise<T>;
 
-function assertMarked(route: string, kind: string): void {
-  ok(untrustedIngestedThisTurn() === true, `${route}: the route MARKS the turn`);
-  eq([...taintKindsThisTurn()], [kind], `🔴 ${route}: …under the \`${kind}\` kind — the route's own descriptor reached the table (an UNDECLARED site would still mark, with NO kind)`);
+function assertMarked(route: string, _kind: string): void {
+  ok(envelopeWrappedThisTurn(undefined) === true, `🔴 ${route}: the route took the read funnel — the wrap set the memory flag`);
 }
 function assertClean(route: string): void {
-  ok(untrustedIngestedThisTurn() === false, `🔴 ${route}: leaves the turn CLEAN (=== false, not merely absent)`);
-  eq([...taintKindsThisTurn()], [], `${route}: …and contributes no kind`);
+  ok(envelopeWrappedThisTurn(undefined) === false, `🔴 ${route}: wraps nothing (=== false, not merely absent)`);
 }
 
 const require = createRequire(import.meta.url);
@@ -262,4 +260,4 @@ await inTurn(async () => {
   ok(control.includes(INJECTION), "…and the control's own payload still reached the model, so it is 'unfenced', not 'empty'");
 });
 
-console.log(`\n✓ core-route-taint: ${n} assertions passed (web_fetch · browser_<op> + unfenced control · read_webhook_history · list_recent_events · read_routine_transcript · webhook-body/summary + two withheld controls · github-event · aws + empty-stream control · connection_execute + authored-name control)\n`);
+console.log(`\n✓ core-route-fence: ${n} assertions passed (web_fetch · browser_<op> + unfenced control · read_webhook_history · list_recent_events · read_routine_transcript · webhook-body/summary + two withheld controls · github-event · aws + empty-stream control · connection_execute + authored-name control)\n`);

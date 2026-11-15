@@ -422,7 +422,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "domain_question.asked",
-    fields: ["questionId", "domain", "room", "seatId", "delivered", "chars", "tainted"],
+    fields: ["questionId", "domain", "room", "seatId", "delivered", "chars"],
     proves: "a member's DM seat asked a domain the member belongs to, through which of the domain's internal rooms, and whether the domain seat was woken (OPE-2452) — ids and counts only, never the question",
     notExercised:
       "RED-until-leg: no e2e domain is wired for a DM question yet; packages/core/scripts/domain-question-test.ts pins the gate's pure decisions offline, and tests/integration/channels/domain-question.test.ts drives the real tool and reads this row on the integration tier.",
@@ -435,7 +435,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "domain_question.answered",
-    fields: ["questionId", "domain", "asker", "declined", "route", "chars", "tainted"],
+    fields: ["questionId", "domain", "asker", "declined", "route", "chars"],
     proves: "a domain's seat answered (or declined) one DM question, and how the answer reached the asker's DM — through the DM seat, by a host post, or not at all (OPE-2452) — never the answer",
     notExercised: "RED-until-leg: beside domain_question.asked — tests/integration/channels/domain-question.test.ts reads this row on the integration tier.",
   },
@@ -712,7 +712,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   },
   {
     action: "email.admitted",
-    fields: ["inbox", "route", "trust", "via", "to", "cc", "dropped", "tainted"],
+    fields: ["inbox", "route", "trust", "via", "to", "cc", "dropped", "nonRequester"],
     proves: "an inbound mail passed the email gate and woke a seat — which inbox, which seat kind, the sender's trust, which list admitted the sender, and how many reply recipients were frozen or dropped",
     notExercised:
       "S-EMAIL-ROOM-REPLY and S-EMAIL-DM-FORWARD are declared NON_LAUNCH: a live leg needs an agent-mailbox account with an inbox on a domain the test org controls (DNS records the run cannot create). The unit pack test:email-front drives the row through the real front with a fake transport.",

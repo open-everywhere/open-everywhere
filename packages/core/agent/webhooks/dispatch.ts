@@ -24,7 +24,7 @@ export function webhookOrg(): string {
 
 function renderPayloadBlock(hook: WebhookHook, rawBody: string, headers: Readonly<Record<string, string>>): string {
   const posture = configHookPosture(hook);
-  if (posture === "content-bearing") return ingestUntrusted(rawBody, { source: `webhook:${hook.id}`, ingestion: { kind: "webhook", label: "webhook-body" } });
+  if (posture === "content-bearing") return ingestUntrusted(rawBody, { source: `webhook:${hook.id}`, toolName: "webhook-body" });
   if (posture === "trigger-only") {
     return `(payload withheld — the "${hook.id}" webhook is declared trigger-only, so nothing the sender wrote is available to you. Act on the fact that it fired.)`;
   }
@@ -45,7 +45,7 @@ function renderPayloadBlock(hook: WebhookHook, rawBody: string, headers: Readonl
       `and this delivery could not be read into those fields. Act on the fact that it fired.)`
     );
   }
-  return ingestUntrusted(ev.summary, { source: `webhook:${hook.id}`, ingestion: { kind: "webhook", label: "webhook-summary" } });
+  return ingestUntrusted(ev.summary, { source: `webhook:${hook.id}`, toolName: "webhook-summary" });
 }
 
 export function renderWebhookMessage(

@@ -13,7 +13,7 @@ export async function a2aToolModelOutput(output: A2aToolOutput): Promise<{ type:
   if (output.remote === undefined) return { type: "text", value: output.message };
   const fenced = await ingestUntrustedModelOutput(output.remote, {
     source: `a2a:${output.agent}`,
-    ingestion: { kind: "connector", grantContentOrigin: "external", label: "a2a-agent" },
+    toolName: "a2a-agent",
   });
   return { type: "text", value: `${output.message}\n\n${fenced.value}` };
 }

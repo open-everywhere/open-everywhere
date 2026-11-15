@@ -53,7 +53,7 @@ export const notionSearchEntry = defineTool({
           output.hits.map((h) => `- ${h.object} ${h.id}: ${h.title || "(untitled)"}`).join("\n");
     return ingestUntrustedModelOutput(body, {
       source: "notion search",
-      ingestion: { kind: "notion", label: "notion_search" },
+      toolName: "notion_search",
     });
   },
 });

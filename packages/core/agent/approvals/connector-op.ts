@@ -38,6 +38,7 @@ interface ConnectorOpArgs {
   readonly input?: Readonly<Record<string, unknown>>;
   readonly inputCleared?: true;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
   readonly credential?: "domain" | "personal";
 }
@@ -139,6 +140,7 @@ export async function offerConnectorCard(offer: ConnectorOpCardOffer, deps: { re
   const surface = offer.auth === undefined || offer.auth === null ? null : await surfaceContextFromAuth(offer.auth as SessionAuth).catch(() => null);
   if (surface === null) return { outcome: "refused", reason: "this call names no conversation a card could be posted to" };
   const ctx = connectorCardContext(surface, offer.session);
+  // principal-gate: presence — the card's "asked by" line is the approver's evidence; a turn with nobody acting has no card.
   const requestedBy = actingPrincipalIdOf(ctx);
   if (!requestedBy) return { outcome: "refused", reason: "this turn has no verified sender to name on an approval card" };
   const binding = bindFrom(ctx);
@@ -160,7 +162,7 @@ export async function offerConnectorCard(offer: ConnectorOpCardOffer, deps: { re
       channelId: venue.channelId,
       threadTs: venue.sameRoom ? (binding.threadTs ?? null) : null,
       postedTo: venue.surfaceKey,
-      chain: { unattended: unattendedOf(ctx), tainted: offer.tainted, ...(domain === undefined ? {} : { domain }) },
+      chain: { unattended: unattendedOf(ctx), ...(domain === undefined ? {} : { domain }) },
     },
     approvalPostDeps(venue.platform, ctx),
   );

@@ -135,7 +135,7 @@ function harness(opts: { verified?: boolean; parsed?: InboundEmail | null; seen?
   ok(JSON.stringify(p.origin.to) === '["ann@acme.com"]' && JSON.stringify(p.origin.cc) === '["bob@acme.com"]', "the origin freezes the sender and the allowed Cc, and drops the stranger");
   ok(emailWakeOriginCodec.validate(p.origin as unknown as Record<string, unknown>), "the frozen origin is a valid stored row");
   ok(p.auth.attributes.email_trust === "internal" && p.auth.attributes.email_mode === "channel", "the auth stamps the gate's verdict for the mapper");
-  ok(p.auth.attributes[OE_CHAT_NONMEMBER_ATTR] === undefined && p.auth.attributes.oe_tainted_fire === undefined, "an internal sender with no quoted text stamps no taint carriage");
+  ok(p.auth.attributes[OE_CHAT_NONMEMBER_ATTR] === undefined && p.auth.attributes.oe_tainted_fire === undefined, "an internal sender with no quoted text stamps no non-member or carriage attribute");
   ok(p.auth.attributes[OE_NON_REQUESTER_ATTR] === undefined, "…and no non-requester stamp: the sender wrote every word (OPE-2713)");
   const admitted = h.audits.find((a) => a.action === "email.admitted");
   ok(admitted !== undefined && admitted.detail.dropped === 1 && admitted.detail.route === "room", "the admission is audited with the dropped-recipient count");
@@ -188,10 +188,10 @@ function harness(opts: { verified?: boolean; parsed?: InboundEmail | null; seen?
   });
   const h = harness({ parsed: fwd });
   const out = await handleEmailDelivery({}, "{}", h.deps);
-  ok(out.kind === "admitted" && out.route === "dm" && out.tainted, "a declared person's forward reaches their DM seat, tainted");
+  ok(out.kind === "admitted" && out.route === "dm" && out.nonRequester, "a declared person's forward reaches their DM seat, stamped non-requester");
   const p = h.dms[0]!;
   ok(p.surfaceKey.startsWith("email/agent.acme.com/dm-rowan-"), "the DM dispatch carries the per-person DM key");
-  ok(p.auth.attributes.oe_tainted_fire === undefined, "🔴 OPE-2720: the forward stamps NO opening-prompt taint carriage — the remainder rides inside the untrusted fence");
+  ok(p.auth.attributes.oe_tainted_fire === undefined, "🔴 OPE-2720: the forward stamps NO opening-prompt carriage attribute — the remainder rides inside the untrusted fence");
   ok(p.auth.attributes[OE_NON_REQUESTER_ATTR] === "email-remainder", "🔴 the forward stamps the non-requester carriage, which does not depend on taint (OPE-2713)");
   ok(p.trigger.author === "Rowan Hale", "the trigger names the declared person");
   ok(!p.trigger.body.includes("IGNORE PREVIOUS"), "the forwarded text is not in the trigger body");

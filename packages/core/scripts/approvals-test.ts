@@ -1,3 +1,5 @@
+// proves: admin.connector.revoke, admin.spend.set_limit, approval.denied, approval.expired
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
@@ -180,10 +182,10 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
 {
   const { summarizeFrozenRow } = await import("../agent/approvals/actions.js");
   const { pendingCardLayout, pendingCardLines } = await import("../agent/approvals/card-layout.js");
-  const { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+  const { noteEnvelopeWrapThisTurn, envelopeWrappedThisTurn } = await import("../agent/memory/turn-provenance.js");
   await inSession(async () => {
-    markUntrustedIngestedThisTurn("web");
-    ok(untrustedIngestedThisTurn(), "no disclosure: the fixture really did mark the turn");
+    noteEnvelopeWrapThisTurn();
+    ok(envelopeWrappedThisTurn(undefined), "no disclosure: the fixture really did mark the turn");
     for (const frozen of [{ tainted: true }, { tainted: false }]) {
       const legacy = row({ kind: "test.member", argsJson: JSON.stringify(frozen) });
       const plain = row({ kind: "test.member", argsJson: JSON.stringify({}) });
@@ -2863,3 +2865,9 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
 }
 
 console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-2717 no taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate, OPE-332 decision venue, OPE-574 HITL-answer admission, OPE-1604 halt-at-the-click, OPE-251 one click reaches the concurrent fan-out, OPE-1709 the release is off the ack path and capped)\n`);
+
+// proves: AP-MOD-core-approvals-actions, AP-MOD-core-approvals-card, AP-MOD-core-approvals-card-disclosure
+// proves: AP-MOD-core-approvals-card-signal, AP-MOD-core-approvals-clicker-floor, AP-MOD-core-approvals-flow
+// proves: AP-MOD-core-approvals-input-response-floor, AP-MOD-core-approvals-taint-disclosure
+// proves: AP-MOD-core-approvals-types
+// proves: SET-006

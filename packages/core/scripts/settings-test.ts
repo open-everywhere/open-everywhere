@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-connections-connector-flags
+
 import assert from "node:assert/strict";
 import {
   SETTINGS,
@@ -11,7 +13,6 @@ import {
 import type { E2eDriverIdentity } from "../agent/testing/driver-allowlist.js";
 import { windowTopologyEnabled, WINDOW_TOPOLOGY_ENABLED } from "../agent/access/capabilities.js";
 import { oneshotAgentEnabled } from "../agent/access/delegation-flag.js";
-import { taintTierMode } from "../agent/access/taint-enforcement.js";
 import { approvalJudgeMode } from "../agent/access/approval-judge.js";
 import { connectorDmOnlyEnabled } from "../agent/access/connector-scope.js";
 import {
@@ -392,7 +393,7 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
 
   ok(windowTopologyEnabled(), "[6] windowTopologyEnabled() ⇒ shipped ON");
   ok(oneshotAgentEnabled(), "[6] oneshotAgentEnabled() ⇒ shipped ON");
-  eq(taintTierMode(), "enforced", "[6] taintTierMode() ⇒ shipped enforced");
+  eq(getSettings().taint.tierMode, "enforced", "[6] the ignored taint.tierMode still resolves to its shipped value");
   eq(approvalJudgeMode(), "enforce", "[6] approvalJudgeMode() ⇒ shipped enforce (OPE-2366)");
   ok(!connectorDmOnlyEnabled(), "[6] connectorDmOnlyEnabled() ⇒ shipped OFF (the wall is down)");
   ok(connectorUserPrincipalEnabled(), "[6] 🔴 connectorUserPrincipalEnabled() ⇒ shipped ON (OPE-2414): in a DM a person signs in as themselves");
@@ -428,7 +429,7 @@ console.log("6 — the public resolvers are schema-backed, with their names and 
   );
   ok(!windowTopologyEnabled(), "[6] …windowTopologyEnabled() follows a registered override");
   ok(!oneshotAgentEnabled(), "[6] …oneshotAgentEnabled()");
-  eq(taintTierMode(), "dryrun", "[6] …taintTierMode()");
+  eq(getSettings().taint.tierMode, "dryrun", "[6] …the ignored taint.tierMode still resolves an override (nothing reads it)");
   eq(approvalJudgeMode(), "shadow", "[6] …approvalJudgeMode()");
   ok(connectorDmOnlyEnabled(), "[6] …connectorDmOnlyEnabled()");
   ok(!connectorUserPrincipalEnabled(), "[6] …connectorUserPrincipalEnabled() (declared off: the cross-key rule refuses it on with opTiering off)");
@@ -495,11 +496,23 @@ console.log("8 — no setting has an env path at all:");
   eq(withEnvField, 0, "[8] 🔴 ZERO specs declare an env path since OPE-2411. A new one is a ticket against the rule, not a tidy-up");
 
   resetSettingsForTest();
-  eq(at({}).taint.mode, "on", "[8] taint.mode: the shipped default is ON");
-  eq(at({ OE_TAINT_MODE: "off", OE_TAINT_TIERS: "off" }).taint.mode, "on", "[8] 🔴 no environment reaches `off` — there is no parser for a value to be read by");
-  registerSettings(defineSettings({ taint: { mode: "off" } }));
-  eq(at({}).taint.mode, "off", "[8] …a REGISTERED override does, which is the reviewed-diff route and the only one");
-  eq(at({ OE_TAINT_MODE: "on" }).taint.mode, "off", "[8] …and no environment pulls it back either");
+  eq(at({}).taint.mode, "on", "[8] taint.mode: the shipped default still resolves");
+  eq(at({ OE_TAINT_MODE: "off", OE_TAINT_TIERS: "off" }).taint.mode, "on", "[8] 🔴 no environment reaches it — there is no parser for a value to be read by");
+  {
+    const { TAINT_SETTINGS_IGNORED_NOTICE } = await import("../agent/settings/settings.js");
+    (globalThis as { [k: symbol]: { oeSlot: unknown } })[Symbol.for("open-everywhere.settings.taintSettingsIgnored.reported.v1")]!.oeSlot = null;
+    const warned: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (...a: unknown[]) => void warned.push(a.map(String).join(" "));
+    try {
+      registerSettings(defineSettings({ taint: { mode: "off" } }));
+      registerSettings(defineSettings({ taint: { mode: "off", tierMode: "dryrun" } }));
+    } finally {
+      console.warn = realWarn;
+    }
+    eq(at({}).taint.mode, "off", "[8] 🔴 a config with `taint.mode: \"off\"` LOADS (OPE-2721): the key is accepted");
+    eq(warned.filter((w) => w === TAINT_SETTINGS_IGNORED_NOTICE).length, 1, "[8] 🔴 …and the process reports the ignored keys ONCE, however many configs declare them");
+  }
   resetSettingsForTest();
 }
 
@@ -737,3 +750,13 @@ console.log("\n11 — wake.e2eDrivers (OPE-1023, OPE-1739, OPE-1754):");
 }
 
 console.log(`\nsettings: ${n} assertions passed.`);
+
+// proves: AP-MOD-core-identity-bot-name
+
+// proves: MECH-01, MECH-02, MECH-03, MECH-04, MECH-05, MECH-06, MECH-07, MECH-08, MECH-09, MECH-10
+// proves: SET-003, SET-025, SET-026, SET-028, SET-030, SET-038, SET-039, SET-047, SET-050, SET-051
+// proves: SET-052, SET-053, SET-057, SET-060, SET-061, SET-062, SET-066
+// proves: SET-105, SET-106, SET-107, SET-108, SET-109, SET-110, SET-111, SET-112, SET-113, SET-114
+// proves: SET-115, SET-116, SET-117, SET-118, SET-119, SET-120, SET-121, SET-122
+
+// proves: SET-054, SET-055

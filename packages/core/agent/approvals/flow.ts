@@ -180,6 +180,7 @@ export interface RequestApprovalInput {
   readonly summaryLines?: readonly string[];
   readonly chain?: {
     readonly unattended: boolean;
+    /** @deprecated OPE-2716, OPE-2718: ignored. Nothing reads it; it stays one release so callers still compile. */
     readonly tainted?: boolean;
     readonly domain?: string;
   };
@@ -484,6 +485,7 @@ export async function requestApproval(
   const chainTool = toolForActionKind(input.kind) ?? connectorChainTool;
   if (chainTool !== undefined) {
     const chainDomain = input.domain ?? input.chain?.domain ?? null;
+    // approval-chain: exempt — this IS the site that applies the fail-closed default, and it is the
     const chainReq: ApprovalChainRequest = {
       tool: chainTool,
       action: input.kind,
@@ -929,6 +931,8 @@ async function offerRoutinePermissionCard(
     const poster = cardPosterFor(plan.platform ?? "");
     let cardId: string | undefined;
     try {
+      // approval-chain: exempt — `routine.permission` is a NON_TOOL_ACTION_KIND (access/consequence.ts),
+      // approval-authority: headless — this unattended routine refusal has no live model turn or wake envelope.
       const posted = await requestApproval(plan.card, {
         ...(deps.post ? { post: deps.post } : {}),
         ...(poster ? { postCard: poster } : {}),

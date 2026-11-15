@@ -8,7 +8,6 @@ import { getConfig } from "../access/config.js";
 import type { Domain } from "../memory/domain.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { domainMembershipProbe, type DomainMembershipAnswer } from "../access/domain-membership.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -149,7 +148,7 @@ export default windowGated(
       const existing = await readDomainQuestion(store, org, id);
       const recordedSend = existing === undefined ? undefined : await readDomainQuestionOutcome(store, org, id);
       if (existing !== undefined && recordedSend !== undefined) {
-        const replayDetail = { questionId: id, domain: target.name, room: existing.roomSurfaceKey, seatId: existing.seatWindowId, delivered: recordedSend, replay: true, chars: question.length, tainted: untrustedIngestedThisTurn() };
+        const replayDetail = { questionId: id, domain: target.name, room: existing.roomSurfaceKey, seatId: existing.seatWindowId, delivered: recordedSend, replay: true, chars: question.length };
         await auditToolAction(c, DOMAIN_QUESTION_ASKED_ACTION, replayDetail);
         await appendAudit({ org, platform: "unified", workspace: target.name, principalId: principal, action: DOMAIN_QUESTION_RECEIVED_ACTION, detail: { ...replayDetail, dm: dmSurfaceKey } }).catch(() => undefined);
         return askedResult(id, target, recordedSend);
@@ -183,7 +182,6 @@ export default windowGated(
           atIso: nowIso,
         });
       }
-      const tainted = untrustedIngestedThisTurn();
       const first = await claimDomainQuestionSend(store, org, id, nowIso);
       const dispatched = first
         ? await dispatchSeatMessage({
@@ -197,7 +195,7 @@ export default windowGated(
         : undefined;
       if (first) await rememberDomainQuestionOutcome(store, org, id, dispatched === true, nowIso);
       const delivered = askDeliveryOutcome(first, dispatched, first ? undefined : await readDomainQuestionOutcome(store, org, id));
-      const detail = { questionId: id, domain: target.name, room: room.surfaceKey, seatId: seat.windowId, delivered: delivered ?? null, replay: !first, chars: question.length, tainted };
+      const detail = { questionId: id, domain: target.name, room: room.surfaceKey, seatId: seat.windowId, delivered: delivered ?? null, replay: !first, chars: question.length };
       await auditToolAction(c, DOMAIN_QUESTION_ASKED_ACTION, detail);
       await appendAudit({ org, platform: "unified", workspace: target.name, principalId: principal, action: DOMAIN_QUESTION_RECEIVED_ACTION, detail: { ...detail, dm: dmSurfaceKey } }).catch(() => undefined);
       return askedResult(id, target, delivered);

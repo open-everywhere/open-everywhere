@@ -64,7 +64,6 @@
         "hook/session-park": "mounted",
         "hook/spend": "mounted",
         "hook/stall-guard": "mounted",
-        "hook/taint-turn": "mounted",
         "hook/telemetry": "mounted",
         "hook/tool-usage": "mounted",
         "hook/turn-anchor": "mounted",

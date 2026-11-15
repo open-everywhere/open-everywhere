@@ -44,7 +44,6 @@ import {
   type MeetingStatus,
 } from "./store.js";
 import type { MeetingPlatform } from "./link.js";
-import { markMeetingPostTarget, markPostedRecap } from "./provenance.js";
 import type { Partition } from "../memory/partition.js";
 import type { SurfaceMode } from "../operational/store.js";
 
@@ -517,7 +516,6 @@ export async function finishMeeting(
     return { posted: false, billed: bill !== undefined };
   }
   if (rec.status === "failed" || reason === "refused") return { posted: false, billed: bill !== undefined };
-  await markMeetingPostTarget(rec.org, rec.origin);
   if (!(await claimMeetingRecap(rec.org, rec.id, ttl))) return { posted: false, billed: bill !== undefined };
   const minutes = Math.max(1, Math.round(boxSeconds(rec.box.createdAt, now) / 60));
   const { text, missing, attendees, labelled } = await readTranscript(rec.org, rec.id, await chunkCount(rec.org, rec.id, rec.chunks));
@@ -536,7 +534,6 @@ export async function finishMeeting(
   const roomName = rec.channelLabel !== undefined ? neutraliseMentions(rec.channelLabel.replace(/^#/, "")) : "";
   const post = renderRecapPost(recap, { platform: rec.platform, minutes, missingChunks: missing.length, empty, ...(roomName.length > 0 ? { room: roomName } : {}) });
   const messageId = await notifyThread(rec, post, deps);
-  if (messageId !== undefined) await markPostedRecap(rec.org, rec.origin, messageId);
   await putMeetingRecord({ ...rec, status: "recapped", endedAt: new Date(now).toISOString() }, ttl);
   await appendAudit({
     ...auditWhere(rec.partition),

@@ -109,6 +109,7 @@ export default defineTool({
 
     const description = describeTrigger(routine.trigger, routine.report);
     const binding = bindFrom(ctx);
+    // principal-gate: accountability — the card's "asked by" line, which a member reads before arming a
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(

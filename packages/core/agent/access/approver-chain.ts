@@ -39,6 +39,7 @@ export interface ApprovalChainRequest {
   readonly org?: string;
   readonly principalId?: string;
   readonly unattended: boolean;
+  /** @deprecated Ignored (OPE-2716). The chain reads no turn mark since the OPE-2715 ruling: a turn that read untrusted content decides as a clean turn. */
   readonly tainted?: boolean;
   readonly mode?: ApprovalModeConfig;
   readonly halted?: boolean;
@@ -106,6 +107,7 @@ export function registryVerdictOf(tool: string): "allow" | "ask" {
 
 export type TransformStage = "mode" | "unattended" | "floor";
 
+// glossary: Transform order: mode → floor → unattended.
 export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "floor", "unattended"];
 
 export interface TransformRow {

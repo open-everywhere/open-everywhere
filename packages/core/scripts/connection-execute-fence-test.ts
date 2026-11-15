@@ -33,7 +33,7 @@ const { clearConnectionExecuteTargets, readConnectionExecuteTarget, qualifiedCon
 );
 const { setConnectorContentOrigin } = await import("../agent/access/connector-content-origin-state.js");
 const { UNTRUSTED_OPEN } = await import("../agent/access/untrusted.js");
-const { untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+const { envelopeWrappedThisTurn } = await import("../agent/memory/turn-provenance.js");
 
 class FakeSession {
   private readonly store = new Map<string, unknown>();
@@ -97,7 +97,7 @@ async function driveExecute(
       opts.renderWithoutInput === true ? { output: result, toolCallId: callId } : { output: result, toolCallId: callId, input },
     );
     const text = projected.type === "text" ? String(projected.value) : JSON.stringify(projected.value ?? null);
-    return { text, tainted: untrustedIngestedThisTurn() };
+    return { text, tainted: envelopeWrappedThisTurn(undefined) };
   });
 }
 
@@ -130,7 +130,7 @@ const host = await inTurn(async () => {
   projectToolSet(hostSet);
   const tool = hostSet["reply"] as unknown as ToolLike;
   const out = await tool.toModelOutput({ output: "posted", toolCallId: "call-h" });
-  return { text: String(out.value), tainted: untrustedIngestedThisTurn() };
+  return { text: String(out.value), tainted: envelopeWrappedThisTurn(undefined) };
 });
 ok(!host.text.includes(UNTRUSTED_OPEN), "4. negative control: a host-authored tool result is NOT fenced");
 ok(!host.tainted, "4. …and does not taint the turn");

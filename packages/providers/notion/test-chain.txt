@@ -20,7 +20,6 @@ test:notion-event-normalizer
 test:dynamic-replay
 test:notion-ancestry-trust
 test:notion-credential-fence
-test:notion-route-taint
 test:notion-post-arm
 test:notion-read
 test:notion-stop
@@ -33,3 +32,4 @@ test:notion-rate-limit
 test:notion-write-seam
 test:notion-question-return
 test:notion-turn-policy
+test:notion-route-fence

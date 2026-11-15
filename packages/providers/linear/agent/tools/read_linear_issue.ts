@@ -16,9 +16,7 @@ import {
   getConfig,
   preRegisterDynamicEntry,
   resolvePartition,
-  declaredWorkspaceTrust,
   ageAtRead,
-  type SurfaceTrust,
   type BindableContext,
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -71,7 +69,6 @@ export const readLinearIssueEntry = defineTool({
     description: z.string(),
     text: z.string(),
     readAt: z.string().optional(),
-    workspaceTrust: z.enum(["internal", "public"]).optional(),
   }),
   async execute(input, ctx2) {
     const bctx = ctx2 as BindableContext;
@@ -92,12 +89,6 @@ export const readLinearIssueEntry = defineTool({
     await assertLinearIssueAllowed(bctx, issue, domains, async (ref) => (await enrichIssueTeam(ref, { organizationId }))?.teamId, { workOrg });
     const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS, organizationId });
     const readAt = new Date().toISOString();
-    let workspaceTrust: SurfaceTrust | undefined;
-    try {
-      workspaceTrust = declaredWorkspaceTrust(resolvePartition(bctx).workspaceKey);
-    } catch {
-      workspaceTrust = undefined;
-    }
     noteAuthoredRecordRead(bctx, {
       kind: "linear-issue",
       id: res.identifier ?? issue,
@@ -106,7 +97,6 @@ export const readLinearIssueEntry = defineTool({
       url: res.url,
     });
     return {
-      ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
       issue,
       identifier: res.identifier,
       title: res.title,
@@ -136,11 +126,7 @@ export const readLinearIssueEntry = defineTool({
         : `\n\n${output.comments} comment(s), oldest first${output.truncated ? " (truncated — the issue has older comments than these)" : ""}:\n${output.text}`;
     return ingestUntrustedModelOutput(`${header}${asOf}${bodyBlock}${commentsBlock}`, {
       source: `linear issue ${ref}`,
-      ingestion: {
-        kind: "linear",
-        label: "read_linear_issue",
-        ...(output.workspaceTrust !== undefined ? { workspaceTrust: output.workspaceTrust } : {}),
-      },
+      toolName: "read_linear_issue",
     });
   },
 });

@@ -54,3 +54,5 @@ ok(true, "4. a consumer bundle with contentOrigin on every grant type-checks aga
 ok(warned.length === 1 && warned[0]!.includes("consumer-0/c0") && warned[0]!.includes("consumer-2/c2"), "4. …with ONE deprecation notice that names every grant");
 
 console.log(`✓ content-origin-deprecation: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-connector-content-origin-state

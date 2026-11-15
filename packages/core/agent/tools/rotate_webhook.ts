@@ -40,6 +40,7 @@ export default defineTool({
 
     const binding = bindFrom(ctx);
 
+    // principal-gate: presence — this tool's entire product is HANDING A SECRET TO SOMEBODY. The
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("rotate_webhook needs a verified sender — a triggered routine fire has no acting sender (only the creator it is attributed to), and there is nobody in a fire to hand a fresh signing secret to. Ask a person in this conversation to rotate it.");

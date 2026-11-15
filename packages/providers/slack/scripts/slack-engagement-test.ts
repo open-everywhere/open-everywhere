@@ -3060,9 +3060,9 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
 
 {
   const { AsyncLocalStorage } = await import("node:async_hooks");
-  const { UNTRUSTED_OPEN, untrustedIngestedThisTurn, taintKindsThisTurn, taintMarkLands } = await import("@open-everywhere/core/agent/adapter-api.js");
-  const { registerTaintVerdictSink, currentTaintVerdictSink } = await import("@open-everywhere/core/agent/adapter-api.js");
-  type TaintVerdictRow = Parameters<NonNullable<ReturnType<typeof currentTaintVerdictSink>>>[0];
+  const { UNTRUSTED_OPEN, untrustedIngestedThisTurn, taintKindsThisTurn, taintMarkLands, registerTaintVerdictSink, currentTaintVerdictSink } = await import(
+    "@open-everywhere/core/agent/adapter-api.js"
+  );
 
   class FakeSession {
     private readonly store = new Map<string, unknown>();
@@ -3084,31 +3084,23 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   const joinMeta = { channelId: "C_JOIN", name: "help", isPrivate: false };
   const render = () => renderChannelJoinMessage(joinMeta, { transcript: `<@U1>: welcome\n<@U2>: ${INJECTION}` });
 
-  ok(taintMarkLands() === false, "channel-join intro: at render time there is NO eve context, so a mark cannot land (the premise the site's comment states)");
   {
     const msg = render();
     ok(msg.includes(UNTRUSTED_OPEN) && msg.includes(INJECTION), "channel-join intro: the backscroll IS fenced — a defang fence, not a `\"\"\"` boundary an author could close");
-    ok(untrustedIngestedThisTurn() === false, "channel-join intro: …and nothing is marked, so the seat this prompt opens does not start life tainted");
+    ok(msg.indexOf(INJECTION) > msg.indexOf(UNTRUSTED_OPEN), "channel-join intro: …and the injection sits INSIDE the fence");
   }
 
-  const verdicts: TaintVerdictRow[] = [];
-  const restoreSink = currentTaintVerdictSink();
-  registerTaintVerdictSink((r) => verdicts.push(r));
-  try {
-    await als.run(new FakeSession(), async () => {
-      ok(untrustedIngestedThisTurn() === false, "channel-join intro [drift]: the fresh turn starts clean (negative control — the reader is live here)");
-      render();
-      ok(untrustedIngestedThisTurn() === true, "channel-join intro [drift]: given a context the mark DOES land — 'ingress only' is a claim about the CALLER, not a property of the code");
-      ok(taintKindsThisTurn().length === 0, "🔴 channel-join intro [drift]: …with NO kind, because the site declares none. This route has no table-governed taint join, deliberately — see the block header");
-    });
-  } finally {
-    registerTaintVerdictSink(restoreSink);
-  }
-  const joinVerdict = verdicts.find((r) => r.label === "slack:channel-join-intro");
-  ok(joinVerdict !== undefined, `🔴 channel-join intro [drift]: the route DECLARES itself to the verdict sink — delete \`noteIngestionVerdict\` from joinTranscriptFence and this is the assertion that reds (got labels: ${verdicts.map((r) => r.label ?? "<none>").join(",") || "none"})`);
-  ok(joinVerdict?.kind === "chat-message", `🔴 channel-join intro [drift]: …binding inbound content to ingestion kind \`chat-message\` — the inventory row's own claim (got ${String(joinVerdict?.kind)})`);
-  ok(joinVerdict?.divergence === "over-taint", "channel-join intro [drift]: …as an OVER-taint — the site taints, the table calls chat-message trusted");
-  ok(joinVerdict?.taintsToday === true && joinVerdict?.applied === false, "channel-join intro [drift]: …and the table's verdict did NOT decide this mark (applied false), so the fence stays unconditional");
+  let sinkCalls = 0;
+  ok(currentTaintVerdictSink() === null, "🔴 shim: currentTaintVerdictSink() is always null (OPE-2721)");
+  registerTaintVerdictSink(() => void sinkCalls++);
+  await als.run(new FakeSession(), async () => {
+    const msg = render();
+    ok(msg.includes(UNTRUSTED_OPEN), "channel-join intro [in a turn]: still fenced");
+    ok(untrustedIngestedThisTurn() === false, "🔴 shim: untrustedIngestedThisTurn() is false, even in a turn that wrapped outside content");
+    ok(taintKindsThisTurn().length === 0, "🔴 shim: taintKindsThisTurn() is empty");
+    ok(taintMarkLands() === false, "🔴 shim: taintMarkLands() is false");
+  });
+  ok(sinkCalls === 0 && currentTaintVerdictSink() === null, "🔴 shim: an installed verdict sink is never called, and never installed");
 }
 
 {

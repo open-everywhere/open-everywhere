@@ -124,6 +124,7 @@ export default defineTool({
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "propose that webhook"));
     }
     const venue = venueResult.venue;
+    // principal-gate: presence — a declared hook opens a PR in a real person's name, and a triggered
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("declare_webhook needs a verified sender — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not open a config PR declaring a standing inbound door in that person's name. Ask a person in this conversation to propose it.");

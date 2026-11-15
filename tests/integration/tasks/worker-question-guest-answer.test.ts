@@ -46,7 +46,7 @@ function userInfo(id: string, name: string, guest: boolean): Record<string, unkn
 }
 
 async function armSeams(): Promise<void> {
-  await bootAgent();
+  await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "engage" } });
   if (!stub) {
@@ -171,7 +171,7 @@ async function askAndAnswer(tag: string, guest: boolean) {
   const resumed = await waitFor(() => continued.requests.find((r) => r.role === "child" && r.stepIndex === 0), `${tag}: the worker's continued turn`);
   const forward = await waitFor(async () => {
     const rows = (await rowsSinceCursor(cursor, ["work.forwarded"], { limit: 50 })).filter((r) => r.detail?.seatSessionId === seatSession);
-    return rows.length >= 2 ? rows[rows.length - 1] : undefined;
+    return rows.length >= 2 ? rows[0] : undefined;
   }, `${tag}: the thread seat's forward of the answer`);
   const finish = async (): Promise<void> => {
     await awaitWorkResult({ handle: secondResult, taskId, label: `${tag}: the thread seat step that read the answered worker's result` });
@@ -187,35 +187,41 @@ async function askAndAnswer(tag: string, guest: boolean) {
   return { cursor, taskId, forward, resumed, childSession, answerText, handles, finish, chainRow };
 }
 
-test("🔴 a guest's answer reaches the asking worker with the guest's nonmember marking", async () => {
+async function forwardNonMemberWake(requestId: unknown): Promise<boolean | undefined> {
+  expect(requestId, "the answer's forward row names no request id").toEqual(expect.any(String));
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+  const binding = await import("@open-everywhere/core/agent/identity/binding.js");
+  const work = await import("@open-everywhere/core/agent/channels/work.js");
+  const row = await work.readWorkRequest(provider.getOperationalStore(), binding.deploymentOrg(), requestId as string);
+  expect(row, "the answer's forward wrote no readable work request row").toBeDefined();
+  return row!.nonMemberWake;
+}
+
+test("🔴 a guest's answer reaches the asking worker with the guest's nonmember stamp", async () => {
   const { cursor, forward, resumed, childSession, answerText, handles, finish, chainRow } = await askAndAnswer("ope2348g", true);
 
   expect(await rowsSinceCursor(cursor, ["input_response.routed"]), "🔴 the host routed the guest's plain message as an answer").toEqual([]);
   expect(resumed.sessionId, "🔴 a FRESH worker read the answer — the continuation did not reach the worker that asked").toBe(childSession);
   expect(resumed.messages.some((m) => m.text.includes(answerText)), "the continued worker was not told what the guest answered").toBe(true);
   expect(forward.detail?.requestId, "the answer's forward row").toEqual(expect.any(String));
+  expect(await forwardNonMemberWake(forward.detail?.requestId), "🔴 the guest's answer was forwarded WITHOUT the non-member stamp").toBe(true);
 
-  const mark = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 });
-    const mine = rows.filter((r) => r.detail?.leg === "mark" && r.detail?.session === childSession);
-    return mine.length > 0 ? mine : undefined;
-  }, "the worker's taint.forward mark row");
-  expect(mark.length).toBeGreaterThan(0);
   const chain = await chainRow();
   expect(chain.detail).not.toHaveProperty("tainted");
+  expect(await rowsSinceCursor(cursor, ["taint.forward", "taint.verdict", "taint.mode"], { limit: 200 }), "a taint.* row landed after OPE-2721").toEqual([]);
   for (const h of handles) expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   await finish();
 });
 
-test("NEGATIVE CONTROL — a member's answer marks nothing", async () => {
-  const { cursor, resumed, childSession, answerText, handles, finish, chainRow } = await askAndAnswer("ope2348m", false);
+test("NEGATIVE CONTROL — a member's answer carries no nonmember stamp", async () => {
+  const { cursor, forward, resumed, childSession, answerText, handles, finish, chainRow } = await askAndAnswer("ope2348m", false);
   expect(await rowsSinceCursor(cursor, ["input_response.routed"])).toEqual([]);
+  expect(await forwardNonMemberWake(forward.detail?.requestId), "a member's answer was forwarded as a non-member's").toBe(false);
   expect(resumed.sessionId).toBe(childSession);
   expect(resumed.messages.some((m) => m.text.includes(answerText))).toBe(true);
   const chain = await chainRow();
   expect(chain.detail).not.toHaveProperty("tainted");
   await finish();
-  const taintMarks = (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark" && r.detail?.session === childSession);
-  expect(taintMarks).toEqual([]);
+  expect(await rowsSinceCursor(cursor, ["taint.forward", "taint.verdict", "taint.mode"], { limit: 200 }), "a taint.* row landed after OPE-2721").toEqual([]);
   for (const h of handles) expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
 });

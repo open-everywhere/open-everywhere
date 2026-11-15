@@ -15,7 +15,6 @@ lint:window-gate
 lint:source-gate
 lint:work-mount
 lint:resource-grant-mount
-lint:ingestion
 lint:provider-selection
 lint:overlays
 lint:docs
@@ -219,7 +218,6 @@ lint:doc-links
 test:doc-links-lint
 test:meeting-bot
 test:meeting-bot-discord
-test:meeting-provenance-surfaces
 test:email-integration
 test:google-chat-integration
 test:personal-browser-fence

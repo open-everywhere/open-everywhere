@@ -215,7 +215,6 @@ describe("root chain parity", () => {
     const expectArgs: Record<string, string[]> = {
       "lint:docs-generate": ["--check"],
       "lint:capabilities": ["--check"],
-      "lint:ingestion": ["--check"],
       "lint:overlays": ["--check"],
       "lint:settings-docs": ["--check"],
       "lint:publish-exports": ["--check"],

@@ -5,7 +5,6 @@ import { distinctReadAuthorIds, refutedReadAuthorIds } from "../agent/channels/r
 import {
   readChannelResult,
   readThreadResult,
-  chatReadIngestion,
   renderChannelBody,
   renderThreadBody,
   type AdapterReadFetch,
@@ -16,9 +15,7 @@ import {
 } from "../agent/channels/channel-read.js";
 import { WITHHELD_BODY_MARKER } from "../agent/access/external-policy.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
-import { classifyIngestion } from "../agent/access/taint-tiers.js";
-import { decideIngestion } from "../agent/access/taint-enforcement.js";
-import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
+import { envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
 import { authoredModelProjectionFor } from "../agent/access/window-gated.js";
 import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
@@ -137,29 +134,6 @@ console.log("3. the register leg:");
   _resetAuthorTrustForTest();
 }
 
-console.log("4. the chat-message row:");
-{
-  const refuted = classifyIngestion({ kind: "chat-message", authoredByNonMember: true });
-  eq(refuted.tier, "untrusted", "🔴 chat-message + authoredByNonMember:true ⇒ UNTRUSTED");
-  eq(refuted.assumed, false, "…a POSITIVE ruling, never `assumed` — nothing was missing that could have decided it otherwise");
-  eq(classifyIngestion({ kind: "chat-message", authoredByNonMember: false }).tier, "trusted", "negative control: authoredByNonMember:false ⇒ TRUSTED");
-  eq(classifyIngestion({ kind: "chat-message" }).tier, "trusted", "🔴 negative control: ABSENT ⇒ TRUSTED, not fail-closed — 'the probe could not answer' is not 'a stranger wrote it'");
-
-  for (const shape of [{ authoredByNonMember: true }, { authoredByNonMember: false }, {}] as const) {
-    ok(decideIngestion({ kind: "chat-message", ...shape }, false) === false, `🔴 relaxation-only holds: decideIngestion(chat-message ${JSON.stringify(shape)}, false) === false`);
-  }
-  ok(decideIngestion({ kind: "chat-message", authoredByNonMember: true }, true) === true, "…and at a TAINTING site the refuted branch keeps the mark");
-  ok(decideIngestion({ kind: "chat-message" }, true) === false, "…while the unrefuted branch still drops it");
-
-  eq(chatReadIngestion("read_channel:slack", {}), { kind: "chat-message", label: "read_channel:slack" }, "descriptor: no field on an ungraded read");
-  eq(chatReadIngestion("read_channel:slack", { authoredByNonMember: false }), { kind: "chat-message", label: "read_channel:slack" }, "descriptor: no field on a member-only read");
-  eq(
-    chatReadIngestion("read_channel:slack", { authoredByNonMember: true }),
-    { kind: "chat-message", label: "read_channel:slack", authoredByNonMember: true },
-    "descriptor: the fact rides only when the page was refuted",
-  );
-}
-
 console.log("5. readChannelResult / readThreadResult:");
 
 const PAGE: readonly RenderedLine[] = [human("U1", "hello there"), human("GUEST", "hi back")];
@@ -177,7 +151,7 @@ function adapter(graded: boolean | "none"): ReadAdapter {
 
 {
   const marked = await readChannelResult(ctx, "slack", adapter(true), "C1");
-  eq(marked.authoredByNonMember, true, "🔴 execute: a refuted page carries the grading fact out of execute");
+  ok(!("authoredByNonMember" in marked), "execute: the output carries no grading field since OPE-2721 — nothing downstream reads one");
   eq(
     marked.messages,
     [
@@ -190,10 +164,7 @@ function adapter(graded: boolean | "none"): ReadAdapter {
   eq(renderChannelBody(marked), "Recent messages in C1 (oldest first):\n[U1] hello there\n[GUEST] hi back", "execute: the render is unchanged by grading");
 
   const clean = await readChannelResult(ctx, "slack", adapter(false), "C1");
-  ok(!("authoredByNonMember" in clean), "🔴 negative control: a member-only read carries NO field at all — POSITIVE-ONLY, so the common output is byte-identical to before OPE-474");
-
-  const ungraded = await readChannelResult(ctx, "slack", adapter("none"), "C1");
-  ok(!("authoredByNonMember" in ungraded), "negative control: an adapter with NO probe contributes nothing (a non-chat surface)");
+  eq(clean, marked, "under the opt-out grain a member-only page and a refuted page project identically");
 
   const thrower: ReadAdapter = {
     platform: "slack",
@@ -206,11 +177,9 @@ function adapter(graded: boolean | "none"): ReadAdapter {
   };
   const survived = await readChannelResult(ctx, "slack", thrower, "C1");
   eq(survived.count, 2, "negative control: a THROWING adapter probe never fails the read — the page comes back whole");
-  ok(!("authoredByNonMember" in survived), "…and contributes no mark (fail-open)");
 
   const thr = await readThreadResult(ctx, "slack", adapter(true), "C1", "999.9");
   eq(thr.thread_ts, "999.9", "thread: the thread id rides through");
-  eq(thr.authoredByNonMember, true, "🔴 thread: read_thread grades identically to read_channel — one body, so they cannot drift");
 }
 
 console.log("5b. coverage disclosure (OPE-761):");
@@ -301,7 +270,7 @@ console.log("5c. adapter-declared partiality (OPE-1015):");
   ok(!renderChannelBody(declaredComplete).includes("[coverage:"), "…and the rendered body carries NO coverage note despite hitting the line-count ceiling");
 }
 
-console.log("6. end to end — execute → the replayed toModelOutput → the turn mark:");
+console.log("6. end to end — execute → the replayed toModelOutput → the fence:");
 
 class FakeSession {
   private readonly store = new Map<string, unknown>();
@@ -344,29 +313,16 @@ for (const [verb, build] of [
   ["read_channel", async (a: ReadAdapter) => await readChannelResult(ctx, "slack", a, "C1")],
   ["read_thread", async (a: ReadAdapter) => await readThreadResult(ctx, "slack", a, "C1", "999.9")],
 ] as const) {
-  await eveContextStorage().run(new FakeSession(), async () => {
-    ok(untrustedIngestedThisTurn() === false, `${verb}: the turn starts clean`);
-    const out = await build(adapter(true));
-    const projected = await replayedProjection(verb, out);
-    ok(untrustedIngestedThisTurn() === true, `🔴 ${verb}: a read whose page carried a REFUTED non-member MARKS the turn`);
-    eq(taintKindsThisTurn(), ["chat-message"], `${verb}: …disclosed as \`chat-message\`, which is what an approval card names`);
-    ok(String(projected.value).includes(UNTRUSTED_OPEN), `${verb}: …and the body is still fenced (the wrap half was never the missing part)`);
-    ok(String(projected.value).includes("hello there"), `${verb}: …with the real content inside the fence`);
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    const out = await build(adapter(false));
-    const projected = await replayedProjection(verb, out);
-    ok(untrustedIngestedThisTurn() === false, `🔴 ${verb}: a MEMBER-ONLY read leaves the turn CLEAN (=== false) — no always-mark`);
-    eq(taintKindsThisTurn(), [], `${verb}: …and discloses nothing`);
-    ok(String(projected.value).includes(UNTRUSTED_OPEN), `${verb}: …while STILL fencing the body — the fence is unconditional, only the mark is the table's call`);
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    const out = await build(adapter("none"));
-    await replayedProjection(verb, out);
-    ok(untrustedIngestedThisTurn() === false, `${verb}: an UNGRADED read leaves the turn clean (=== false)`);
-  });
+  for (const graded of [true, false, "none"] as const) {
+    await eveContextStorage().run(new FakeSession(), async () => {
+      const out = await build(adapter(graded));
+      const projected = await replayedProjection(verb, out);
+      const v = String(projected.value);
+      ok(v.includes(UNTRUSTED_OPEN), `🔴 ${verb} (graded=${String(graded)}): the body reaches the model FENCED`);
+      ok(v.indexOf("hello there") > v.indexOf(UNTRUSTED_OPEN), `${verb} (graded=${String(graded)}): …with the real content inside the fence`);
+      ok(envelopeWrappedThisTurn(undefined), `${verb} (graded=${String(graded)}): …and the wrap sets the memory provenance flag (OPE-2719)`);
+    });
+  }
 }
 
 console.log("7. the author grain on the read path (OPE-534):");
@@ -399,12 +355,6 @@ console.log("7. the author grain on the read path (OPE-534):");
       const fresh = await readChannelResult(ctx, "slack", adapter(true), "C1");
       const projected = await replayedProjection("read_channel", fresh);
       ok(
-        untrustedIngestedThisTurn() === (!withholding),
-        withholding
-          ? "🔴 withhold: a WITHHELD body does NOT mark the turn (=== false) — claiming an exposure that did not happen is the always-on bit"
-          : "🔴 taint (the opt-out): the refuted page still MARKS the turn — the read-side withhold is off and changes nothing",
-      );
-      ok(
         String(projected.value).includes("hi back") === !withholding,
         `🔴 ${grain}: the FENCED projection ${withholding ? "does not carry" : "carries"} the excluded author's text — end to end, through eve's replay path`,
       );
@@ -418,7 +368,6 @@ console.log("7. the author grain on the read path (OPE-534):");
     ["hello there", "hi back"],
     "🔴 negative control: under `withhold`, a page with NO refuted author comes back byte-identical — nothing is blanked on suspicion",
   );
-  ok(!("authoredByNonMember" in clean), "…and it marks nothing");
 
   const thr = await readThreadResult(ctx, "slack", adapter(true), "C1", "999.9");
   eq(thr.messages[1]!.text, WITHHELD_BODY_MARKER, "🔴 read_thread withholds identically to read_channel — one grade-and-project body");
@@ -484,3 +433,4 @@ console.log("8. a read line carries its files:");
   overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
 }
 console.log(`✓ ${n} read-nonmember-author assertions passed`);
+

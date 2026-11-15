@@ -135,7 +135,7 @@ export function toAuditDetail(record: MemorySyncTiming): AuditDetail {
   return out;
 }
 
-export function isTaintCleanDetail(detail: unknown): boolean {
+export function isContentFreeDetail(detail: unknown): boolean {
   if (!detail || typeof detail !== "object" || Array.isArray(detail)) return false;
   const d = detail as Record<string, unknown>;
   const top = new Set<string>(SYNC_DETAIL_KEYS);
@@ -165,8 +165,8 @@ export async function emitMemorySyncTiming(
   record: MemorySyncTiming,
 ): Promise<void> {
   const detail = toAuditDetail(record);
-  if (!isTaintCleanDetail(detail)) {
-    console.warn(`[open-everywhere:memory] sync-timing row DROPPED — projected detail failed the taint check (names/paths/counts only)`);
+  if (!isContentFreeDetail(detail)) {
+    console.warn(`[open-everywhere:memory] sync-timing row DROPPED — projected detail failed the content-free check (names/paths/counts only)`);
     return;
   }
   await appendAudit({

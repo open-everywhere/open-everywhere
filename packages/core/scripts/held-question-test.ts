@@ -48,7 +48,6 @@ registerConfig({
 
 const heldQuestion = await import("../agent/access/held-question.js");
 const { heldQuestionNonMemberKey, nonMemberAnsweredIds } = heldQuestion;
-const { untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const settlementHook = (await import("../agent/hooks/delegation-settlement.js")).default as unknown as {
@@ -90,17 +89,17 @@ const resolved = (kind: string, requestId: string) => ({ data: { resolutions: [{
 await contextStorage.run(new ContextContainer(), async () => {
   const ctx = seatCtx("turn_q2");
   turnStarted(ctx);
-  ok(!untrustedIngestedThisTurn(), "Q2 precondition: the turn opened clean");
+  const rowsNow = async (): Promise<number> => (await readAudit({ org: ORG, action: NONMEMBER_ANSWER_MARKED_AUDIT_ACTION, limit: 10 })).length;
   await heldQuestionHook.events["input.resolved"]!(resolved("question", "q1-member"), ctx);
-  ok(!untrustedIngestedThisTurn(), "Q2 NEGATIVE CONTROL: a member's answer leaves the turn clean");
+  eq(await rowsNow(), 0, "Q2 NEGATIVE CONTROL: a member's answer writes no row");
   await heldQuestionHook.events["input.resolved"]!(resolved("tool-approval", "q1-guest"), ctx);
-  ok(!untrustedIngestedThisTurn(), "Q2: a resolution that is not a question reads no stamp");
+  eq(await rowsNow(), 0, "Q2: a resolution that is not a question reads no stamp");
   await heldQuestionHook.events["input.resolved"]!(resolved("question", "q1-guest"), ctx);
-  ok(untrustedIngestedThisTurn(), "🔴 Q2 THE FIX: the guest's answer marks the asking turn, as a plain message from that guest would");
+  eq(await rowsNow(), 1, "🔴 Q2: the guest's answer writes the row");
 });
 {
   const rows = await readAudit({ org: ORG, action: NONMEMBER_ANSWER_MARKED_AUDIT_ACTION, limit: 10 });
-  eq(rows.length, 1, "Q2: one audit row records the mark");
+  eq(rows.length, 1, "Q2: one audit row records the guest's answer");
   eq((rows[0]!.detail as { requestIds?: unknown }).requestIds, ["q1-guest"], "Q2: …naming the request id, and ids only");
   ok(!JSON.stringify(rows[0]).includes("use staging"), "Q2: the answer text is never audited");
 }
@@ -125,11 +124,14 @@ await contextStorage.run(new ContextContainer(), async () => {
     await contextStorage.run(new ContextContainer(), async () => {
       const ctx = seatCtx("turn_q2_nostore");
       turnStarted(ctx);
-      ok(!untrustedIngestedThisTurn(), "Q2 precondition: the turn opened clean");
       await heldQuestionHook.events["input.resolved"]!(resolved("tool-approval", "q-nostore"), ctx);
-      ok(!untrustedIngestedThisTurn(), "Q2: with no store, a resolution that is not a question still marks nothing");
-      await heldQuestionHook.events["input.resolved"]!(resolved("question", "q-nostore"), ctx);
-      ok(untrustedIngestedThisTurn(), "🔴 Q2 FAIL CLOSED: a store the hook cannot build marks the turn — 'could not check' is never 'a member answered'");
+      let threw = false;
+      try {
+        await heldQuestionHook.events["input.resolved"]!(resolved("question", "q-nostore"), ctx);
+      } catch {
+        threw = true;
+      }
+      ok(!threw, "Q2: a store the hook cannot build never fails the resolution");
     });
   } finally {
     delete process.env.DATABASE_URL;

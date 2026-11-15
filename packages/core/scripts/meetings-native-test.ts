@@ -16,7 +16,6 @@ const { registerMeetingCompletion, resetMeetingCompletionForTest } = await impor
 const { meetingRecapSummary, meetingRecapResult } = await import("../agent/approvals/meeting-recap.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { getMeetingRow } = await import("../agent/meetings/store.js");
-const provenance = await import("../agent/meetings/provenance.js");
 import type { MeetingPolicy } from "../agent/meetings/policy.js";
 import type { NativeRecapArgs } from "../agent/meetings/native-recap.js";
 import type { NativeMeetingRef, NativeTranscriptResult } from "../agent/meetings/native.js";
@@ -189,8 +188,6 @@ const deps = { policy: NATIVE_ON, post, now: () => NOW, secret: async (name: str
   const a = args();
   const out = await flow.startNativeRecap(a, "U2", deps);
   ok(out.kind === "posted" && out.posted, "a ready transcript is recapped at the click");
-  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", threadRoot: "1700159720.000100", botMessageIds: [] }), "🔴 the native recap MARKS the thread it went into");
-  ok(await provenance.chatReadCarriesMeetingPost(ORG, { platform: "slack", container: "C1", botMessageIds: [`ts-${posts.length}`] }), "🔴 the native recap MARKS its own post id");
   ok(reads.length === 1 && reads[0]!.secrets[0] === "value-of-TEAMS_TRANSCRIPT_SECRET", "the reader gets the stored secret the policy names, resolved by core");
   ok(reads[0]!.ref.organizerId === OID && reads[0]!.ref.tenantId === TENANT && reads[0]!.ref.startedAfter === undefined, "a `past` ask reads the newest session of the meeting the link names");
   ok(posts.length === 1 && posts[0]!.channelId === "C1" && posts[0]!.threadTs === "1700159720.000100", "ONE recap goes into the thread the ask came from");

@@ -10,6 +10,8 @@ import { EVERYONE_GROUP, type Group } from "../identity/groups.js";
 
 export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "group" | "principal";
 
+// glossary: Four rungs of increasing specificity — org < tenant < domain < surface — plus the off-ladder personal levels `group` and `principal`.
+// glossary: 🔴 `tenant`, `surface` and `principal` are PLATFORM-QUALIFIED because bare vendor ids come from namespaces that never agreed to share one — two platforms' user ids can be identical digit strings, and a collision there resolves a stranger's personal-credential universe in a DM. `domain` and `group` stay BARE, being cross-platform by construction.
 export interface Scope {
   readonly level: ScopeLevel;
   readonly tenant?: string;
@@ -62,18 +64,22 @@ function wildcardCovers(pattern: string, other: string): boolean {
   return other.endsWith(suffix) && other.length > suffix.length;
 }
 
+/** @deprecated Ignored since OPE-2723; OPE-2724 removes it. A grant's `contentOrigin` value changes nothing. */
 export type ConnectorContentOrigin = "internal" | "external";
 
+/** @deprecated Ignored since OPE-2723; OPE-2724 removes it. The per-tool form of the retired */
 export interface ConnectorContentOriginOverrides {
   readonly default: ConnectorContentOrigin;
   readonly except: Readonly<Record<string, ConnectorContentOrigin>>;
 }
 
+/** @deprecated Ignored since OPE-2723; OPE-2724 removes it. */
 export type ConnectorContentOriginSpec = ConnectorContentOrigin | ConnectorContentOriginOverrides;
 
 export interface ConnectorGrant {
   readonly name: string;
   readonly credential: string;
+  /** @deprecated IGNORED since OPE-2723, and OPE-2724 removes it at the next breaking core release. */
   readonly contentOrigin?: ConnectorContentOriginSpec;
 }
 
@@ -83,6 +89,7 @@ export function connectorGrantName(grant: ConnectorGrantSpec): string {
   return typeof grant === "string" ? grant : grant.name;
 }
 
+/** @deprecated No first-party code calls it since OPE-2723, and OPE-2724 removes it. The value it returns changes no verdict. */
 export function connectorGrantContentOrigin(grant: ConnectorGrantSpec): ConnectorContentOriginSpec | undefined {
   return typeof grant === "string" ? undefined : grant.contentOrigin;
 }
@@ -91,6 +98,7 @@ export function connectorGrantCredential(grant: ConnectorGrantSpec): string | un
   return typeof grant === "string" ? undefined : grant.credential;
 }
 
+/** @deprecated No first-party code calls it since OPE-2723, and OPE-2724 removes it. It resolves a retired spec to one origin for one BARE tool name. */
 export function contentOriginForTool(spec: ConnectorContentOriginSpec, bareToolName: string): ConnectorContentOrigin {
   if (typeof spec === "string") return spec;
   const override = Object.hasOwn(spec.except, bareToolName) ? spec.except[bareToolName] : undefined;

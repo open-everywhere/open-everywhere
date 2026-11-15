@@ -34,6 +34,7 @@ export function mcpServerProposeAudienceRefusal(binding: Pick<SurfaceBinding, "t
   if (opts.nonMember) {
     return "a message from someone outside the workspace woke this turn, so I can't propose a new MCP server from it. Ask again in a conversation with members only.";
   }
+  // principal-gate: presence — a proposal opens a config PR in a real person's name, and a triggered fire has nobody here to read the card or own the ask.
   if (opts.actingPrincipal === undefined) {
     return "propose_mcp_server needs a person in the conversation — a triggered routine fire has no acting sender, so it may not open a config PR in anyone's name. Ask a person here to request it.";
   }

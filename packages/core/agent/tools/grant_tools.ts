@@ -44,7 +44,7 @@ function grantModelProjection(grant: CredentialGrantRow): (output: unknown) => P
     if (row?.ok === false && typeof row.message === "string") return hostAuthoredModelOutput(row.message, { source });
     const body = row?.ok === true ? row.result : output;
     const fenced = await ingestUntrustedModelOutput(typeof body === "string" ? body : JSON.stringify(body ?? null), {
-      ingestion: { kind: "connector", label },
+      toolName: label,
       source,
     });
     const disclosure = typeof row?.disclosure === "string" ? row.disclosure : credentialGrantDisclosureLine(grant, Date.now());
