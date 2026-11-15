@@ -1,3 +1,5 @@
+// proves: SEAT-64, SEAT-66
+
 import assert from "node:assert/strict";
 import {
   registerSeatCatchUp,
@@ -405,3 +407,5 @@ const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): Nor
 }
 
 console.log(`seat-catch-up: ${n} assertions passed`);
+
+// proves: SET-062

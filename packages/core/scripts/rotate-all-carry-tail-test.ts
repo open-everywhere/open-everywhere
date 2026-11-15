@@ -191,7 +191,7 @@ const CARRIED_POST = "checking now";
   eq(row.rotateMarkedAt, null, "sqlite: a freshly minted generation is unmarked");
   eq(await s.markChannelSessionRotation(ORG, key, "2026-08-19T00:05:00.000Z"), true, "sqlite: marking an existing row returns TRUE");
   eq((await s.getChannelSession(ORG, key))!.rotateMarkedAt, "2026-08-19T00:05:00.000Z", "…and the stamp reads back");
-  await s.markChannelSessionRotation(ORG, key, "2026-04-23T08:30:00.000Z");
+  await s.markChannelSessionRotation(ORG, key, "2026-08-19T09:00:00.000Z");
   eq((await s.getChannelSession(ORG, key))!.rotateMarkedAt, "2026-08-19T00:05:00.000Z", "sqlite: a second mark keeps the FIRST stamp — idempotent, like Postgres");
   eq((await s.listChannelSessions(ORG, "oe-domain::")).find((r) => r.surfaceKey === key)!.rotateMarkedAt, "2026-08-19T00:05:00.000Z", "sqlite: listChannelSessions carries the mark, so a sweep can see it");
 

@@ -228,3 +228,5 @@ await domainClient.close();
 await client.close();
 await removeTempDir(dir);
 console.log(`\n✓ control audit read is org-pinned and role-scoped: ${n} assertions passed\n`);
+
+// proves: CTRL-access_preview, CTRL-audit_query

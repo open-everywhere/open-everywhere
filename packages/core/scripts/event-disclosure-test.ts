@@ -1,3 +1,5 @@
+// proves: routine.skip
+
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -181,7 +183,7 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
     body: "internal detail",
     url: "https://github.com/acme/payments/issues/7",
     updatedAt: "2026-07-26T10:00:00.000Z",
-    fetchedAt: "2026-03-30T11:30:00.000Z",
+    fetchedAt: "2026-07-26T12:00:00.000Z",
   } });
   await fanOutDelivery(ISSUE_BODY, "issues", undefined, h.deps);
   ok(

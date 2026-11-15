@@ -88,7 +88,7 @@ test("a worker's canvas and List writes each post a card on the real host, and n
           delayMs: 120_000,
           calls: [
             { tool: "write_canvas", input: { canvas: `https://acme.slack.com/docs/${SLACK_TEAM_ID}/${CANVAS}`, markdown: "## Decision\n- Ship on Friday (it2521)" }, id: "it2521-canvas" },
-            { tool: "update_list", input: { list: `https://acme.slack.com/lists/${SLACK_TEAM_ID}/${LIST}`, add: [{ cells: { Title: "Login fails (it2521)", Due: "2026-10-21" } }] }, id: "it2521-list" },
+            { tool: "update_list", input: { list: `https://acme.slack.com/lists/${SLACK_TEAM_ID}/${LIST}`, add: [{ cells: { Title: "Login fails (it2521)", Due: "2026-10-20" } }] }, id: "it2521-list" },
           ],
         },
         { say: "proposed both" },

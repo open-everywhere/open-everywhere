@@ -1,3 +1,5 @@
+// proves: REPLY-26, REPLY-42
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -319,3 +321,5 @@ async function enrol(ctx: unknown, threadTs: string): Promise<void> {
 console.log(
   `✓ stand-down-ack: ${n} assertions passed (the arm seam + the resolver's stamp + the tool note per arm + the owed-acknowledgement refusal + its discharges with the counted order test, its turn keying and its fail-off)`,
 );
+
+// proves: TOOL-stand_down

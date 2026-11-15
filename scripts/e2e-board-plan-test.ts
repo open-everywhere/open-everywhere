@@ -222,7 +222,7 @@ const serialRow = (id: string): LaneDeclaration => ({ id, parallel: "serial", wh
   ok(boardRan([{ id: "J1", surface: "slack", status: "RED", durationMs: 5 }]), "a board with one timed leg ran");
   const dir = mkdtempSync(join(tmpdir(), "oe-board-plan-"));
   ok(readLastBoard(dir) === undefined, "an empty results directory has no last board");
-  writeBoardRecord([{ id: "OLD", surface: "slack", status: "RED" }], { startedAt: "2026-06-04T13:35:00Z" }, dir);
+  writeBoardRecord([{ id: "OLD", surface: "slack", status: "RED" }], { startedAt: "2026-10-01T00:00:00Z" }, dir);
   await new Promise((r) => setTimeout(r, 5));
   const path = writeBoardRecord(
     [

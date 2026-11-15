@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 
-
 import { bootAgent } from "./harness";
 
 const CONTRACT_IDS = [

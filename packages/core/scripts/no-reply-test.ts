@@ -1,3 +1,6 @@
+// proves: auditSilencesEnabled, reply.no_reply, reply.no_reply_duplicate_refused, reply.no_reply_observed, reply.no_reply_redundant, turn.bare_stop
+// proves: REPLY-45
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -332,7 +335,7 @@ await inSession(async () => {
     ok(after === before, "unified bare stop: a turn that reacted is NOT a bare stop — no row");
   });
 
-  await inWindowTurn("wrun_example7", "wake-sentinel-1", "turn-sentinel")(async () => {
+  await inWindowTurn("wrun_sentinel", "wake-sentinel-1", "turn-sentinel")(async () => {
     const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
     await onCompleted({ finishReason: "stop", message: NO_REPLY_SENTINEL }, windowChannel);
     const after = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
@@ -382,3 +385,5 @@ ok(isNoReply(`${NO_REPLY_SENTINEL} trailing rationale`), "isNoReply: prefix matc
 n++;
 
 console.log(`\n✓ no-reply: ${n} assertions passed (reason enum, signal, execute, suppression parity, bare-stop)\n`);
+
+// proves: TOOL-no_reply

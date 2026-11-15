@@ -1,3 +1,5 @@
+// proves: connector.grant, egress.policy
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { compileNetworkPolicy, openWriteHosts } from "../agent/access/egress.js";
@@ -840,3 +842,7 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
 console.log(
   `\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure + capability extra-hosts merge + OPE-1614 browser credential boundary + OPE-300 per-turn re-apply + OPE-311 connector-override reaches egress)\n`,
 );
+
+// proves: AP-MOD-core-access-egress, AP-MOD-core-access-extra-hosts
+
+// proves: SET-020, SET-021

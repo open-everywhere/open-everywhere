@@ -436,3 +436,5 @@ writeFileSync(join(broken, "agent", "settings", "settings.ts"), 'throw new Error
 
 console.log(`✓ sovereignty: ${n} checks passed`);
 process.exit(0);
+
+// proves: OPS-sovereignty

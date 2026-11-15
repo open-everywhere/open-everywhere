@@ -1,3 +1,7 @@
+// proves: grant.revoked
+
+// proves: AP-MOD-core-access-credential-grant-revoke
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -341,7 +345,7 @@ console.log("5. NEGATIVE CONTROLS — every way the route must not fire:");
   const numbered = await callTool(dmCtx("U-owner"), { action: "end", grants: [1] as unknown as string[] });
   eq(numbered.ended, 0, "…and a number that got past the schema still ends nothing — the filter matches row ids, never positions");
   eq(await liveIds(), before, "…so it revoked nothing");
-  const foreign = await callTool(dmCtx("U-owner"), { action: "end", grants: ["00000000-0000-4000-8000-000000000018"] });
+  const foreign = await callTool(dmCtx("U-owner"), { action: "end", grants: ["9f8b4c2e-1d3a-4f6b-8c7d-2e1f0a9b8c7d"] });
   eq(foreign.ended, 0, "an id that names no grant of THIS owner ends nothing — the lookup is owner-keyed, so an id is not a capability");
   eq(await liveIds(), before, "…and this owner's grants are untouched");
 
@@ -424,3 +428,5 @@ console.log("7. the room notice really varies with the grant it describes:");
 }
 
 console.log(`\n✓ credential-grant-revoke: ${String(n)} assertions passed`);
+
+// proves: TOOL-revoke_credential_grant

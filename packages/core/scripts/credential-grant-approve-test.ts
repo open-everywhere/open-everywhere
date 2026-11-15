@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-grant-schema-pin
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

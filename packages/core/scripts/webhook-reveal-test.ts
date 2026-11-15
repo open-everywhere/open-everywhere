@@ -1,3 +1,8 @@
+// proves: webhook.secret_revealed
+// proves: ROUT-89
+
+// proves: AP-MOD-core-credentials-page-token
+
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

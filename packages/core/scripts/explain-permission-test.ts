@@ -95,3 +95,5 @@ const ctx = {
 
 console.log(`✓ explain-permission: ${passed} assertions — the simulator resolves the real chain (config deny named, unattended/domain previews, shared trace formatter) and records nothing`);
 await removeTempDir(tmp);
+
+// proves: TOOL-explain_permission

@@ -74,3 +74,6 @@ const ok = (cond: boolean, label: string) => {
 }
 
 console.log(`\n✓ sandbox-extend: ${n} assertions passed (tool shape, cap, running-only, no-op path)\n`);
+
+// proves: SET-041
+// proves: TOOL-extend_workspace_time

@@ -1,3 +1,5 @@
+// proves: DELG-08, DELG-10, DELG-11, DELG-23
+
 import assert from "node:assert/strict";
 import {
   recordThreadOwner,
@@ -118,3 +120,5 @@ await assert.rejects(
 n++;
 
 console.log(`thread-ownership-test: ${n} assertions passed`);
+
+// proves: TOOL-complete_thread

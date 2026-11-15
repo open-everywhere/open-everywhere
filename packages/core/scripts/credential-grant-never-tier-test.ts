@@ -44,7 +44,7 @@ registerConfig({
 const NEVER_ALL: readonly Bundle[] = [defineBundle({ name: "grant-never", connectorOps: [{ connector: CONNECTOR, never: ["*"] }] })];
 
 const mintInput = (mcpTool: string): GrantMintInput => ({
-  borrow: { mcpTool, rowId: "00000000-0000-4000-8000-000000000015", takenToolNames: [], targetLabel: "Quarterly report" },
+  borrow: { mcpTool, rowId: "11112222-3333-4444-5555-666677778888", takenToolNames: [], targetLabel: "Quarterly report" },
   connector: CONNECTOR,
   domainGrantsConnector: true,
   liveAsk: undefined,

@@ -56,7 +56,6 @@ const PRICED_MODEL = builtInModelIds()[0];
 const FIXTURE_DAY = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
 registerSlackFixtureMapper();
 
-
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
@@ -832,3 +831,6 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing incl. display labels + DM masking, session_cost/spend_report/usage_report tools)`);
+
+// proves: TOOL-session_cost, TOOL-spend_report, TOOL-usage_report
+// proves: resolveSlackLabels

@@ -617,3 +617,6 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
 }
 
 console.log(`✓ ${passed} approval-tools assertions passed`);
+
+// proves: TOOL-clear_connector_override, TOOL-clear_spend_limit, TOOL-revoke_connector
+// proves: TOOL-set_spend_limit

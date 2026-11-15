@@ -309,3 +309,5 @@ eq(
 
 _resetAuthorTrustForTest();
 console.log(`\n✓ author-trust: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-author-trust

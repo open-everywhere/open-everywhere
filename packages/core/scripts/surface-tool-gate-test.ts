@@ -13,7 +13,6 @@ delete process.env.OE_PLATFORM;
 const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureManifest();
 
-
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

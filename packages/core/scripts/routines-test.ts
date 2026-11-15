@@ -1,3 +1,5 @@
+// proves: ROUT-02, ROUT-04, ROUT-05, ROUT-38, ROUT-41, ROUT-42
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -122,12 +124,12 @@ ok(computeNextRun({ kind: "once", at: "2026-07-08T09:00:00.000Z" }, from) === nu
   ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "every-run" })) === '{"kind":"cron","expr":"0 9 * * *"}', "cron + every-run → cron");
   ok(JSON.stringify(st({ kind: "scheduled", everyMinutes: 60, postPolicy: "only-on-change" })) === '{"kind":"watch","everyMinutes":60}', "cadence + only-on-change → watch");
   ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "only-on-change" })) === '{"kind":"watch","expr":"0 9 * * *"}', "cron + only-on-change → cron-scheduled watch (new expressiveness)");
-  ok(JSON.stringify(st({ kind: "scheduled", at: "2027-03-01T09:00:00Z" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once (postPolicy omitted entirely — ignored for a one-shot)");
-  ok(JSON.stringify(st({ kind: "scheduled", at: "2027-03-01T09:00:00Z", postPolicy: "every-run" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once EVEN when postPolicy is also given (ignored, not an error)");
+  ok(JSON.stringify(st({ kind: "scheduled", at: "2026-07-08T09:00:00Z" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once (postPolicy omitted entirely — ignored for a one-shot)");
+  ok(JSON.stringify(st({ kind: "scheduled", at: "2026-07-08T09:00:00Z", postPolicy: "every-run" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once EVEN when postPolicy is also given (ignored, not an error)");
   const ONE_OF = "A scheduled routine needs exactly ONE of `cron`, `everyMinutes`, or `at`.";
   throwsWith(() => st({ kind: "scheduled", postPolicy: "every-run" }), ONE_OF, "neither of cron/everyMinutes/at is refused");
   throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *", everyMinutes: 5, postPolicy: "every-run" }), ONE_OF, "both cron and everyMinutes are refused");
-  throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *", at: "2027-03-01T09:00:00Z" }), ONE_OF, "both cron and at are refused");
+  throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *", at: "2026-07-08T09:00:00Z" }), ONE_OF, "both cron and at are refused");
   throwsWith(() => st({ kind: "scheduled", at: "not-a-real-timestamp" }), '`at` must be a valid ISO 8601 timestamp, got "not-a-real-timestamp"', "an invalid `at` is refused");
   throwsWith(() => st({ kind: "scheduled", cron: "0 9 * * *" }), "A cron/everyMinutes routine needs `postPolicy`", "a missing postPolicy is refused");
   const ev = st({ kind: "event", source: "github", jq: '.fields.repo == "me/proj" and (.fields.event | IN("push"))' });
@@ -345,3 +347,7 @@ await removeTempDir(dir);
 }
 
 console.log(`✓ routines: ${passed} assertions passed (schedule + lifecycle + watch + store + check-in cap)`);
+
+// proves: AP-MOD-core-approvals-routine-cancel
+
+// proves: TOOL-cancel_routine, TOOL-record_watch_state

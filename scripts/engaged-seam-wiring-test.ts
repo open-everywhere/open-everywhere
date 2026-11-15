@@ -40,7 +40,7 @@ const ok = (cond: boolean, label: string) => {
 };
 
 const store = getOperationalStore();
-const NOW = "2026-05-12T11:30:00.000Z";
+const NOW = "2026-09-07T12:00:00.000Z";
 
 {
   const OWNER = "wiring-org";

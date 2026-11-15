@@ -1,3 +1,9 @@
+// proves: AP-LEAN-agent, AP-LEAN-complete_thread, AP-LEAN-no_reply, AP-LEAN-react
+// proves: AP-LEAN-read_channel, AP-LEAN-read_thread, AP-LEAN-reply
+// proves: AP-LEAN-spawn_thread_session, AP-LEAN-stand_down, AP-LEAN-task_cancel
+// proves: AP-LEAN-update_status, AP-MOD-core-access-lean-seat, AP-MOD-core-access-lean-seat-state
+// proves: AP-MOD-core-access-worker-seat, AP-MOD-core-access-worker-seat-state
+
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -576,3 +582,7 @@ ok(
 ok(LEAN_SEAT_TOOLS.has(WORK_FORWARD_TOOL) && WORK_FORWARD_TOOL === "work", "the forwarding seat's verb `work` is on the lean seat roster");
 
 console.log(`\n✓ lean-seat (OPE-301 + the OPE-420 worker subtraction): ${n} assertions passed (posture truth table, roster membership, toolset filter, live-context wiring incl. job mutual-exclusion, execute backstop, derived surfaces)\n`);
+
+// proves: SEAT-chat-arm, SEAT-dm-carve-in, SEAT-harness-internal, SEAT-lean-default-deny, SEAT-lean-filter
+// proves: SEAT-lean-posture, SEAT-lean-roster, SEAT-worker-allow-by-default, SEAT-worker-withheld
+// proves: TOOL-task_wait, TOOL-web_search

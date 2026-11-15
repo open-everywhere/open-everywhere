@@ -1,3 +1,5 @@
+// proves: SEAT-36
+
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -327,9 +329,9 @@ const EPOCH_ISO = "1970-01-01T00:00:00.000Z";
   await store.markUnifiedWakesAudited(ORG, [w], "2026-08-19T11:00:00.000Z");
   ok((await stampOf(w)) === "2026-08-19T10:00:00.000Z", "§11: FIRST STAMP WINS — a re-run cannot move the horizon");
 
-  await store.markUnifiedWakesAudited(ORG, ["no-such-wake-id"], "2026-01-16T13:12:00.000Z");
+  await store.markUnifiedWakesAudited(ORG, ["no-such-wake-id"], "2026-08-19T12:00:00.000Z");
   ok((await store.getUnifiedWakeRecord(ORG, "no-such-wake-id")) === null, "§11: marking an ABSENT wake inserts nothing (UPDATE-only)");
-  await store.markUnifiedWakesAudited(ORG, [], "2026-01-16T13:12:00.000Z");
+  await store.markUnifiedWakesAudited(ORG, [], "2026-08-19T12:00:00.000Z");
   ok((await stampOf(other)) === undefined, "§11: an EMPTY batch writes nothing");
 
   await store.markUnifiedWakesAudited("globex", [other], "2026-08-19T13:00:00.000Z");

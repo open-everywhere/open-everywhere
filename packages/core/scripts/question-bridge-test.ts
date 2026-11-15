@@ -351,3 +351,5 @@ const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_A
 }
 
 console.log(`question-bridge: ${n} assertions passed`);
+
+// proves: TOOL-ask_question

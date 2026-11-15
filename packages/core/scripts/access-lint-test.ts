@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-lint
+
 import assert from "node:assert/strict";
 import { defineBundle, defineBinding, type Bundle, type Binding, type Connection } from "../agent/access/bundle.js";
 import {

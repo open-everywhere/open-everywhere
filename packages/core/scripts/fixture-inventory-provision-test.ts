@@ -436,7 +436,7 @@ const PLAN_LIMIT = "You have reached the limit of teams allowed in your current 
 }
 {
   const rec = recorder();
-  const guid = "00000000-0000-4000-8000-000000000020";
+  const guid = "9e396c88-1a2b-4c3d-8e5f-6a7b8c9d0e1f";
   const outcome = await withPatchedFetch(linearRefusingScript(rec, `Team ${guid} is not accessible`), () =>
     PROVISIONERS.linear(LINEAR_ENV, PLAN, LINEAR_ROOM),
   );

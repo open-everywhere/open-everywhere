@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-config-pr-github
+
 import assert from "node:assert/strict";
 import type { PrFetchFn } from "../agent/scm/pr.js";
 

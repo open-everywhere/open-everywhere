@@ -1,3 +1,5 @@
+// proves: ROUT-45, ROUT-46
+
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,7 +63,7 @@ function rule(over: Partial<RoutinePolicyRule> = {}): RoutinePolicyRule {
     id: "p-1a2b3c4d",
     rule: "Never post before 09:00 UTC.",
     why: "the 2026-07-19 run woke the channel at 03:12.",
-    addedAt: "2026-02-24T06:00:00.000Z",
+    addedAt: "2026-07-20T10:00:00.000Z",
     addedBy: "U_HUMAN",
     source: "human",
     ...over,
@@ -269,14 +271,14 @@ for (const name of ["add_routine_rule", "remove_routine_rule"] as const) {
     ruleId: "p-1a2b3c4d",
     ruleText: "Never post before 09:00 UTC.",
     why: "the 2026-07-19 run woke the channel at 03:12.",
-    addedAt: "2026-02-24T06:00:00.000Z",
+    addedAt: "2026-07-20T10:00:00.000Z",
     addedBy: "U_HUMAN",
     countBefore: 3,
     requestedBy: "U_ASKER",
   });
   const removeText = removeCard.join("\n");
   ok(removeText.includes("Never post before 09:00 UTC."), "card/remove: names the rule being destroyed, FROZEN at propose time — the execute deletes the only live copy");
-  ok(removeText.includes("U_HUMAN") && removeText.includes("2026-02-24T06:00:00.000Z"), "card/remove: names who armed it and when");
+  ok(removeText.includes("U_HUMAN") && removeText.includes("2026-07-20T10:00:00.000Z"), "card/remove: names who armed it and when");
   ok(/guardrail/.test(removeText), "card/remove: says plainly that a guardrail is going away");
   ok(/3 → 2/.test(removeText), "card/remove: the count moves the other way");
 }
@@ -344,3 +346,7 @@ for (const name of ["add_routine_rule", "remove_routine_rule", "declare_webhook"
 }
 
 console.log(`✓ routine-policy: ${passed} assertions (standing rules — pure, render, mount, gates)`);
+
+// proves: AP-MOD-core-approvals-routine-policy
+
+// proves: TOOL-add_routine_rule, TOOL-remove_routine_rule

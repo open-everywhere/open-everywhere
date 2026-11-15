@@ -225,6 +225,8 @@ async function retryRows(wakeId: string): Promise<Array<Record<string, unknown>>
     /withRetryAfterThrown\(\s*\(\)\s*=>\s*receive\(channel, target\)\.send\(/.test(src),
     "🔴 §5: the ONE cross-surface dispatch still goes through the shared road — unwrap it and every surface silently loses its wake backoff",
   );
+  const dispatchAt = src.indexOf("const deliveredAuth = auth;");
+  ok(dispatchAt > 0, "§5: the slice anchor `const deliveredAuth = auth;` is still in unified.ts — without it the check below reads nothing and passes vacuously");
   ok(
     !/setTimeout\(|new Promise\(\s*\(resolve\)\s*=>/.test(src.slice(dispatchAt)),
     "🔴 §5: …and the dispatch grew no backoff of its own beside it — one road, not two",

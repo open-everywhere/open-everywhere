@@ -1,3 +1,5 @@
+// proves: DELG-52
+
 import assert from "node:assert/strict";
 import { ROUTING_ASKS, scoreRoutingTurn, summariseRoutingRun, SELF_ORCHESTRATION_TOOLS, THREAD_HANDOFF_TOOL, type RoutingAsk } from "./eval/routing-decision-offline.js";
 import { ROUTING_DECISION } from "../agent/instructions/seat-prompt.js";

@@ -1,3 +1,7 @@
+// proves: ROUT-48, ROUT-79, ROUT-80
+
+// proves: AP-MOD-core-access-read-grant
+
 import assert from "node:assert/strict";
 import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";

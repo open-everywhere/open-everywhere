@@ -1,3 +1,5 @@
+// proves: DELG-40, DELG-41, DELG-43, DELG-45
+
 import assert from "node:assert/strict";
 import {
   defineDomain,
@@ -280,9 +282,9 @@ function supervisorTokenPerContainer(): string {
 
 const baseInput: WakeEnvelopeInput = {
   reason: "channel-activity",
-  currentTime: "2026-03-15T09:30:00.000Z",
+  currentTime: "2026-07-11T10:00:00.000Z",
   channel: { id: "C_PAY", type: "channel", memberCount: 5 },
-  messages: [{ from: "human", author: "Sarah", id: "1.1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer", trigger: true, body: "hello" }],
+  messages: [{ from: "human", author: "Sarah", id: "1.1", sentAt: "2026-07-11T09:59:00.000Z", trust: "peer", trigger: true, body: "hello" }],
 };
 const noPlatform = renderWakeEnvelope(baseInput);
 ok(noPlatform.includes('<channel id="C_PAY" type="channel" member-count="5">'), "the <channel> element carries its opaque id, type and member-count");
@@ -445,9 +447,9 @@ const cw = (unifiedDisclosure?: boolean): NormalizedWake => ({
   addressing: "channel-watch",
   ...(unifiedDisclosure ? { unifiedDisclosure } : {}),
   locus: { channel: { id: "C_PAY", type: "channel" } },
-  trigger: { kind: "message", message: { from: "human", author: "Sarah", id: "1.1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer", trigger: true, body: "hi" } },
+  trigger: { kind: "message", message: { from: "human", author: "Sarah", id: "1.1", sentAt: "2026-07-11T09:59:00.000Z", trust: "peer", trigger: true, body: "hi" } },
 });
-const clock = () => "2026-03-15T09:30:00.000Z";
+const clock = () => "2026-07-11T10:00:00.000Z";
 const plain = renderWake(cw(), clock).message;
 const disclosed = renderWake(cw(true), clock).message;
 assert.equal(disclosed, plain, "🔴 unifiedDisclosure reaches NO rendered byte — setting it changes nothing");

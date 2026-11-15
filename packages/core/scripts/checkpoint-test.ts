@@ -1,3 +1,5 @@
+// proves: checkpoint.continue, checkpoint.trip
+
 import { __setTestValveForTest, testValveArmed } from "../agent/testing/test-valves.js";
 import { tmpdir } from "node:os";
 import { rmSync, readdirSync, readFileSync } from "node:fs";
@@ -8,7 +10,6 @@ import type { SpendCheckpoints } from "../agent/spend/checkpoint.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
-
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -603,3 +604,5 @@ try {
 }
 
 console.log(`✓ checkpoint-test: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-approvals-session-checkpoint

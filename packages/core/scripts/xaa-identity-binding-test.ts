@@ -1,6 +1,8 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
+// proves: connector.xaa.link_refused
+
 import { createPrivateKey, generateKeyPairSync, sign } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";

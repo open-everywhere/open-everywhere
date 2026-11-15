@@ -1,3 +1,7 @@
+// proves: ROUT-14, ROUT-15, ROUT-16, ROUT-17, ROUT-18, ROUT-19, ROUT-21, ROUT-22, ROUT-44
+
+// proves: AP-JW-record_follow_up
+
 import { tmpdir } from "node:os";
 import { rmSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -773,3 +777,5 @@ const T0 = new Date("2026-07-02T12:00:01.000Z");
 }
 
 console.log(`✓ routine pre-fire (collectors, condition gates, follow-ups): ${passed} assertions passed`);
+
+// proves: TOOL-record_follow_up

@@ -168,7 +168,6 @@ export function staticTokenVerifier(opts: { token: string; subject?: string }): 
 
 export const SERVICE_TOKEN_ISSUER = "service-token";
 
-
 export interface ServiceTokenEntry {
   readonly name: string;
   readonly sha256: string;

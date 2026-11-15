@@ -190,7 +190,7 @@ const ROUTINE_ID = "r-1a2b3c4d";
 }
 
 {
-  const sessionId = "wrun_example79";
+  const sessionId = "wrun_41MBA8W2A00GYVM20VYEBVST5W";
   const body = upsertStatusItem(statusSeed("slack/T0EXAMPLE/C0123ABCD"), sessionId, statusItemLine(sessionId, "working", "Drafting the launch note", "2026-10-13 09:30Z"));
   ok(body.includes(sessionId), "NEGATIVE CONTROL: STATUS.md keeps the session id — it is the bullet's key");
   clean(renderPinned(body), "the pinned status message");

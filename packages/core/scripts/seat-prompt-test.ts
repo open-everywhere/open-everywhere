@@ -1,3 +1,5 @@
+// proves: DELG-53
+
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("seat-prompt");
 import {

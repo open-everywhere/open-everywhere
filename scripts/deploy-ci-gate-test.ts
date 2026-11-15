@@ -403,7 +403,6 @@ function routedExec(fixture: { ancestors?: string[]; checkRuns?: Record<string, 
   };
 }
 
-
 await check("listFirstParentAncestors: parses rev-list output, sha itself first", async () => {
   const exec = async () => ({ code: 0, stdout: `${SHA}\n${A1}\n${A2}\n`, stderr: "" });
   const result = await listFirstParentAncestors({ sha: SHA, count: 3, exec });
@@ -1450,6 +1449,5 @@ await check("runCiGate: the PAT 403 + a walk-back whose diff has a RUNTIME path 
   assert.equal(decision.verdict, "refuse");
   assert.match(decision.message, /agent\/agent\.ts/);
 });
-
 
 console.log(`✓ deploy-ci-gate: ${checks} check(s) passed (classification, decision matrix, spawn-trap seam, fetch→decide, oe/cloud-proof walk-back, REST fallback transport, fail-closed fetch edge — all offline)`);

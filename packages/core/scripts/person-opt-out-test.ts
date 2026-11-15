@@ -1,3 +1,5 @@
+// proves: person.opt_out.set, person.opt_out.cleared, person.opt_out.refused
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

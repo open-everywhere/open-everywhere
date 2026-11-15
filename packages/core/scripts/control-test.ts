@@ -414,3 +414,5 @@ ok("server exposes the declared tool names", JSON.stringify(registered) === JSON
 ok("no mutating tool leaked into slice 1", !registered.some((t) => /set|grant|revoke|cancel|create|update|delete|rotate/.test(t)));
 
 console.log(`\n✓ control surface: ${n} assertions passed (${registered.length} tools: ${registered.join(", ")})\n`);
+
+// proves: CTRL-session_transcript, CTRL-skill_revisions, CTRL-skills_list, CTRL-usage_summary

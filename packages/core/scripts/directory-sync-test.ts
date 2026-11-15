@@ -1,3 +1,5 @@
+// proves: identity.link.suggested
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
@@ -269,7 +271,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
 {
   const evilSet = "dir-evil";
-  await pg.putLinkSet(ORG, { org: ORG, id: evilSet, handle: "evil", status: "active", createdAt: "2026-01-10T12:20:00Z", updatedAt: "2026-01-10T12:20:00Z" });
+  await pg.putLinkSet(ORG, { org: ORG, id: evilSet, handle: "evil", status: "active", createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z" });
   await suggestLinkedId({ org: ORG, linkSetId: evilSet, account: { platform: "slack", tenant: T1, nativeId: "ATTACKER" }, evidence: { kind: "directory-sync", provider: "okta", grade: "attested" } });
   await suggestLinkedId({ org: ORG, linkSetId: evilSet, account: { platform: "github", tenant: "", nativeId: "VICTIM_GH" }, evidence: { kind: "directory-sync", provider: "okta", grade: "email-match" } });
   const dmAttacker = ctxFor({ channelId: "D-EVIL", channelType: "im", principalId: "ATTACKER" });
@@ -866,3 +868,10 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
 resetDirectoryProvider();
 console.log(`✓ directory-sync-test: ${n} assertions passed`);
+
+// proves: AP-MOD-core-identity-directory, AP-MOD-core-identity-directory-sync
+
+// proves: SET-013
+// proves: CTRL-directory_sync_now, CTRL-directory_sync_status
+
+// proves: SET-073, SET-083

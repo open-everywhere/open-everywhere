@@ -419,3 +419,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
 }
 
 console.log(`\n✓ scm-broker: ${n} assertions passed (union-mint per owner, 500-cap, merge-no-duplicate-github-rule, withBareAllowHost push-window swap, checkoutCommandBrokered, enforcement-state seam, checkout_repo enforced-vs-fallback, checkout_repo with a personal access token)\n`);
+
+// proves: AP-MOD-core-access-enforcement
+
+// proves: TOOL-checkout_repo

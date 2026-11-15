@@ -136,7 +136,6 @@ if [ "$("$DOCKER" inspect -f '{{.State.Running}}' "$APP" 2>/dev/null)" = "true" 
   probe=$("$DOCKER" exec -w /app "$APP" node /app/scripts/docker-smoke-egress-probe.mjs 2>&1 | grep -E '^(PROBE|NOTE) ' || true)
 fi
 
-
 proxy_logs=$("$DOCKER" logs "$PROXY" 2>&1 || true)
 denied=$("$DOCKER" exec "$PROXY" cat /var/log/oe-egress/denied.log 2>/dev/null || true)
 GW_HOST="ai-gateway.vercel.sh"

@@ -1,3 +1,6 @@
+// proves: routine.complete
+// proves: ROUT-39
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { slackContinuationToken } from "eve/channels/slack";
@@ -293,3 +296,5 @@ await rejectsWith(
 
 await removeTempDir(dir);
 console.log(`✓ job-routine: ${passed} assertions passed`);
+
+// proves: TOOL-complete_job, TOOL-record_job_state

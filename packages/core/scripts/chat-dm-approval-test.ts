@@ -1,3 +1,5 @@
+// proves: chat.dm
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,3 +159,5 @@ function args(over: Partial<ChatDmArgs> = {}): ChatDmArgs {
 
 await removeTempDir(dir);
 console.log(`✓ chat-dm-approval: ${n} assertions`);
+
+// proves: AP-MOD-core-approvals-chat-dm

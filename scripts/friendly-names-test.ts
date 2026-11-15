@@ -50,7 +50,7 @@ const RAW =
   "Ask U0EXOWNER about it in C0123ABCD (slack/T0EXAMPLE/C0123ABCD, user:slack/T0EXAMPLE/U0BOB00001). " +
   "The voice channel 123456789012345678 in discord/876543210987654321/123456789012345678 is ready. " +
   "Teams: teams/tenant-1/19:abcDEF_123@thread.tacv2 and 29:1abcDEFghijKLM. " +
-  "Run wrun_example79, meeting mtg_0123456789abcdef0123456789, wake-id=\"w-1\".";
+  "Run wrun_41MBA8W2A00GYVM20VYEBVST5W, meeting mtg_0123456789abcdef0123456789, wake-id=\"w-1\".";
 ok(rawIdLeaks(RAW).length >= 10, "🔴 the fixture leaks every class of raw id before the guard (the test can fail)");
 
 for (const platform of ["slack", "discord", "teams", "github", "linear", "notion", "email", "plain", "future-chat"]) {
@@ -74,7 +74,7 @@ const KEPT = [
   "Edit .github/workflows/ci.yml, then /api/oauth/callback and `/api/oauth/slack/callback`.",
   "Pin github/codeql-action@v3 for the scan.",
   "Run `grep -n slack/T0EXAMPLE/C0123ABCD log.txt` to check.",
-  "ASIN B0EXAMPLE86 shipped; git log E0123ABCDE; the hash is 0x12345678901234567890.",
+  "ASIN B07XJ8C8F5 shipped; git log E0123ABCDE; the hash is 0x12345678901234567890.",
 ];
 const slackMentions = "Ping <@U0EXOWNER> in <#C0123ABCD>, and <!here>.";
 eq(renderFriendlyText(slackMentions, { platform: "slack" }), slackMentions, "a Slack mention passes as written on Slack, where it renders as a name");
@@ -86,7 +86,7 @@ eq(rawIdLeaks(slackMentions, "teams"), ["U0EXOWNER", "C0123ABCD"], "the detector
 for (const text of KEPT) for (const platform of ["slack", "github", "teams"]) eq(renderFriendlyText(text, { platform }), text, `left untouched on ${platform}: ${JSON.stringify(text.slice(0, 48))}`);
 for (const platform of ["slack", "teams"]) eq(renderFriendlyText("order 12345678901234567890 shipped", { platform }), "order 12345678901234567890 shipped", `a 20-digit order number stays on ${platform}`);
 eq(renderFriendlyText("ask `U0EXOWNER` now", { platform: "slack" }), "ask someone on Slack now", "an id ALONE in inline code is a quoted id: it renders, and its backticks go");
-eq(renderFriendlyText("pending `00000000-0000-4000-8000-000000000087` expires", { platform: "discord" }), "pending `00000000-0000-4000-8000-000000000087` expires", "an unnamed GUID in inline code keeps its backticks");
+eq(renderFriendlyText("pending `0f8fad5b-d9cb-469f-a165-70867728950f` expires", { platform: "discord" }), "pending `0f8fad5b-d9cb-469f-a165-70867728950f` expires", "an unnamed GUID in inline code keeps its backticks");
 eq(renderFriendlyText("from user:email/bob@example.com", { platform: "slack" }), "from someone", "an email person key renders as words (it used to be a shape the detector caught)");
 eq(renderFriendlyText("Rowan (U0EXOWNER) asked", { platform: "slack" }), "Rowan asked", "🔴 a read's `Name (id)` label echoed by the model collapses to the name — no doubled name, no ping");
 const linked = "Who asked: <slack://user?team=T0EXAMPLE&id=U0EXOWNER|Rowan Hale> (rowan@example.com), and [Sam](https://discord.com/users/123456789012345678).";
@@ -98,13 +98,13 @@ const names = new Map([
   ["U0EXOWNER", { label: "Rowan", kind: "person" as const }],
   ["123456789012345678", { label: "#voice-lobby", kind: "channel" as const }],
   ["876543210987654321", { label: "Acme HQ", kind: "server" as const }],
-  ["00000000-0000-4000-8000-000000000088", { label: "Sam Lee", kind: "person" as const }],
+  ["0f8fad5b-d9cb-469f-a165-70867728950e", { label: "Sam Lee", kind: "person" as const }],
 ]);
 ok(renderFriendlyText(RAW, { platform: "slack", names }).startsWith("Ask Rowan about it"), "a resolved name renders as the name");
 ok(renderFriendlyText(RAW, { platform: "teams", names }).includes("The voice channel #voice-lobby in #voice-lobby is ready"), "off Discord, a NAMED Discord number renders as its #name");
 eq(renderFriendlyText("on discord/876543210987654321", { platform: "discord", names }), "on Acme HQ", "a Discord server key renders as the server name");
-eq(renderFriendlyText("from 00000000-0000-4000-8000-000000000088", { platform: "teams", names }), "from Sam Lee", "a GUID a resolver named renders as the name");
-eq(renderFriendlyText("request 00000000-0000-4000-8000-000000000087 failed", { platform: "teams" }), "request 00000000-0000-4000-8000-000000000087 failed", "an unnamed GUID stays: it may be a request id a person needs");
+eq(renderFriendlyText("from 0f8fad5b-d9cb-469f-a165-70867728950e", { platform: "teams", names }), "from Sam Lee", "a GUID a resolver named renders as the name");
+eq(renderFriendlyText("request 0f8fad5b-d9cb-469f-a165-70867728950f failed", { platform: "teams" }), "request 0f8fad5b-d9cb-469f-a165-70867728950f failed", "an unnamed GUID stays: it may be a request id a person needs");
 eq(renderFriendlyText("ask U0EXOWNER", { platform: "slack", names: new Map([["U0EXOWNER", { label: "U0EXOWNER", kind: "person" as const }]]) }), "ask someone on Slack", "a label that only repeats the id is not a name");
 const hostile = new Map([["U0EXOWNER", { label: "<!here> & *bold*", kind: "person" as const }], ["111111111111111111", { label: "@everyone **x**", kind: "person" as const }]]);
 eq(renderFriendlyText("ask U0EXOWNER", { platform: "slack", names: hostile }), "ask &lt;!here&gt; &amp; *bold*", "🔴 on Slack a hostile name is escaped: no `<!here>` broadcast");
@@ -169,7 +169,7 @@ for (const platform of PLATFORMS) {
   const fetch = async (_url: string, init: RequestInit) => (wire.push(init), new Response("{}", { status: 200 }));
   const card = {
     content: RAW,
-    embeds: [{ title: "Join 123456789012345678?", description: RAW, fields: [{ name: "Requested by", value: "<@111111111111111111> for U0EXOWNER" }], footer: { text: "wrun_example79" } }],
+    embeds: [{ title: "Join 123456789012345678?", description: RAW, fields: [{ name: "Requested by", value: "<@111111111111111111> for U0EXOWNER" }], footer: { text: "wrun_41MBA8W2A00GYVM20VYEBVST5W" } }],
     components: [{ type: 1, components: [{ type: 2, label: "Join 123456789012345678", custom_id: "oe:approve:123456789012345678" }] }],
   };
   await discordFetch("POST /channels/{id}/messages", "https://discord.com/api/v10/channels/1/messages", { method: "POST", body: JSON.stringify(card) }, { fetch });

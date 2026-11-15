@@ -27,7 +27,7 @@ const TOOL = "update_list";
 
 const cellsSchema = z
   .record(z.string(), z.string())
-  .describe('Column name → value, e.g. { "Title": "Fix login", "Owner": "<@U123>", "Status": "In progress", "Due": "2026-10-21" }. A person is a Slack mention (look them up first); a date is YYYY-MM-DD; a checkbox is yes or no.');
+  .describe('Column name → value, e.g. { "Title": "Fix login", "Owner": "<@U123>", "Status": "In progress", "Due": "2026-10-20" }. A person is a Slack mention (look them up first); a date is YYYY-MM-DD; a checkbox is yes or no.');
 
 const inputSchema = z.object({
   list: z.string().min(1).describe("The List, as its Slack link. It must be shared in this conversation."),
@@ -58,7 +58,7 @@ async function namedCells(cells: readonly ListCell[], nameOf: PersonName): Promi
 
 export async function buildListWrite(
   input: z.infer<typeof inputSchema>,
-  p: { readonly org: string; readonly scopeKey: string; readonly channelId: string; readonly requestedBy: string; readonly tainted?: boolean },
+  p: { readonly org: string; readonly scopeKey: string; readonly channelId: string; readonly requestedBy: string; /** @deprecated Ignored since OPE-2717. */ readonly tainted?: boolean },
   call: SlackDocCall,
   nameOf: PersonName = bridgeFetchUserDisplayName,
 ): Promise<ListWriteArgs> {
@@ -121,6 +121,7 @@ const updateListEntry = defineTool({
     }
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error(`${TOOL}: I could not tell which Slack conversation this is. Ask again from the channel or DM.`);
+    // principal-gate: accountability — somebody NAMEABLE must exist (a card needs an "asked by" line). A fire's attested creator satisfies this, correctly.
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(`${TOOL}: no verified person asked for this, so there is nobody to show on the approval card.`);

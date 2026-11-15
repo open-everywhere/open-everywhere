@@ -403,3 +403,5 @@ const ctxForTurn = (page: string, turnId: string, ws = WS): BindableContext => {
 }
 
 console.log(`✓ ${passed} notion read-scope assertions passed`);
+
+// proves: TOOL-read_notion_comments, TOOL-read_notion_page

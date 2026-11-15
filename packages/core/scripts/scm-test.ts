@@ -850,3 +850,5 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, read/write mint split, git-arg safety, identity, config, orchestrator, checkout cmd, approved push, PR create/update, convention probe, repo skills, repo agents, guards, egress, PR checks summary, PR feedback digest, installation composition)\n`);
+
+// proves: TOOL-get_pr_feedback

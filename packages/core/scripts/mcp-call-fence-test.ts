@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-mcp-call-fence
+
 import assert from "node:assert/strict";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 

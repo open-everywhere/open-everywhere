@@ -541,3 +541,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
 }
 
 console.log(`✓ routine-declared-permissions: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-approvals-routine-create, AP-MOD-core-approvals-session-grant
+
+// proves: TOOL-revoke_routine_permissions

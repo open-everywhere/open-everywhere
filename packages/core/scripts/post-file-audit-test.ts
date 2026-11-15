@@ -151,3 +151,5 @@ async function armed(ctx: BindableContext): Promise<ArmedPostFile> {
 }
 
 console.log(`\n✓ post-file-audit: ${n} assertions passed (Discord attach id, Slack attach named-absence, negative control)\n`);
+
+// proves: TOOL-post_file

@@ -675,7 +675,7 @@ await inSession(async () => {
   eq(await signIn.takeSignInResume(ORG, "det-9"), { requestId: "req-q", taskId: "agent-q", connector: "notion" }, "the callback takes it");
   eq(await signIn.takeSignInResume(ORG, "det-9"), undefined, "🔴 …once: a replayed callback finds nothing to resume");
 
-  const row = { requestId: "req-q", seatToken: SEAT_TOKEN, wakeId: WAKE, origin: ORIGIN, surfaceKey: "slack/T1/D1", binding: {} as never, requester: { kind: "requester" as const, principalId: "slack/T1/U_ROWAN" }, nonMemberWake: false, tainted: false, atIso: "2026-05-17T11:54:00.000Z" };
+  const row = { requestId: "req-q", seatToken: SEAT_TOKEN, wakeId: WAKE, origin: ORIGIN, surfaceKey: "slack/T1/D1", binding: {} as never, requester: { kind: "requester" as const, principalId: "slack/T1/U_ROWAN" }, nonMemberWake: false, tainted: false, atIso: "2026-10-11T00:00:00.000Z" };
   const record = { detourId: "det-9", connector: "notion", origin: { org: ORG, surfaceKey: "slack/T1/D1", target: { platform: "slack", channelId: "D1" } as never, principalId: "U_ROWAN" }, startedAtMs: 0, expiresAtMs: 1 };
   const sent: { message: string; quiet?: boolean; requestId: string; seatToken: string }[] = [];
   const deps = (over: Record<string, unknown> = {}) => ({
@@ -683,7 +683,7 @@ await inSession(async () => {
     readRequest: async () => row as never,
     seatToken: async (_o: string, t: string) => t,
     dispatch: (async (i: { message: string; quiet?: boolean; requestId: string; seatToken: string }) => (sent.push(i), true)) as never,
-    nowIso: () => "2026-05-17T11:54:00.000Z",
+    nowIso: () => "2026-10-11T00:00:00.000Z",
     ...over,
   });
   ok(await resumeSignedInWork(record, deps()), "🔴 the sign-in of the job's own requester wakes the seat");

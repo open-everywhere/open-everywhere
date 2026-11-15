@@ -1,3 +1,5 @@
+// proves: ROUT-65, ROUT-67, ROUT-68, ROUT-69, ROUT-71, ROUT-75, ROUT-76, ROUT-77, ROUT-82
+
 import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { readFileSync } from "node:fs";
@@ -161,7 +163,7 @@ ok(webhookMaxBodyBytes() === 256 * 1024, "the cap is a code constant (OPE-2411):
 delete process.env.OE_WEBHOOK_MAX_BODY_BYTES;
 
 const maxBodyBytes = 1024;
-const nowMs = Date.parse("2026-03-30T11:30:00.000Z");
+const nowMs = Date.parse("2026-07-26T12:00:00.000Z");
 const ts = String(Math.floor(nowMs / 1000));
 const msgId = "msg_webhooks_test";
 const signedFor = (key: string, rawBody = body, timestamp = ts): Headers =>
@@ -482,7 +484,7 @@ function captureReceive(): { calls: Captured[]; to: never } {
 
 {
   const { calls, to } = captureReceive();
-  const fireNow = new Date("2026-06-04T18:01:00.000Z");
+  const fireNow = new Date("2026-09-23T12:00:00.000Z");
   const result = await fireWebhook(goodHook, payload, { to, confirmInternal: async () => true, now: fireNow });
   ok(result.fired === true, "a healthy fire reports fired=true");
   ok(calls.length === 1, "receive() is called exactly once");
@@ -750,3 +752,5 @@ await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07"
 
 await removeTempDir(dir);
 console.log(`✓ webhooks: ${passed} assertions passed`);
+
+// proves: SET-063, SET-064, SET-065

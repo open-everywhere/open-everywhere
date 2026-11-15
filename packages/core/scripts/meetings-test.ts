@@ -186,7 +186,7 @@ function args(over: Partial<MeetingJoinArgs> = {}): MeetingJoinArgs {
     host: "meet.google.com",
     roomId: "abc-defg-hij",
     requestedBy: "U1",
-    origin: { platform: "slack", channelId: "C1", threadTs: "1700159720.000100" },
+    origin: { platform: "slack", channelId: "C1", threadTs: "1700000000.000100" },
     partition,
     maxMinutes: 120,
     transcriptDays: 30,
@@ -237,7 +237,7 @@ async function auditActions(): Promise<{ action: string; detail?: Record<string,
   const rec = await lifecycle.openMeeting(a, "U2", { policy, backend: fake.backend, callbackBase: "https://oe.example" });
   ok(fake.opened.length === 1 && rec.box.name === "box-1" && rec.status === "joining", "the click opens exactly one box and stores the record");
   const stored = await getMeetingRecord(ORG, a.meetingId);
-  ok(stored !== undefined && stored.secret === rec.secret && stored.origin.threadTs === "1700159720.000100", "the record (secret, origin thread) survives in the operational store");
+  ok(stored !== undefined && stored.secret === rec.secret && stored.origin.threadTs === "1700000000.000100", "the record (secret, origin thread) survives in the operational store");
   const joinRow = (await auditActions()).find((r) => r.action === "meeting.join");
   ok(joinRow !== undefined && joinRow.detail?.meetingId === a.meetingId && !JSON.stringify(joinRow.detail).includes(rec.secret), "a meeting.join audit row names the meeting and never carries the callback secret");
 
@@ -268,7 +268,7 @@ async function auditActions(): Promise<{ action: string; detail?: Record<string,
   const ended = signed(rec.secret, { type: "ended", chunks: 3, reason: "meeting-ended" });
   ok((await lifecycle.handleMeetingCallback(ORG, a.meetingId, ended.raw, ended.headers, deps)).status === 200, "the ended callback is accepted");
   ok(fake.stopped.includes("box-1"), "ended stops the box");
-  ok(posts.length === 1 && posts[0]!.channelId === "C1" && posts[0]!.threadTs === "1700159720.000100" && posts[0]!.platform === "slack", "ONE recap is posted into the thread the ask came from");
+  ok(posts.length === 1 && posts[0]!.channelId === "C1" && posts[0]!.threadTs === "1700000000.000100" && posts[0]!.platform === "slack", "ONE recap is posted into the thread the ask came from");
   const recap = posts[0]!.text;
   ok(recap.includes("Decisions:") && recap.includes("Launch on 2026-11-02") && recap.includes("Ana: Book the venue") && recap.includes("(due Friday)"), "the recap carries the decisions and the actions with owner and due date");
   ok(!/[<>]/.test(recap.split("\n").map((l) => l.replace(/^> ?/, "")).join("\n")) && !recap.includes("@here") && !recap.includes("<https:"), "the recap strips mention and link syntax from the model's fields");

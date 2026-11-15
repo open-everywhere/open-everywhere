@@ -1,3 +1,5 @@
+// proves: identity.link.revoked, identity.link.unlinked
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
@@ -342,3 +344,5 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
 }
 
 console.log(`✓ c3-oauth-vault-share: ${n} assertions passed`);
+
+// proves: CTRL-purge_link_set_credentials

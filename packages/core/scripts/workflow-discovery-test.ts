@@ -1,3 +1,5 @@
+// proves: personal_watch.proposal, personal_watch.proposal.accepted, personal_watch.proposal.declined, room_watch.proposal, room_watch.proposal.accepted, room_watch.proposal.declined, room_watch.silence, room_watch.stopped, room_watch.resumed
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -1,3 +1,7 @@
+// proves: ROUT-92
+
+// proves: AP-JW-list_webhooks
+
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -315,3 +319,7 @@ const rotateKind = actionKind("webhook.rotate")!;
 
 await removeTempDir(dir);
 console.log(`\n✅ webhook-provisioning: ${n} checks passed`);
+
+// proves: AP-MOD-core-approvals-webhook
+
+// proves: TOOL-list_webhooks, TOOL-rotate_webhook

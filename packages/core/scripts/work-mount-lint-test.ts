@@ -1,3 +1,10 @@
+// proves: AP-MOD-core-access-work-mount-manifest, AP-WORK-add_label, AP-WORK-assign, AP-WORK-check_pr_status
+// proves: AP-WORK-checkout_repo, AP-WORK-create_ticket, AP-WORK-get_pr_feedback, AP-WORK-notion_search
+// proves: AP-WORK-open_pull_request, AP-WORK-post_pr_walkthrough, AP-WORK-read_linear_issue
+// proves: AP-WORK-read_notion_page, AP-WORK-read_work_channel, AP-WORK-read_work_thread, AP-WORK-search
+// proves: AP-WORK-set_state, AP-WORK-subscribe_pr, AP-WORK-walk_pr
+// proves: AP-WORK-read_github_issue
+
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -261,3 +268,5 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log(`\nAll work-mount manifest checks passed.`);
+
+// proves: ROSTER-lint-work-mount

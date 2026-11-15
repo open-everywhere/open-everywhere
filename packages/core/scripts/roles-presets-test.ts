@@ -24,7 +24,6 @@ import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _resetDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 
-
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

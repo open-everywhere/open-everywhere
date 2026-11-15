@@ -1,3 +1,5 @@
+// proves: CTRL-adopt_env_secrets
+
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";

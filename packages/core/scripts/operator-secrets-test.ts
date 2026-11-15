@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-operator-secrets
+
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -355,3 +357,5 @@ function cli(stdin = "") {
 
 await removeTempDir(dir);
 console.log(`✓ operator-secrets: ${n} assertions passed`);
+
+// proves: OPS-secret-write-only, OPS-secret_list, OPS-secret_rm, OPS-secret_set

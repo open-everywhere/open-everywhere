@@ -1,3 +1,5 @@
+// proves: routine.create, routine.expire
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -33,7 +35,6 @@ import type { PrFetchFn } from "../agent/scm/pr.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 registerSlackFixtureMapper();
-
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -490,3 +491,5 @@ const routineCtx = (): BindableContext =>
 }
 
 console.log(`\n✓ pr-subscribe: ${n} assertions passed (status + activity fetch, fingerprint diff, re-arm prompt fencing, check_pr_status + subscribe_pr tools, once-routine persistence, settled + cap short-circuits, audit rows)\n`);
+
+// proves: TOOL-check_pr_status, TOOL-subscribe_pr

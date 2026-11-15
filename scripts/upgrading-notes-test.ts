@@ -29,7 +29,7 @@ function ok(cond: boolean, label: string): void {
 
 const release = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   version: "0.2.0",
-  date: "2026-10-03",
+  date: "2026-10-02",
   summary: "a release.",
   evePeer: "0.54.3",
   breaking: [],
@@ -142,7 +142,7 @@ const rendered = renderUpgradingMarkdown(
   ),
 );
 ok(rendered.startsWith("# Upgrading Open Everywhere\n"), "the page opens with its own title");
-ok(rendered.includes("## 0.3.0 — 2026-10-03"), "every release gets a heading with its date");
+ok(rendered.includes("## 0.3.0 — 2026-10-02"), "every release gets a heading with its date");
 ok(rendered.includes("the seat tool was renamed"), "a breaking change reaches the page");
 ok(rendered.includes("add an override (apply by hand)"), "🔴 a migration with no codemod says so — the reader is the one who applies it");
 ok(rendered.includes("pin undici (codemod `pin-undici`)"), "a migration with a codemod names it");
@@ -157,13 +157,13 @@ ok(
 ok(!rendered.includes("@open-everywhere/core@0.2.0"), "…and never an older release in the record (the negative control)");
 const twoReleases = notesOf(record(release({ version: "0.3.0" }), release({ version: "0.2.0", date: "2026-09-30" })));
 const nextOnMain = renderUpgradingMarkdown(twoReleases, "0.2.0");
-ok(nextOnMain.includes("## 0.3.0 — not released yet\n") && !nextOnMain.includes("## 0.3.0 — 2026-10-03"), "🔴 an entry above core's version is headed \"not released yet\", not with a date");
+ok(nextOnMain.includes("## 0.3.0 — not released yet\n") && !nextOnMain.includes("## 0.3.0 — 2026-10-02"), "🔴 an entry above core's version is headed \"not released yet\", not with a date");
 ok(nextOnMain.includes("## 0.2.0 — 2026-09-30\n"), "…and the released entry keeps its date");
 ok(
   nextOnMain.includes(`\`\`\`sh\n${bootstrapCommands("0.2.0").join("\n")}\n\`\`\`\n`) && !nextOnMain.includes("@open-everywhere/core@0.3.0"),
   "🔴 the bootstrap names the newest RELEASED entry, never a version npm does not hold yet",
 );
-ok(renderUpgradingMarkdown(twoReleases, "0.3.0").includes("## 0.3.0 — 2026-10-03\n"), "…and the same entry renders its date once core reaches it (the negative control)");
+ok(renderUpgradingMarkdown(twoReleases, "0.3.0").includes("## 0.3.0 — 2026-10-02\n"), "…and the same entry renders its date once core reaches it (the negative control)");
 ok(
   bootstrapCommands("0.3.0")[0] === "npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.3.0 tsx@4",
   "🔴 the bootstrap installs tsx BESIDE the target core: the oe bin needs it, and core declares it only as a dev dependency",

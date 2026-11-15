@@ -77,3 +77,5 @@ const workerCtx: BindableContext = {
 }
 
 console.log(`skill-prompt-roster: ${n} assertions passed`);
+
+// proves: TOOL-load_skill

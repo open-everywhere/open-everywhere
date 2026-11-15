@@ -1,3 +1,5 @@
+// proves: SEAT-73
+
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";

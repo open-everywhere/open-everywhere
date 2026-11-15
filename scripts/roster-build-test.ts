@@ -358,3 +358,5 @@ write(
 
 rmSync(root, { recursive: true, force: true });
 console.log(`✓ roster-build-test: ${n} assertions passed (materialise, reconcile, delete strays, unreviewed/vanished, --show/--json/--accept)`);
+
+// proves: ROSTER-accept, ROSTER-build, ROSTER-lint-roster

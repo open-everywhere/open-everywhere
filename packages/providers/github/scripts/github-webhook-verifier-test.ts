@@ -11,7 +11,7 @@ const { githubWebhookVerifier, GITHUB_WEBHOOK_SOURCE } = await import("../agent/
 const { registerWebhookVerifier, webhookVerifier, registeredWebhookVerifierSources, resetWebhookVerifiersForTest, declareProviderSelection } =
   await import("@open-everywhere/core/agent/adapter-api.js");
 
-const NOW_MS = Date.parse("2026-03-30T11:30:00.000Z");
+const NOW_MS = Date.parse("2026-07-26T12:00:00.000Z");
 
 {
   const secret = "It's a Secret to Everybody";

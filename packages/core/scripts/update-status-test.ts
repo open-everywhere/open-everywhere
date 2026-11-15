@@ -255,3 +255,5 @@ const stored = (): MemoryFiles => ({ ...(durable.get(surfaceTierId) ?? {}) });
 }
 
 console.log(`✅ update_status durable-write tests passed (${n} assertions)`);
+
+// proves: TOOL-update_status

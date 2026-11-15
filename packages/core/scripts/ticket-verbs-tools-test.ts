@@ -1,3 +1,5 @@
+// proves: DELG-30, DELG-31
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
@@ -7,7 +9,6 @@ import { join } from "node:path";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { execTool } from "./_tool-exec.js";
 registerSlackFixtureMapper();
-
 
 const dir = join(tmpdir(), `open-everywhere-ticket-verbs-tools-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -199,3 +200,5 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 }
 
 console.log(`✓ ${n} ticket-verbs-tools assertions passed`);
+
+// proves: TOOL-add_label, TOOL-assign, TOOL-set_state

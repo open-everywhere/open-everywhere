@@ -1,3 +1,5 @@
+// proves: AP-JW-report_run_failed
+
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -399,3 +401,5 @@ async function runSession(fire: Fire, declare: string | undefined, sessionId: st
 
 await removeTempDir(dir);
 console.log(`✓ routine semantic failure (OPE-177): ${passed} assertions passed`);
+
+// proves: TOOL-report_run_failed

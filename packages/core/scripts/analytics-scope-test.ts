@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-analytics-scope
+
 import assert from "node:assert/strict";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
@@ -7,7 +9,6 @@ import type { BindableContext } from "../agent/identity/binding.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 registerSlackFixtureMapper();
-
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

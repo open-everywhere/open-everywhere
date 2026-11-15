@@ -2326,7 +2326,6 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       });
     },
 
-
     async setSpendLimit(org, scopeKey, level, limit, meta, condition) {
       assertSpendLimitAmount(limit);
       const params = [org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null];

@@ -164,3 +164,6 @@ function isGitIgnored(dir: string): boolean {
 }
 
 console.log(`✓ human-only-invariants: ${passed} assertions passed`);
+
+// proves: AP-HUMANONLY-clickerMayDecide, AP-HUMANONLY-handleApprovalPayload, AP-HUMANONLY-registerSurfaces
+// proves: AP-HUMANONLY-resolveApprovalClick, AP-MOD-core-access-human-only-invariants-manifest

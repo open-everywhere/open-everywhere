@@ -1,3 +1,12 @@
+// proves: ROUT-40
+
+// proves: AP-JW-check_pr_status, AP-JW-complete_job, AP-JW-describe_image, AP-JW-no_reply
+// proves: AP-JW-query_analytics, AP-JW-react, AP-JW-read_channel, AP-JW-read_linear_issue
+// proves: AP-JW-read_notion_comments, AP-JW-read_notion_page, AP-JW-read_thread, AP-JW-record_job_state
+// proves: AP-JW-record_watch_state
+// proves: AP-JW-reply, AP-JW-update_status, AP-MOD-core-access-job-posture
+// proves: AP-MOD-core-access-job-session-state
+
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -408,3 +417,5 @@ eq(jobFireAttrs(true), { [JOB_FIRE_ATTR]: "true" }, "🔴 OPE-2720: a job fire c
 }
 
 console.log(`\n✓ job-toolset (OPE-111): ${n} assertions passed (posture truth table, fire stamp, kit membership + connector tiers, toolset filter, live-context wiring incl. escalation, execute backstop)\n`);
+
+// proves: SEAT-job-default-deny, SEAT-job-kit, SEAT-job-posture

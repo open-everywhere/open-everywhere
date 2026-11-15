@@ -29,7 +29,7 @@ type Verdict = import("../agent/webhooks/verifier.js").WebhookVerdict;
 type GateOutcome = import("../agent/webhooks/gate.js").WebhookGateOutcome;
 
 const SECRET = "s3cr3t";
-const NOW_MS = Date.parse("2026-03-30T11:30:00.000Z");
+const NOW_MS = Date.parse("2026-07-26T12:00:00.000Z");
 const NOW_TS = String(Math.floor(NOW_MS / 1000));
 
 const hook = defineWebhook({

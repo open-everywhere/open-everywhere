@@ -1,3 +1,5 @@
+// proves: webhook.declare.pr_opened
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -505,3 +507,7 @@ function rejectsWithSync(fn: () => unknown, fragment: string, label: string): vo
 
 await removeTempDir(dir);
 console.log(`\n✅ webhook-declare (OPE-208): ${n} checks passed`);
+
+// proves: AP-MOD-core-approvals-webhook-declare
+
+// proves: TOOL-declare_webhook

@@ -56,7 +56,7 @@ async function armSeams(): Promise<void> {
       platform: READ_PLATFORM,
       channel: "C0FIXTURE1",
       count: 1,
-      messages: [{ author: "U0AUTHOR1", ts: "1700159720.000100", text: `${nonce} ${MESSAGE_TEXT}` }],
+      messages: [{ author: "U0AUTHOR1", ts: "1700000000.000100", text: `${nonce} ${MESSAGE_TEXT}` }],
       ...(authoredByNonMember ? { authoredByNonMember: true } : {}),
     })),
   );

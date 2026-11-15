@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-resolver
+
 import assert from "node:assert/strict";
 import { EgressHostCollisionError, ownAccountEgressRefusalText, resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
 import {
@@ -882,3 +884,5 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 }
 
 console.log(`✓ resolver: ${passed} assertions passed`);
+
+// proves: TOOL-list_repos

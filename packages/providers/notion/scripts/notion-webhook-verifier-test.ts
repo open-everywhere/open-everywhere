@@ -1,3 +1,5 @@
+// proves: ROUT-70
+
 import { createHmac } from "node:crypto";
 
 let passed = 0;
@@ -14,7 +16,7 @@ const { registerWebhookVerifier, webhookVerifier, resetWebhookVerifiersForTest, 
   "@open-everywhere/core/agent/adapter-api.js"
 );
 
-const NOW_MS = Date.parse("2026-03-30T11:30:00.000Z");
+const NOW_MS = Date.parse("2026-07-26T12:00:00.000Z");
 const TOKEN = "secret_verification_token";
 const RAW = '{"type":"page.content_updated","entity":{"id":"abc"}}';
 const SIGNATURE = "sha256=" + createHmac("sha256", TOKEN).update(RAW, "utf8").digest("hex");

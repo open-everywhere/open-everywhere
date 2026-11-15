@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-surface-work-grant
+
 import assert from "node:assert/strict";
 import {
   SURFACE_WORK_ROLES,
@@ -423,3 +425,5 @@ ok(allowedOnWorkerSeat("read_work_thread") === true, "the WORK thread read REACH
 }
 
 console.log(`✓ surface-work-grant: ${passed} assertions passed`);
+
+// proves: TOOL-read_work_channel, TOOL-read_work_thread

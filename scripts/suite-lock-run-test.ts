@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-
 import vitestConfig from "../vitest.config.js";
 import { DurationShardSequencer } from "./it-shard-sequencer.js";
 import { mergeTimings, timingsFileText } from "./it-timings-generate.js";

@@ -1,3 +1,5 @@
+// proves: MEM-20
+
 import {
   parseWikiLinks,
   buildGraph,

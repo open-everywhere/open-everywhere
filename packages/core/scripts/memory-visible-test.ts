@@ -1,3 +1,5 @@
+// proves: memory.export, memory.purge, memory.write
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

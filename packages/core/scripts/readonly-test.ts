@@ -1,3 +1,5 @@
+// proves: MEM-23, MEM-24
+
 import { readOnlyBanner, hasReadOnlyBanner, isProjectedCache, isAppendOnlyBacking, lockCommand } from "../agent/memory/readonly.js";
 import type { MemorySilo } from "../agent/memory/silo.js";
 

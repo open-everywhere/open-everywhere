@@ -1,3 +1,5 @@
+// proves: REPLY-01
+
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerSlackProvider as __regSlack } from "@open-everywhere/provider-slack/agent/register.js";
@@ -349,3 +351,5 @@ await inSession(async () => {
 }
 
 console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry, OPE-811 uniform supervisor mount + one delivery arm)\n`);
+
+// proves: TOOL-reply

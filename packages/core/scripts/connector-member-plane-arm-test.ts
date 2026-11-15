@@ -1,3 +1,5 @@
+// proves: connector.mint
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -339,3 +341,5 @@ resetSettingsForTest();
 _resetSurfacesForTest();
 await removeTempDir(tmp);
 console.log(`✓ connector-member-plane-arm: ${passed} assertions passed`);
+
+// proves: SET-014

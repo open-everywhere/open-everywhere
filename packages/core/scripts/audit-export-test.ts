@@ -179,7 +179,7 @@ ok(defineSettings({ auditExport: { targets: [{ name: "x", format: "otlp", url: "
 throws(() => defineSettings({ auditExport: { targets: [jsonTarget, { ...jsonTarget }] } }), "unique", "a duplicate target name is refused");
 throws(() => defineSettings({ auditExport: { targets: [{ ...jsonTarget, url: "https://u:p@siem.example.com/" }] } }), "credentials", "a URL with credentials is refused");
 throws(() => defineSettings({ auditExport: { targets: [{ ...jsonTarget, tokenSecret: "Bearer abc def" }] } }), "secret NAME", "a `Bearer …` string in tokenSecret is refused");
-throws(() => defineSettings({ auditExport: { targets: [{ ...jsonTarget, tokenSecret: "00000000-0000-4000-8000-000000000078" }] } }), "secret NAME", "a UUID-shaped (HEC-style) token in tokenSecret is refused");
+throws(() => defineSettings({ auditExport: { targets: [{ ...jsonTarget, tokenSecret: "3f2b8c1e-0a4d-4c7b-9e21-5d6f7a8b9c0d" }] } }), "secret NAME", "a UUID-shaped (HEC-style) token in tokenSecret is refused");
 throws(() => defineSettings({ auditExport: { targets: [{ ...jsonTarget, tokenSecret: "a1b2c3d4e5f60718293a4b5c6d7e8f90" }] } }), "secret NAME", "a lowercase-hex (Datadog-style) token in tokenSecret is refused");
 throws(() => defineSettings({ auditExport: { targets: [{ name: "x", format: "syslog" as "json", url: "https://a.example.com/" }] } }), "format", "an unknown format is refused");
 

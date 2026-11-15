@@ -586,3 +586,6 @@ function discordOeInteraction(opts: {
 }
 
 console.log(`\n✓ oe-commands: ${n} assertions passed (parsing, renderers, registration JSON, classification, ephemeral responses, budget glue — the Slack signature gate moved to @open-everywhere/provider-slack)\n`);
+
+// proves: CLI-budget-clear, CLI-budget-raise, CLI-budget-status, CLI-help, CLI-parse-never-throws
+// proves: CLI-slack-parse, CLI-status, CLI-stop, TOOL-agent_version

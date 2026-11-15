@@ -343,3 +343,5 @@ console.log("spawn guard (discord):");
 }
 
 console.log(`owned-thread-ingress-wiring-test: ${n} assertions passed`);
+
+// proves: TOOL-spawn_thread_session

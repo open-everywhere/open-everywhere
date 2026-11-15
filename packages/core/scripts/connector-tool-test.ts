@@ -1,3 +1,7 @@
+// proves: connector.dashboard_link_issued, connector.oauth_url_issued
+
+// proves: AP-MOD-core-connections-connector-card, AP-MOD-core-connections-connector-offer
+
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -398,3 +402,5 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
 }
 
 console.log(`\nconnector-tool-test: ${n} checks passed`);
+
+// proves: TOOL-connector

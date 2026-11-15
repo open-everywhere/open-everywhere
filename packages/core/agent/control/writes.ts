@@ -335,7 +335,6 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     },
   );
 
-
   server.registerTool(
     "cancel_routine",
     {

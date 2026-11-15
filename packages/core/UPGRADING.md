@@ -117,6 +117,7 @@ eve peer: `0.71.0`
 **Manual steps**
 
 - Run `oe build --accept` after the upgrade (OPE-2720). Core renames the hook `hook/spawn-taint` to `hook/delegation-settlement` (OPE-2720) and removes the hook `hook/taint-turn` (OPE-2721), so the app's `roster.lock.json` must record both changes.
+- The scaffold template carries no code comments any more (OPE-2737). On the first upgrade across this release, `npx oe upgrade` lists every scaffolded file that still carries the old comments as different from the template, as a `SYNC` line (a template-owned file) or a `config` line. If your copy matched the 0.9.1 template, only comments differ: keep your copy or take the template copy. If you upgrade from an earlier release, or you edited the file, read the diff, because it can also hold a real change. A `config` line is your own config, so keep it.
 
 ## 0.9.1 — 2026-10-23
 

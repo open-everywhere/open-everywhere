@@ -1,3 +1,7 @@
+// proves: credential.intake_requested, credential.stored
+
+// proves: AP-MOD-core-credentials-db-broker
+
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -303,5 +307,6 @@ function recorder() {
   delete process.env[ENV_ONLY_REF];
 }
 
-
 console.log(`credential-broker-test: ${n} checks passed`);
+
+// proves: AP-MOD-core-access-credentials

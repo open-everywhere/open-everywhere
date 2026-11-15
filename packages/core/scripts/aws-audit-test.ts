@@ -178,3 +178,5 @@ try {
 
 console.log(`✓ ${passed} aws-audit assertions passed`);
 await removeTempDir(tmp);
+
+// proves: TOOL-aws

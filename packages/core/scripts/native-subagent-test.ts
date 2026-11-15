@@ -1,3 +1,6 @@
+// proves: AP-MOD-core-access-delegation-mount
+// proves: AP-MOD-core-access-native-delegation-state
+
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -691,3 +694,5 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 }
 
 console.log(`✓ native-subagent: ${n} assertions passed`);
+
+// proves: TOOL-agent, TOOL-task_cancel

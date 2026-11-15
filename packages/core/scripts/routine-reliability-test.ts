@@ -1,3 +1,5 @@
+// proves: ROUT-01
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
@@ -304,3 +306,5 @@ const okReceive = (() => ({ send: async () => undefined })) as never;
 
 await removeTempDir(dir);
 console.log(`✓ routine reliability + exposure (OPE-146): ${passed} assertions passed`);
+
+// proves: CTRL-routines_list

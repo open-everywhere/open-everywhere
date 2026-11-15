@@ -1,3 +1,5 @@
+// proves: DELG-42, DELG-44, SEAT-70, SEAT-71, SEAT-72
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -240,7 +242,7 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 {
   ok(parkRotateDelta() >= supervisorRotateTokenBudget(), "the park delta reaches the supervisor rotation budget");
   ok(parkRotateDelta() >= DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the (larger) DM-seat rotation budget");
-  const at = "2026-03-30T11:30:00.000Z";
+  const at = "2026-07-26T12:00:00.000Z";
   const neutralised = { quietGapMs: Number.POSITIVE_INFINITY, turnBudget: 1_000_000, expiryMs: Number.POSITIVE_INFINITY };
   for (const prior of [0, 1, 3_999_999, 4_000_001]) {
     for (const tokenBudget of [supervisorRotateTokenBudget(), DM_SEAT_ROTATE_TOKEN_BUDGET]) {

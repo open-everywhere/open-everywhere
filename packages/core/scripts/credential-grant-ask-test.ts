@@ -1,3 +1,7 @@
+// proves: AP-MOD-core-access-credential-grant-ask, AP-MOD-core-access-credential-grant-click
+// proves: AP-MOD-core-access-credential-grant-flow
+// proves: grant.mount_refused
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -1283,3 +1287,5 @@ console.log("12. the ask verb records whether a person's own words asked for the
 }
 
 console.log(`\n✅ credential-grant ask + card lifecycle: ${n} assertions passed`);
+
+// proves: TOOL-request_credential_grant

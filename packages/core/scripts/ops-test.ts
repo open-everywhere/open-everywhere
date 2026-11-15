@@ -962,3 +962,7 @@ const ok = (label: string, cond: boolean) => {
 }
 
 console.log(`\n✓ ops/setup: ${n} assertions passed (three-target preflight, live probes, env merge, scaffold via MCP, credential-store key, two-role provisioning, chat-app manifest, secret org guard, secret_rm env fallback, no secret value in a tool, stale-core refusal, oe env set)\n`);
+
+// proves: OPS-env-confine, OPS-preflight, OPS-scaffold_credential_key, OPS-scaffold_env
+// proves: OPS-surface_manifest, OPS-surface_app_package, OPS-secret_rm
+// proves: OPS-no-secret-value, OPS-stale-core, OPS-secret_set

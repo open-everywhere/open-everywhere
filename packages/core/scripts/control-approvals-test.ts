@@ -1,3 +1,5 @@
+// proves: admin.approval.decide, admin.approval.judge_disarm, admin.approval.judge_rearm
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -378,3 +380,6 @@ await client.connect(clientT);
 await client.close();
 await removeTempDir(dir);
 console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold; disarm_approval_judge disarms one domain off one RBAC-gated row and rearm_approval_judge restores it, both write-only and append-only; both also take the ORG-WIDE address, which needs \"admin\", governs the domain-less consults only, and is exclusive with \`domain\` in the schema; a decide during a break-glass halt is refused on this door too, in core's own words, editing no row — and succeeds once the halt is cleared)\n`);
+
+// proves: CTRL-decide_pending_action, CTRL-disarm_approval_judge, CTRL-pending_actions_list
+// proves: CTRL-rearm_approval_judge

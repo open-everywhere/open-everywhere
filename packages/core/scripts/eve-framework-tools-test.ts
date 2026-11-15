@@ -263,3 +263,6 @@ throwsWith(() => deriveRegistryMountSets([]), "0 default-mounted", "🔴 an empt
 }
 
 console.log(`\n✓ eve-framework-tools: ${n} assertions passed (grammar, union totality, unknown-scope guard, empty-scope guards, reserved-slot reader, task-verb reader, live premise)\n`);
+
+// proves: ROSTER-reserved-slot, TOOL-connection_execute, TOOL-connection_search, TOOL-connection_tools
+// proves: TOOL-glob, TOOL-grep, TOOL-task_wait

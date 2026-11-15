@@ -1,3 +1,33 @@
+// proves: AP-MOD-core-access-window-gate-manifest, AP-WG-agent, AP-WG-bash, AP-WG-checkout_repo
+// proves: AP-WG-complete_thread, AP-WG-create_skill, AP-WG-delete_skill, AP-WG-glob, AP-WG-grep
+// proves: AP-WG-message_thread_seat, AP-WG-open_pull_request, AP-WG-post_file, AP-WG-read_file
+// proves: AP-WG-read_thread_seat, AP-WG-spawn_thread_session, AP-WG-web_fetch, AP-WG-write_file
+// proves: AP-WGU-add_label, AP-WGU-add_routine_rule, AP-WGU-agent_version, AP-WGU-ask_question, AP-WGU-assign
+// proves: AP-WGU-aws, AP-WGU-browser_tools, AP-WGU-cancel_routine, AP-WGU-capture_events
+// proves: AP-WGU-check_pr_status, AP-WGU-clear_connector_override, AP-WGU-clear_spend_limit
+// proves: AP-WGU-complete_job, AP-WGU-confirm_link, AP-WGU-connection_search, AP-WGU-connector
+// proves: AP-WGU-create_agent, AP-WGU-create_routine, AP-WGU-create_ticket, AP-WGU-declare_webhook
+// proves: AP-WGU-describe_image, AP-WGU-dm_person, AP-WGU-edit_reply, AP-WGU-edit_routine
+// proves: AP-WGU-enable_routine, AP-WGU-explain_permission, AP-WGU-extend_workspace_time
+// proves: AP-WGU-fresh_eyes_review, AP-WGU-get_pr_feedback, AP-WGU-grant_tools, AP-WGU-halt
+// proves: AP-WGU-link_identity, AP-WGU-list_recent_events, AP-WGU-list_repos, AP-WGU-list_routines
+// proves: AP-WGU-list_skills, AP-WGU-list_webhooks, AP-WGU-load_skill, AP-WGU-memory_admin_list
+// proves: AP-WGU-memory_admin_read, AP-WGU-no_reply, AP-WGU-notion_search, AP-WGU-permission_fit_report
+// proves: AP-WGU-post_message, AP-WGU-post_pr_walkthrough, AP-WGU-purge_memory, AP-WGU-query_analytics
+// proves: AP-WGU-react, AP-WGU-read_channel, AP-WGU-read_docs, AP-WGU-read_file_upload
+// proves: AP-WGU-read_linear_issue, AP-WGU-read_notion_comments, AP-WGU-read_notion_page
+// proves: AP-WGU-read_routine_transcript, AP-WGU-read_thread, AP-WGU-read_webhook_history
+// proves: AP-WGU-read_work_channel, AP-WGU-read_work_thread, AP-WGU-record_follow_up, AP-WGU-record_job_state
+// proves: AP-WGU-record_watch_state, AP-WGU-remove_routine_rule, AP-WGU-reply, AP-WGU-report_run_failed
+// proves: AP-WGU-request_access, AP-WGU-request_credential_grant, AP-WGU-resume, AP-WGU-revoke_connector
+// proves: AP-WGU-revoke_credential_grant, AP-WGU-revoke_routine_permissions, AP-WGU-rotate_webhook
+// proves: AP-WGU-run_routine_now, AP-WGU-sandbox_tools, AP-WGU-search, AP-WGU-session_cost
+// proves: AP-WGU-set_dm_delivery, AP-WGU-set_spend_limit, AP-WGU-set_state, AP-WGU-spend_report
+// proves: AP-WGU-connection_execute, AP-WGU-connection_tools, AP-WGU-stand_down, AP-WGU-subscribe_pr
+// proves: AP-WGU-task_cancel, AP-WGU-task_wait, AP-WGU-unlink_identity
+// proves: AP-WGU-update_status, AP-WGU-usage_report, AP-WGU-walk_pr, AP-WGU-web_search
+// proves: AP-WGU-read_github_issue
+
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -400,3 +430,6 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
 }
 
 console.log(`✓ ${n} window-gate-manifest assertions passed`);
+
+// proves: ROSTER-lint-window-gate, SEAT-grain-gate, SEAT-root-grain-ban, SEAT-ungated, SEAT-wide-hands
+// proves: TOOL-sandbox_tools

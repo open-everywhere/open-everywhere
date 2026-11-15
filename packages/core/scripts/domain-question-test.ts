@@ -1,3 +1,5 @@
+// proves: TOOL-ask_domain, TOOL-answer_domain_question
+
 import assert from "node:assert/strict";
 import {
   DOMAIN_QUESTION_ANSWER_TOOL,

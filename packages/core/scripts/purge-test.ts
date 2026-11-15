@@ -1,3 +1,5 @@
+// proves: MEM-38, MEM-40
+
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -474,3 +476,7 @@ function tiersOf(eng: Record<string, string | undefined>, org: Record<string, st
 assert.ok(n > 0);
 console.log(`\n✓ purge: ${n} assertions passed (planPurge sweep/multi-bullet/refusals, redacted memory.purge execute + audit, capture-seam deletion digests, GDPR round-trip sweep, OPE-582 re-execution idempotence)\n`);
 await removeTempDir(tmp);
+
+// proves: AP-MOD-core-approvals-memory-purge
+
+// proves: TOOL-purge_memory

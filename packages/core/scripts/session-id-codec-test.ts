@@ -1,3 +1,5 @@
+// proves: SEAT-60
+
 import assert from "node:assert/strict";
 import {
   classifySessionId,

@@ -475,3 +475,5 @@ function armed(on: boolean): void {
 ok(deploymentOrg().length > 0, "sanity: the deployment org resolves (the org the read route scopes to)");
 await removeTempDir(tmp);
 console.log(`✓ model-call capture: ${n} assertions passed`);
+
+// proves: SET-048, SET-049

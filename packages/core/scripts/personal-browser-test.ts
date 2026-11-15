@@ -1,3 +1,5 @@
+// proves: browser.personal.open, browser.personal.action, browser.personal.act_granted, browser.personal.takeover, browser.personal.handback, browser.personal.view_opened, browser.personal.closed, browser.personal.forget
+
 import { randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

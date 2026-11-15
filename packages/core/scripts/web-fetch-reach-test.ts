@@ -325,3 +325,7 @@ async function refusal(fn: () => unknown): Promise<string> {
 console.log(
   `\n✓ web-fetch-reach: ${n} assertions passed (shared reach decision + legible refusal + live-resolver default + break-glass revoke parity + audited deny + real mounted wiring + first-request admission row + one-table status/host-side join)\n`,
 );
+
+// proves: AP-MOD-core-access-web-fetch-reach
+
+// proves: TOOL-web_fetch

@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-repo-capabilities
+
 import assert from "node:assert/strict";
 import {
   REPO_CAPABILITIES,

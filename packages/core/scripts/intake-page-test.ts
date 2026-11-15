@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-intake, AP-MOD-core-credentials-intake-page
+
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";

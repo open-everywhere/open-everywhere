@@ -1,3 +1,5 @@
+// proves: memory.index_change, memory.trust_gate, memory.write_refused
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -13,7 +15,6 @@ import type { HookContext } from "eve/hooks";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 registerSlackFixtureMapper();
-
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

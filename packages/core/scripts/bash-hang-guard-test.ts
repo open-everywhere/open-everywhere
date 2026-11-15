@@ -179,3 +179,5 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
 }
 
 console.log(`✓ bash-hang-guard: ${n} assertions passed`);
+
+// proves: SET-009, SET-010

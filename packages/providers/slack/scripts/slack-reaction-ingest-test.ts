@@ -158,5 +158,4 @@ function captureSink(): { deps: ReactionSinkDeps; recorded: IngestedReaction[]; 
   ok(sRes.status === 200 && afterSelf === after, "front: the bot's own reaction is ignored end-to-end (no feedback row)");
 }
 
-
 console.log(`\n✓ slack-reaction-ingest: ${n} assertions passed (Slack parse/route + front dedupe/signature)\n`);

@@ -221,3 +221,5 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
 }
 
 console.log(`✓ ${n} create-ticket-tool assertions passed`);
+
+// proves: TOOL-create_ticket

@@ -367,3 +367,5 @@ function harness(over: {
 }
 
 console.log(`✓ webhook-history-test: ${passed} assertions passed`);
+
+// proves: TOOL-read_webhook_history

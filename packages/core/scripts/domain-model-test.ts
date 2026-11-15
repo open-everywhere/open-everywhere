@@ -1,3 +1,5 @@
+// proves: admin.model.clear_domain, admin.model.set_domain
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -312,3 +314,5 @@ function deps(opts: {
 
 await removeTempDir(dir);
 console.log(`\n✓ domain model self-serve: ${n} assertions passed (RBAC + SET-time envelope clamp + pricing report + resolver slotting + fail-soft)\n`);
+
+// proves: CTRL-clear_domain_model, CTRL-set_domain_model

@@ -82,7 +82,7 @@ function entity(over: Partial<HydratedEntity> = {}): HydratedEntity {
     body: INJECTED,
     url: "https://github.com/me/proj/pull/42",
     updatedAt: "2026-07-26T10:00:00.000Z",
-    fetchedAt: "2026-03-30T11:30:00.000Z",
+    fetchedAt: "2026-07-26T12:00:00.000Z",
     ...over,
   };
 }
@@ -133,7 +133,7 @@ function harness(routines: Routine[], outcome: HydrationOutcome, repos: readonly
   const msg = h.fired[0]!.message;
   ok(msg.includes(INJECTED), "ok: the re-fetched BODY reaches the fire (payload-as-pointer is now real — this is the whole ticket)");
   ok(msg.includes("state: open"), "ok: the fetched state is rendered under a CODE-CHOSEN key (the vendor picks values, never key names)");
-  ok(msg.includes("2026-03-30T11:30:00.000Z"), "ok: the FETCH INSTANT is rendered — a late delivery contradicting its own event is diagnosable (design G3)");
+  ok(msg.includes("2026-07-26T12:00:00.000Z"), "ok: the FETCH INSTANT is rendered — a late delivery contradicting its own event is diagnosable (design G3)");
 }
 
 {
@@ -301,10 +301,10 @@ function harness(routines: Routine[], outcome: HydrationOutcome, repos: readonly
   const out = await readGithubEntity("me/proj#42", {
     fetchFn: (async () => res(200, { title: "T", state: "open", body: "B", html_url: "u", updated_at: "2026-01-01T00:00:00Z" })) as never,
     resolveToken: async () => "tok",
-    now: () => new Date("2026-03-30T11:30:00.000Z"),
+    now: () => new Date("2026-07-26T12:00:00.000Z"),
   });
   ok(out.status === "ok" && out.entity.title === "T" && out.entity.body === "B", "github: a 200 maps onto the neutral HydratedEntity");
-  ok(out.status === "ok" && out.entity.fetchedAt === "2026-03-30T11:30:00.000Z", "github: the fetch instant is OURS, not the vendor's");
+  ok(out.status === "ok" && out.entity.fetchedAt === "2026-07-26T12:00:00.000Z", "github: the fetch instant is OURS, not the vendor's");
   const gone = await readGithubEntity("me/proj#42", { fetchFn: (async () => res(404, {})) as never, resolveToken: async () => "tok" });
   ok(gone.status === "gone", "github: a 404 from the live reader is `gone`");
   const forbidden = await readGithubEntity("me/proj#42", { fetchFn: (async () => res(403, {})) as never, resolveToken: async () => "tok" });
@@ -316,13 +316,13 @@ function harness(routines: Routine[], outcome: HydrationOutcome, repos: readonly
   const r = renderHydratedEntity(entity({ body: long }));
   ok(r.includes("truncated at"), "render: an oversized hydrated body is TRUNCATED with a visible marker — an uncapped body is a context-blowing primitive anyone who can open an issue can pull");
   ok(r.length < long.length, "render: and the truncation is real");
-  const minimal = renderHydratedEntity({ platform: "p", id: "i", fetchedAt: "2026-03-30T11:30:00.000Z" });
+  const minimal = renderHydratedEntity({ platform: "p", id: "i", fetchedAt: "2026-07-26T12:00:00.000Z" });
   ok(minimal.includes("state:") === false && minimal.includes("body:") === false, "render: absent fields render no key at all (never an empty label the model has to interpret)");
 }
 
 {
   const dated = renderHydratedEntity(entity());
-  ok(dated.includes("Read live at 2026-03-30T11:30:00.000Z"), "dated: the render states the read instant");
+  ok(dated.includes("Read live at 2026-07-26T12:00:00.000Z"), "dated: the render states the read instant");
   ok(dated.includes("this is the CURRENT, authoritative state"), "dated: ...and says this block is the current state");
   ok(dated.includes("HISTORY"), "dated: ...and names the event summary ABOVE this block as history");
   ok(dated.includes("updated: 2026-07-26T10:00:00.000Z (2 hours before this read)"), "dated: the vendor's own updated-at is aged against the read, same shape as Linear's comment age");

@@ -1,3 +1,5 @@
+// proves: MEM-01, MEM-03, MEM-05, MEM-06, MEM-09, MEM-21
+
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveMemoryPlan, surfaceProvider, type MemoryResolveConfig } from "../agent/memory/resolve.js";
@@ -394,3 +396,5 @@ throwsWith(() => assertSilosValid([{ name: "empty" } as MemorySilo]), '"empty" h
 }
 
 console.log(`✓ memory-resolve: ${passed} assertions passed`);
+
+// proves: SET-098

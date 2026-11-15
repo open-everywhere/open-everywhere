@@ -1,3 +1,6 @@
+// proves: thread.ingress_routed
+// proves: DELG-49
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,7 +25,6 @@ import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 registerSlackFixtureMapper();
 registerSlackFixtureCodec();
-
 
 let n = 0;
 const ok = (cond: boolean, label: string) => { assert.ok(cond, label); n++; };

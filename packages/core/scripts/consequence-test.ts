@@ -436,3 +436,34 @@ ok(
 );
 
 console.log(`✓ ${n} consequence-registry assertions passed`);
+
+// proves: AP-AK-session.checkpoint, AP-CONS-add_label, AP-CONS-add_routine_rule, AP-CONS-agent, AP-CONS-agent_version
+// proves: AP-CONS-ask_question, AP-CONS-assign, AP-CONS-aws, AP-CONS-bash, AP-CONS-browser_tools
+// proves: AP-CONS-cancel_routine, AP-CONS-capture_events, AP-CONS-check_pr_status, AP-CONS-checkout_repo
+// proves: AP-CONS-clear_connector_override, AP-CONS-clear_spend_limit, AP-CONS-complete_job, AP-CONS-complete_thread
+// proves: AP-CONS-confirm_link, AP-CONS-connection_execute, AP-CONS-connection_search
+// proves: AP-CONS-connection_tools, AP-CONS-connector, AP-CONS-create_agent
+// proves: AP-CONS-create_routine, AP-CONS-create_skill, AP-CONS-create_ticket, AP-CONS-declare_webhook
+// proves: AP-CONS-delete_skill, AP-CONS-describe_image, AP-CONS-dm_person, AP-CONS-edit_reply, AP-CONS-edit_routine
+// proves: AP-CONS-enable_routine, AP-CONS-explain_permission, AP-CONS-fresh_eyes_review, AP-CONS-get_pr_feedback
+// proves: AP-CONS-glob, AP-CONS-grant_tools, AP-CONS-grep, AP-CONS-halt, AP-CONS-link_identity
+// proves: AP-CONS-list_recent_events, AP-CONS-list_repos, AP-CONS-list_routines, AP-CONS-list_skills
+// proves: AP-CONS-list_webhooks, AP-CONS-load_skill, AP-CONS-memory_admin_list, AP-CONS-memory_admin_read
+// proves: AP-CONS-message_thread_seat, AP-CONS-no_reply, AP-CONS-open_pull_request, AP-CONS-permission_fit_report
+// proves: AP-CONS-post_file, AP-CONS-post_message, AP-CONS-post_pr_walkthrough, AP-CONS-purge_memory
+// proves: AP-CONS-query_analytics, AP-CONS-react, AP-CONS-read_channel, AP-CONS-read_docs, AP-CONS-read_file
+// proves: AP-CONS-read_file_upload, AP-CONS-read_routine_transcript, AP-CONS-read_thread, AP-CONS-read_thread_seat
+// proves: AP-CONS-read_webhook_history, AP-CONS-read_work_channel, AP-CONS-read_work_thread, AP-CONS-record_follow_up
+// proves: AP-CONS-record_job_state, AP-CONS-record_watch_state, AP-CONS-remove_routine_rule, AP-CONS-reply
+// proves: AP-CONS-report_run_failed, AP-CONS-request_access, AP-CONS-request_credential_grant, AP-CONS-resume
+// proves: AP-CONS-revoke_connector, AP-CONS-revoke_credential_grant, AP-CONS-revoke_routine_permissions
+// proves: AP-CONS-rotate_webhook, AP-CONS-run_routine_now, AP-CONS-sandbox_tools, AP-CONS-search
+// proves: AP-CONS-session_cost, AP-CONS-set_dm_delivery, AP-CONS-set_spend_limit, AP-CONS-set_state
+// proves: AP-CONS-spawn_thread_session, AP-CONS-spend_report, AP-CONS-stand_down, AP-CONS-subscribe_pr
+// proves: AP-CONS-task_cancel, AP-CONS-task_wait, AP-CONS-unlink_identity, AP-CONS-update_status
+// proves: AP-CONS-usage_report
+// proves: AP-CONS-walk_pr, AP-CONS-web_fetch, AP-CONS-web_search, AP-CONS-write_file, AP-MOD-core-access-consequence
+// proves: AP-CONS-read_github_issue
+
+// proves: ROSTER-lint-consequence
+// proves: AP-CONS-notion_search, AP-CONS-read_notion_comments, AP-CONS-read_notion_page

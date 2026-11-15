@@ -556,3 +556,5 @@ function post(secs: number, text: string, over: Partial<SessionTailEntry> = {}):
 }
 
 console.log(`✓ session-tail: ${n} assertions passed (cap + most-recent-first, time order, the recursive-inheritance guard, bot posts, self provenance, the cross-surface container guard, carry-forward, the standing-grain window guard, the unseeded no-write floor, the OPE-815 id thread + ring rewrite, the OPE-1747 withhold grain + its per-surface parity, the OPE-2431 DM conversation summary)`);
+
+// proves: SET-034, SET-087

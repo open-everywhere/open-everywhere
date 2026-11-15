@@ -24,13 +24,13 @@ export function parseCoverTokens(rest: readonly string[]): CoverCommand {
     if (word === "until" && date !== undefined && extra.length === 0 && /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(`${date}T00:00:00Z`))) {
       return { kind: "cover", action: "on", until: `${date}T00:00:00.000Z` };
     }
-    return { kind: "error", message: `Give the date you are back as year-month-day, for example \`${oeSlash("cover on until 2026-10-21")}\`.` };
+    return { kind: "error", message: `Give the date you are back as year-month-day, for example \`${oeSlash("cover on until 2026-10-20")}\`.` };
   }
   return { kind: "error", message: `I don't know "${action}". Try \`${oeSlash("cover on")}\`, \`${oeSlash("cover off")}\` or \`${oeSlash("cover")}\`.` };
 }
 
 export function coverHelpLine(): string {
-  return `• \`${oeSlash("cover on|off")}\` — while you are away, I answer questions people ask you in my channels, marked as cover, and send you a recap when you are back. Add \`until 2026-10-21\` to end it on a date.`;
+  return `• \`${oeSlash("cover on|off")}\` — while you are away, I answer questions people ask you in my channels, marked as cover, and send you a recap when you are back. Add \`until 2026-10-20\` to end it on a date.`;
 }
 
 function longDate(iso: string): string {

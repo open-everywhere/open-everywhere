@@ -167,3 +167,5 @@ ok(!/function classifyWakeMapping/.test(mentionDoor), "…via the core helper, n
 ok(/envelope\.team_id \?\? \(typeof e\.team === "string" \? e\.team : undefined\)/.test(engagementDoor), "ENGAGEMENT DOOR: teamId is read off the event ENVELOPE (always present) — no heal gap, hence no guard there");
 
 console.log(`slack-wake-mapping: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-wake-mapping

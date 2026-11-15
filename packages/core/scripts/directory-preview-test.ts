@@ -1,3 +1,5 @@
+// proves: CTRL-directory_sync_preview, SET-088
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 

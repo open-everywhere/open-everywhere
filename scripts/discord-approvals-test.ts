@@ -1,3 +1,5 @@
+// proves: approval.rejected
+
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();

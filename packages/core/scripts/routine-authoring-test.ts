@@ -470,3 +470,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
 
 await removeTempDir(dir);
 console.log(`✓ routine authoring (OPE-147): ${passed} assertions passed (preview + run-now + edit + permission invalidation + prompt revisions + re-arm)`);
+
+// proves: AP-MOD-core-approvals-arming-context, AP-MOD-core-approvals-routine-lifecycle
+
+// proves: TOOL-create_routine, TOOL-edit_routine, TOOL-enable_routine, TOOL-run_routine_now

@@ -126,7 +126,7 @@ const P = { org: "default", scopeKey: `slack/T0TEAM01/${ROOM}`, channelId: ROOM,
   ok(lib.encodeListCell(by("Owner"), "<@U0ANN001>").shown === "<@U0ANN001>", "the pure encoder gives a person as a mention; the propose step swaps in the display name for the card");
   ok(JSON.stringify(lib.encodeListCell(by("Status"), "in progress").value) === JSON.stringify({ select: ["Opt0Prog"] }), "a select column matches a choice by its label, ignoring case");
   ok(lib.encodeListCell(by("Status"), "in progress").shown === "In progress", "a select shows its label, never the option id");
-  ok(JSON.stringify(lib.encodeListCell(by("Due"), "2026-10-21").value) === JSON.stringify({ date: ["2026-10-21"] }), "a date column takes YYYY-MM-DD");
+  ok(JSON.stringify(lib.encodeListCell(by("Due"), "2026-10-20").value) === JSON.stringify({ date: ["2026-10-20"] }), "a date column takes YYYY-MM-DD");
   ok(JSON.stringify(lib.encodeListCell(by("Shipped"), "Done").value) === JSON.stringify({ checkbox: true }), "a checkbox takes done as yes");
   const text = lib.encodeListCell(by("Title"), "Fix <!here> login").value as { rich_text: unknown[] };
   ok(JSON.stringify(text).includes("Fix ‹!here> login"), "a text cell is rich text, and a broadcast in it is defused");
@@ -190,7 +190,7 @@ const P = { org: "default", scopeKey: `slack/T0TEAM01/${ROOM}`, channelId: ROOM,
   await refuses(() => buildCanvasWrite({ canvas: TAB_MEM, markdown: "my notes" }, T, fakeCall), memLine, "🔴 [OPE-2587] a memory canvas held only as a TAB (made before the row existed) refuses by its marker");
   ok((await buildCanvasWrite({ canvas: TAB_PERSON, markdown: "more" }, T, fakeCall)).canvasId === TAB_PERSON, "🔴 [OPE-2587] a person's canvas TAB is this room's canvas, so it takes an append");
   const { getOperationalStore } = await import("../agent/operational/provider.js");
-  await getOperationalStore().setMemoryCanvas("default", lib.memoryCanvasSurfaceKey("T0TEAM01", ROW_ROOM), ROW_MEM, "2026-06-21T23:30:00Z");
+  await getOperationalStore().setMemoryCanvas("default", lib.memoryCanvasSurfaceKey("T0TEAM01", ROW_ROOM), ROW_MEM, "2026-10-18T00:00:00Z");
   const R = { ...P, scopeKey: `slack/T0TEAM01/${ROW_ROOM}`, channelId: ROW_ROOM };
   await refuses(() => buildCanvasWrite({ canvas: ROW_MEM, markdown: "x" }, R, fakeCall), memLine, "🔴 [OPE-2587] the canvas the memory_canvas row names refuses");
   ok((await buildCanvasWrite({ canvas: ROW_WC, markdown: "more" }, R, fakeCall)).canvasId === ROW_WC, "🔴 [OPE-2587] a write_canvas canvas beside it takes an append");
@@ -208,7 +208,7 @@ const P = { org: "default", scopeKey: `slack/T0TEAM01/${ROOM}`, channelId: ROOM,
   };
   await refuses(() => buildCanvasWrite({ canvas: TAB_MEM, markdown: "x" }, T, noLookup), /could not confirm that this canvas is not this channel's memory canvas/, "🔴 [OPE-2587] with no canvases:read, a bot-made tab could be the memory canvas: it refuses");
   ok((await buildCanvasWrite({ canvas: ROW_WC, markdown: "x" }, R, noLookup)).canvasId === ROW_WC, "…but a room whose row names a canvas on screen needs no section read");
-  await getOperationalStore().setMemoryCanvas("default", lib.memoryCanvasSurfaceKey("T0TEAM01", TAB_ROOM), "F0GONECV1", "2026-06-21T23:30:00Z");
+  await getOperationalStore().setMemoryCanvas("default", lib.memoryCanvasSurfaceKey("T0TEAM01", TAB_ROOM), "F0GONECV1", "2026-10-18T00:00:00Z");
   await refuses(() => buildCanvasWrite({ canvas: TAB_MEM, markdown: "x" }, T, fakeCall), memLine, "🔴 [OPE-2587] with a stale row, the marked memory canvas tab still refuses");
   ok((await buildCanvasWrite({ canvas: TAB_PERSON, markdown: "more" }, T, fakeCall)).canvasId === TAB_PERSON, "…and a person's canvas tab still takes the write");
   const both = { ok: true, channel: { properties: { canvas: { file_id: "F1" }, tabs: [{ type: "canvas", data: { file_id: "F2" } }, { type: "canvas", data: { file_id: "F1" } }] } } };
@@ -219,7 +219,7 @@ const P = { org: "default", scopeKey: `slack/T0TEAM01/${ROOM}`, channelId: ROOM,
   );
 
   const lw = await buildListWrite(
-    { list: LIST, add: [{ cells: { Title: "New bug", Owner: "<@U0ANN001>", Status: "To do", Due: "2026-10-21" } }], update: [{ row: "fix LOGIN", cells: { Status: "Done" } }] },
+    { list: LIST, add: [{ cells: { Title: "New bug", Owner: "<@U0ANN001>", Status: "To do", Due: "2026-10-20" } }], update: [{ row: "fix LOGIN", cells: { Status: "Done" } }] },
     P,
     fakeCall,
     async (id) => (id === "U0ANN001" ? "Ann Lee" : undefined),
@@ -411,3 +411,5 @@ registerSlackBridge({ readCall: async (m: string, p: Record<string, string | num
 _resetSlackBridgeForTest();
 
 console.log(`slack-doc-write: ${n} assertions passed`);
+
+// proves: TOOL-write_canvas, TOOL-update_list

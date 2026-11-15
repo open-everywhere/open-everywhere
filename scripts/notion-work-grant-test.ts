@@ -627,3 +627,5 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
 }
 
 console.log(`✓ notion-work-grant: ${passed} assertions passed`);
+
+// proves: TOOL-notion_search

@@ -101,6 +101,7 @@ export function personalBrowserRefusal(policy: PersonalBrowserPolicy, ask: Perso
     return "this direct message is not confirmed internal (a guest or an outside account), so I won't open a browser with signed-in sessions from here";
   }
   if (ask.nonMember) return "a message from someone outside the workspace woke this turn, so I won't use your browser from it";
+  // principal-gate: presence — the browser is the acting person's own; with no person here there is no browser to name.
   if (ask.actingPrincipal === undefined) return "your browser needs you in the conversation — a triggered routine fire has nobody whose browser it could use";
   return undefined;
 }

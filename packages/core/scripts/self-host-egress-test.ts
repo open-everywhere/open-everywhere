@@ -421,6 +421,7 @@ await (async () => {
   }
 })();
 
+// proves: SET-095, SET-096
 {
   const realFetch = globalThis.fetch;
   const seen: { url: string; auth?: string; body: Record<string, unknown> }[] = [];
@@ -455,3 +456,5 @@ await (async () => {
 }
 
 console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture + OPE-955 backend tripwire + docker-behind-proxy refusal + host plane)\n`);
+
+// proves: AP-MOD-core-access-self-host-egress, AP-MOD-core-sandbox-backend-select, AP-MOD-core-access-host-plane-egress

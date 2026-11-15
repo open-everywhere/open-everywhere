@@ -57,15 +57,18 @@ const ev: ParsedMessageEvent = {
 const triggerTrust = (w: NormalizedWake): string | undefined => (w.trigger.kind === "message" ? w.trigger.message.trust : undefined);
 ok(triggerTrust(slackChannelWatchWake(ev, { trust: "principal" })) === "principal", "slack supervisor builder: opts.trust rides into the trigger");
 function __ope596SlackPins(): void {
+  // @ts-expect-error OPE-596: `opts` is REQUIRED — a caller cannot build a wake without a tier.
   void slackChannelWatchWake(ev);
+  // @ts-expect-error OPE-596: …and `trust` is REQUIRED inside it.
   void slackChannelWatchWake(ev, { memberCount: 3 });
+  // @ts-expect-error OPE-596: `opts` (with `trust`) is REQUIRED on the name-drop builder.
   void slackNameDropWake(ev, "Open Everywhere");
+  // @ts-expect-error OPE-596: …and on the render wrapper.
   void renderNameDropMessage(ev, "Open Everywhere");
 }
 void __ope596SlackPins;
 ok(triggerTrust(slackChannelWatchWake(ev, { trust: "unauth" })) === "unauth", "slack supervisor builder: a fail-closed tier rides in unchanged — nothing talks it up");
 ok(triggerTrust(slackThreadFollowWake(ev, { trust: "relay" })) === "relay", "slack thread-follow builder: opts.trust rides into the trigger");
 ok(triggerTrust(slackNameDropWake(ev, "Open Everywhere", { trust: "unauth" })) === "unauth", "slack name-drop builder: a fail-closed tier rides in unchanged");
-
 
 console.log(`slack-wake-trust tests passed (${passed})`);

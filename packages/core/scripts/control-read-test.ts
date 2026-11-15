@@ -1,3 +1,5 @@
+// proves: const CONTROL_READ_AUDIT_PATH, authorizeRead, const AUDIT_MAX_LIMIT, handleAuditWindowRead, handleAuditWindowRead` (scan truncated), handleUsageWindowRead, handleRuntimeSignalRead, handleAuditWindowRead` (org pin)
+
 import type { AttachSessionFn } from "eve/channels";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -728,3 +730,6 @@ _resetModelPricingForTest();
 
 await removeTempDir(dir);
 console.log(`✓ control-read route: ${passed} assertions passed (fail-closed 404 / 401 / 400 / priced 200 / runtime-signal presence-never-value / audited / structurally read-only)`);
+
+// proves: CTRL-usage_window, ROUTE-audit, ROUTE-model-call-sessions, ROUTE-model-calls
+// proves: ROUTE-read-token-gate, ROUTE-runtime-signal, ROUTE-transcript, ROUTE-usage

@@ -312,3 +312,5 @@ const ONE = [{ kind: "tool", name: "remember", module: "agent/tools/remember.js"
 }
 
 console.log(`✓ roster-test: ${n} assertions passed (validation rules, determinism, lock diffing, render shapes, projections)`);
+
+// proves: ROSTER-config, ROSTER-contributions, ROSTER-lock, ROSTER-sentinel

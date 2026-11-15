@@ -1,3 +1,5 @@
+// proves: identity.link.notice_undeliverable
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 _setDeploymentIdentityForTest({ org: "default" });
@@ -1330,3 +1332,9 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 }
 
 console.log(`✓ identity-links: ${n} assertions (challenge state machine, store invariants incl. sqlite parity, claim hook, union resolver, tools, admin plane, audit)`);
+
+// proves: AP-MOD-core-identity-account-display-name, AP-MOD-core-identity-link-initiator
+// proves: AP-MOD-core-identity-link-resolve, AP-MOD-core-identity-link-store, AP-MOD-core-identity-principals
+
+// proves: CTRL-link_sets_list, CTRL-reactivate_link_set, CTRL-revoke_link_set, CTRL-suspend_link_set
+// proves: TOOL-unlink_identity

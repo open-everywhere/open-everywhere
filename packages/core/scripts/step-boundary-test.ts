@@ -401,3 +401,5 @@ const smallSettings = (budget: number, multiple = 2): void => {
 
 await removeTempDir(tmp);
 console.log(`\n✓ step-boundary: ${n} assertions passed (tier classification, settings limits, per-turn counting, prompt notice, soft wrap, hard stub, unroutable-path bypass fence, disabled-off, audit rows, ceiling retired from the patch)\n`);
+
+// proves: SET-058, SET-059

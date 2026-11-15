@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-loop-breaker
+
 import {
   hashResultBody,
   loopKey,

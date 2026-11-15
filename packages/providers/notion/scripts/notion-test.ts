@@ -1,3 +1,6 @@
+// proves: notion.no_reply
+// proves: notion.no_target
+
 import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";

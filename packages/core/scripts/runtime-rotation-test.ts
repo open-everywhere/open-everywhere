@@ -660,3 +660,5 @@ console.log(
     `a rollback rotates, an identical redeploy does not, one domain's edit touches one domain's seats, and two concurrent wakes rotate once; ` +
     `OPE-627: rotation retires the outgoing generation, and eve 0.48.0's terminal emit stays unreachable from the seats it retires)`,
 );
+
+// proves: ROSTER-refresh

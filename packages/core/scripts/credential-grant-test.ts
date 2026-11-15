@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-credential-grant
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -51,7 +53,7 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 };
 
 const ORG = "org-1";
-const NOW = Date.parse("2026-01-29T18:22:00.000Z");
+const NOW = Date.parse("2026-08-24T12:00:00.000Z");
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 const MCP_TOOL = "notion-fetch";
@@ -62,7 +64,7 @@ const TOOL_NAME = grantBorrowToolName("rowan_hale", "notion", "notion_fetch_laun
 console.log("1. the mint decision table:");
 
 const baseMint: GrantMintInput = {
-  borrow: { mcpTool: MCP_TOOL, rowId: "00000000-0000-4000-8000-000000000015", takenToolNames: [], targetLabel: "Launch page" },
+  borrow: { mcpTool: MCP_TOOL, rowId: "11112222-3333-4444-5555-666677778888", takenToolNames: [], targetLabel: "Launch page" },
   connector: "notion",
   domainGrantsConnector: true,
   liveAsk: undefined,

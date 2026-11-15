@@ -276,5 +276,4 @@ function ok(cond: boolean, label: string): void {
   else process.env.SLACK_SIGNING_SECRET = prevSecret;
 }
 
-
 console.log(`\n✓ slack-commands: ${n} assertions passed (mount path + signature gate matrix + signed /oe responses + the DM invoker verdict + the channel room verdict)`);

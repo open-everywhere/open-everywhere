@@ -1,3 +1,5 @@
+// proves: read.refused
+
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -387,3 +389,5 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
 }
 
 console.log(`✓ ${passed} linear read-scope assertions passed`);
+
+// proves: TOOL-read_linear_issue

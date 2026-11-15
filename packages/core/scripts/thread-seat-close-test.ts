@@ -1,3 +1,5 @@
+// proves: DELG-10, DELG-11, DELG-24, DELG-25, DELG-47, DELG-48, DELG-50, DELG-51
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,3 +1,6 @@
+// proves: github.no_reply, github.supervisor_turn_failed
+// proves: github.no_target, github.replied
+
 import assert from "node:assert/strict";
 import {
   githubSupervisorToken,
@@ -678,6 +681,7 @@ for (const [label, err] of [
   const directRender = renderWake(ghDirect, NOW).message;
   ok(directRender.includes(UNTRUSTED_OPEN), "github builder: an @mention from an UNVOUCHED author is still FENCED — being addressed is not standing");
   function __ope596GitHubPin(): void {
+    // @ts-expect-error OPE-596: `trust` is REQUIRED on the trigger — a caller cannot omit the tier.
     void buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
   }
   void __ope596GitHubPin;

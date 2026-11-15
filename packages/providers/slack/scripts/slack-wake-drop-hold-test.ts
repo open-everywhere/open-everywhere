@@ -184,7 +184,7 @@ async function rowAfterSnapshot(snapshot: Promise<unknown>[], ts: string): Promi
     wake: async (input) => {
       wakes.push(input);
     },
-    now: () => "2026-03-12T14:44:00Z",
+    now: () => "2026-09-09T12:00:00Z",
   });
   const ts = "8005.100";
   const ev: ParsedMessageEvent = {

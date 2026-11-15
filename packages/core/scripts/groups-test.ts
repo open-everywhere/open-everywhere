@@ -561,3 +561,8 @@ await db.close();
 ok(new GroupsCodemodError("x") instanceof Error, "GroupsCodemodError is an Error subclass (refused-by-design stays distinguishable)");
 
 console.log(`✓ groups: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-group-request, AP-MOD-core-identity-group-sync, AP-MOD-core-identity-groups
+// proves: AP-MOD-core-identity-groups-codemod, AP-MOD-core-identity-groups-delivery
+
+// proves: SET-074

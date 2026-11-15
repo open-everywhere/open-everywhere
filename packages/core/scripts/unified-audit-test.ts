@@ -1,3 +1,5 @@
+// proves: const CONTROL_READ_UNIFIED_AUDIT_PATH, handleUnifiedAuditRead, turn.supervisor_prose_dropped
+
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -447,3 +449,5 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 void appendAudit;
 
 console.log(`✓ unified-audit: ${passed} assertions passed (composition view: containers/reach-union/wideners/humans-read-across/controllers/notes + route: 404/401/400/200/self-audit + OPE-779 drop-detail classification + OPE-805 cross-turn replied leak)`);
+
+// proves: CTRL-unified_domain_audit, ROUTE-unified-audit

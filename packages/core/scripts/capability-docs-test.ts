@@ -83,3 +83,5 @@ const check = (toolNames: string[], docs: { path: string; spans: string[] }[], e
 }
 
 console.log(`✓ capability-docs: ${passed} assertions — totality fails closed on an undocumented capability, and the exemption table cannot grow into a blanket`);
+
+// proves: ROSTER-doc-exemption, ROSTER-lint-capability-docs

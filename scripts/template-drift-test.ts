@@ -197,7 +197,7 @@ function assertReport(text: string, where: string): void {
     releases: [
       { version: "0.1.5", date: "2026-10-04", summary: "later.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [], removedFiles: ["agent/later-removed.ts"] },
       { version: TARGET, date: "2026-10-03", summary: "x.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [], removedFiles: ["agent/instrumentation.ts", "scripts/ops-mcp.ts"] },
-      { version: "0.1.3", date: "2026-10-03", summary: "older.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] },
+      { version: "0.1.3", date: "2026-10-02", summary: "older.", evePeer: "0.54.3", breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] },
     ],
   }).notes!;
   const removed = removedFilesUpTo(notes, TARGET);

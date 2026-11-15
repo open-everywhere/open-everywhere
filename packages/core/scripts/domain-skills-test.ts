@@ -377,3 +377,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 console.log(`✓ domain-skills: ${n} assertions passed (store round-trip, domain resolution policy, resolver merge, tool validation matrix)`);
+
+// proves: AP-MOD-core-approvals-skill-create, AP-MOD-core-approvals-skill-delete
+
+// proves: TOOL-create_skill, TOOL-delete_skill, TOOL-list_skills

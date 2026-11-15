@@ -1,3 +1,5 @@
+// proves: slack.react
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -381,3 +383,5 @@ function fixtureCtx(issueId: string | undefined) {
 }
 
 console.log(`\n✓ react: ${n} assertions passed (gate, validation, execute, react-signal, audit, unified fence)\n`);
+
+// proves: TOOL-react

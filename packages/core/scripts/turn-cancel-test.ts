@@ -1,3 +1,5 @@
+// proves: REPLY-53
+
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -1401,3 +1403,5 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
 }
 
 console.log(`✓ turn-cancel: ${passed} assertions passed (registry, cancel, note, /oe stop, stand_down registration, reader-side unpaired-stop join)`);
+
+// proves: CTRL-unpaired_stops

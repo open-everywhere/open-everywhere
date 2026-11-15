@@ -1,3 +1,5 @@
+// proves: const WORKER_TOOLSET_ACTION, worker.toolset
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -178,7 +180,7 @@ console.log("§5 the dedupe is on the ROSTER, not on 'have I written a row yet'"
   const org = "org-discovery";
   inSession(() => {
     setWorkerWake(true);
-    setWorkerToolsetIdentity(identity(org, "wrun_example17"));
+    setWorkerToolsetIdentity(identity(org, "wrun_SEARCHER"));
     projectToolSet(makeToolset());
     projectToolSet(makeToolset(["notion__fetch"]));
     projectToolSet(makeToolset(["notion__fetch"]));

@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-seat-read-budget
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -178,3 +180,5 @@ ok(bothBody.includes("[coverage:") && bothBody.includes("[oversize:"), "a page t
 ok(bothBody.indexOf("[coverage:") < bothBody.indexOf("[oversize:"), "…coverage first (what the fetch reached), then oversize (what the result carried)");
 
 console.log(`\n✓ seat-read-recovery (OPE-829): ${passed} assertions passed (budget pure + in-context, inline cap, spool fail-soft, render join)`);
+
+// proves: SEAT-read-budget

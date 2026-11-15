@@ -1,3 +1,5 @@
+// proves: agent.create.pr_opened
+
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -396,3 +398,7 @@ function fakeDeps(state: FakeState) {
 
 await removeTempDir(dir);
 console.log(`agent-create-test: ${n} assertions passed`);
+
+// proves: AP-MOD-core-approvals-agent-create
+
+// proves: TOOL-create_agent

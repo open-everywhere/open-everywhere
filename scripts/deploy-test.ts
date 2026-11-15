@@ -286,7 +286,7 @@ check("chooseRollbackTarget: alias on lastGood with NO history falls through to 
 });
 
 check("probeUrl targets the audit read route with an ISO lookback", () => {
-  const url = probeUrl("https://a.vercel.app/", new Date("2026-08-08T12:00:00.000Z"));
+  const url = probeUrl("https://a.vercel.app/", new Date("2026-08-10T12:00:00.000Z"));
   assert.equal(url, `https://a.vercel.app/control/v1/audit?since=${encodeURIComponent("2026-08-10T11:00:00.000Z")}`);
 });
 
@@ -580,7 +580,7 @@ await check("runRecord: stamps whatever the alias points at, with commit and not
     store,
     commit: "d67ab396",
     note: "OPE-376",
-    now: new Date("2026-08-08T12:00:00.000Z"),
+    now: new Date("2026-08-10T12:00:00.000Z"),
     log: () => {},
   });
   assert.equal(result.ok, true);
@@ -588,7 +588,7 @@ await check("runRecord: stamps whatever the alias points at, with commit and not
     url: "https://my-agent-9f2h1kq0x.vercel.app",
     id: "dpl_my-agent-9f2h1kq0x",
     commit: "d67ab396",
-    recordedAt: "2026-08-08T12:00:00.000Z",
+    recordedAt: "2026-08-10T12:00:00.000Z",
     note: "OPE-376",
   });
   assert.equal(store.current.lastGood?.url, "https://my-agent-9f2h1kq0x.vercel.app");
@@ -602,7 +602,7 @@ await check("runRecord: --url wins over discovery, and reaches Vercel not at all
     client: createVercelClient(vercel.api),
     store,
     url: "my-agent-explicit.vercel.app",
-    now: new Date("2026-08-08T12:00:00.000Z"),
+    now: new Date("2026-08-10T12:00:00.000Z"),
     log: () => {},
   });
   assert.equal(result.entry?.url, "https://my-agent-explicit.vercel.app");

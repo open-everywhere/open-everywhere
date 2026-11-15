@@ -1,3 +1,5 @@
+// proves: access_request.claim_withheld
+
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,3 +1,5 @@
+// proves: permission.fit_report
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -231,3 +233,5 @@ const auditBefore = (await readAudit({ org: "default" })).length;
 
 console.log(`✓ permission-fit-report: ${passed} assertions — both loops read the real store, domain scoping holds, the review is audited, and nothing was actuated`);
 await removeTempDir(tmp);
+
+// proves: TOOL-permission_fit_report

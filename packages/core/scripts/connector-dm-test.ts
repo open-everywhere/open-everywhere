@@ -1,3 +1,5 @@
+// proves: connector.use
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +10,6 @@ import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-iden
 import { removeTempDir } from "./_temp-dir.js";
 import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
-
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-dm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -192,3 +193,5 @@ overrideSettingsForTest(WALL_UP);
 
 await removeTempDir(tmp);
 console.log(`✓ connector-dm: ${passed} assertions passed`);
+
+// proves: SET-012

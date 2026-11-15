@@ -24,6 +24,7 @@ export interface CanvasWriteArgs {
   readonly title: string;
   readonly markdown: string;
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
 
@@ -41,9 +42,9 @@ export interface ListWriteArgs {
   readonly listTitle: string;
   readonly rows: readonly ListRowWrite[];
   readonly requestedBy: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
-
 
 const CANVAS_VERB: Readonly<Record<CanvasWriteArgs["op"], string>> = { create: "Create", replace: "Rewrite", append: "Add to" };
 const CANVAS_DONE: Readonly<Record<CanvasWriteArgs["op"], string>> = { create: "created", replace: "rewritten", append: "added to" };

@@ -1,3 +1,6 @@
+// proves: AP-MOD-core-access-worker-capabilities, AP-MOD-core-access-worker-capability-index.generated
+// proves: AP-WCI-WORKER_ONLY_TOOLS_STANDING, AP-WCI-WORKER_ONLY_TOOLS_THREAD
+
 import assert from "node:assert/strict";
 
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
@@ -251,3 +254,5 @@ eq(
 );
 
 console.log(`✓ worker-capabilities: ${n} assertions passed (${WORKER_ONLY_TOOLS_STANDING.length} worker-only tools across ${WORKER_CAPABILITY_GROUPS.length} capability groups)`);
+
+// proves: SEAT-worker-index, SEAT-worker-reserved

@@ -1,3 +1,5 @@
+// proves: slack.replied, slack.no_reply
+
 import { __setTestValveForTest } from "@open-everywhere/core/agent/adapter-api.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -92,6 +94,5 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok(engaged !== null, "🔴 POSITIVE CONTROL: a turn that DID deliver through the `reply` tool engages the thread — the promotion is still wired");
   ok(engaged?.participating === true, "POSITIVE CONTROL: …and it is the participating promotion, the one the drop must not earn");
 }
-
 
 console.log(`✓ slack-chat-audit: ${passed} assertions passed (judged silence rowless · closing prose dropped and rowed, never posted · reply-tool empty terminal rowless)`);

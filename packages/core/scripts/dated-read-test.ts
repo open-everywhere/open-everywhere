@@ -16,7 +16,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const ctx = {} as BindableContext;
-const READ_AT = "2026-01-16T13:12:00.000Z";
+const READ_AT = "2026-08-23T12:00:00.000Z";
 const OLD_TS = "2026-08-23T11:33:00.000Z";
 
 function adapter(lines: readonly RenderedLine[]): ReadAdapter {

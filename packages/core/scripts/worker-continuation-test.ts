@@ -616,3 +616,5 @@ eq(noMessage.success, false, "🔴 §4 NEGATIVE CONTROL: eve's own `message` req
 }
 
 console.log(`worker-continuation: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-worker-continuation

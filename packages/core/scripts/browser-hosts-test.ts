@@ -259,3 +259,5 @@ const row = (extra: Partial<BrowserHostDeclaration> = {}): BrowserHostDeclaratio
 }
 
 console.log(`\n✓ browser-hosts: ${n} assertions passed (declaration lint + fail-closed boot + derived views + the two browser_evaluate walls + the plane's platform-gated egress opener)\n`);
+
+// proves: AP-MOD-core-access-browser-hosts, AP-MOD-core-access-browser-toolkit, AP-MOD-core-access-reserved-hosts

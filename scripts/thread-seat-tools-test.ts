@@ -1,3 +1,5 @@
+// proves: DELG-13, DELG-14, DELG-21
+
 import assert from "node:assert/strict";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
@@ -157,3 +159,5 @@ console.log("5 — the thread's root message, per surface:");
 }
 
 console.log(`\nthread-seat-tools: ${n} assertions passed`);
+
+// proves: TOOL-message_thread_seat, TOOL-read_thread_seat

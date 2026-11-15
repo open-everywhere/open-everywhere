@@ -1,3 +1,5 @@
+// proves: appendAudit, registerAuditDropCounter, readAudit, auditRoot, auditToolAction, auditRowSha, findChainBreak, bootVerifyAuditChainTail, audit_entry` (sqlite DDL)
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

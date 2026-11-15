@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-credential-grant-card
+
 import assert from "node:assert/strict";
 
 import { grantCardText, type GrantAskWorkerOrigin } from "../agent/access/credential-grant-card.js";
@@ -129,7 +131,7 @@ ok(
 
 const ask: CredentialGrantAskRow = {
   connector: "notion",
-  createdAt: "2026-05-05T23:30:00.000Z",
+  createdAt: "2026-09-01T00:00:00.000Z",
   expiresAt: "2026-09-01T00:30:00.000Z",
   frozenArgs: { id: "page-1" },
   id: "ask-1",

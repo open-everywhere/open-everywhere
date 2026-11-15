@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-credential-grant-broker
+
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync } from "node:fs";
@@ -339,7 +341,6 @@ const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
   lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
 };
 const ownerFor = (name: string): Record<string, unknown> => ({ sessionId: "sess-credential-grant-mount", scope: "session", resolverSlug: name, entryKey: "_single", name });
-
 
 {
   const NAME = "grant__pat__read_page";
@@ -796,7 +797,7 @@ console.log("10. a granted call records its pinned target on the turn's provenan
   };
   const { adoptDelegatedRootSession } = await import("../agent/identity/delegated-binding.js");
   const inWorker = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(new ContextContainer(), fn);
-  const runIdWorker = { channel: { kind: "subagent", continuationToken: "subagent:wrun_example67:0" }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-run-id" } };
+  const runIdWorker = { channel: { kind: "subagent", continuationToken: "subagent:wrun_DISPATCHRUN:0" }, session: { auth: { current: { attributes: { oe_grain: "standing" } } }, id: "worker-run-id" } };
   eq(
     await inWorker(async () => {
       ok(adoptDelegatedRootSession(LENT_TO), "the worker records its root seat in a fresh eve context");
@@ -824,3 +825,5 @@ console.log("10. a granted call records its pinned target on the turn's provenan
 }
 
 console.log(`\ncredential-grant-mount: ${n} assertions passed.`);
+
+// proves: TOOL-grant_tools

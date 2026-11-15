@@ -53,8 +53,8 @@ function row(over: Partial<LinkedIdRow> & { platform: string; tenant: string; na
     org: ORG,
     status: "confirmed",
     establishedBy: "test",
-    createdAt: "2026-01-10T12:20:00Z",
-    updatedAt: "2026-01-10T12:20:00Z",
+    createdAt: "2026-08-01T00:00:00Z",
+    updatedAt: "2026-08-01T00:00:00Z",
     ...over,
   };
 }
@@ -267,3 +267,5 @@ const OLD_SQLITE_DDL = OLD_PG_DDL.replace(/text/g, "TEXT");
 
 await removeTempDir(TMP);
 console.log(`✓ link-tenant: ${n} assertions (vocabulary, the widened PK on both engines, the in-place migration from the pre-phase-2 shape, the backfill + its fail-loud/fail-closed edge, the tenant-qualified challenge flow)`);
+
+// proves: AP-MOD-core-identity-link-tenant, AP-MOD-core-identity-link-tenant-backfill

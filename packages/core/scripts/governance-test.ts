@@ -1,3 +1,5 @@
+// proves: governance.dm_delivered, governance.floor_breach
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +39,6 @@ import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
 registerSlackFixtureMapper();
-
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -459,3 +460,5 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
 
 await removeTempDir(tmp);
 console.log(`\n✓ governance: ${n} assertions passed (OPE-110 governance venue + OPE-44 DM-delivery arm)\n`);
+
+// proves: AP-MOD-core-access-pane-venue

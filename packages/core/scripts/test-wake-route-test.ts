@@ -87,6 +87,7 @@ const normFrame = (m: string): string =>
 
 interface Captured { message: string; target: Record<string, unknown>; auth: { attributes?: Record<string, unknown> } }
 const captured: Captured[] = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const captureReceive: any = (_channel: unknown, target: Record<string, unknown>) => ({
   send: async (message: string, options: { auth?: { attributes?: Record<string, unknown> } }) => {
     captured.push({ message, target, auth: options.auth ?? {} });
@@ -426,3 +427,5 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 await removeTempDir(dir);
 console.log(`\n✓ test-wake route: ${passed} assertions passed (triple fail-closed gate + INJECT-vs-READ credential separation + validation + render+divert + self-audit)\n`);
+
+// proves: ROUTE-test-wake, SET-068

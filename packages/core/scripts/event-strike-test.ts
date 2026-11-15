@@ -1,3 +1,5 @@
+// proves: ROUT-28
+
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +36,7 @@ type OperationalStore = import("../agent/operational/store.js").OperationalStore
 
 const ORG = "acme";
 const SURFACE = "slack/T1/C1";
-const NOW = new Date("2026-03-30T11:30:00.000Z");
+const NOW = new Date("2026-07-26T12:00:00.000Z");
 
 const SLACK_CHANNEL = { __fixture: "slack" } as never;
 const posts: Array<{ operation: string; body: string }> = [];

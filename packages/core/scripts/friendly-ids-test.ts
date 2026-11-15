@@ -54,13 +54,13 @@ eq(placeWords({ key: "teams/tenant-1/19:abc@thread.v2" }), "a Microsoft Teams co
 eq(placeWords({ key: "github/acme/widgets" }), "acme/widgets", "a GitHub room renders as its readable owner/repo");
 eq(rawIdLeaks("Target: acme/widgets"), [], "…which is not a leak");
 eq(placeWords({ key: ROOM, label: "#launch" }), "#launch", "a resolved label wins");
-eq(placeWords({ key: "wrun_example79" }), "another conversation", "an eve session id never renders");
+eq(placeWords({ key: "wrun_41MBA8W2A00GYVM20VYEBVST5W" }), "another conversation", "an eve session id never renders");
 eq(placeWords({ key: "oe-grant-room::eng::C1" }), "another conversation", "a grant room key never renders");
 eq(placeWords({ key: "eng" }), "the eng domain", "a domain name renders as words");
 eq(placeWords({ key: `user:slack/${TEAM}/${ROWAN}` }), `<@${ROWAN}>`, "a person's scope renders as that person");
 
 eq(rawIdLeaks(`Sent by the agent on behalf of ${ROWAN}, from slack/${TEAM}.`), [ROWAN, `slack/${TEAM}`], "🔴 the live footer leaks both the member id and the scope key, in text order");
-ok(rawIdLeaks("in wrun_example79").length === 1, "an eve session id is a leak");
+ok(rawIdLeaks("in wrun_41MBA8W2A00GYVM20VYEBVST5W").length === 1, "an eve session id is a leak");
 ok(rawIdLeaks(`asked by <@${ROWAN}> in <#C0123ABCD>`).length === 0, "a platform mention is not a leak");
 ok(rawIdLeaks(`open https://example.com/${ROWAN}/x`).length === 0, "an id inside a URL is not a leak");
 ok(rawIdLeaks("SUMMARY THE CHANGELOG").length === 0, "an all-capitals word with no digit is not an id");
@@ -74,7 +74,7 @@ clean(ownFromRoom, "a footer for the reader's own errand");
 ok(ownFromRoom.includes("_You asked for this in <#C0123ABCD>."), "…says \"you\"");
 eq(dmDeliveryFooter({ platform: "slack", recipientId: ROWAN, requestedBy: ROWAN, from: DM, sameConversation: true }), "", "🔴 a DM in the conversation the person asked from carries no footer at all");
 ok(dmDeliveryFooter({ platform: "slack", recipientId: "U0BOB00001", requestedBy: ROWAN, from: DM, sameConversation: true }).includes("Reply here to ask me to stop"), "🔴 a DM to anyone but the person who asked keeps the stop line, even marked same-conversation");
-const grantFooter = dmDeliveryFooter({ platform: "slack", recipientId: "U0BOB00001", requestedBy: `slack/${TEAM}/${ROWAN}`, ...grantFooterPlace("wrun_example79", undefined) });
+const grantFooter = dmDeliveryFooter({ platform: "slack", recipientId: "U0BOB00001", requestedBy: `slack/${TEAM}/${ROWAN}`, ...grantFooterPlace("wrun_41MBA8W2A00GYVM20VYEBVST5W", undefined) });
 clean(grantFooter, "a grant card's footer keyed on an eve session");
 ok(grantFooter.includes("in another conversation."), "…which names the place in plain words");
 const pingFooter = dmDeliveryFooter({ platform: "slack", recipientId: ROWAN, requestedBy: ROWAN });

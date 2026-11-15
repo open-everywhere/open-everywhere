@@ -28,7 +28,6 @@ import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-iden
 registerSlackFixtureMapper();
 registerSlackFixtureCodec();
 
-
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

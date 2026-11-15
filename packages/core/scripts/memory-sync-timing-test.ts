@@ -1,3 +1,5 @@
+// proves: MEM-46
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -417,3 +419,5 @@ function leakSurfaceOf(row: unknown): string {
 resetSettingsForTest();
 
 console.log(`\n✓ memory-sync-timing: ${n} assertions passed (flag OFF is a structural no-op + no row; flag ON emits one per-session row with per-silo load/sync/lock/files/bytes + the once-per-session sandbox cold-create; work is unchanged by arming; TAINT holds — bodies, unknown fields and provider error text all refused; boot decomposes into hook + unattributed)\n`);
+
+// proves: SET-078

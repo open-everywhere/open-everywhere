@@ -1,3 +1,6 @@
+// proves: unified.self_dispatch
+// proves: SEAT-38, SEAT-39
+
 import assert from "node:assert/strict";
 
 const __slackStubs = await import("./_slack-test-stubs.js");
@@ -194,6 +197,7 @@ console.log("3. parseSelfDispatchPayload (fail-closed structural validation):");
 
 console.log("4. handleSelfDispatch (fail-closed route):");
 const diverted: { payload: UnifiedDispatchPayload }[] = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fakeReceive: any = async () => ({ id: "sess-fake" });
 const captureDivert = async (_r: RouteHandlerArgs["to"], input: UnifiedDispatchPayload): Promise<void> => {
   diverted.push({ payload: input });
@@ -481,6 +485,7 @@ try {
 
   console.log("7. loop-back (captured self-call → real handler → real divert → capture receive):");
   const received: { message: string; target: UnifiedReceiveTarget; auth: { attributes?: Record<string, unknown> } }[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const captureReceive: any = (_ch: unknown, target: unknown) => ({
     send: async (message: string, options: { auth: unknown }) => {
       received.push({ message, target, auth: options.auth } as (typeof received)[number]);

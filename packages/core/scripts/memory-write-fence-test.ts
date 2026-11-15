@@ -1,3 +1,5 @@
+// proves: MEM-26
+
 import assert from "node:assert/strict";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
@@ -230,3 +232,5 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
 }
 
 console.log(`\n✓ memory-write-fence: ${n} assertions passed (path resolution + plan decision + wrapper + fail-closed + real mounted wiring)\n`);
+
+// proves: TOOL-write_file

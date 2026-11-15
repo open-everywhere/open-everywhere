@@ -167,7 +167,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 }
 
 {
-  const UNIFIED = "wrun_example23";
+  const UNIFIED = "wrun_41MBA8VYD00GX92N81AKRQ9KMA";
   const park = row("memory.write", "2026-01-24T00:25:22.000Z", { road: "session-persist", kind: "memory", outcome: "edited", files: 9, sessionId: UNIFIED });
   const siblingRemember = row("memory.write", "2026-01-24T17:44:07.000Z", {
     road: "session-persist",
@@ -175,7 +175,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     tier: "silo:e2e-ambient-brain",
     outcome: "write-intent",
     files: 9,
-    sessionId: "wrun_example25",
+    sessionId: "wrun_41MBA8W1AR0GTM59YJ170PN6NA",
   });
   const siblingPersist = { ...siblingRemember, detail: { ...siblingRemember.detail, outcome: "edited" } };
 
@@ -287,7 +287,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 }
 
 {
-  const WAKE = "00000000-0000-4000-8000-000000000061";
+  const WAKE = "bbed8665-705d-4e5a-9055-10fc54e5ecf5";
   const MARKER = "unix-6353";
   const ASK = "Before I write this up — what was the deploy window name the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.";
   const envelope =
@@ -336,7 +336,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   const latest = memoryPathReadsBetween(rerun, { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(latest.fromIndex === 266 && latest.paths.length === 0, "an earlier run's identical ask does not stretch the slice — the LATEST envelope before the close opens it");
 
-  const rows = [row("reply.post", "2026-01-31T02:00:20.000Z", { id: "5808350125", wakeId: WAKE, sessionId: "wrun_example60" }, 1, "github")];
+  const rows = [row("reply.post", "2026-01-31T02:00:20.000Z", { id: "5808350125", wakeId: WAKE, sessionId: "wrun_41MBA5EQ980GHRSHRTSZDV9J83" }, 1, "github")];
   ok(replyPostWakeId(rows, "5808350125") === WAKE, "replyPostWakeId names the wake the GitHub reply answered");
   ok(replyPostWakeId(rows, "1") === undefined, "…and nothing for a message no reply.post row names");
 }
@@ -720,7 +720,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
 {
   const OP = "notion__notion-create-pages";
-  const worker = row("worker.toolset", "2026-01-24T01:38:50.000Z", { worker: "wrun_example24", grain: "task", tools: ["bash", "read_file", "reply"], toolCount: 3 });
+  const worker = row("worker.toolset", "2026-01-24T01:38:50.000Z", { worker: "wrun_41MBA8VZC80GVQD7F5PR7G8638", grain: "task", tools: ["bash", "read_file", "reply"], toolCount: 3 });
   const v = workerRoadForOp([worker], OP);
   ok(v.workers === 1 && !v.mounted, "🔴 a delegated worker whose roster has no connector tool: NO CONNECTOR CALL HAPPENED, which is routing and not the fence");
   ok(v.sample.includes("bash"), "…and the roster rides back so the gate's message can show what the work actually held");
@@ -733,8 +733,8 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
 {
   const OP = "notion__notion-create-pages";
-  const FIRE = ["wrun_example43"];
-  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_example35", parentSession: "wrun_example43", rootSession: "wrun_example43", grain: "task", tools: ["bash", "load_skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
+  const FIRE = ["wrun_2026RCWB054FIRE"];
+  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_2026RCWB054REST", parentSession: "wrun_2026RCWB054FIRE", rootSession: "wrun_2026RCWB054FIRE", grain: "task", tools: ["bash", "load_skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
 
   const restArm = unattendedArmRoad({ planeRows: 0, workerRows: restRoad, fireSessions: FIRE, op: OP });
   ok(restArm.verdict === "not-proven", "🔴 the DECLARED fire took the REST road with the op unmounted: there is no lift to measure, so the arm is NOT PROVEN and never scored");
@@ -750,7 +750,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     "no roster at all is not an explanation either — the fire's own seat is where the call had to come from, so an empty plane stays HARD",
   );
 
-  const unreadable = [{ ...restRoad[0]!, detail: { worker: "wrun_example36", parentSession: "wrun_example43", grain: "task", tools: "not-an-array" } }];
+  const unreadable = [{ ...restRoad[0]!, detail: { worker: "wrun_UNREADABLE", parentSession: "wrun_2026RCWB054FIRE", grain: "task", tools: "not-an-array" } }];
   ok(
     unattendedArmRoad({ planeRows: 0, workerRows: unreadable, fireSessions: FIRE, op: OP }).verdict === "unexplained",
     "🔴 a roster whose tools is not an array says nothing about the road, so it cannot buy the arm its NOT PROVEN — an unreadable roster fails HARD, not open",
@@ -1015,8 +1015,8 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   process.env.OE_SQLITE_PATH = join("/tmp", `oe-gate-joins-halt-test-${process.pid}.sqlite3`);
   const { haltWakeForSlackAnchor, haltSetEvidence } = await import("./scenarios.js");
 
-  const WAKE_ID = "00000000-0000-4000-8000-000000000028";
-  const SESSION_ID = "wrun_example27";
+  const WAKE_ID = "1626ef2f-eff2-4356-a081-0acc73da4482";
+  const SESSION_ID = "wrun_41MBA5EAK00GGDHPWZAZ7G82P3";
   const SURFACE_KEY = "slack/T0EXAMPLE/C0EXCHAN011";
   const ANCHOR_TS = "1769829801.042000";
   const RUN_START = "2026-01-31T03:23:16.000Z";
@@ -1037,7 +1037,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     action: "wake.ingress",
     detail: {
       wakeId: overrides.wakeId ?? WAKE_ID,
-      deliveryId: "00000000-0000-4000-8000-000000000029",
+      deliveryId: "5bdef812-4a0e-4f2a-9a3e-1b6f0d2c7e41",
       surfaceKey: overrides.surfaceKey ?? SURFACE_KEY,
       vendorTs: overrides.vendorTs ?? "2026-01-31T03:23:21.042Z",
       vendorTsSource: "slack-ts",
@@ -1339,7 +1339,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     const SEED_WAKE_Re = "7a96610c";
     const MINTED_WAKE_Re = "b6a55ebd";
     const TASK_Re = "task_97f964968f606158574f4797";
-    const SEAT_Re = "wrun_example39";
+    const SEAT_Re = "wrun_41MBA5EBJ80GNC7362Q01C78PM";
     const INTERIM_Re = "1769897345.296000";
     const SETTLEMENT_Re = "1769897495.621000";
     const TURN_START_Re = Date.parse("2026-01-31T22:08:57.618Z");
@@ -1449,7 +1449,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     const WRj = "c3f3fc09";
     const PURGE_TASK = "task_ce043908";
     const SEED_TASK = "task_109eb4dd4c4b7b9e80fe5f3d";
-    const SEATRj = "wrun_example53";
+    const SEATRj = "wrun_41MBA5EJD00GV11R7QHFXT308N";
     const ACKRj = "1770056084.427000";
     const STARTRj = Date.parse("2026-02-02T18:14:03.833Z");
     const purgeDispatch = row("delegation.task_started", "2026-02-02T18:12:17.000Z", { task: PURGE_TASK, session: SEATRj }, 100, "ingest");
@@ -1989,8 +1989,8 @@ console.log("23. S-DISCORD-GRANT phase 2 skips the hand-off ack and polls its au
 console.log("24. seatContinuity scopes replies, sessions and seats to the admitted wakes:");
 {
   const { seatContinuity } = await import("./engaged-rows.js");
-  const SEAT = "wrun_example62";
-  const OTHER = "wrun_example63";
+  const SEAT = "wrun_41MBA5ES7R0GKFKBTSEWEFA4XH";
+  const OTHER = "wrun_41MBA5ER8G0GVCD24GSQ62DTAJ";
   const W1 = "555a0071";
   const W2 = "9ddc7ca8";
   const post = (ts: string, sessionId: string, wakeId?: string): AuditWireEntry => ({

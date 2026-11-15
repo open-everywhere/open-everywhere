@@ -476,7 +476,6 @@ export function createVercelClient(api: VercelApi): VercelClient {
 
     inspect: readDeployment,
 
-
     async aliasSet(deploymentUrl, alias) {
       let id: string;
       try {

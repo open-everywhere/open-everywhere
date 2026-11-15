@@ -1,3 +1,5 @@
+// proves: cover.set, cover.wake, cover.answered, cover.recap, cover.recap_refused
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +36,7 @@ function ok(cond: boolean, label: string): void {
 }
 
 const ORG = "default";
-const NOW = new Date("2026-06-18T09:30:00.000Z");
+const NOW = new Date("2026-10-14T10:00:00.000Z");
 const later = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
 const ANA = "slack/T1/UANA";
 const anaDm: SurfaceBinding = { org: ORG, platform: "slack", workspace: "T1", surface: "DANA", mode: "dm", visibility: "private", trust: "internal", principalId: "UANA" } as SurfaceBinding;
@@ -59,7 +61,7 @@ const roomWake = (over: Partial<Parameters<typeof wake.coverForWake>[0]> = {}): 
 console.log("§1 the command");
 {
   ok(JSON.stringify(parseOeCommandTokens(["cover"])) === JSON.stringify({ kind: "cover", action: "status" }), "`cover` alone reads the setting");
-  ok(JSON.stringify(parseOeCommandTokens(["cover", "on", "until", "2026-10-21"])) === JSON.stringify({ kind: "cover", action: "on", until: "2026-10-20T00:00:00.000Z" }), "`cover on until <date>` parses to the start of that day, UTC");
+  ok(JSON.stringify(parseOeCommandTokens(["cover", "on", "until", "2026-10-20"])) === JSON.stringify({ kind: "cover", action: "on", until: "2026-10-20T00:00:00.000Z" }), "`cover on until <date>` parses to the start of that day, UTC");
   ok(parseOeCommandTokens(["cover", "on", "until", "Friday"]).kind === "error", "a date that is not year-month-day is an error, never a change");
   ok(parseOeCommandTokens(["cover", "loud"]).kind === "error", "an unknown action is an error");
   ok(renderHelp().includes("cover on|off"), "`/oe help` names the command");

@@ -251,3 +251,7 @@ console.log(
   `✓ sandbox-region: ${passed} assertions passed (validate, fail-closed plan, composed opts, ` +
     `eve create copy=${createCopy}, passthrough=${live.supported})`,
 );
+
+// proves: AP-MOD-core-sandbox-vercel-create
+
+// proves: SET-043, SET-044, SET-046

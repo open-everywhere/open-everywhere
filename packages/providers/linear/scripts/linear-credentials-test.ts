@@ -1,3 +1,5 @@
+// proves: linear.token_mint_failed
+
 import {
   _resetLinearMintCache,
   linearAppActorCredentials,

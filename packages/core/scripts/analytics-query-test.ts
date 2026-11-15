@@ -321,3 +321,5 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
 }
 
 console.log(`\n✓ analytics-query: ${n} assertions passed (dual-engine parity, scope isolation A↮B, self-scope, no-rows-for-degraded, audit detail gating, domain fold + est_usd, OPE-369 depth/root/cost_source dims + measured_usd, OPE-1611 attribution measures + coverage counts, OPE-1866 audit DM mask)\n`);
+
+// proves: TOOL-query_analytics

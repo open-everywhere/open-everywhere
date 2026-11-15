@@ -212,7 +212,7 @@ function standInPackages(): readonly Record<string, unknown>[] {
       schemaVersion: 1,
       releases: [
         ...(later ? [{ version: LOCK_TO, date: "2026-10-08", summary: "the stand-in target.", evePeer: EVE_TO, breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] }] : []),
-        { version: LOCK_FROM, date: "2026-10-03", summary: "the stand-in start.", evePeer: EVE_FROM, breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] },
+        { version: LOCK_FROM, date: "2026-10-02", summary: "the stand-in start.", evePeer: EVE_FROM, breaking: [], configMigrations: [], env: { added: [], removed: [] }, manualSteps: [] },
       ],
     };
     out.push({ name: "@open-everywhere/core", version: v, bin: { oe: "bin/oe.js" }, peerDependencies: { eve: e }, __files: { "upgrading.json": JSON.stringify(notes), "bin/oe.js": "process.exit(0);\n" } });

@@ -392,3 +392,5 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
 }
 
 console.log(`✓ issue-read: ${passed} assertions passed`);
+
+// proves: TOOL-read_github_issue

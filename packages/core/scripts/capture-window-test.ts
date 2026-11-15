@@ -1,3 +1,6 @@
+// proves: webhook.capture_arm, webhook.capture_read
+// proves: ROUT-85, ROUT-86, ROUT-87
+
 process.env.OE_SQLITE_PATH = ":memory:";
 _setDeploymentIdentityForTest({ org: "acme" });
 
@@ -381,3 +384,5 @@ async function admit(over: Record<string, unknown>): Promise<{ readonly calls: u
 
 resetEventNormalizersForTest();
 console.log(`✓ capture-window: ${passed} assertions`);
+
+// proves: TOOL-capture_events

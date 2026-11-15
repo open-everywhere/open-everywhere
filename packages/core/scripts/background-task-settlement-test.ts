@@ -506,3 +506,5 @@ await new Promise((r) => setTimeout(r, 50));
 }
 
 console.log(`background-task-settlement: ${String(n)} assertions passed`);
+
+// proves: AP-MOD-core-access-background-tasks, delegation.task_unreadable, delegation.dispatch_unauthorized

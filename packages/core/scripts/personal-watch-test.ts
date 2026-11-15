@@ -1,3 +1,5 @@
+// proves: personal_watch.dial.set, personal_watch.dial.refused, personal_watch.response, personal_watch.silence, personal_watch.nudge
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

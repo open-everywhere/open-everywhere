@@ -209,3 +209,5 @@ await assert.rejects(exec({ query: "q", scope: "slack" }, bothCtx), /holds no "s
 }
 
 console.log(`✓ work-search: ${passed} assertions passed`);
+
+// proves: TOOL-search

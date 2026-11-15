@@ -172,3 +172,5 @@ const report = async (args: Record<string, unknown>): Promise<{ view: SpendWire;
 await client.close();
 await removeTempDir(dir);
 console.log(`\n✓ control spend read is org-pinned: ${n} assertions passed\n`);
+
+// proves: CTRL-spend_report

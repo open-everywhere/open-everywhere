@@ -1,3 +1,5 @@
+// proves: MEM-31, MEM-32, MEM-33, MEM-34, MEM-35, MEM-37
+
 import assert from "node:assert/strict";
 import {
   EXTERNAL_CLAIM_PREFIX,

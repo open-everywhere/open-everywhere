@@ -280,3 +280,6 @@ resetBrowserHostsForTest();
 console.log(
   `\n✓ agent-browser: ${n} assertions passed (flag gating fail-closed + host declaration + config binding tripwire + toolkit/egress registration + evaluate opt-in + grain policy + pre-bake hooks)\n`,
 );
+
+// proves: SET-011
+// proves: TOOL-browser_tools

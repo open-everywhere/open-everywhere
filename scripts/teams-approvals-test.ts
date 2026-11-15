@@ -1,3 +1,5 @@
+// proves: approval.approved, approval.rejected, approval.denied
+
 import assert from "node:assert/strict";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 registerTeamsProvider();

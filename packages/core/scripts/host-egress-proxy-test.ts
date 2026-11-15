@@ -1,3 +1,5 @@
+// proves: egress.hostside.deny
+
 import assert from "node:assert/strict";
 import { Agent, ProxyAgent } from "undici";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
@@ -190,3 +192,5 @@ function stubLookup(addresses: readonly string[]): { calls: number } {
 }
 
 console.log(`\n✓ host-egress-proxy: ${n} assertions passed (routing decision + proxy dispatch with delegated anti-rebind + direct path unchanged + oeFetch dispatcher/audit fork)\n`);
+
+// proves: AP-MOD-core-access-host-egress

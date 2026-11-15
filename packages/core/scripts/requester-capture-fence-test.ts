@@ -284,5 +284,4 @@ resetSettingsForTest();
   }
 }
 
-
 console.log(`\nrequester-capture-fence: ${n} assertions passed`);

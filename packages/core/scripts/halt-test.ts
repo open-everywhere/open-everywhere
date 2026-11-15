@@ -1,3 +1,5 @@
+// proves: DELG-33, ROUT-09
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { readFileSync } from "node:fs";
@@ -849,3 +851,7 @@ registerConfig({
 
 await closeAllTestPg();
 console.log(`✓ halt — ${passed} assertions (row shape on BOTH adapters, the four-axis union, fail-closed reads, the chain arrow + its one exemption, both routine legs, the grant broker, both egress planes, the connector wall, the absence seam, the announcement, and the two doors)`);
+
+// proves: AP-MOD-core-access-halt, AP-MOD-core-access-halt-state, AP-MOD-core-tools-halt
+
+// proves: CTRL-halt, CTRL-resume, TOOL-halt, TOOL-resume

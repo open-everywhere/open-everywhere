@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-binding-pr
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";

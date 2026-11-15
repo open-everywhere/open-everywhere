@@ -97,7 +97,7 @@ function leaks(text: string): string[] {
     ["Runs on vercel-sandbox; its hours go to the spend ledger.", "internal word"],
     ["Post a message into slack C0EXAMPLE2", "raw platform id"],
     ["Join voice channel 123456789012345678", "raw snowflake"],
-    ["quote action 00000000-0000-4000-8000-000000000085", "internal row id"],
+    ["quote action 3f2a1b4c-1111-2222-3333-444455556666", "internal row id"],
     ["Let routine r-1a2b3c4d use it", "internal id"],
     ["expires 2026-03-16T07:01:00.000Z", "ISO instant"],
     ["$: $50.00/mo → $2575.00/mo", "figure label"],
@@ -145,7 +145,7 @@ function discordLines(msg: { content: string; components: readonly unknown[] }):
 
 function row(kind: string, args: unknown, over: Partial<PendingActionRow> = {}): PendingActionRow {
   return {
-    id: "00000000-0000-4000-8000-000000000085",
+    id: "3f2a1b4c-1111-2222-3333-444455556666",
     org: "acme",
     kind,
     argsJson: JSON.stringify(args),
@@ -407,7 +407,7 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
   const r = row(f.kind, f.args, { status: "approved", decidedBy: "U0EXAMPLE3" });
   const dashed = decidedCardLine(r, "rule added — the routine follows it from its next run", "<@U0EXAMPLE3>");
   ok(leaks(dashed).length === 0 && dashed.includes("rule added, the routine follows it"), `🔴 an executor's em-dash never reaches the decided line (got ${JSON.stringify(dashed)})`);
-  const failed = decidedCardLine(r, "FAILED: SqliteError: no such table pending_actions (id 00000000-0000-4000-8000-000000000085)", "<@U0EXAMPLE3>");
+  const failed = decidedCardLine(r, "FAILED: SqliteError: no such table pending_actions (id 3f2a1b4c-1111-2222-3333-444455556666)", "<@U0EXAMPLE3>");
   ok(!failed.includes("Sqlite") && !failed.includes("3f2a1b4c") && failed.includes("but it failed") && leaks(failed).length === 0, `🔴 a failed act says it failed, never the raw error (got ${JSON.stringify(failed)})`);
   ok(withoutDashes("rule added — it applies at once") === "rule added, it applies at once", "withoutDashes: a code-written dash becomes a comma");
   ok(withoutDashes("“Ship it — today” — later ones go without asking") === "“Ship it — today”, later ones go without asking", "withoutDashes: quoted content keeps its own dash");
@@ -490,7 +490,7 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
     verb: "notion_fetch",
   } as never;
   const NOW = Date.parse("2026-02-09T02:30:45.132Z");
-  const grant = { ...(ask as object), askId: "ask-1", id: "00000000-0000-4000-8000-000000000018", expiresAt: "2026-02-09T14:30:45.132Z", mode: "session", status: "active", tier: "read" } as never;
+  const grant = { ...(ask as object), askId: "ask-1", id: "9f8b4c2e-1d3a-4f6b-8c7d-2e1f0a9b8c7d", expiresAt: "2026-02-09T14:30:45.132Z", mode: "session", status: "active", tier: "read" } as never;
   const own = (text: string): string[] => text.split("\n").filter((l) => l.length > 0 && !l.includes(RESOURCE) && !l.includes("summarise the quarter"));
   const texts: [string, string][] = [
     ["approved card", approvedGrantCardText(ask, grant, NOW)],
@@ -531,7 +531,7 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
   const { withArmingApproval } = await import("@open-everywhere/core/agent/approvals/arming-context.js");
   const { cardSitsWhereAsked } = await import("@open-everywhere/core/agent/approvals/requester-note.js");
   const f = APPROVAL_KIND_FIXTURES.find((x) => x.kind === "access.request")!;
-  const card = row(f.kind, f.args, { id: "00000000-0000-4000-8000-000000000089", channelId: "C0EXAMPLE1", threadTs: "1760453300.000100" });
+  const card = row(f.kind, f.args, { id: "5a5a5a5a-1111-2222-3333-444455556666", channelId: "C0EXAMPLE1", threadTs: "1760453300.000100" });
   await getOperationalStore().addPendingAction(card);
   const armed = <T>(fn: () => Promise<T>): Promise<T> => withArmingApproval({ id: card.id, kind: card.kind }, fn);
   ok((await armed(() => cardSitsWhereAsked("acme", "C0EXAMPLE1", "1760453300.000100"))) === true, "🔴 a card in the asking thread is the asker's answer: the note does not post");

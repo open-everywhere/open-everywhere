@@ -9,7 +9,6 @@ import { removeTempDir } from "./_temp-dir.js";
 import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 registerSlackFixtureMapper();
 
-
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-user-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
@@ -357,3 +356,5 @@ await eveContextStorage().run(new FakeSession(), async () => {
 
 await removeTempDir(tmp);
 console.log(`✓ connector-user-principal: ${passed} assertions passed`);
+
+// proves: SET-016

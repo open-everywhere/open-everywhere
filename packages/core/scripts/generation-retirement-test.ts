@@ -1,3 +1,5 @@
+// proves: SEAT-74, SEAT-75, SEAT-76
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -420,6 +422,5 @@ async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token:
     "§13: the record is written on the dispatch edge, beside the session-local one it makes durable",
   );
 }
-
 
 console.log(`✓ generation-retirement: ${String(n)} assertions passed (OPE-627: rotation retires the outgoing generation, so eve's child reaper takes its parked workers; OPE-1620: and never while that generation still owes a live delegation)`);

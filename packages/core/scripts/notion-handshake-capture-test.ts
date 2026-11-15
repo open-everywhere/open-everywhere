@@ -1,3 +1,7 @@
+// proves: ROUT-88, ROUT-90
+
+// proves: AP-MOD-core-credentials-reserved-refs
+
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

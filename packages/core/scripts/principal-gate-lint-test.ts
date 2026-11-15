@@ -709,3 +709,20 @@ class Policies {
 }
 
 console.log(`✓ principal-gate-lint: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-principal-gate-manifest, AP-PGATE-add_routine_rule-123, AP-PGATE-analytics-scope-41
+// proves: AP-PGATE-approval-dedupe-88, AP-PGATE-assign-87, AP-PGATE-auth-627, AP-PGATE-auth-657
+// proves: AP-PGATE-aws-identity-205, AP-PGATE-cancel_routine-57, AP-PGATE-checkpoint-562
+// proves: AP-PGATE-clear_connector_override-51, AP-PGATE-clear_spend_limit-57, AP-PGATE-confirm_link-140
+// proves: AP-PGATE-connector-auth-455, AP-PGATE-create_agent-110, AP-PGATE-create_routine-380
+// proves: AP-PGATE-create_skill-97, AP-PGATE-create_ticket-91, AP-PGATE-declare_webhook-166, AP-PGATE-delete_skill-60
+// proves: AP-PGATE-dispatch-344, AP-PGATE-dm_person-78, AP-PGATE-edit_routine-72, AP-PGATE-enable_routine-74
+// proves: AP-PGATE-flow-410, AP-PGATE-flow-910, AP-PGATE-ingress-667, AP-PGATE-link_identity-73
+// proves: AP-PGATE-open_pull_request-147, AP-PGATE-post_message-83, AP-PGATE-purge_memory-133
+// proves: AP-PGATE-remove_routine_rule-69, AP-PGATE-request_access-206, AP-PGATE-resume-74
+// proves: AP-PGATE-revoke_connector-53, AP-PGATE-revoke_credential_grant-61, AP-PGATE-revoke_routine_permissions-34
+// proves: AP-PGATE-rotate_webhook-66, AP-PGATE-run_routine_now-58, AP-PGATE-set_dm_delivery-59
+// proves: AP-PGATE-set_spend_limit-268, AP-PGATE-set_spend_limit-353, AP-PGATE-set_state-83
+// proves: AP-PGATE-unlink_identity-38
+
+// proves: ROSTER-lint-principal-gate

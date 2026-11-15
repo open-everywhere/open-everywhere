@@ -1,3 +1,5 @@
+// proves: control.oauth_refused, control.oauth_token_issued
+
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -500,3 +502,5 @@ let code = "";
 
 await removeTempDir(dir);
 console.log(`✓ control OAuth plane: ${passed} assertions passed (fail-closed 404 / client_credentials / PKCE round trip + replay / expired-audience-issuer-signature-scope refusals / audited / eve-parity pinned)`);
+
+// proves: ROUTE-mcp, ROUTE-oauth

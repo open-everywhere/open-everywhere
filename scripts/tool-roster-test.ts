@@ -254,3 +254,5 @@ try {
 }
 
 console.log(`✓ ${passed} tool-roster assertions passed`);
+
+// proves: ROSTER-agent-slot, ROSTER-capability-gain, ROSTER-enumeration

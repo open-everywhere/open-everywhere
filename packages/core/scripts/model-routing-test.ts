@@ -636,3 +636,5 @@ const supDomains: Domain[] = [
 }
 
 console.log(`model-routing: ${passed} assertions passed`);
+
+// proves: SET-079

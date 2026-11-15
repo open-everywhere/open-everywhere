@@ -194,3 +194,5 @@ ok(
 );
 
 console.log(`✓ docs registry + source map — ${passed} assertions`);
+
+// proves: TOOL-read_docs

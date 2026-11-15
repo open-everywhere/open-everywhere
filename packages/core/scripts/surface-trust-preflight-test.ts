@@ -426,3 +426,7 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
 }
 
 console.log(`\n✓ surface-trust-preflight: ${n} assertions passed`);
+
+// proves: AP-MOD-core-identity-trust-preflight
+
+// proves: SET-056

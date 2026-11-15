@@ -1,3 +1,6 @@
+// proves: webhook.fired
+// proves: ROUT-83
+
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,7 +106,7 @@ const hook: FusedWebhookHook = defineWebhook({
   instruction: "A deploy just finished. Summarise it.",
 });
 
-const FIRE_NOW = new Date("2026-06-04T18:01:00.000Z");
+const FIRE_NOW = new Date("2026-09-23T12:00:00.000Z");
 
 async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "throws"): Promise<{ fired: boolean; reason?: string; calls: Captured[] }> {
   arm(facts);

@@ -1,3 +1,5 @@
+// proves: routine.transcript_read
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -379,7 +381,7 @@ const FIRE = {
   ok(!mine.some((f) => f.sessionId === "s-x"), "🔴 fires: the SAME routine id in another channel is not reachable — the same-channel boundary");
   ok((await listRoutineFires({ ...base, surface: "C-other" }, "r-aaa", now)).length === 1, "fires: the other channel sees only its own");
   ok((await listRoutineFires({ ...base, surface: "C-ops" }, "r-nope", now)).length === 0, "fires: an unknown routine id resolves to nothing");
-  ok((await listRoutineFires({ ...base, surface: "C-ops" }, "r-aaa", new Date("2026-05-05T23:30:00.000Z"))).length === 0, "fires: outside the 7-day window, nothing is reachable");
+  ok((await listRoutineFires({ ...base, surface: "C-ops" }, "r-aaa", new Date("2026-09-01T00:00:00.000Z"))).length === 0, "fires: outside the 7-day window, nothing is reachable");
 }
 
 {
@@ -584,3 +586,5 @@ const FIRE = {
 
 await removeTempDir(tmp);
 console.log(`✓ transcript-tool: ${n} assertions (same-channel routine transcript read — fence proven through eve's real replay path)`);
+
+// proves: ROUTE-transcript-relay, TOOL-read_routine_transcript

@@ -1,3 +1,5 @@
+// proves: SEAT-30, SEAT-31
+
 import assert from "node:assert";
 import { bindFrom, registerIdentityMapper, type BindableContext } from "../agent/identity/binding.js";
 import { registerConfig } from "../agent/access/config.js";
@@ -134,3 +136,5 @@ console.log("2. the derivation:");
 }
 
 console.log(`\n✓ chat-read-container (OPE-929): ${n} assertions passed (tool surface admits no target, container + thread root derived from the turn's binding)`);
+
+// proves: TOOL-read_channel, TOOL-read_thread

@@ -1,3 +1,5 @@
+// proves: access.request.pr_opened
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -903,3 +905,8 @@ function fakeDeps(state: FakeState) {
 
 await removeTempDir(dir);
 console.log(`access-request-test: ${n} assertions passed`);
+
+// proves: AP-MOD-core-approvals-access-request, AP-MOD-core-approvals-domain-exposure
+// proves: AP-MOD-core-approvals-review-surface
+
+// proves: TOOL-request_access

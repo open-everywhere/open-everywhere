@@ -1,3 +1,7 @@
+// proves: turn.tool_gated
+
+// proves: AP-MOD-core-access-window-gated
+
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -600,3 +604,5 @@ console.log("7. the sandbox kit mounts through eve's real resolver (OPE-2304):")
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);
+
+// proves: SEAT-memory-recall, SEAT-withheld-audit, TOOL-bash, TOOL-read_file

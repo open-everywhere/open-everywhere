@@ -1,3 +1,6 @@
+// proves: AP-MOD-core-access-chat-write-grant, AP-MOD-core-access-resource-capabilities
+// proves: AP-MOD-core-access-resource-grant
+
 import assert from "node:assert/strict";
 import {
   RESOURCE_CAPABILITIES,
@@ -403,3 +406,5 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
 }
 
 console.log(`chat-write-grant: ${n} assertions passed`);
+
+// proves: TOOL-post_message

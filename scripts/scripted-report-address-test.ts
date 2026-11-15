@@ -15,8 +15,8 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const WAKE_A: string = "00000000-0000-4000-8000-000000000064";
-const WAKE_B: string = "00000000-0000-4000-8000-000000000065";
+const WAKE_A: string = "9d2f1c44-2f7a-4d1e-9f0b-6a4c1d2e3f40";
+const WAKE_B: string = "1b7e5a90-3c11-4a52-8d63-0e9f2a7b4c18";
 
 function msg(text: string): { readonly text: string } {
   return { text };

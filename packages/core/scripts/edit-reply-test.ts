@@ -1,3 +1,5 @@
+// proves: REPLY-09, REPLY-31, REPLY-32, REPLY-33, REPLY-35, REPLY-36
+
 import { tmpdir } from "node:os";
 import { readdirSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -638,3 +640,5 @@ function captureRingState(leg: string, ring: readonly { readonly kind?: string; 
 }
 
 console.log(`✓ edit_reply own-post fence: ${passed} assertions passed`);
+
+// proves: TOOL-edit_reply

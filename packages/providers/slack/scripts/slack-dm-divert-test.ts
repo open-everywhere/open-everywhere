@@ -1,3 +1,5 @@
+// proves: surface.wake_dropped
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -1211,3 +1213,5 @@ overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "en
 }
 
 console.log(`✓ slack-dm-divert: ${n} assertions passed (OPE-2577 unchanged-edit drop, classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips)`);
+
+// proves: SET-062

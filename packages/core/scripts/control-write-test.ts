@@ -1,3 +1,5 @@
+// proves: admin.connector.clear_override, admin.routine.cancel, admin.session_grants.revoke, admin.spend.clear_limit, skill.delete
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -206,6 +208,7 @@ await client.connect(clientT);
   const beforeRows = await readAudit({ org: "default", limit: 200 });
   ok("a refused reopen_slack_setup appends no audit row", !beforeRows.some((r) => r.action === "slack.setup_reopened"));
 
+  // proves: slack.setup_reopened
   let reopenCalls = 0;
   registerSlackBridge({
     ...({} as unknown as Parameters<typeof registerSlackBridge>[0]),
@@ -278,6 +281,7 @@ await client.connect(clientT);
   ok("a value pasted into the names field is refused and not echoed", pasted.isError === true && !textOf(pasted).includes(SENTINEL));
   ok("no refused call wrote an adopt row", (await adoptRows()).length === 0);
 
+  // proves: admin.secret.adopt_env
   const res = await client.callTool({ name: "adopt_env_secrets", arguments: { org: "default", names: [ADOPT, UNSET, KEPT] } });
   const body = JSON.parse(textOf(res)) as { ok: boolean; results: { name: string; outcome: string }[] };
   const outcome = (name: string) => body.results.find((r) => r.name === name)?.outcome;
@@ -455,3 +459,7 @@ await client.connect(clientT);
 await client.close();
 await removeTempDir(dir);
 console.log(`\n✓ control write tools: ${n} assertions passed (mutations overlay config-as-code + are audited)\n`);
+
+// proves: CTRL-cancel_routine, CTRL-clear_connector_override, CTRL-clear_spend_limit, CTRL-delete_skill
+// proves: CTRL-directory_groups_plan, CTRL-overrides_list, CTRL-reopen_slack_setup, CTRL-revoke_connector
+// proves: CTRL-revoke_session_grants, CTRL-set_spend_limit, CTRL-adopt_env_secrets

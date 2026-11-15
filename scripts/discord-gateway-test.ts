@@ -1,3 +1,6 @@
+// proves: discord.heartbeat
+// proves: MEM-12
+
 import { createHmac } from "node:crypto";
 import { voiceSyncEnvelope as relayVoiceSyncEnvelope, parseSyncAnswer as relayParseSyncAnswer } from "../deploy/discord-relay/voice.js";
 import { parseVoiceSync } from "@open-everywhere/core/agent/meetings/discord-voice.js";
@@ -312,8 +315,11 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 {
   const trig = { id: "m9", author: "u", authorId: "U9", sentAt: "2026-07-10T10:00:00.000Z", text: "hi" };
   function __ope596DiscordPins(): void {
+    // @ts-expect-error OPE-596: `trust` is REQUIRED on the unified builder's trigger.
     void buildDiscordUnifiedWake({ guildId: "G", channelId: "c1", isThread: false, addressing: "direct-mention", wakeId: "wk_1", trigger: trig });
+    // @ts-expect-error OPE-596: `trust` is REQUIRED on the native builder's trigger.
     void discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: trig });
+    // @ts-expect-error OPE-596: `trust` is REQUIRED on the DM builder's trigger.
     void buildDiscordDmWake({ channelId: "c1", wakeId: "wk_1", trigger: trig });
   }
   void __ope596DiscordPins;
@@ -1113,3 +1119,5 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 }
 
 console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache, author-trust register leg, seat context-line admission)`);
+
+// proves: SET-018, SET-019, SET-067

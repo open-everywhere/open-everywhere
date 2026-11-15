@@ -785,3 +785,5 @@ const NARRATION: WalkthroughNarration = {
 }
 
 console.log(`pr-walkthrough-test: ${n} assertions passed`);
+
+// proves: TOOL-fresh_eyes_review, TOOL-post_pr_walkthrough, TOOL-walk_pr

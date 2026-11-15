@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-credential-bindings-codemod
+
 import fs from "node:fs";
 import {
   assertConnectorCredentialsValid,
@@ -226,6 +228,5 @@ const notion: ConnectorCredentials = {
   }
   ok(refusal.includes('unknown credential home kind "test-vault"'), `vendor home: without the registered home the same set is refused (message: "${refusal}")`);
 }
-
 
 console.log(`✓ credential-bindings-codemod: ${passed} assertions passed`);

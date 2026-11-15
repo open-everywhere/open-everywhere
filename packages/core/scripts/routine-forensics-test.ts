@@ -1,3 +1,5 @@
+// proves: ROUT-24, ROUT-25
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
@@ -747,3 +749,5 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
 await removeTempDir(dir);
 console.log(`✓ routine-forensics: ${passed} assertions passed`);
+
+// proves: TOOL-list_routines

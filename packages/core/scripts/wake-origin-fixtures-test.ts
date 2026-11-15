@@ -403,3 +403,5 @@ console.log("(c2) the DM threadRef namespace never collides with a guild one:");
 }
 
 console.log(`\nwake-origin fixtures: ${n} assertions passed (${FIXTURES.length} fixtures across 6 platforms / 7 union arms).`);
+
+// proves: SET-086

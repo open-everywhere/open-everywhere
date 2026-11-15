@@ -117,3 +117,5 @@ console.log(
     `a sentinel exists for every slot eve mounts by default, ` +
     `and its spend hook and instructions file are present.`,
 );
+
+// proves: ROSTER-lint-subagents

@@ -251,3 +251,5 @@ function registerFakeGuarded(entries: Record<string, { mimeType?: string; name?:
 
 await removeTempDir(tmp);
 console.log(`✓ read-file-upload: ${n} assertions passed (durable cross-process resolve · allowlist/pdf/binary fail-closed · untrusted wrap+defang+taint · size-guarded plane: pre-check reject/happy/unknown/2nd-platform · the reducing arm meets a whole body)`);
+
+// proves: TOOL-read_file_upload

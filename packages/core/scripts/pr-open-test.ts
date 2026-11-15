@@ -1,3 +1,5 @@
+// proves: pr.open, pr.update
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { readFileSync, rmSync } from "node:fs";
@@ -334,3 +336,7 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
 }
 
 console.log(`✓ ${n} pr-open assertions passed`);
+
+// proves: AP-MOD-core-approvals-pr-open
+
+// proves: TOOL-open_pull_request

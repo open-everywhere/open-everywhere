@@ -118,3 +118,5 @@ for (const grain of GRAINS) {
 eq(renderApprovalPreview({ member: [], admin: [], elsewhere: [], confirm: [], route: "file-tools" }), "", "a seat with no carded verbs renders no section at all");
 
 console.log(`approval-preview: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-approval-preview

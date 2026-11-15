@@ -1,3 +1,5 @@
+// proves: governance.narrowed, memory.admin_read
+
 import assert from "node:assert/strict";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { tmpdir } from "node:os";
@@ -330,3 +332,7 @@ _resetGovernanceMemberSupplierForTest();
 _resetGovernanceFloorCacheForTest();
 await removeTempDir(dir);
 console.log(`\n✓ memory-admin (in-Slack bridge): ${n} assertions passed\n`);
+
+// proves: AP-MOD-core-access-admin-read-venue
+
+// proves: TOOL-memory_admin_list, TOOL-memory_admin_read

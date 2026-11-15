@@ -1,3 +1,5 @@
+// proves: memory.delete
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -316,3 +318,5 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
 
 await removeTempDir(dir);
 console.log(`\n✓ memory-admin control-plane MCP: ${n} assertions passed\n`);
+
+// proves: CTRL-memory_delete_file, CTRL-memory_list, CTRL-memory_read, CTRL-memory_write_file

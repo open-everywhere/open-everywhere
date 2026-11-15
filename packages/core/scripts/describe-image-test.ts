@@ -1,3 +1,5 @@
+// proves: describe_image
+
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync } from "node:fs";
@@ -400,3 +402,5 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
 }
 
 console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · deleted spellings (flat trio + nested + JSON-string) refuse VISIBLY · { kind, ref } per-arm + half-spelling corrective + exactly four declared properties + NO anyOf in the emitted schema · AUDIT DETAIL carries+bounds+scrubs the underlying error · VISION SPEND attributed to both sinks (OPE-403) · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);
+
+// proves: TOOL-describe_image

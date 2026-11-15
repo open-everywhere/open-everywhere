@@ -1,3 +1,5 @@
+// proves: cover.wake, cover.answered
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -207,7 +209,7 @@ try {
     ok(group!.description.length <= 100, "the group description fits Discord's 100-character limit");
     const parse = (sub: string, opts?: unknown[]) => parseDiscordOeCommandOptions([{ name: "cover", type: 2, options: [{ name: sub, type: 1, ...(opts ? { options: opts } : {}) }] }]);
     ok(JSON.stringify(parse("on")) === JSON.stringify({ kind: "cover", action: "on" }), "`/oe cover on` parses to core's `on`");
-    ok(JSON.stringify(parse("on", [{ name: "until", type: 3, value: "2026-10-21" }])) === JSON.stringify({ kind: "cover", action: "on", until: "2026-10-20T00:00:00.000Z" }), "`/oe cover on until:2026-10-20` carries the end date");
+    ok(JSON.stringify(parse("on", [{ name: "until", type: 3, value: "2026-10-20" }])) === JSON.stringify({ kind: "cover", action: "on", until: "2026-10-20T00:00:00.000Z" }), "`/oe cover on until:2026-10-20` carries the end date");
     ok(parse("on", [{ name: "until", type: 3, value: "next week" }]).kind === "error", "a date core cannot read answers core's own error");
     ok(JSON.stringify(parse("off")) === JSON.stringify({ kind: "cover", action: "off" }), "`/oe cover off` parses to core's `off`");
     ok(JSON.stringify(parse("status")) === JSON.stringify({ kind: "cover", action: "status" }), "`/oe cover status` parses to core's status read");

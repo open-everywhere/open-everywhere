@@ -299,3 +299,5 @@ const boundAt = (bundle: string, domain: string): Binding => defineBinding({ bun
 }
 
 console.log(`credential-narrowing-test: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-credential-endpoints

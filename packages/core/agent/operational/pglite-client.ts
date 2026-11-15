@@ -114,6 +114,7 @@ export function releasePgliteLock(dir: string): void {
 
 async function loadPglite(): Promise<new (dataDir?: string) => PGlite> {
   const pkg = ["@electric-sql", "pglite"].join("/");
+  // hosted-inline-exempt: PGlite must NOT be inlined (its WASM siblings resolve off import.meta.url,
   const mod = (await import(pkg)) as { PGlite: new (dataDir?: string) => PGlite };
   return mod.PGlite;
 }

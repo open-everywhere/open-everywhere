@@ -303,3 +303,5 @@ const CREDS = { applicationId: "1410000000000000002", botToken: "not-a-real-toke
 }
 
 console.log(`discord-command-registration-test: ${n} assertions passed`);
+
+// proves: CLI-discord-registration

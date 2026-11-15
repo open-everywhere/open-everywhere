@@ -1,3 +1,5 @@
+// proves: home.publish, memory.canvas_refresh, surface.wake_dropped
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.SLACK_BOT_TOKEN = "xoxb-test";
 delete process.env.DATABASE_URL;
