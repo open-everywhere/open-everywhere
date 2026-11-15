@@ -138,9 +138,9 @@ console.log("3 — admission by name:");
 
 console.log("4 — the since-last-wake catch-up:");
 {
-  const now = Date.parse("2026-09-11T12:00:00.000Z");
+  const now = Date.parse("2026-09-12T12:00:00.000Z");
   eq(seatCatchUpSinceMs("2026-09-11T11:30:00.000Z", now, 24), Date.parse("2026-09-11T11:30:00.000Z"), "the seat's own last wake is the bound");
-  eq(seatCatchUpSinceMs("2026-08-01T00:00:00.000Z", now, 24), now - 24 * 3600_000, "a seat quiet for weeks is FLOORED — it reads the recent tail, not a month");
+  eq(seatCatchUpSinceMs("2026-04-04T23:30:00.000Z", now, 24), now - 24 * 3600_000, "a seat quiet for weeks is FLOORED — it reads the recent tail, not a month");
   eq(seatCatchUpSinceMs(null, now, 24), now - 24 * 3600_000, "no recorded wake ⇒ the bootstrap window, which is what a first wake always read");
   eq(seatCatchUpSinceMs("not-a-date", now, 24), now - 24 * 3600_000, "an unparseable stamp degrades the same way rather than reading nothing");
 

@@ -95,7 +95,7 @@ _resetDynamicVariantsForTest();
 const GRANT: CredentialGrantRow = {
   askId: "ask-1",
   connector: "notion",
-  createdAt: "2026-08-24T12:00:00.000Z",
+  createdAt: "2026-01-29T18:22:00.000Z",
   expiresAt: "2026-08-24T13:00:00.000Z",
   id: "grant-abc",
   mode: "session",

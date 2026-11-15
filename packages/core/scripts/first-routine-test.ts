@@ -129,7 +129,7 @@ console.log("§4 the room");
   ok((await block(room, soon)) === fr.ROOM_FIRST_CONVERSATION_BLOCK, "🔴 the room's first conversation reads the room block");
   ok((await block(room, new Date(Date.parse(marker!.since) + 3 * DAY + 1).toISOString())) === "", "…and not after the window");
   const old = roomOf("UCAL", "COLD");
-  await getProvider().writeTier(partitionOfBinding(old), SURFACE, { [ONBOARDED_MARKER]: "2026-09-01T00:00:00.000Z" }, "seed");
+  await getProvider().writeTier(partitionOfBinding(old), SURFACE, { [ONBOARDED_MARKER]: "2026-05-05T23:30:00.000Z" }, "seed");
   let reads = 0;
   const counting = async (p: import("../agent/memory/partition.js").Partition) => (reads++, getProvider().readTier(p, SURFACE));
   const oldTurn = { binding: old, partition: partitionOfBinding(old), worker: false, nowIso: soon };

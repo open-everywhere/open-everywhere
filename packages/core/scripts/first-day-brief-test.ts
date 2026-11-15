@@ -70,7 +70,7 @@ const slackPost = async (method: string, body: string): Promise<Record<string, u
     const buttons = blocks.filter((b) => b.type === "actions").flatMap((b) => (b.elements ?? []).map((e) => e.text?.text ?? ""));
     cards.push({ channel: form.get("channel") ?? "", text: `${form.get("text") ?? ""} ${form.get("blocks") ?? ""}`, buttons });
   }
-  return { ok: true, ts: `1760000000.${String(++cardSeq).padStart(6, "0")}` };
+  return { ok: true, ts: `1759836620.${String(++cardSeq).padStart(6, "0")}` };
 };
 const resolveTarget = async (spec: { principalId?: string }) => {
   const dm = `D${spec.principalId}`;

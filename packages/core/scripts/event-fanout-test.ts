@@ -254,7 +254,7 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 
 {
   const store = getOperationalStore();
-  const t0 = Date.parse("2026-07-20T10:00:00.000Z");
+  const t0 = Date.parse("2026-02-24T06:00:00.000Z");
   const iso = (ms: number): string => new Date(t0 + ms).toISOString();
   ok(await store.markEventSeen("acme", "prune-long", iso(0), 600_000), "prune: a 10-minute key is first-seen");
   ok(await store.markEventSeen("acme", "prune-short", iso(70_000), 60_000), "prune: an unrelated 60-second key is first-seen");

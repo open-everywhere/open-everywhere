@@ -201,13 +201,13 @@ console.log("2. two rows in one chat pinned to one name:");
       `[${label}] the later grant was never registered as a variant, so no replay can reach it either`,
     );
     n++;
-    const winner = (await boundExecute(NAME)({ entryKey: "grant-first" }, {}, seatCtx("wrun_elsewhere"))) as { refused?: string; message?: string };
+    const winner = (await boundExecute(NAME)({ entryKey: "grant-first" }, {}, seatCtx("wrun_example8"))) as { refused?: string; message?: string };
     eq(winner.refused, "out_of_scope", `[${label}] …while the winner IS registered and its replay reaches the broker`);
     ok(winner.message?.includes("First brief") === true, `[${label}] …and the row it read is the FIRST-MINTED one`);
   }
 
-  const tieA = borrowRow({ createdAt: "2026-08-25T12:00:00.000Z", frozenArgs: { page_id: "AAA-PAGE" }, id: "grant-aaa" });
-  const tieB = borrowRow({ createdAt: "2026-08-25T12:00:00.000Z", frozenArgs: { page_id: "BBB-PAGE" }, id: "grant-bbb" });
+  const tieA = borrowRow({ createdAt: "2026-01-20T16:07:00.000Z", frozenArgs: { page_id: "AAA-PAGE" }, id: "grant-aaa" });
+  const tieB = borrowRow({ createdAt: "2026-01-20T16:07:00.000Z", frozenArgs: { page_id: "BBB-PAGE" }, id: "grant-bbb" });
   for (const rows of [
     [tieA, tieB],
     [tieB, tieA],
@@ -354,7 +354,7 @@ console.log("6. two chats, one pinned name, the installed eve:");
   eq(aClosure, { entryKey: "grant-chat-a" }, "eve persists the GRANT ID in chat A's durable closure");
 
   const bound = boundExecute(NAME);
-  const elsewhere = seatCtx("wrun_elsewhere");
+  const elsewhere = seatCtx("wrun_example8");
   const fromA = (await bound(aClosure, {}, elsewhere)) as { ok: boolean; refused?: string; message?: string };
   eq(fromA.refused, "out_of_scope", "the replayed entry reaches the broker, which refuses a call from a chat the owner did not approve");
   ok(fromA.message?.includes("Chat A brief") === true, "a replay driven from chat A's closure read chat A's GRANT ROW, though chat B registered LAST");

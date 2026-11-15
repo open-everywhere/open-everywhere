@@ -758,7 +758,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   {
     const { subagentParentOf } = await import("../agent/hooks/spend.js");
     eq(
-      subagentParentOf(runCtx("wrun_WORKER", { parent: { sessionId: "wrun_SEAT", callId: "call_1" }, token: "subagent:wrun_DISPATCHRUN:0" }) as never, "subagent:wrun_DISPATCHRUN:0"),
+      subagentParentOf(runCtx("wrun_WORKER", { parent: { sessionId: "wrun_SEAT", callId: "call_1" }, token: "subagent:wrun_example67:0" }) as never, "subagent:wrun_example67:0"),
       { parentSessionId: "wrun_SEAT", callId: "call_1", rootSessionId: "wrun_SEAT" },
       "🔴 an eve 0.70+ worker carrying BOTH sources parents to the SEAT from the typed linkage, never to the runId its token names",
     );
@@ -949,7 +949,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok(over.over === true, "config $ cap below the month's priced spend -> over (fail closed)");
   ok(!!over.reason?.includes("$3.00") && !!over.reason?.includes("$2.50"), `the refusal names spent vs cap (got: "${over.reason}")`);
   ok((await scopeOverBudget(p as never, "dm", NOW_ISO)).over, "OPE-267: the same over-$ scope is over in DM mode too — end to end through the real gate, not just checkCap");
-  ok(!(await scopeOverBudget(p as never, "channel", "2026-08-01T00:00:00.000Z")).over, "the window resets at the calendar-month boundary (August sees $0)");
+  ok(!(await scopeOverBudget(p as never, "channel", "2026-04-04T23:30:00.000Z")).over, "the window resets at the calendar-month boundary (August sees $0)");
 
   await opStore.setSpendLimit(org, "slack/T9/C1", "surface", { monthlyUsd: 10 }, { reason: "bridge while the PR lands", setBy: "admin#1" });
   ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "an active USD override above the spend un-blocks the scope");

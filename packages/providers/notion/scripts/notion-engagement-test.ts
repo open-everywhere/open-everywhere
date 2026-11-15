@@ -55,7 +55,7 @@ function stubDeps(row: EngagementRow | null): NotionEngagementDeps & { reads: st
       seen.push(key);
       return first;
     },
-    now: () => "2026-09-07T12:00:00.000Z",
+    now: () => "2026-05-12T11:30:00.000Z",
   };
 }
 
@@ -121,7 +121,7 @@ ok(notionEngagementAnchor({ ...FACTS, workspaceId: undefined }) === undefined, "
   const anchor = await markNotionEngaged(FACTS, "cmt-1", deps);
   ok(anchor === "WS_N/PAGE_N", "3a: an addressed (name-drop) comment enrols the page and the mark returns its anchor");
   ok(deps.writes.length === 1 && deps.writes[0]!.key === "WS_N/PAGE_N", "🔴 3b: …writing the SAME key the read half asks for");
-  ok(deps.writes[0]!.at === "2026-09-07T12:00:00.000Z", "3c: …stamped with the injected clock");
+  ok(deps.writes[0]!.at === "2026-05-12T11:30:00.000Z", "3c: …stamped with the injected clock");
 }
 
 {

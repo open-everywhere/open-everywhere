@@ -1054,11 +1054,11 @@ const store = makeOperationalPostgresStore(client);
   row = await store.getEngagement("acme", sk, "o.1");
   ok(row !== null && row.ownerToken === "T:oe-sup:1", "pg: a refresh carrying ownerToken sets it on an existing row");
 
-  await store.markEngaged("acme", sk, "o.1", "2026-07-09T12:00:00Z", { participating: true });
+  await store.markEngaged("acme", sk, "o.1", "2026-07-11T12:00:00Z", { participating: true });
   row = await store.getEngagement("acme", sk, "o.1");
   ok(row !== null && row.ownerToken === "T:oe-sup:1" && row.participating === true, "pg: a refresh omitting ownerToken never clears the existing owner");
 
-  await store.markEngaged("acme", sk, "o.1", "2026-07-09T13:00:00Z", { kind: "spawned" });
+  await store.markEngaged("acme", sk, "o.1", "2026-03-25T21:52:00Z", { kind: "spawned" });
   row = await store.getEngagement("acme", sk, "o.1");
   ok(row !== null && row.kind === "thread", "pg: kind is immutable after first touch — a later call can't flip it");
 
@@ -1212,11 +1212,11 @@ const store = makeOperationalPostgresStore(client);
   }
 
   ok((await store.getChannelSession("globex", sk)) === null, "pg: channel session is org-isolated");
-  await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-09T12:00:00Z");
+  await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-11T12:00:00Z");
   ok((await store.getChannelSession("acme", sk))!.generation === 2, "pg: another org's rotation doesn't disturb this org's row");
 
   ok((await store.getChannelSession("acme", "slack/T/CNOSUP")) === null, "pg: sanity — no row for an untouched surface");
-  await store.touchChannelSession("acme", "slack/T/CNOSUP", "2026-07-09T13:00:00Z");
+  await store.touchChannelSession("acme", "slack/T/CNOSUP", "2026-03-25T21:52:00Z");
   ok((await store.getChannelSession("acme", "slack/T/CNOSUP")) === null, "pg: touchChannelSession on a surface with no session is a no-op");
 }
 
@@ -1305,7 +1305,7 @@ const store = makeOperationalPostgresStore(client);
 {
   const { sqliteOperationalStore } = await import("../agent/operational/sqlite.js");
   const EMAIL_TTL = 72 * 60 * 60_000;
-  const t0 = Date.parse("2026-08-01T00:00:00Z");
+  const t0 = Date.parse("2026-01-10T12:20:00Z");
   const at = (ms: number): string => new Date(t0 + ms).toISOString();
   const SVIX_LAST_RETRY = (27 * 60 + 36) * 60_000;
   for (const s of [store, sqliteOperationalStore]) {
@@ -1443,9 +1443,9 @@ const store = makeOperationalPostgresStore(client);
 
 {
   ok((await store.getPersonOptOut("acme", "UALICE")) === null, "pg: no opt-out row before the person opts out");
-  ok((await store.setPersonOptOut("acme", "UALICE", "2026-10-01T00:00:00Z")) === true, "pg: the first set draws the boundary");
+  ok((await store.setPersonOptOut("acme", "UALICE", "2026-06-04T13:35:00Z")) === true, "pg: the first set draws the boundary");
   ok((await store.setPersonOptOut("acme", "UALICE", "2026-10-02T00:00:00Z")) === false, "pg: a repeat is not new");
-  ok((await store.getPersonOptOut("acme", "UALICE"))?.optedOutAt === "2026-10-01T00:00:00Z", "pg: …and keeps the FIRST date");
+  ok((await store.getPersonOptOut("acme", "UALICE"))?.optedOutAt === "2026-06-04T13:35:00Z", "pg: …and keeps the FIRST date");
   ok((await store.getPersonOptOut("globex", "UALICE")) === null, "pg: a different org sees no row");
   ok((await store.clearPersonOptOut("acme", "UALICE")) === true, "pg: clear lifts it");
   ok((await store.clearPersonOptOut("acme", "UALICE")) === false, "pg: a second clear lifts nothing and says so");

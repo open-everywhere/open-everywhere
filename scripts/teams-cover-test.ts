@@ -89,7 +89,7 @@ const deps: TeamsSupervisorDeps = {
   wake: async (input) => {
     wakes.push({ message: input.message, auth: input.auth, wakeId: input.window.wakeId });
   },
-  now: () => "2026-10-14T10:00:00.000Z",
+  now: () => "2026-06-18T09:30:00.000Z",
 };
 const facts = { scope: "channel" as const, membershipType: "standard", tenantId: TENANT, vouched: true };
 const dispatch = async (text: string, cover: TeamsCoverFacts | undefined) => {
@@ -101,7 +101,7 @@ const dispatch = async (text: string, cover: TeamsCoverFacts | undefined) => {
       channelId: CHANNEL,
       auth,
       ingested: [{ trust: "peer" as const }],
-      trigger: { id: "1701", authorId: BO, authorName: "Bo", sentAt: "2026-10-14T10:00:00.000Z", text, trust: "peer" },
+      trigger: { id: "1701", authorId: BO, authorName: "Bo", sentAt: "2026-06-18T09:30:00.000Z", text, trust: "peer" },
       window,
       ...(cover ? { cover } : {}),
     },

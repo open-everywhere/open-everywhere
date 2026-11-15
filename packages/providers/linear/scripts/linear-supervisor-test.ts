@@ -37,7 +37,7 @@ const TEAM = "team-uuid-1";
 const TEAM_KEY = "ch_bGluZWFyOnRlYW0tdXVpZC0x";
 const ISSUE = "issue-uuid-9";
 const VIEWER = { id: "app-user-1", name: "Open Everywhere" };
-const NOW = () => "2026-07-10T10:00:00.000Z";
+const NOW = () => "2026-02-18T14:05:00.000Z";
 
 ok(linearSupervisorSentinel(3) === "oe-sup:g3", "sentinel is oe-sup:g<gen>");
 ok(linearSupervisorToken(TEAM, 1) === `linear:${TEAM}:oe-sup:g1`, "token is linear:<teamId>:oe-sup:g<gen>");
@@ -68,7 +68,7 @@ ok(isLinearDirectSelfAuthored(undefined, VIEWER) === false, "author-less trigger
 ok(isLinearDirectSelfAuthored(VIEWER.id, {}) === false, "UNRESOLVED viewer id -> FALSE, never TRUE (fail-closed the same direction as classifyLinearAmbientComment: can't assert self-authorship without a resolved identity, so this guard stays byte-identical to having no check at all rather than dropping a legitimate trigger)");
 ok(isLinearDirectSelfAuthored(VIEWER.id, { name: VIEWER.name }) === false, "viewer id absent (name-only) -> FALSE, same fail-closed reasoning");
 
-const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt: "2026-07-10T09:59:00Z", text: "can we ship the migration tomorrow?", trust: "unauth" as const };
+const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt: "2026-03-24T18:51:00Z", text: "can we ship the migration tomorrow?", trust: "unauth" as const };
 {
   const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, engagementTier: "reserved" });
   const { message, context } = renderWake(nw, NOW);
@@ -735,7 +735,7 @@ for (const [label, err] of [
         comments: {
           nodes: [
             { id: "c2", body: "retry budget is the cause", createdAt: "2026-07-20T11:00:00.000Z", user: { id: "u2", displayName: "Bo" } },
-            { id: "c1", body: "seen it on prod too", createdAt: "2026-07-20T10:00:00.000Z", user: { id: "u1", name: "ann", displayName: "Ann" } },
+            { id: "c1", body: "seen it on prod too", createdAt: "2026-02-24T06:00:00.000Z", user: { id: "u1", name: "ann", displayName: "Ann" } },
           ],
           pageInfo: { hasNextPage: false },
         },
@@ -753,7 +753,7 @@ for (const [label, err] of [
     {
       const fetch = mkFetch({
         id: "i", identifier: "ENG-1", title: "t", description: "d", state: { name: "Todo", type: "unstarted" },
-        comments: { nodes: [{ id: "c", body: "one", createdAt: "2026-07-20T10:00:00.000Z", user: { id: "u", displayName: "U" } }], pageInfo: { hasNextPage: true } },
+        comments: { nodes: [{ id: "c", body: "one", createdAt: "2026-02-24T06:00:00.000Z", user: { id: "u", displayName: "U" } }], pageInfo: { hasNextPage: true } },
       });
       const res = await readLinearIssue("i", { api: { fetch }, maxComments: 1 });
       ok(res.comments.length === 1 && res.truncated === true, "readLinearIssue: reports truncated when the issue has more comments than the bounded page");

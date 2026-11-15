@@ -249,7 +249,7 @@ ok(adoptedOwnAccountAsk({} as BindableContext, VENDORS) === undefined, "an empty
   const inSession = <T>(fn: () => T): T => contextStorage.run(new ContextContainer(), fn);
   const runIdResolverCtx = (stamp: string): BindableContext =>
     ({
-      channel: { continuationToken: "subagent:wrun_DISPATCHRUN:0", kind: "subagent" },
+      channel: { continuationToken: "subagent:wrun_example67:0", kind: "subagent" },
       session: { auth: { current: { attributes: { oe_own_account_ask: stamp } } }, id: "wrun_WORKER" },
     }) as unknown as BindableContext;
 
@@ -356,7 +356,7 @@ const ASKER = "slack/T1/U-asker";
 const OTHER_OWNER = "slack/T1/U-someone-else";
 ok(holdsPersonalGrant([row({ ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "a live row the ASKER owns is a held grant");
 ok(!holdsPersonalGrant([row({ ownerPrincipalId: ASKER, status: "revoked" })], "notion", ASKER, NOW), "a revoked row is not");
-ok(!holdsPersonalGrant([row({ expiresAt: "2026-09-07T00:00:00.000Z", ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "a row past its expiry is not, whatever its status column says");
+ok(!holdsPersonalGrant([row({ expiresAt: "2026-05-11T23:30:00.000Z", ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "a row past its expiry is not, whatever its status column says");
 ok(!holdsPersonalGrant([row({ connector: "linear", ownerPrincipalId: ASKER })], "notion", ASKER, NOW), "another connector's row is not");
 ok(!holdsPersonalGrant([], "notion", ASKER, NOW), "no rows ⇒ no grant");
 ok(!holdsPersonalGrant([row({ ownerPrincipalId: OTHER_OWNER })], "notion", ASKER, NOW), "🔴 SOMEBODY ELSE's live grant for the same connector is NOT this asker's held grant");

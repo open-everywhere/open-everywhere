@@ -58,7 +58,7 @@ function stubDeps(row: EngagementRow | null): GitHubEngagementDeps & { reads: st
       seen.push(key);
       return first;
     },
-    now: () => "2026-09-07T12:00:00.000Z",
+    now: () => "2026-05-12T11:30:00.000Z",
   };
 }
 
@@ -161,7 +161,7 @@ ok(githubEngagedFollowUpReach({ ...FACTS, conversationKind: "pull_request" }).re
   const anchor = await markGitHubEngaged({ ...FACTS, isMention: true }, 9001, deps);
   ok(anchor === "acme/widgets#42", "5a: the mark returns the anchor it wrote");
   ok(deps.writes.length === 1 && deps.writes[0]!.key === "acme/widgets#42", "5b: …and writes exactly that key, so the mark and the read address one row");
-  ok(deps.writes[0]!.at === "2026-09-07T12:00:00.000Z", "5c: …stamped with the injected clock");
+  ok(deps.writes[0]!.at === "2026-05-12T11:30:00.000Z", "5c: …stamped with the injected clock");
 }
 
 {

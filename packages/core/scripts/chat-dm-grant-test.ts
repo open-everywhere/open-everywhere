@@ -276,7 +276,7 @@ const ORG = "default";
   await noteDmAudienceDelivery(ORG, SARAH, "2026-08-24T11:00:00.000Z");
   ok((await readDmAudience(ORG, SARAH)).row?.firstDmAt === "2026-08-24T10:00:00.000Z", "a later delivery does NOT move the first-delivery stamp");
 
-  const stopped = await stopDmAudience({ ...subject, at: "2026-08-24T12:00:00.000Z" });
+  const stopped = await stopDmAudience({ ...subject, at: "2026-01-29T18:22:00.000Z" });
   ok(stopped.changed, "the first stop reports that it changed something");
   const afterStop = await readDmAudience(ORG, SARAH);
   ok(afterStop.stopped, "the stop is durable and reads back");
@@ -284,7 +284,7 @@ const ORG = "default";
 
   const again = await stopDmAudience({ ...subject, at: "2026-08-24T13:00:00.000Z" });
   ok(!again.changed, "re-stopping reports that nothing changed");
-  ok((await readDmAudience(ORG, SARAH)).row?.stoppedAt === "2026-08-24T12:00:00.000Z", "the trail keeps when the boundary was FIRST drawn");
+  ok((await readDmAudience(ORG, SARAH)).row?.stoppedAt === "2026-01-29T18:22:00.000Z", "the trail keeps when the boundary was FIRST drawn");
 
   await noteDmAudienceDelivery(ORG, SARAH, "2026-08-24T14:00:00.000Z");
   ok((await readDmAudience(ORG, SARAH)).stopped, "recording a delivery does not clear a stop");
@@ -339,7 +339,7 @@ const ORG = "default";
   const second = await assertChatDmAllowed(ctx, LIVE_DOMAINS, MARK);
   ok(second.delivered, "a LATER delivery reports delivered:true, so the tool flows it");
 
-  await stopDmAudience({ org: ORG, address: MARK, platform: "slack", workspace: "T1", principalId: MARK_ID, at: "2026-08-24T12:00:00.000Z" });
+  await stopDmAudience({ org: ORG, address: MARK, platform: "slack", workspace: "T1", principalId: MARK_ID, at: "2026-01-29T18:22:00.000Z" });
   let boundary = "";
   let message = "";
   try {

@@ -33,7 +33,7 @@ function sign(body: string, secret = SECRET_A): string {
 function commentEvent(extra: Record<string, unknown> = {}): string {
   return JSON.stringify({
     id: "evt-comment-1",
-    timestamp: "2026-09-17T09:00:00.000Z",
+    timestamp: "2026-05-26T05:32:00.000Z",
     type: "comment.created",
     workspace_id: "ws-1",
     entity: { id: "comment-1", type: "comment", attacker_extra: "drop-me" },

@@ -48,8 +48,8 @@ const rejects = async (fn: () => Promise<unknown>, label: string): Promise<void>
 };
 
 const ORG = "org-borrow";
-const ROW_ID = "9e1c7a52-4f89-11d3-9a0c-0305e82c3301";
-const NOW = Date.parse("2026-08-25T12:00:00.000Z");
+const ROW_ID = "00000000-0000-4000-8000-000000000009";
+const NOW = Date.parse("2026-01-20T16:07:00.000Z");
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 console.log("1. the borrow name grammar:");
@@ -72,7 +72,7 @@ for (const budget of [13, 16, 18, 20, 40]) {
   ok(seg !== undefined && seg.length <= budget, `budget ${String(budget)}: …and it honours the budget`);
 }
 
-eq(grantBorrowRowSuffix("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), "3f2504", "the collision suffix is the first six segment-legal characters of the row id");
+eq(grantBorrowRowSuffix("00000000-0000-4000-8000-000000000010"), "3f2504", "the collision suffix is the first six segment-legal characters of the row id");
 eq(grantBorrowRowSuffix("----"), undefined, "an id with too few usable characters yields NOTHING — a refusal, never a padded stand-in");
 
 for (const target of ["quarterly_report", undefined]) {
@@ -96,8 +96,8 @@ throws(
 );
 
 {
-  const ROW_A = "aa11bb22-4f89-11d3-9a0c-0305e82c3301";
-  const ROW_B = "cc33dd44-4f89-11d3-9a0c-0305e82c3301";
+  const ROW_A = "00000000-0000-4000-8000-000000000011";
+  const ROW_B = "00000000-0000-4000-8000-000000000012";
   const first = nextGrantBorrowToolName("rowan_hale", "notion", "notion_fetch", "quarterly_report", ROW_A, []);
   eq(first, "grant__rowan_hale_notion__notion_fetch_quarterly_report", "with nothing claimed, the next name is the bare <tool>_<target> one — NO row-id suffix");
   eq(

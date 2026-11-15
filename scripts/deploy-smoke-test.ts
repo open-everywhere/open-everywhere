@@ -522,7 +522,7 @@ function makeLinearStub(opts: LinearStubOpts = {}): LinearStub {
 }
 
 async function linearSmoke(opts: LinearStubOpts = {}, stub: LinearStub = makeLinearStub(opts)): Promise<SmokeResult> {
-  let clock = Date.parse("2026-08-19T12:00:00.000Z");
+  let clock = Date.parse("2026-01-16T13:12:00.000Z");
   return runLinearSignedDeliverySmoke({
     targetUrl: TARGET,
     webhookSecret: LINEAR_SECRET,
