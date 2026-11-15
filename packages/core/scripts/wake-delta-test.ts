@@ -1,3 +1,5 @@
+// proves: MEM-48, MEM-49, MEM-50
+
 import assert from "node:assert/strict";
 import {
   formatMemoryDelta,

@@ -1,3 +1,6 @@
+// proves: AP-MOD-core-access-result-controls
+// proves: AP-MOD-core-access-result-cap
+
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,3 +1,5 @@
+// proves: browser.personal.open, browser.personal.action, browser.personal.takeover, browser.personal.view_opened, browser.personal.closed, browser.personal.teach
+
 import { createHash, createHmac } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 

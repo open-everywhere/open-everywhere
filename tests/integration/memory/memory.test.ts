@@ -81,6 +81,7 @@ async function forwardAndRelease(input: {
   return { taskId, settlement };
 }
 
+// proves: MEM-26
 test("session.started seeds the domain's own silo at the expected path and body, never a sibling domain's silo, and both write fences hold for write_file and for bash", async () => {
   await bootAgent({ sharedSqlite: true });
 

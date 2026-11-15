@@ -1,3 +1,8 @@
+// proves: bot_ask.expected
+// proves: bot_ask.refused
+// proves: bot_ask.reply_relayed
+// proves: TOOL-expect_bot_reply
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

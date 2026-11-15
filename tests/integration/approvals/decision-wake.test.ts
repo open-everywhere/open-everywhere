@@ -1,3 +1,5 @@
+// proves: approval.decision_wake
+
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { expect, test } from "vitest";
 

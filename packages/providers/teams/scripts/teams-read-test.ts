@@ -1,3 +1,5 @@
+// proves: teams.read_boundary, teams.token_mint_failed
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -101,7 +103,7 @@ const RAW_ENG = "19:channel-eng@thread.tacv2";
 const RAW_STANDUP = "19:channel-standup@thread.tacv2";
 const RAW_OUTSIDE = "19:channel-outside@thread.tacv2";
 const RAW_TEAM = "19:team-eng@thread.tacv2";
-const GROUP_TEAM = "00000000-0000-4000-8000-000000000021";
+const GROUP_TEAM = "5f3c1a70-9d21-4a55-bb18-2c7e0f9a44d1";
 
 registerConfig({
   loadBundles: () => [],

@@ -1,3 +1,5 @@
+// proves: SEAT-43, SEAT-44
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1032,3 +1034,5 @@ await new Promise((r) => setTimeout(r, 60));
 }
 
 console.log(`task-wake-identity: ${n} assertions passed`);
+
+// proves: AP-MOD-core-access-dispatch-origin-signal, AP-MOD-core-access-task-wake-signal

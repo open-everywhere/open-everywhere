@@ -261,3 +261,5 @@ await inTurn(async () => {
 });
 
 console.log(`\n✓ core-route-fence: ${n} assertions passed (web_fetch · browser_<op> + unfenced control · read_webhook_history · list_recent_events · read_routine_transcript · webhook-body/summary + two withheld controls · github-event · aws + empty-stream control · connection_execute + authored-name control)\n`);
+
+// proves: TOOL-list_recent_events

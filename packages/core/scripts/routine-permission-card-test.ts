@@ -1,3 +1,5 @@
+// proves: ROUT-59
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { tmpdir } from "node:os";
@@ -807,3 +809,5 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
 
 await removeTempDir(tmp);
 console.log(`✓ routine permission card: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-approvals-routine-permission

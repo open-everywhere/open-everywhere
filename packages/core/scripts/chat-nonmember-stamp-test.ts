@@ -279,3 +279,5 @@ eq(OE_CHAT_NONMEMBER_ATTR, "oe_chat_nonmember", "🔴 the stamp's key is unchang
 }
 
 console.log(`\n✅ chat non-member stamp: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-identity-non-member

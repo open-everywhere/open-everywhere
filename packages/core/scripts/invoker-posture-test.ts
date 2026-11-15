@@ -399,3 +399,5 @@ ok(currentInvokerPosture() === "interactive", "outside an eve context the postur
 console.log(
   `\n✓ invoker-posture (OPE-421): ${n} assertions passed (truth table + minimum composition, withheld-set = manifest wide-hands, the fire's OWN window narrowed and its task-grain WORKER wide — both proven at the model-call seam on real tokens — the thread-seat child still narrowed, the human-into-parked-fire arm, clock/manual classes, fail-narrow directions)\n`,
 );
+
+// proves: AP-MOD-core-access-invoker-posture, AP-MOD-core-access-invoker-posture-state, AP-MOD-core-access-wake-slot

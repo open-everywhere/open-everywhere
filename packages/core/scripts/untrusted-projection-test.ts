@@ -642,3 +642,5 @@ function replayedToolSet(name: string): Record<string, BuiltTool> {
 }
 
 console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve projection tripwire + descriptor negative control + connector-path absence, eve-carries-it-alone + the shape gate it owns, connector fence + auth passthrough, registered-name classification, provider skip, registration wiring, OPE-2129 executed fact, web_fetch envelope, browser family seam, connection_search every shape fenced + status-only flag clear, retired contentOrigin inert)\n`);
+
+// proves: AP-MOD-core-access-untrusted-projection

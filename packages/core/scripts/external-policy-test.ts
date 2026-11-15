@@ -691,3 +691,7 @@ console.log("8. the admit value `envelope` and its deprecated alias `taint`:");
 }
 
 console.log(`\n✅ external-policy: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-access-external-policy
+
+// proves: SET-022, SET-023

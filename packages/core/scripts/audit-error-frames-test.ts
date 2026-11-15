@@ -90,3 +90,5 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 }
 
 console.log(`audit-error-frames: ${String(n)} assertions passed`);
+
+// proves: auditErrorFrames

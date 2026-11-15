@@ -1,3 +1,5 @@
+// proves: approval.failed
+
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
 

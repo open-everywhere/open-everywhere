@@ -1,3 +1,5 @@
+// proves: ticket.create
+
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
@@ -363,3 +365,5 @@ function stubFetch(status: number, payload: unknown) {
 }
 
 console.log(`✓ ${n} ticket-create assertions passed`);
+
+// proves: AP-MOD-core-approvals-ticket-create

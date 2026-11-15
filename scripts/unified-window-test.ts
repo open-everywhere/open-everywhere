@@ -1,3 +1,5 @@
+// proves: DELG-46, REPLY-30, SEAT-47, SEAT-48, SEAT-50, SEAT-51, SEAT-52, SEAT-53, SEAT-84
+
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -1456,8 +1458,10 @@ function inOpe922Turn<T>(fn: () => Promise<T>): Promise<T> {
     const row = rows.find((r) => r.detail?.wakeId === received[0].target.wakeId && r.detail?.sessionId === "sess-choke");
     ok(!!row, "choke point: postUnifiedReply(audit) writes a reply.post row joined by wakeId + sessionId");
     ok(row?.detail?.route === "tool" && row?.detail?.platform === "slack" && row?.detail?.id === "ts-1" && row?.detail?.chars === 14, "choke point: reply.post detail carries route/platform/id/chars (taint-clean)");
+    // @ts-expect-error OPE-1982: "bridge" is retired from ReplyAudit["route"] and must stay unassignable.
     const retiredBridgeRoute: ReplyAudit["route"] = "bridge";
     void retiredBridgeRoute;
+    // @ts-expect-error OPE-2006: "terminal" is retired from ReplyAudit["route"] and must stay unassignable.
     const retiredTerminalRoute: ReplyAudit["route"] = "terminal";
     void retiredTerminalRoute;
     const liveRoutes: ReplyAudit["route"][] = ["tool"];

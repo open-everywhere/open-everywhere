@@ -1,3 +1,6 @@
+// proves: memory.observation, memory.proposal, memory.tidy, memory.tidy_tick
+// proves: MEM-29, MEM-30, MEM-36, MEM-52, MEM-53, MEM-57
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

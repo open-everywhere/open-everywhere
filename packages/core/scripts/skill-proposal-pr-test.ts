@@ -1,3 +1,5 @@
+// proves: MEM-58, MEM-59
+
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -442,3 +444,5 @@ async function crossing(occurrences: number): Promise<Proposal | null> {
 
 await removeTempDir(tmp);
 console.log(`✓ skill-proposal-pr: ${passed} assertions passed`);
+
+// proves: SET-029
