@@ -6,7 +6,7 @@ must never be committed. Deeper reference lives in [`docs/`](./docs/README.md); 
 points you at the right page rather than duplicating it.
 
 > **Before you write about the runtime, read [`docs/glossary.md`](./docs/glossary.md).** It is the
-> ratified vocabulary — seat, worker, grain, posture, taint, tier, judge, scope — with the
+> ratified vocabulary — seat, worker, grain, posture, envelope, tier, judge, scope — with the
 > `file:line` that is the source of truth for each. Use those words exactly.
 
 > Operator-private, machine-specific instructions do **not** belong here. Put them in
@@ -292,7 +292,7 @@ Operational CLIs also live in core scripts: `npm run spend`, `npm run audit`, `n
 `scripts/<name>-test.ts` that exits non-zero on failure. Define a `test:<name>` script for it in
 that package's `package.json` and append one line, `test:<name>`, to that package's `test-chain.txt`.
 `npm test` reads the list, so nothing else names the suite. Never edit the `test:chain` script: it only
-runs `scripts/chain/run-chain.ts` over the list (OPE-2286). Behaviour that spans seams — toolset assembly, delegation, taint,
+runs `scripts/chain/run-chain.ts` over the list (OPE-2286). Behaviour that spans seams — toolset assembly, delegation, the untrusted-content envelope,
 approvals, audit, the reply path — gets a vitest test in `tests/integration/` instead
 ([Testing](./docs/extending/testing.md) has the decision rule). Bug fixes add a regression test
 that fails before the fix.
