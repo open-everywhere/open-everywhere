@@ -2542,6 +2542,10 @@
       "types": "./dist/agent/memory/sync-timing.d.ts",
       "default": "./dist/agent/memory/sync-timing.js"
     },
+    "./agent/memory/turn-provenance.js": {
+      "types": "./dist/agent/memory/turn-provenance.d.ts",
+      "default": "./dist/agent/memory/turn-provenance.js"
+    },
     "./agent/memory/visible.js": {
       "types": "./dist/agent/memory/visible.d.ts",
       "default": "./dist/agent/memory/visible.js"
@@ -4446,6 +4450,7 @@
     "test:answered-container": "NODE_NO_WARNINGS=1 tsx scripts/answered-container-ledger-test.ts",
     "test:name-drop-wake-audit": "NODE_NO_WARNINGS=1 tsx scripts/name-drop-wake-audit-test.ts",
     "test:memory-provenance": "NODE_NO_WARNINGS=1 tsx scripts/memory-provenance-test.ts",
+    "test:memory-turn-provenance": "NODE_NO_WARNINGS=1 tsx scripts/memory-turn-provenance-test.ts",
     "test:taint-provenance-join": "NODE_NO_WARNINGS=1 tsx scripts/taint-provenance-join-test.ts",
     "test:repo-capabilities": "NODE_NO_WARNINGS=1 tsx scripts/repo-capabilities-test.ts",
     "test:pr-mint-capabilities": "NODE_NO_WARNINGS=1 tsx scripts/pr-mint-capabilities-test.ts",

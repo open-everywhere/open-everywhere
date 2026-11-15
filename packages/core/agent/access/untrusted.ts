@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { appendLoopNudge, capResultBody, controlHostResult, controlToolResult } from "./result-controls.js";
 import { decideIngestion } from "./taint-enforcement.js";
 import type { IngestionSource } from "./taint-tiers.js";
+import { noteEnvelopeWrapThisTurn } from "../memory/turn-provenance.js";
 
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
 
@@ -50,6 +51,7 @@ function defangDelimiters(content: string): string {
 }
 
 export function wrapUntrusted(content: string, opts: UntrustedOpts = {}): string {
+  noteEnvelopeWrapThisTurn();
   return fenceBody(capResultBody(content), opts);
 }
 
@@ -92,6 +94,7 @@ export async function ingestUntrustedModelOutput(
     ...(opts.ingestion?.label !== undefined ? { toolName: opts.ingestion.label } : {}),
   });
   markIngestion(opts);
+  noteEnvelopeWrapThisTurn();
   return { type: "text", value: appendLoopNudge(fenceBody(controlled.body, opts), controlled.nudge) };
 }
 

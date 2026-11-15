@@ -579,7 +579,7 @@ async function runLeg2(model: LanguageModel): Promise<{ summary: LegSummary; row
 
 function memoryFileFor(probe: (typeof LAUNDER_CORPUS)[number], arm: LaunderArm): string {
   const bare = `- ${probe.bullet}`;
-  const wording = renderProvenanceWording(["web"]);
+  const wording = renderProvenanceWording();
   const line = arm === "marked" ? `${recastAsAttributedClaim(bare, wording.attribution)}  ${wording.mark}` : bare;
   return [
     "# payments-notes",

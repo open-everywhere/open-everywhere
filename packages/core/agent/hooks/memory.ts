@@ -15,9 +15,8 @@ import { tierId, storeRoot, type MemoryFiles, type Tier } from "../memory/store.
 import { seedFor } from "../memory/layout.js";
 import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir, writeTierFile } from "../memory/sandbox-sync.js";
 import { type ProvenanceWording, baselineOf, markAddedBullets, renderProvenanceWording } from "../memory/provenance-mark.js";
-import { untrustedIngestedThisTurn, taintKindsThisTurn } from "../access/taint-signal.js";
+import { beginMemoryProvenanceTurn, envelopeWrappedThisTurn } from "../memory/turn-provenance.js";
 import { liveTaskIds } from "../access/live-delegated-tasks.js";
-import { taintEnabled } from "../access/taint-enforcement.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import { lockMemoryRoot, memoryRootUnlockCommand } from "../memory/root-fence.js";
 import { removedLineDigests } from "../memory/purge-redaction.js";
@@ -685,18 +684,9 @@ async function runSupervisorResync(
   return resynced;
 }
 
-function provenanceArmed(): boolean {
-  try {
-    return taintEnabled();
-  } catch {
-    return false;
-  }
-}
-
 async function provenanceTargets(
   ctx: MemoryPersistContext,
 ): Promise<{ p: ReturnType<typeof resolvePartition>; principalId: string | undefined; modeStamp: { readonly surfaceMode?: SessionMode }; writes: readonly ResolvedMemory[]; sandbox: MemorySandbox } | null> {
-  if (!provenanceArmed()) return null;
   const p = resolvePartition(ctx);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, p);
@@ -757,9 +747,8 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
     if (state.armed !== true) return edited;
     const target = await provenanceTargets(ctx);
     if (target === null) return edited;
-    const tainted = untrustedIngestedThisTurn();
-    const kinds = [...taintKindsThisTurn()];
-    const wording: ProvenanceWording = tainted ? renderProvenanceWording(kinds) : { mark: "", attribution: "" };
+    const wrapped = envelopeWrappedThisTurn(currentTurnId(ctx));
+    const wording: ProvenanceWording = wrapped ? renderProvenanceWording() : { mark: "", attribution: "" };
     const tiers: Record<string, Record<string, string[]>> = {};
     const markedFiles: string[] = [];
     let marked = 0;
@@ -769,7 +758,7 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
       let current = files;
       const held = state.tiers?.[tid];
       if (held !== undefined && !sameBaseline(held, baselineOf(files))) edited.push(tid);
-      if (tainted && held !== undefined) {
+      if (wrapped && held !== undefined) {
         const pass = markAddedBullets(held, files, wording);
         for (const [rel, content] of Object.entries(pass.files)) {
           await writeTierFile(target.sandbox, rm.tier, rel, content);
@@ -798,7 +787,6 @@ async function markProvenanceForTurn(ctx: MemoryPersistContext, where: string): 
           where,
           bullets: marked,
           files: markedFiles,
-          kinds,
           ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}),
         },
       });
@@ -1002,6 +990,7 @@ export default defineHook({
     },
 
     "turn.started": async (_event, ctx) => {
+      beginMemoryProvenanceTurn(currentTurnId(ctx));
       let resynced: readonly string[] = [];
       if (resyncArmed(ctx)) {
         try {

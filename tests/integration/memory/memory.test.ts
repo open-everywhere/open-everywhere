@@ -383,8 +383,9 @@ test("purge_memory proposes a card under the egress spoof and redacts the fact o
 test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant lands its bullets CLAIM-SHAPED and marked in the durable store, a clean worker turn's bullet reaches it untouched, and only bullets are marked", async () => {
   await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
-  settings.overrideSettingsForTest({ taint: { mode: "on" } });
-  expect(settings.getSettings().taint.mode).toBe("on");
+  settings.overrideSettingsForTest({ taint: { mode: "off" } });
+  afterThisTest(() => settings.overrideSettingsForTest({ taint: { mode: "on" } }));
+  expect(settings.getSettings().taint.mode).toBe("off");
 
   afterThisTest(
     wrapToolExecute("read_file_upload", async () => ({
@@ -465,18 +466,18 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
     cursor,
   });
   expect(rows.length).toBe(1);
-  const detail = rows[0]!.detail as { bullets?: number; files?: string[]; kinds?: string[]; where?: string };
+  const detail = rows[0]!.detail as { bullets?: number; files?: string[]; kinds?: unknown; where?: string };
   expect(detail.bullets).toBe(2);
   expect(detail.files?.some((f) => f.endsWith(marked))).toBe(true);
-  expect(detail.kinds).toContain("file-upload");
+  expect(detail.kinds).toBeUndefined();
   expect(detail.where).toBe("turn.completed");
   expect(JSON.stringify(detail)).not.toContain("PROV-ADDED-A");
 
   const { renderProvenanceMark, renderClaimAttribution, EXTERNAL_PROVENANCE_PREFIX, EXTERNAL_CLAIM_PREFIX } = await import(
     "@open-everywhere/core/agent/memory/provenance-mark.js"
   );
-  const expectedMark = renderProvenanceMark(detail.kinds ?? []);
-  const expectedAttribution = renderClaimAttribution(detail.kinds ?? []);
+  const expectedMark = renderProvenanceMark();
+  const expectedAttribution = renderClaimAttribution();
   const markedPath = siloFilePath("it-memory-brain", marked);
   const storedTainted = await waitFor(
     () => {
@@ -497,7 +498,6 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
     expect(line).toBe(`- 2026-08-22: ${expectedAttribution} ${f.id} — ${f.text}  ${expectedMark}`);
   }
   expect(storedTainted.split("\n").filter((l) => l.includes(EXTERNAL_CLAIM_PREFIX)).length).toBe(2);
-  expect(expectedMark).toContain("file-upload");
   expect(storedTainted.split("\n").filter((l) => l.includes(EXTERNAL_PROVENANCE_PREFIX)).length).toBe(2);
   for (const bare of ["Prose about the handover, which is not a bullet and takes no mark.", "- not a bullet, an argument"]) {
     const line = storedTainted.split("\n").find((l) => l.includes(bare));

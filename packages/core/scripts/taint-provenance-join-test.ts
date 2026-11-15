@@ -12,6 +12,7 @@ import spawnTaintHook from "../agent/hooks/spawn-taint.js";
 import { OE_DISPATCH_TURN_ATTR, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
 import { markUntrustedIngestedThisTurn, taintKindsThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { EXTERNAL_PROVENANCE_PREFIX } from "../agent/memory/provenance-mark.js";
+import { wrapUntrusted } from "../agent/access/untrusted.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { registerProvider, type MemoryProvider } from "../agent/memory/provider.js";
@@ -314,7 +315,7 @@ function lineWith(s: Session, needle: string): string {
   return memoryLines(s).find((l) => l.includes(needle)) ?? "";
 }
 
-console.log("A — parent taint → child adoption → a MARKED bullet, naming what the parent read:");
+console.log("A — parent taint → child adoption → the bullet stays UNMARKED (OPE-2719); a child's own wrap marks:");
 {
   const parent = makeSeat("join-parent", "standing");
   parent.sandbox.put("MEMORY.md", SEEDED);
@@ -327,17 +328,26 @@ console.log("A — parent taint → child adoption → a MARKED bullet, naming w
   );
 
   const child = await makeChild(parent, "join-child", 0, "join-parent-turn-1", "call_a1");
+  let adopted = false;
   await turnThatWrites(child, () => {
+    adopted = untrustedIngestedThisTurn();
     parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Ada owns billing\n`);
   });
-
-  const bullet = lineWith(child, "Ada owns billing");
-  ok(MARKED(bullet), "[A] 🔴 THE JOIN: a bullet the CHILD of a tainted parent turn added comes out MARKED");
+  ok(adopted, "[A] precondition: the child of a tainted parent turn ADOPTS the taint bit");
   ok(
-    bullet.includes(`${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested web, github]`),
-    "[A] 🔴 …and the mark NAMES the parent's kinds — the unqualified 'external content' wording is what the lost-kinds hole produced",
+    !MARKED(lineWith(child, "Ada owns billing")),
+    "[A] 🔴 OPE-2719 LOOSENS: the adopted taint does NOT mark the child's bullet — the memory flag has no cross-process carriage",
   );
-  ok(bullet.includes("[unverified claim; the turn ingested web, github]"), "[A] the in-sentence attribution names the same kinds");
+
+  child.ctx = childCtx(child, parent, 1, "join-parent-turn-1", "call_a1");
+  await turnThatWrites(child, () => {
+    wrapUntrusted("a fetched page", { source: "web" });
+    parent.sandbox.put("MEMORY.md", `${parent.sandbox.read("MEMORY.md")}- 2026-08-27: Ada owns the billing renewals\n`);
+  });
+  const own = lineWith(child, "Ada owns the billing renewals");
+  ok(MARKED(own), "[A] 🔴 a bullet added on a turn in which the CHILD's own envelope wrapped content IS marked");
+  ok(own.includes(`${EXTERNAL_PROVENANCE_PREFIX} added on a turn that ingested external content]`), "[A] …with the unqualified wording: the flag names no source");
+  ok(!MARKED(lineWith(child, "Ada owns billing")), "[A] …and the earlier turn's bullet is still not marked");
 
   ok(!MARKED(lineWith(child, "pricing is reviewed quarterly")), "[A] 🔴 the pre-existing bullet is NOT marked — the diff is against the baseline, not the file");
 }
@@ -379,17 +389,21 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
 
   Object.assign(child.bag, parent.bag);
   child.ctx = childCtx(child, parent, 1, "cont-parent-turn-1", "call_b2");
+  let bit = false;
+  let kinds: string[] = [];
   await turnThatWrites(child, () => {
+    bit = untrustedIngestedThisTurn();
+    kinds = [...taintKindsThisTurn()];
     parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Cy approves refunds\n`);
   });
 
-  const bullet = lineWith(child, "Cy approves refunds");
   ok(
-    MARKED(bullet),
-    "[B] 🔴 THE CONTINUATION GAP IS CLOSED: the child's SECOND turn, from a still-tainted parent, adopts and its bullet is MARKED (RED before: `turn.sequence > 0` refused it, and the pinned parent turn never matched the new stamp)",
+    bit,
+    "[B] 🔴 THE CONTINUATION GAP IS CLOSED: the child's SECOND turn, from a still-tainted parent, adopts the taint bit (RED before: `turn.sequence > 0` refused it, and the pinned parent turn never matched the new stamp)",
   );
-  ok(/ingested [^\]]*notion/.test(bullet), "[B] …and it names the SECOND turn's kind, from the parent's fresh stamp");
-  ok(/ingested [^\]]*web/.test(bullet), "[B] 🔴 …and the FIRST turn's kind too, from the child's sticky taint — its second turn still holds the first turn's history");
+  ok(kinds.includes("notion"), "[B] …and it holds the SECOND turn's kind, from the parent's fresh stamp");
+  ok(kinds.includes("web"), "[B] 🔴 …and the FIRST turn's kind too, from the child's sticky taint — its second turn still holds the first turn's history");
+  ok(!MARKED(lineWith(child, "Cy approves refunds")), "[B] 🔴 OPE-2719 LOOSENS: the adopted taint does not mark the continuation's bullet");
 }
 {
   const parent = makeSeat("stale-parent", "standing");
@@ -404,12 +418,16 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
 
   child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "stale-parent|stale-parent-turn-1|web";
   child.ctx = childCtx(child, parent, 1, "stale-parent-turn-1", "call_b4");
+  let bit = false;
+  let kinds: string[] = [];
   await turnThatWrites(child, () => {
+    bit = untrustedIngestedThisTurn();
+    kinds = [...taintKindsThisTurn()];
     parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Dee runs the ledger\n`);
   });
-  const dee = lineWith(child, "Dee runs the ledger");
-  ok(MARKED(dee), "[B] 🔴 OPE-2251 STICKY: a child that adopted a taint on its first turn writes a MARKED bullet on its second — its history still holds what the first turn read");
-  ok(/ingested [^\]]*web/.test(dee), "[B] …naming the class it adopted on the first turn");
+  ok(bit, "[B] 🔴 OPE-2251 STICKY: a child that adopted a taint on its first turn is still tainted on its second — its history still holds what the first turn read");
+  ok(kinds.includes("web"), "[B] …holding the class it adopted on the first turn");
+  ok(!MARKED(lineWith(child, "Dee runs the ledger")), "[B] 🔴 OPE-2719 LOOSENS: the sticky taint does not mark the bullet");
 }
 {
   const parent = makeSeat("stale2-parent", "standing");
@@ -424,13 +442,13 @@ console.log("B — a CONTINUATION of the same child, from the parent's SECOND ta
   child.bag[OE_PARENT_TURN_TAINTED_ATTR] = "stale2-parent|stale2-parent-turn-2|web";
   child.bag["oe_dispatch_turn"] = "stale2-parent|stale2-parent-turn-3";
   child.ctx = childCtx(child, parent, 1, "stale2-parent-turn-1", "call_b6");
+  let bit = true;
   await turnThatWrites(child, () => {
+    bit = untrustedIngestedThisTurn();
     parent.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Eve signs the cheques\n`);
   });
-  ok(
-    !MARKED(lineWith(child, "Eve signs the cheques")),
-    "[B] 🔴 NEGATIVE CONTROL: a STALE stamp from parent turn 2, carried by a continuation the CLEAN turn 3 sent, does not taint the child",
-  );
+  eq(bit, false, "[B] 🔴 NEGATIVE CONTROL: a STALE stamp from parent turn 2, carried by a continuation the CLEAN turn 3 sent, does not taint the child");
+  ok(!MARKED(lineWith(child, "Eve signs the cheques")), "[B] …and its bullet takes no mark");
 }
 
 console.log("C — the kinds cross the hop, and only kinds the ingestion table names:");
@@ -451,7 +469,7 @@ console.log("C — the kinds cross the hop, and only kinds the ingestion table n
   await inSession(child, async () => {
     await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), true, "[C] the stamp still taints the child");
-    eq([...taintKindsThisTurn()], ["web"], "[C] 🔴 a kind the ingestion table does not name is DROPPED — nothing off an auth bag names itself in a memory bullet");
+    eq([...taintKindsThisTurn()], ["web"], "[C] 🔴 a kind the ingestion table does not name is DROPPED — nothing off an auth bag names itself in an approval card");
   });
 }
 {
@@ -462,7 +480,7 @@ console.log("C — the kinds cross the hop, and only kinds the ingestion table n
   await inSession(child, async () => {
     await startTaintTurn(child);
     eq(untrustedIngestedThisTurn(), true, "[C] 🔴 a stamp with NO kind tail — the pre-OPE-1215 bytes — still taints; the tail is disclosure, never the signal");
-    eq([...taintKindsThisTurn()], [], "[C] …and leaves the breakdown empty, which renders the unqualified wording");
+    eq([...taintKindsThisTurn()], [], "[C] …and leaves the taint breakdown empty");
   });
 }
 
@@ -471,7 +489,7 @@ for (const grain of ["standing", "native"]) {
   const seat = makeSeat(`arm-seat-${grain}`, grain);
   seat.sandbox.put("MEMORY.md", SEEDED);
   await turnThatWrites(seat, () => {
-    markUntrustedIngestedThisTurn("web" as never);
+    wrapUntrusted("a fetched page", { source: "web" });
     seat.sandbox.put("MEMORY.md", `${SEEDED}- 2026-08-27: Eve chairs the risk review\n`);
   });
   ok(
@@ -551,7 +569,7 @@ console.log("G — a mid-session re-sync's foreign bullets are NOT marked as thi
       await taint.events["turn.started"]!({}, seat.ctx);
       await memory.events["turn.started"]!({}, seat.ctx);
       ok((seat.sandbox.read("MEMORY.md") ?? "").includes("Gus signed the vendor contract"), "[G] precondition: the REAL re-sync pulled the concurrent session's bullet into the sandbox — without this the section proves nothing");
-      markUntrustedIngestedThisTurn("web" as never);
+      wrapUntrusted("a fetched page", { source: "web" });
       seat.sandbox.put("MEMORY.md", `${seat.sandbox.read("MEMORY.md")}- 2026-08-27: Hal owns the vendor renewal\n`);
       await memory.events["turn.completed"]!({}, seat.ctx);
     });
@@ -610,7 +628,7 @@ console.log("H — a native seat's own edit reaches the STORE at its turn end, w
   await inSession(seat, async () => {
     await taint.events["turn.started"]!({}, seat.ctx);
     await memory.events["turn.started"]!({}, seat.ctx);
-    markUntrustedIngestedThisTurn("web" as never);
+    wrapUntrusted("a fetched page", { source: "web" });
     seat.sandbox.put("MEMORY.md", `${seat.sandbox.read("MEMORY.md")}- 2026-08-27: Iris owns the renewals inbox\n`);
     seat.sandbox.tierListings = 0;
     await memory.events["turn.completed"]!({}, seat.ctx);

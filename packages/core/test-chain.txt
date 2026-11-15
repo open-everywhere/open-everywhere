@@ -106,6 +106,7 @@ test:approval-claim-guard
 test:request-claim-guard
 test:memory-write-intent
 test:memory-provenance
+test:memory-turn-provenance
 test:taint-provenance-join
 test:markdown
 test:memory-supersede
