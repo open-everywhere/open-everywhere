@@ -1,8 +1,6 @@
 import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
 import { randomBytes } from "node:crypto";
-import { capResult, maxResultChars } from "./result-cap.js";
-import { reduceResultBody } from "./result-reduce.js";
-import { noteToolResultLoop } from "./loop-breaker.js";
+import { appendLoopNudge, capResultBody, controlHostResult, controlToolResult } from "./result-controls.js";
 import { decideIngestion } from "./taint-enforcement.js";
 import type { IngestionSource } from "./taint-tiers.js";
 
@@ -52,8 +50,12 @@ function defangDelimiters(content: string): string {
 }
 
 export function wrapUntrusted(content: string, opts: UntrustedOpts = {}): string {
+  return fenceBody(capResultBody(content), opts);
+}
+
+function fenceBody(bounded: string, opts: UntrustedOpts): string {
   const src = opts.source ? ` source=${JSON.stringify(opts.source)}` : "";
-  const body = defangDelimiters(capResult(content));
+  const body = defangDelimiters(bounded);
   const nonce = mintFenceNonce(body);
   return (
     `${UNTRUSTED_OPEN} nonce="${nonce}"${src}>\n` +
@@ -71,30 +73,32 @@ export function untrustedModelOutput(
 }
 
 export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): string {
+  markIngestion(opts);
+  return wrapUntrusted(content, opts);
+}
+
+function markIngestion(opts: UntrustedOpts): void {
   if (decideIngestion(opts.ingestion, true)) {
     markUntrustedIngestedThisTurn(opts.ingestion?.kind);
   }
-  return wrapUntrusted(content, opts);
 }
 
 export async function ingestUntrustedModelOutput(
   content: string,
   opts: UntrustedOpts = {},
 ): Promise<{ type: "text"; value: string }> {
-  const body = await reduceResultBody(content, maxResultChars(), {
-    source: "untrusted-result",
+  const controlled = await controlToolResult(content, {
+    source: opts.source,
     ...(opts.ingestion?.label !== undefined ? { toolName: opts.ingestion.label } : {}),
   });
-  const wrapped = ingestUntrusted(body, opts);
-  const nudge = noteToolResultLoop(opts.source, content);
-  return { type: "text", value: nudge ? `${wrapped}\n\n${nudge}` : wrapped };
+  markIngestion(opts);
+  return { type: "text", value: appendLoopNudge(fenceBody(controlled.body, opts), controlled.nudge) };
 }
 
 export function hostAuthoredModelOutput(
   content: string,
   opts: UntrustedOpts = {},
 ): { type: "text"; value: string } {
-  const wrapped = wrapUntrusted(content, opts);
-  const nudge = noteToolResultLoop(opts.source, content);
-  return { type: "text", value: nudge ? `${wrapped}\n\n${nudge}` : wrapped };
+  const controlled = controlHostResult(content, { source: opts.source });
+  return { type: "text", value: appendLoopNudge(fenceBody(controlled.body, opts), controlled.nudge) };
 }

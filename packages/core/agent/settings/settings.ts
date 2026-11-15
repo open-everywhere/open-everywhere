@@ -1611,7 +1611,7 @@ export const SETTINGS = {
       shipped: 120_000,
       validate: positiveInt,
       summary:
-        "Per-tool-result character cap (~30k tokens), applied inside the untrusted-ingestion funnel so one avalanche result cannot blow the context window in a single shot.",
+        "Per-tool-result character cap (~30k tokens), applied by the result controls before the untrusted-ingestion funnel fences a body, so one avalanche result cannot blow the context window in a single shot.",
       format: (v) => `${v} chars`,
     } satisfies SettingSpec<number>,
   },

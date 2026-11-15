@@ -566,6 +566,10 @@
       "types": "./dist/agent/access/result-cap.d.ts",
       "default": "./dist/agent/access/result-cap.js"
     },
+    "./agent/access/result-controls.js": {
+      "types": "./dist/agent/access/result-controls.d.ts",
+      "default": "./dist/agent/access/result-controls.js"
+    },
     "./agent/access/result-reduce-model-arm.js": {
       "types": "./dist/agent/access/result-reduce-model-arm.d.ts",
       "default": "./dist/agent/access/result-reduce-model-arm.js"
@@ -4075,6 +4079,7 @@
     "test:audit-error-frames": "NODE_NO_WARNINGS=1 tsx scripts/audit-error-frames-test.ts",
     "test:audit-scrub-arm": "NODE_NO_WARNINGS=1 tsx scripts/audit-scrub-arm-test.ts",
     "test:result-reduce-arm": "NODE_NO_WARNINGS=1 tsx scripts/result-reduce-arm-test.ts",
+    "test:result-controls": "NODE_NO_WARNINGS=1 tsx scripts/result-controls-test.ts",
     "test:wake-arm": "NODE_NO_WARNINGS=1 tsx scripts/wake-arm-test.ts",
     "test:verify-audit-chain-cli": "NODE_NO_WARNINGS=1 tsx scripts/verify-audit-chain-cli-test.ts",
     "test:events": "tsx scripts/events-test.ts",

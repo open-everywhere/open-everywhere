@@ -558,3 +558,4 @@ test:discord-dm-card
 test:list-fixture
 test:secret-adopt-route
 test:outbound-filter
+test:result-controls

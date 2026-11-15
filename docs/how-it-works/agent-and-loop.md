@@ -2300,10 +2300,30 @@ or pull request that the GitHub delivery is anchored to.
 ## Why memory lives on disk, and why the transport matters
 
 A subtle but load-bearing detail: **MCP tool results flow straight into the model's
-context.** One funnel stands between an MCP call and the model: a reducer arm the deployment may
-register, then a hard cap of 120,000 characters (`tools.maxResultChars`). This deployment registers
-no arm, so a large result is truncated rather than summarised, and it spends the whole cap. The
-REST path is different: the agent `curl`s an API
+context.** Two steps stand between an MCP call and the model. The first is the result controls
+(`packages/core/agent/access/result-controls.ts`). The second is the untrusted-content fence, which
+`ingestUntrustedModelOutput` applies to a connector result (`hostAuthoredModelOutput` for a
+status-only result that holds no external bytes). For a connector result, the result controls run a
+reducer arm the deployment may register, then a hard cap of 120,000 characters
+(`tools.maxResultChars`), then the loop breaker. This deployment registers no arm, so a large result
+is truncated rather than summarised, and it spends the whole cap.
+
+The result controls are their own step, outside the untrusted-content envelope and the taint mark.
+Each of the five funnels in `packages/core/agent/access/untrusted.ts` calls one entry point of the
+result controls and then fences the body:
+
+| Funnel | Entry point | Reducer arm | Cap | Loop breaker |
+| --- | --- | --- | --- | --- |
+| `ingestUntrustedModelOutput` | `controlToolResult` | yes | yes | yes |
+| `hostAuthoredModelOutput` | `controlHostResult` | no | yes | yes |
+| `wrapUntrusted`, `ingestUntrusted`, `untrustedModelOutput` | `capResultBody` | no | yes | no |
+
+These are the controls each funnel applied before the result controls existed. A site that drops
+its fence calls the same entry point alone. `controlToolResult` and `controlHostResult` return the
+body and the loop breaker's nudge apart, so such a site must also append the nudge with
+`appendLoopNudge`, or the model never reads it.
+
+The REST path is different: the agent `curl`s an API
 through the [egress firewall](../security/credentials-and-planes.md) guided by a
 [skill](../capabilities/skills-and-plugins.md), and the skill's wrapping *script* reduces
 the response before any of it reaches context.

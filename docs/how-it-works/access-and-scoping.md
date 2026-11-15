@@ -869,7 +869,10 @@ only ever appends text to the result: the result itself is never withheld. With 
 tracks nothing and appends nothing, and the counters reset at each turn start. A worker that parks
 on `ask_question` and resumes on the answer stays in the same turn, so its count carries across the
 answer. Each write stores a fresh map, because eve's step delta drops an in-place change to a stored
-`Map`.
+`Map`. The loop breaker runs inside the result controls
+(`packages/core/agent/access/result-controls.ts`), with the result cap and the reducer arm. That step
+knows nothing of the untrusted-content envelope or the taint mark, so the three controls do not
+depend on either.
 
 ## Work destinations — where a work verb may land
 
