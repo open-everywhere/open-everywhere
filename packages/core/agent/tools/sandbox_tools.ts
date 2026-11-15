@@ -9,7 +9,7 @@ import { withStallGuard } from "../stall/guard.js";
 import { withBashHangGuard } from "../stall/bash-hang-guard.js";
 import { windowGatedKit } from "../access/window-gated.js";
 import { ingestUntrusted, ingestUntrustedModelOutput } from "../access/untrusted.js";
-import { withEgressFence } from "../access/web-fetch-fence.js";
+import { withEgressFence } from "../access/web-fetch-reach.js";
 import { withMemoryWriteFence } from "../memory/write-fence.js";
 import { extractSkillEnvelopes, sanitizeSkillEnvelopeSource } from "../access/skill-taint-envelope.js";
 

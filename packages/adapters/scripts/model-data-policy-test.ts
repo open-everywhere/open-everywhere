@@ -177,8 +177,9 @@ try {
     const build = (member: string, id: string): Record<string, (o: unknown) => Promise<unknown>> =>
       (dp[member] as (id: string) => Record<string, (o: unknown) => Promise<unknown>>)(id);
     for (const [member, method, opts] of [
-      ["evaluationModel", "doEvaluate", { state: { messages: [] }, questions: [] }],
-      ["evaluation", "doEvaluate", { state: { messages: [] }, questions: [] }],
+      ["evaluationModel", "doEvaluate", { state: [], questions: {} }],
+      ["evaluation", "doEvaluate", { state: [], questions: {} }],
+      ["evaluationModel", "doDecide", { state: [], questions: {} }],
       ["rerankingModel", "doRerank", { documents: { type: "text", values: ["a"] }, query: "q" }],
       ["chat", "doGenerate", { prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }] }],
     ] as const) {

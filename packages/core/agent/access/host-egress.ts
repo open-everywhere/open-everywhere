@@ -202,16 +202,7 @@ export const EGRESS_REPORT_PROTOCOL =
 
 export type ReachDenyReason = "not-allowlisted" | "own-account-withheld" | "connector-revoked" | "halted";
 
-type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed" | "redirect-bound";
-
-export const MAX_REDIRECT_HOPS = 5;
-
-export function redirectBoundDenial(tool: string, host: string): string {
-  return (
-    `${tool}: this request has already followed ${MAX_REDIRECT_HOPS} redirects, and "${host}" is the next one. ` +
-    `A chain that long is a loop or a cloak, so the fence stopped it. Fetch the final URL directly instead.`
-  );
-}
+type HostDenyReason = ReachDenyReason | "ssrf" | "resolve-failed";
 
 export function egressReachDenial(tool: string, host: string, reason: ReachDenyReason, withheld?: OwnAccountEgressRefusal): string {
   if (reason === "own-account-withheld") {
@@ -273,20 +264,9 @@ export async function assertEgressReach(ctx: BindableContext, rawUrl: string, de
   return url;
 }
 
-export async function assertEgressHop(ctx: BindableContext, rawUrl: string, hop: number, deps: ReachDeps = {}): Promise<URL> {
+export async function assertFrameworkDispatchReach(ctx: BindableContext, rawUrl: string, deps: ReachDeps = {}): Promise<URL> {
   const tool = deps.tool ?? DEFAULT_TOOL_LABEL;
-  const parsed = parseHttpUrl(rawUrl, tool);
-  const rowFields = { hop, dispatch: "framework" } as const;
-  if (hop > MAX_REDIRECT_HOPS) {
-    const reason: HostDenyReason = "redirect-bound";
-    await auditToolAction(ctx, "egress.hostside.deny", {
-      ...hostCallAuditFields({ host: parsed.hostname, verb: HOST_PLANE_VERB, outcome: "denied" }),
-      reason,
-      tool,
-      ...rowFields,
-    });
-    throw new Error(redirectBoundDenial(tool, parsed.hostname));
-  }
+  const rowFields = { dispatch: "framework" } as const;
   const url = await assertEgressReach(ctx, rawUrl, { ...deps, rowFields });
   await auditToolAction(ctx, "egress.hostside.allow", {
     ...hostCallAuditFields({ host: url.hostname, verb: HOST_PLANE_VERB, outcome: "allowed" }),

@@ -145,6 +145,7 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   ok(/Never add an .Authorization. header yourself/.test(r), "README stops the agent trying to authenticate a call the firewall authenticates");
   ok(r.includes("`web_fetch` and `web_search` do not run in here"), "🔴 README scopes itself honestly: these tools run host-side, so this file is not the thing enforcing them");
   ok(/fenced against this\s+same allow-list/.test(r), "🔴 README states the CURRENT truth: web_fetch is fenced against this same allow-list before it dispatches");
+  ok(/for its FIRST request only/.test(r) && /A redirect that `web_fetch` follows is NOT checked/.test(r), "🔴 …and bounds that claim to the first request: a redirect is not checked against the list (OPE-2688)");
   ok(!/does not mean .web_fetch. will fail/.test(r), "🔴 …and no longer carries the pre-fence claim that a host's absence says nothing about web_fetch");
   ok(/`web_search` runs\s+inside the model call and is bounded by neither/.test(r), "…while keeping the two tools apart: web_search really is bounded by neither plane");
 
@@ -304,3 +305,5 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
 }
 
 console.log(`\n✓ egress-status: ${n} assertions passed (hosts-only status file + pinned README protocol + publish locking + hook-seam publish/skip + opt-in registry constant)\n`);
+
+// proves: AP-MOD-core-access-egress-status

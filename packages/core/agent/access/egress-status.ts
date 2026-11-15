@@ -123,9 +123,10 @@ not a config gap: say so, and send the person to their DM with me, where a perso
 minted.
 
 **\`web_fetch\` and \`web_search\` do not run in here.** They execute host-side, outside this
-sandbox. That changes WHO enforces, not WHAT is allowed: \`web_fetch\` is fenced against this
-same allow-list before it dispatches, so a host absent from \`STATUS.json\` is refused there
-too — audibly, naming the host, unlike the silent failure you get in here. \`web_search\` runs
+sandbox. \`web_fetch\` is fenced against this
+same allow-list before it dispatches, for its FIRST request only, so a host absent from
+\`STATUS.json\` is refused there — audibly, naming the host, unlike the silent failure you
+get in here. A redirect that \`web_fetch\` follows is NOT checked. \`web_search\` runs
 inside the model call and is bounded by neither. \`github.com\` is the exception: a repo grant
 lists it for \`git\`, not for \`web_fetch\`. This file is about what **you** run in here:
 \`curl\`, \`git\`, \`npm\`.

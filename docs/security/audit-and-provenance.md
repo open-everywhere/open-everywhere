@@ -258,14 +258,16 @@ physical property of where each call is made, not a gap somebody has yet to fill
 - **`unit: "call"`** — one row per outbound call, on the **host** plane, wherever Open Everywhere
   makes that call: it holds the verb and it sees the response.
   🔴 **`web_fetch` counts its own way, because the dispatch is not ours.** It writes **one row per
-  redirect hop**: hop `0` is the URL the model asked for, and every hop after it is a host the
-  *response* chose. Every row of that chain carries `hop` and `dispatch: "framework"`, refusals
-  included — the refusal *message* is the one a direct call gets, so the row is the only place that
-  says a declared host bounced somewhere rather than the model asking for it. They are written at
-  **admission** rather than at settlement — past the fence the request belongs to the framework, so
-  Open Everywhere never sees the response. So on this tool `allowed` means "admitted, and handed to
-  the framework's dispatcher", and the row carries no `status`, no `route` and no `antiRebind`.
-  Read the rows as the chain the allow-list permitted, never as transport successes.
+  tool call**, for the URL the model asked for, and the row carries `dispatch: "framework"`,
+  refusals included. 🔴 **A redirect writes no row.** The framework follows up to ten redirects
+  per request itself (twenty per call, because a Cloudflare challenge repeats the request), with
+  no allow-list check, so the trail names the first host only and never a host a
+  *response* chose. (Patch part 7, OPE-1568, once fenced and recorded every hop. OPE-2688 dropped
+  it.) The row is written at **admission** rather than at settlement — past the fence the request
+  belongs to the framework, so Open Everywhere never sees the response. So on this tool `allowed`
+  means "admitted, and handed to the framework's dispatcher", and the row carries no `status`, no
+  `route` and no `antiRebind`. Read the row as the first request the allow-list permitted, never as
+  a transport success.
   `outcome` is `allowed` (dispatched, with the
   response `status` beside it on every other seam), `denied` (refused by policy before anything
   left) or `failed` (the dispatch itself errored).
@@ -281,8 +283,8 @@ physical property of where each call is made, not a gap somebody has yet to fill
 
 So "could this session have written to that vendor, and under whose credential?" is answered on both
 planes. "Did it?" is answered by the host plane's own row for every call Open
-Everywhere dispatches, and — with the admission caveat above — for every hop a `web_fetch` was
-admitted to make; on the sandbox plane it is answered only by
+Everywhere dispatches, and — with the admission caveat above — for the first request a `web_fetch`
+was admitted to make, but not for a redirect the framework then followed; on the sandbox plane it is answered only by
 the session transcript. The reviewed `Connection.methods` declaration is the control
 on the sandbox plane; the row is evidence, not a gate.
 
@@ -293,10 +295,11 @@ are unaffected — a reach deny and an SSRF refusal are both decided before a so
 fence's own evidence never depended on the timing.
 
 🔴 **`web_fetch` is the exception, and it is the higher-volume writer.** Its rows are written at
-**admission**, per hop, because the framework owns that dispatch and Open Everywhere never sees the
-response — see the note on that tool above. So `egress.hostside.allow{tool: "web_fetch"}` does not
-say the fetch completed: the transport may still have failed, the 5 MB cap may have cut it, or a
-later hop may have been refused. Read `tool` before you read `outcome`.
+**admission**, one per tool call, because the framework owns that dispatch and Open Everywhere never
+sees the response — see the note on that tool above. So `egress.hostside.allow{tool: "web_fetch"}`
+does not say the fetch completed: the transport may still have failed, the 5 MB cap may have cut it,
+or the framework may have followed a redirect to a host the row does not name. Read `tool` before you
+read `outcome`.
 
 ### Properties that make the log trustworthy
 

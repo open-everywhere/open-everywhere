@@ -97,9 +97,13 @@ npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 
 ## 0.9.2 — not released yet
 
-0.9.2 moves one setting and keeps its old key as an alias (OPE-2711). The setting `taint.undeclaredSurface` is now `identity.undeclaredSurface`, with the same values and the same shipped value. The old key still works. The non-member stamp `oe_chat_nonmember` and its helpers move to `agent/identity/non-member.ts`, and every published name still resolves. No behaviour changes.
+0.9.2 moves one setting and keeps its old key as an alias (OPE-2711). The setting `taint.undeclaredSurface` is now `identity.undeclaredSurface`, with the same values and the same shipped value. The old key still works. The non-member stamp `oe_chat_nonmember` and its helpers move to `agent/identity/non-member.ts`, and every published name still resolves. That move changes no behaviour. 0.9.2 also drops eve patch part 7, the per-hop `web_fetch` redirect fence (OPE-2688). The `web_fetch` allow-list check now decides the first request only. eve follows up to ten redirects per request (up to twenty per call, because a Cloudflare challenge repeats the request) and checks only that each next address is a public `https://` one, so a declared host can redirect a fetch to a host the session never declared. A redirect writes no audit row, and the `web_fetch` allow row no longer carries `hop`. The committed patch is smaller: it no longer edits `dist/src/execution/web-fetch/request.js`. Run `npx oe-eve-patch` after the upgrade, as on every upgrade, so the installed eve matches the new patch. See the breaking line below for the removed subpath and exports.
 
 eve peer: `0.71.0`
+
+**Breaking**
+
+- Core (`@open-everywhere/core`) no longer publishes the subpath `./agent/access/web-fetch-fence.js` (OPE-2688). `withEgressFence` moved to `./agent/access/web-fetch-reach.js`, and `HOP_HOOK_ABSENT` is gone. `./agent/access/host-egress.js` no longer exports `assertEgressHop`, `MAX_REDIRECT_HOPS` and `redirectBoundDenial`; `assertFrameworkDispatchReach` replaces `assertEgressHop` for the first request. An app that imports one of the removed names fails its build. Import `withEgressFence` from the new subpath, and remove the other imports: no redirect fence replaces them.
 
 **Config migrations**
 

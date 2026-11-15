@@ -60,22 +60,6 @@ const OPS: readonly PortOp[] = [
     replace: "pass finishes. eve does NOT\n * always append a checkpoint: read `reduced` to tell real work from a no-op.\n */\nexport interface CompactionCompletedStreamEvent {\n    data: {\n        modelId: string;\n        /**\n         * OE patch (OPE-697). `true` when the compaction work step returned a\n         * different message list, `false` when it returned its input. Only\n         * `maybeCompact` sets it. The `createCompactionCompletedEvent`\n         * factory does not, so the field stays optional.\n         */\n        reduced?: boolean;\n        se",
   },
   {
-    part: "7",
-    file: "dist/src/execution/web-fetch/request.js",
-    why: "the per-hop web_fetch egress fence helper and its marker (OPE-1568)",
-    expect: 1,
-    find: "async function requestPublicUrl(e,t){",
-    replace: "\n// === OE PATCH (OPE-1568) — the per-hop egress fence on web_fetch redirects ===\n// A REDIRECT IS A NEW REQUEST. The loop below follows one, re-checking only that the next\n// address is public — a check that knows nothing about the calling session's egress allow-list.\n// So an allow-listed host answering `301 Location: https://evil.test/` handed an undeclared\n// host's body to the model, and Open Everywhere's trail named only the allow-listed host. That is\n// the exfil/ingest leg the host-side fence exists to close.\n//\n// __oeWebFetchHop is called with the NEXT url and its hop number BEFORE the loop follows it. The\n// guard is installed by access/web-fetch-fence.ts, which re-takes the full reach decision per hop\n// and throws the standard egress refusal for an undeclared one. A throw here aborts the fetch,\n// which is the intended consequence: the tool fails rather than the fence.\n//\n// __oeWebFetchHopPatched tells that fence these bytes carry the hook. patch-package only WARNS\n// when a patch does not apply, so without the marker an unpatched tree would silently restore the\n// hole; the fence refuses web_fetch when the marker is absent.\nglobalThis.__oeWebFetchHopPatched=!0;\nasync function __oeWebFetchHop(e,t){let n=globalThis.__oeWebFetchHopGuard;if(typeof n!=`function`)throw Error(`web_fetch: the Open Everywhere per-hop egress fence is not installed, so a redirect to \"${e}\" cannot be checked against this session's allow-list — refusing to follow it.`);await n(e,t)}\nasync function requestPublicUrl(e,t){",
-  },
-  {
-    part: "7",
-    file: "dist/src/execution/web-fetch/request.js",
-    why: "check the next hop against the session's allow-list before the loop follows it",
-    expect: 1,
-    find: ",n=parseHttpsUrl(new URL(r,n).toString());con",
-    replace: ";let a=parseHttpsUrl(new URL(r,n).toString());await __oeWebFetchHop(a.toString(),e+1);n=a;con",
-  },
-  {
     part: "10",
     file: "dist/src/internal/authored-package-boundary.js",
     why: "keep a built workspace package external on the evaluation path (OPE-2276)",
@@ -96,7 +80,6 @@ const OPS: readonly PortOp[] = [
 const MARKERS: readonly string[] = [
   "__oeProjectToolSetPatched",
   "__oeCompactionContractPatched",
-  "__oeWebFetchHopPatched",
   "__oeResolvesThroughInstalledPackage",
 ];
 

@@ -8,6 +8,7 @@ This page is for the maintainer who publishes. A consumer who deploys the reposi
 that produced it. It is no longer the only copy — every library README states the same recipe in
 § Install (OPE-2206), and a consumer reads that one on the npm page.
 
+> **The tarballs are the release surface.** A published version is permanent and diffable by
 > anyone. Treat every publish as a public, irreversible act.
 
 ## What ships
@@ -42,11 +43,11 @@ each fail `npm run lint:publish`. The cheap half of the same rule runs on the te
 
 `@open-everywhere/core` runs on a PATCHED `eve`. The tree carries
 `patches/eve+<pinned version>.patch`, and `patch-package` applies it on `postinstall` **in this
-repository**. On the eve 0.71.0 pin the patch holds four parts. Three are live at runtime: part 1, the
-untrusted output projection (OPE-73); part 4, the compaction event contract (OPE-697); and part 7,
-the per-hop `web_fetch` egress fence (OPE-1568). Part 10 (OPE-2276) changes only eve's CLI-side
-evaluation of authored files (`eve build`, `eve dev`, `eve eval`), so the deployed server never runs
-it. Parts 5 and 6 are retired (OPE-2252, OPE-2251). Every live part is a
+repository**. On the eve 0.71.0 pin the patch holds three parts. Two are live at runtime: part 1, the
+untrusted output projection (OPE-73), and part 4, the compaction event contract (OPE-697). Part 10
+(OPE-2276) changes only eve's CLI-side evaluation of authored files (`eve build`, `eve dev`,
+`eve eval`), so the deployed server never runs it. Parts 5 and 6 are retired (OPE-2252, OPE-2251).
+Part 7, the per-hop `web_fetch` redirect fence (OPE-1568), was dropped (OPE-2688). Every live part is a
 security or correctness control, and every one fails SILENTLY when the patch is absent — nothing throws, nothing logs, the behaviour is
 simply not there. The worst of them is the connector fence: on an unpatched `eve`, every connector
 result and every MCP-server-authored tool description reaches the model unfenced.
@@ -272,15 +273,6 @@ npm run publish:preview -- --only packages/create
 npm run publish:preview -- --strict            # REVIEW rows fail the run too
 ```
 
-
-
-
-
-
-```bash
-```
-
-
 ### Rehearse the upgrade before you publish
 
 `oe upgrade --from <dir>` takes the release packed in `<dir>`, not the release on the registry. So
@@ -379,6 +371,7 @@ it unseen.
 green ship that needs no upgrade notes can also take a patch version: see
 [A patch bump is one command](#a-patch-bump-is-one-command) (OPE-2627).
 
+The reason is that a consumer reads the list of published versions as the history of this project:
 the tarballs and their diffs. A version per merge would publish that reader a stream of increments
 with no story, and every one of them is permanent.
 
@@ -469,7 +462,11 @@ short-lived identity token. npm checks it and issues a publish credential for th
 token exists anywhere, and each version gets signed provenance that names the commit and the
 workflow.
 
+🔴 **Until the trusted publishers are configured on npm, the hand publish stays the path.** Until
 then, every tag the release process pushes gives a red `npm-publish` run, and that red run is
+expected. The maintainer then publishes the release by hand: `npm publish --workspace <name>` per
+package, core first, after the checklist below. npm attaches provenance only to a public
+repository, so the workflow also refuses a private repository and publishes nothing.
 
 ### What starts it, and what never does
 
@@ -481,7 +478,6 @@ then, every tag the release process pushes gives a red `npm-publish` run, and th
   another branch never publishes. Each job is guarded on `github.repository`, so in a fork or any
   other repository both jobs are skipped. `scripts/release-publish.ts` checks the same rules again
   before it publishes anything.
-
 
 ### What it does
 

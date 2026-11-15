@@ -80,15 +80,12 @@ try {
 }
 
 const WEB_FETCH_REQUEST = "node_modules/eve/dist/src/execution/web-fetch/request.js";
-const HOP_CALL_IN_FOLLOW = "await __oeWebFetchHop(a.toString(),e+1);n=a;continue";
 try {
-  const bytes = readFileSync(WEB_FETCH_REQUEST, "utf8");
-  if (!bytes.includes(HOP_CALL_IN_FOLLOW)) {
+  if (readFileSync(WEB_FETCH_REQUEST, "utf8").includes("__oeWebFetchHop")) {
     reds.push(
-      `HOP HOOK NOT IN THE FOLLOW BRANCH: ${WEB_FETCH_REQUEST} does not contain "${HOP_CALL_IN_FOLLOW}". ` +
-        `eve's redirect loop must call the Open Everywhere hop guard BEFORE it follows a Location, or an ` +
-        `allow-listed host can redirect web_fetch to a host this session never declared (OPE-1568). ` +
-        `Re-derive the redirect hunk of patches/ against the installed eve and re-run this lint.`,
+      `RETIRED HOOK PRESENT: "__oeWebFetchHop" is back in ${WEB_FETCH_REQUEST}. Patch part 7 was dropped at OPE-2688, ` +
+        `and its helper refuses every redirect when no guard is installed. ` +
+        `Restore patches/ from git and re-run \`rm -rf node_modules/eve && npm install\`.`,
     );
   }
 } catch {

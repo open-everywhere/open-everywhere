@@ -144,6 +144,7 @@ ok(
 );
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
+const WEB_FETCH_REQUEST = join("dist", "src", "execution", "web-fetch", "request.js");
 const COMPACTION = join("dist", "src", "harness", "compaction.js");
 const AUTHORED_PACKAGE_BOUNDARY = join("dist", "src", "internal", "authored-package-boundary.js");
 
@@ -334,6 +335,14 @@ for (const eveDir of copies) {
     ok(
       !src.includes(dead.symbol),
       `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; port ONLY the __oeProjectToolSet projection helper and its one call site`,
+    );
+  }
+  {
+    const request = join(eveDir, WEB_FETCH_REQUEST);
+    ok(existsSync(request), `dropped: ${where}/${WEB_FETCH_REQUEST} exists (if eve moved the file, this row is stale)`);
+    ok(
+      !readFileSync(request, "utf8").includes("__oeWebFetchHop"),
+      `dropped: ${where}/${WEB_FETCH_REQUEST} must NOT contain \`__oeWebFetchHop\` — patch part 7 was dropped at OPE-2688, and its helper refuses every redirect when no guard is installed. Restore patches/ from git and reinstall eve`,
     );
   }
   for (const hunk of CARRIAGE) {

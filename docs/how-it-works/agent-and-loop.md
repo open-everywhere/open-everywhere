@@ -97,18 +97,17 @@ the two:
   `revoke_connector` closes a credentialed host here on the next turn too. On top of that
   fence the framework's own protections still apply: `https://` only, public destinations
   only (loopback, private and reserved addresses are refused, re-checked at DNS resolution
-  so a rebind cannot slip past) and a 5 MB body cap. It stays
-  *ungated* because a read of an allow-listed host escapes nothing — the allow-list decides
-  **where** it may reach, and no approval prompt is added on top.
-  **The framework follows redirects, and each hop is a new reach decision.** A redirect asks for a
-  host the *response* chose, so the fence checks every `Location` against the same allow-list
-  before the framework follows it. A declared hop is followed and audited; an undeclared one is
-  refused at that hop, with the same message a refused first request gets, naming the hop's host.
-  Its audit row is the one that differs: every row of a chain carries the hop number, so a bounce
-  off a declared host is legible as one. A chain stops after five hops, which ends a redirect loop
-  between declared hosts. One tool call can run that chain twice — the framework answers a
-  Cloudflare challenge by repeating the whole request — so up to ten hops in all, every one of them
-  fenced.
+  so a rebind cannot slip past) and a 5 MB body cap. It stays *ungated*, and no approval prompt
+  is added on top. That is the rule (OPE-2688), not a claim that the read
+  escapes nothing: the allow-list decides only the host of the **first** request.
+  🔴 **A redirect is not checked against the allow-list.** The framework follows up to ten
+  redirects per request itself, and it checks each next address only for `https://` and a public
+  destination. A Cloudflare challenge makes it repeat the whole request, so one call can follow up
+  to twenty. So a declared host that redirects — an open redirector, say — can carry a URL the
+  model built to a host this session never declared, and that host's body reaches the model.
+  Open Everywhere writes no row for that hop. The audit trail names the first host only. A patch part once checked every redirect against the allow-list (part 7,
+  OPE-1568). It was dropped at OPE-2688, on the rule that the framework's own
+  `web_fetch` is enough.
 - **`web_search` also runs provider-side**, inside the model call itself — see the note on it
   further down. Nothing about the allow-list reaches it. Like the other reads it lives on
   workers and non-delegating seats, not on a delegating conversational seat — a delegating
@@ -117,8 +116,9 @@ the two:
 So an egress denial reaches `web_search` but not `web_fetch`: a session whose policy compiled
 to `deny-all` can still search, while both its shell and its fetches can reach nothing. Worth
 knowing in both directions — it is why a worker that has lost its shell egress can often still
-answer from the web, and why the allow-list settles only *where* page content came from, never
-*what it says*: a page from an allow-listed host is still untrusted content, fenced as such.
+answer from the web. The allow-list settles only which host the first request went to, never
+where the page content finally came from or *what it says*: a page fetched through an
+allow-listed host is still untrusted content, fenced as such.
 
 **Turn-shaping verbs** that never leave the conversation, and since the OPE-2023 addendum live on
 WORKERS rather than on a conversational seat: `ask_question` (put a clarifying question back

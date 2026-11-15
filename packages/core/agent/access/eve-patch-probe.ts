@@ -25,13 +25,6 @@ export const EVE_PATCH_PARTS: readonly EvePatchPart[] = [
     lost:
       "the compaction event contract (OPE-697) — `compaction.completed` carries no `reduced` field, so a pass that returned its input is indistinguishable from a real summary",
   },
-  {
-    part: 7,
-    marker: "__oeWebFetchHopPatched",
-    carrier: "dist/src/execution/web-fetch/request.js",
-    lost:
-      "the per-hop web_fetch egress fence (OPE-1568) — an allow-listed host can redirect the fetch to a host the session never declared. This part alone already refuses at the tool (access/web-fetch-fence.ts); the probe makes it refuse at boot instead",
-  },
 ];
 
 export const EVE_PATCH_CARRIERS: readonly string[] = [...new Set(EVE_PATCH_PARTS.map((p) => p.carrier))];
@@ -90,6 +83,7 @@ export async function probeEvePatch(
   await Promise.all(
     EVE_PATCH_CARRIERS.map(async (rel) => {
       try {
+        // hosted-inline-exempt: a deliberate reach into eve's installed internals by absolute path;
         await import(pathToFileURL(join(root, rel)).href);
       } catch {
       }

@@ -32,7 +32,7 @@ else implicitly:
 //   credentialed host  -> allow rule + transform that injects the auth header at the firewall
 //   credential-less    -> bare allow
 //   everything else    -> denied implicitly ("all traffic not explicitly allowed is denied")
-if (Object.keys(allow).length === 0) return "deny-all";
+if (Object.keys(allow).length === 0) return "deny-all"; // fail-closed: nothing reachable
 ```
 
 This is the same property Claude Tag's Agent Proxy gives, and it's why a credential the agent
@@ -53,7 +53,8 @@ itself, and its denials are always ours to see.
 It governs **the sandbox**, which is a narrower statement than it sounds: `bash` (and so
 `curl`, `git`, `npm`) runs in here and is bounded by it, while `web_fetch` and `web_search`
 execute host-side. The *policy* still reaches one of them — `web_fetch` is fenced against the
-same resolved allow-list before it dispatches, host-side rather than at the firewall — and
+same resolved allow-list before it dispatches, host-side rather than at the firewall, for the
+first request only (a redirect is not checked, OPE-2688) — and
 reaches `web_search` not at all. See
 [the toolset](../how-it-works/agent-and-loop.md#the-toolset-it-works-with) for both.
 

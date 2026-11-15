@@ -120,13 +120,7 @@ function coreSources(dir: string): string[] {
   return out;
 }
 const HOOK_SHAPES = [/^(?:void\s+)?install\w*Hook\([^)]*\);/m, /^[A-Za-z_$][\w$.]*\.__oe\w+\s*=(?![=>])/m];
-const HOOK_EXEMPT = new Map<string, string>([
-  [
-    join(ROOT, "packages/core/agent/access/web-fetch-fence.ts"),
-    "never in the adapter-api barrel graph, so this change leaves its order as it was on main; its hop scope " +
-      "is shared through `??=` and its comment above `hopScope` states that the LAST copy to load owns the guard",
-  ],
-]);
+const HOOK_EXEMPT = new Map<string, string>([]);
 const hookModules = coreSources(join(ROOT, "packages/core/agent")).filter((f) => {
   const src = readFileSync(f, "utf8");
   return HOOK_SHAPES.some((re) => re.test(src));
@@ -134,7 +128,7 @@ const hookModules = coreSources(join(ROOT, "packages/core/agent")).filter((f) =>
 for (const exempt of HOOK_EXEMPT.keys()) {
   ok(hookModules.includes(exempt), `${rel(exempt)} is exempt but the scan no longer finds it — drop the stale exemption`);
 }
-ok(hookModules.length >= 2, `the scan finds the preloaded global-hook module and the exempt one (found ${hookModules.length})`);
+ok(hookModules.length >= 1, `the scan finds the preloaded global-hook module (found ${hookModules.length})`);
 const direct = new Set(
   staticSpecifiers(readFileSync(HARNESS, "utf8"))
     .map((s) => resolveSpecifier(HARNESS, s))

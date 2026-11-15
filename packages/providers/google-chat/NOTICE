@@ -1,5 +1,5 @@
 Open Everywhere
-Copyright 2026 Rowan Hale
+Copyright 2026 Tommy Long
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
@@ -18,9 +18,8 @@ Apache License, Version 2.0. The copyright notice of eve 0.71.0 reads
 "Copyright 2026 Vercel, Inc. and contributors". The Open Everywhere authors made
 the changes in the patch file.
 
-The patch modifies four files of eve 0.71.0:
+The patch modifies three files of eve 0.71.0:
 
-  dist/src/execution/web-fetch/request.js
   dist/src/harness/tool-loop.js
   dist/src/internal/authored-package-boundary.js
   dist/src/protocol/message.d.ts

@@ -434,7 +434,7 @@ test:propose-venue
 test:egress-status
 test:egress-write-attribution
 test:egress-denial-log
-test:web-fetch-fence
+test:web-fetch-reach
 test:host-egress-proxy
 test:lean-seat
 test:worker-toolset

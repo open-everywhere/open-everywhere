@@ -26,7 +26,15 @@ const unresolvableRoot = (): string => {
   throw new Error("Cannot find module 'eve/package.json'");
 };
 
-ok(EVE_PATCH_PARTS.length === 3, `parts: three live patch parts are declared (got ${EVE_PATCH_PARTS.length})`);
+ok(EVE_PATCH_PARTS.length === 2, `parts: two live patch parts are declared (got ${EVE_PATCH_PARTS.length})`);
+ok(
+  EVE_PATCH_PARTS.map((p) => p.part).join(",") === "1,4",
+  `parts: the live runtime parts are exactly {1, 4} (got {${EVE_PATCH_PARTS.map((p) => p.part).join(", ")}})`,
+);
+ok(
+  !EVE_PATCH_PARTS.some((p) => p.part === 7 || p.marker === "__oeWebFetchHopPatched"),
+  "parts: part 7 (the per-hop web_fetch redirect fence, OPE-1568) is DROPPED (OPE-2688) and must not come back",
+);
 ok(!EVE_PATCH_PARTS.some((p) => p.part === 5), "parts: part 5 (the empty-step terminal guard) is RETIRED onto native `endsTurn` (OPE-2252) and must not come back");
 ok(!EVE_PATCH_PARTS.some((p) => p.part === 6), "parts: part 6 (the model-message projection) is RETIRED (OPE-2251) and must not come back");
 ok(
@@ -39,11 +47,11 @@ ok(
 );
 ok(
   EVE_PATCH_PARTS.every((p) => p.marker.startsWith("__oe") && p.marker.endsWith("Patched")),
-  "parts: every marker follows the `__oe<Part>Patched` shape part 7 established",
+  "parts: every marker follows the `__oe<Part>Patched` shape",
 );
 ok(
-  EVE_PATCH_CARRIERS.length === 2 && EVE_PATCH_CARRIERS.every((c) => c.startsWith("dist/src/")),
-  `parts: the parts collapse to the two eve dist carriers the probe loads (got ${EVE_PATCH_CARRIERS.join(", ")})`,
+  EVE_PATCH_CARRIERS.length === 1 && EVE_PATCH_CARRIERS[0] === "dist/src/harness/tool-loop.js",
+  `parts: the parts collapse to the one eve dist carrier the probe loads (got ${EVE_PATCH_CARRIERS.join(", ")})`,
 );
 
 ok(missingEvePatchParts(bagWithout()).length === 0, "full: a bag carrying every live marker reports NOTHING missing (negative control)");
