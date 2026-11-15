@@ -447,7 +447,6 @@ const ORG = "default";
   ok(dm !== undefined, "dm_person carries a TOOL_CONSEQUENCE row");
   ok(dm!.tier === "gate:member", "dm_person is gate:member — the audience axis, by definition");
   ok(dm!.via.kind === "action-kind" && dm!.via.action === "chat.dm", "dm_person proposes the chat.dm ActionKind");
-  ok(dm!.taint === "disclose", "dm_person discloses taint on the card rather than auto-rejecting");
   ok(dm!.reason.includes("DOES NOT REPEAT"), "the consequence row states the honest bound: the card gates the FIRST message only");
 
   const stop = TOOL_CONSEQUENCE["set_dm_delivery"];

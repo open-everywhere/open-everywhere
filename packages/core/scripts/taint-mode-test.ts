@@ -33,7 +33,6 @@ import {
   renderChainResolution,
   resolveApproverChain,
   registryVerdictOf,
-  taintToleranceOf,
   type ApprovalChainRequest,
 } from "../agent/access/approver-chain.js";
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
@@ -281,55 +280,31 @@ console.log("4 — off: the source-tier table decides nothing and writes no rows
   }
 }
 
-console.log("5 — off: every gate-tier sink resolves at its registry baseline:");
+console.log("5 — the chain reads no taint, on or off (OPE-2716):");
 {
-  const GATE_SINKS = Object.keys(TOOL_CONSEQUENCE).filter((t) => taintToleranceOf(t) === "gate").sort();
-  ok(GATE_SINKS.length > 0, "[5] precondition: the derived gate-sink set is non-empty — otherwise every leg below is vacuous");
+  const GATED = Object.keys(TOOL_CONSEQUENCE).filter((t) => TOOL_CONSEQUENCE[t]!.tier !== "open").sort();
+  ok(GATED.length > 0, "[5] precondition: the gated set is non-empty — otherwise every leg below is vacuous");
   const live = (tool: string, unattended = false): ApprovalChainRequest => ({ tool, unattended, principalId: unattended ? undefined : "U1" });
   const lowered = { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] };
 
-  for (const tool of GATE_SINKS) {
-    eq(taintToleranceOf(tool), "gate", `[5] ${tool} is a gate-tier sink (the table itself is untouched by this ticket)`);
+  for (const mode of ["on", "off"] as const) {
+    await withMode(mode, async () => {
+      await inSession(async () => {
+        hostileRead();
+        eq(untrustedIngestedThisTurn(), mode === "on", `[5/${mode}] the read ${mode === "on" ? "taints" : "leaves clean"} the turn`);
+        for (const tool of GATED) {
+          const attended = await resolveApproverChain(live(tool), lowered);
+          eq(attended.verdict, "allow", `[5/${mode}] ${tool}: an operator lowering lands on a turn that read hostile bytes`);
+          eq(attended.transforms.length, 0, `[5/${mode}] ${tool}: …with no transform`);
+          const fire = await resolveApproverChain(live(tool, true));
+          eq(fire.verdict, "deny", `[5/${mode}] ${tool}: the unattended clamp still denies the registry's ask`);
+          eq(fire.transforms.map((t) => t.name).join(","), "unattended", `[5/${mode}] ${tool}: …by the unattended arrow alone`);
+          const plain = await resolveApproverChain(live(tool));
+          eq(plain.verdict, registryVerdictOf(tool), `[5/${mode}] ${tool}: with no lowering it resolves at its registry baseline`);
+        }
+      });
+    });
   }
-
-  await withMode("on", async () => {
-    await inSession(async () => {
-      hostileRead();
-      ok(untrustedIngestedThisTurn(), "[5/on] the turn is tainted by the read");
-      for (const tool of GATE_SINKS) {
-        const attended = await resolveApproverChain(live(tool), lowered);
-        eq(attended.verdict, "ask", `[5/on] ${tool}: a tainted turn is FLOORED at ask — an operator lowering cannot auto-approve it`);
-        ok(attended.transforms.some((t) => t.name === "taint:ask"), `[5/on] ${tool}: …by the taint:ask transform, named on the row`);
-        eq(attended.tainted, true, `[5/on] ${tool}: …and the resolution reports the LIVE signal it read`);
-
-        const fire = await resolveApproverChain(live(tool, true), lowered);
-        eq(fire.verdict, "deny", `[5/on] ${tool}: a tainted UNATTENDED run DENIES — ask with nobody to ask IS deny`);
-        eq(
-          fire.transforms.map((t) => t.name).join(","),
-          "taint:ask,unattended",
-          `[5/on] ${tool}: …and the row shows the order — the taint floor, then unattended reading its ask`,
-        );
-
-        const plain = await resolveApproverChain(live(tool));
-        eq(plain.verdict, "ask", `[5/on] ${tool}: with no lowering the tainted turn resolves at the registry's own ask`);
-        eq(plain.transforms.length, 0, `[5/on] ${tool}: …with NO transform — the floor only ever refuses a lowering`);
-      }
-    });
-  });
-
-  await withMode("off", async () => {
-    await inSession(async () => {
-      hostileRead();
-      ok(!untrustedIngestedThisTurn(), "[5/off] the same read leaves the turn clean");
-      for (const tool of GATE_SINKS) {
-        const res = await resolveApproverChain(live(tool));
-        ok(!res.transforms.some((t) => t.name === "taint:ask"), `[5/off] 🔴 ${tool}: the taint floor never fires`);
-        eq(res.verdict, registryVerdictOf(tool), `[5/off] ${tool}: …so it resolves at its REGISTRY baseline — the approval card, which is the primary control and is untouched by this switch`);
-        const res2 = await resolveApproverChain(live(tool), lowered);
-        eq(res2.verdict, "allow", `[5/off] ${tool}: …and an operator lowering now auto-approves it, which is exactly what the switch costs`);
-      }
-    });
-  });
 }
 
 console.log("6 — off: the forward taint stamp is never written:");
@@ -418,29 +393,17 @@ console.log("8 — off is recoverable from the audit trail; on is byte-identical
   });
 
   const req: ApprovalChainRequest = { tool: "add_routine_rule", unattended: false, principalId: "U1" };
-  await withMode("on", async () => {
-    await inSession(async () => {
-      const res = await resolveApproverChain(req);
-      const detail = chainAuditDetail(req, res);
-      ok(!("taintMode" in detail), "[8/on] 🔴 the approval.chain row carries NO `taintMode` key — every existing query over these rows is unchanged");
-      ok(!renderChainResolution(req, res).some((l) => l.includes("taint.mode")), "[8/on] …and explain_permission's trace is unchanged too");
+  for (const mode of ["on", "off"] as const) {
+    await withMode(mode, async () => {
+      await inSession(async () => {
+        hostileRead();
+        const res = await resolveApproverChain(req);
+        const detail = chainAuditDetail(req, res);
+        ok(!("taintMode" in detail) && !("tainted" in detail) && !("taintKinds" in detail), `[8/${mode}] the approval.chain row carries no taint field`);
+        ok(!renderChainResolution(req, res).some((l) => /taint/.test(l)), `[8/${mode}] …and explain_permission's trace carries no taint line`);
+      });
     });
-  });
-  await withMode("off", async () => {
-    await inSession(async () => {
-      hostileRead();
-      const res = await resolveApproverChain(req);
-      const detail = chainAuditDetail(req, res);
-      eq(detail.tainted, false, "[8/off] the row still says tainted: false — that is the true fact about the turn");
-      eq(detail.taintMode, "off", "[8/off] 🔴 …and now says WHY it could not have said anything else");
-      ok(!("taintKinds" in detail), "[8/off] …with no kinds, since there is no breakdown to disclose");
-      const trace = renderChainResolution(req, res);
-      ok(
-        trace.some((l) => l.includes("tainted: false") && l.includes("taint.mode: off")),
-        "[8/off] explain_permission says it in prose as well — the audit row's retrospective twin, one vocabulary",
-      );
-    });
-  });
+  }
 }
 
 console.log("9 — the SHIPPED default (nothing registered) is the unchanged, fully-armed model:");
@@ -459,12 +422,12 @@ console.log("9 — the SHIPPED default (nothing registered) is the unchanged, fu
     setNativeDelegationSeat("allow");
     ok(nativeAgentAllowedNow(), "[9] native delegation SURVIVES the tainted turn — the child it dispatches inherits the stamp above (OPE-471)");
     const req: ApprovalChainRequest = { tool: "declare_webhook", unattended: false, principalId: "U1" };
-    const res = await resolveApproverChain(req, { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] });
-    eq(res.verdict, "ask", "[9] a gate-tier sink is floored at a human decision, so an operator lowering cannot auto-approve it");
-    ok(res.transforms.some((t) => t.name === "taint:ask"), "[9] …by the taint:ask transform");
-    const fire = await resolveApproverChain({ tool: "declare_webhook", unattended: true }, { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] });
+    const res = await resolveApproverChain(req);
+    eq(res.verdict, "ask", "[9] a gated sink resolves at the registry's ask — a human decides");
+    eq(res.transforms.length, 0, "[9] …with no transform");
+    const fire = await resolveApproverChain({ tool: "declare_webhook", unattended: true });
     eq(fire.verdict, "deny", "[9] …and the same act on an unattended run still DENIES");
-    ok(!("taintMode" in chainAuditDetail(req, res)), "[9] and the audit row is byte-identical to the pre-OPE-399 shape");
+    ok(!("taintMode" in chainAuditDetail(req, res)) && !("tainted" in chainAuditDetail(req, res)), "[9] and the audit row carries no taint field");
     ok(!announceTaintOff({ session: { id: "sess-z" } } as unknown as Parameters<typeof announceTaintOff>[0]), "[9] …with no posture row written");
   });
 }

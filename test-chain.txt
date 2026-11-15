@@ -129,7 +129,6 @@ test:e2e-board-plan
 test:e2e-pacing
 test:memory-eval-fixture
 test:e2e-engaged-fixture
-test:taint-floor-fixture
 lint:release-records
 test:release-record
 lint:upgrading-notes

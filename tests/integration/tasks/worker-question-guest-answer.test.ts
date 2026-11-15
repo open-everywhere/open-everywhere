@@ -202,7 +202,7 @@ test("🔴 a guest's answer reaches the asking worker with the guest's nonmember
   }, "the worker's taint.forward mark row");
   expect(mark.length).toBeGreaterThan(0);
   const chain = await chainRow();
-  expect(chain.detail?.tainted).toBe(true);
+  expect(chain.detail).not.toHaveProperty("tainted");
   for (const h of handles) expect(h.requests.filter((r) => r.fault !== undefined)).toEqual([]);
   await finish();
 });
@@ -213,7 +213,7 @@ test("NEGATIVE CONTROL — a member's answer marks nothing", async () => {
   expect(resumed.sessionId).toBe(childSession);
   expect(resumed.messages.some((m) => m.text.includes(answerText))).toBe(true);
   const chain = await chainRow();
-  expect(chain.detail?.tainted).toBe(false);
+  expect(chain.detail).not.toHaveProperty("tainted");
   await finish();
   const taintMarks = (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark" && r.detail?.session === childSession);
   expect(taintMarks).toEqual([]);

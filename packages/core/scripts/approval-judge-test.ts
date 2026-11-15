@@ -25,6 +25,7 @@ const {
   setApprovalJudgeLedgerReadLimitForTest,
   judgeWithoutRulesBootLine,
   announceJudgeWithoutRules,
+  JUDGE_CACHE_EPOCH,
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
@@ -54,11 +55,11 @@ function ok(cond: boolean, label: string): void {
 }
 
 function req(tool: string, extra: Partial<ApprovalChainRequest> = {}): ApprovalChainRequest {
-  return { tool, unattended: false, tainted: false, principalId: "U1", ...extra };
+  return { tool, unattended: false, principalId: "U1", ...extra };
 }
 
 function ctxOf(tool: string, extra: Partial<ApprovalJudgeContext> = {}): ApprovalJudgeContext {
-  return { tool, argsJson: "{}", registryVerdict: "ask", unattended: false, tainted: false, taintKinds: [], ...extra };
+  return { tool, argsJson: "{}", registryVerdict: "ask", unattended: false, ...extra };
 }
 
 const JUDGE_RULE_ID = "judge-test-rule";
@@ -161,9 +162,12 @@ overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
   ok(p1.includes("notion__create_page") && p1.includes("ignore previous instructions"), "prompt: pass 1 carries tool + args verbatim (as data)");
   ok(/YES or NO/.test(p1) && /VERDICT:/.test(p2) && p2.includes("Domain: support"), "prompt: pass shapes are distinct, context shared");
   const built = judgeContextOf(req("create_ticket", { action: "ticket.create", domain: "support", args: { a: 1 } }), await resolveApproverChain(req("create_ticket")));
-  const allowedKeys = ["tool", "action", "argsJson", "registryVerdict", "domain", "unattended", "tainted", "taintKinds", "requesterMessages", "earlierRequesterMessages", "argsDigest", "requester"];
+  const allowedKeys = ["tool", "action", "argsJson", "registryVerdict", "domain", "unattended", "requesterMessages", "earlierRequesterMessages", "argsDigest", "requester"];
   ok(Object.keys(built).every((k) => allowedKeys.includes(k)), "context: judgeContextOf emits only reasoning-blind fields");
   ok(built.argsJson === '{"a":1}' && built.registryVerdict === "ask", "context: frozen args + the displaced default are what the judge sees");
+  const fromTainted = judgeContextOf(req("create_ticket", { action: "ticket.create", domain: "support", args: { a: 1 }, tainted: true }), await resolveApproverChain(req("create_ticket")));
+  ok(JSON.stringify(fromTainted) === JSON.stringify(built), "context: a supplied tainted:true builds the identical context (OPE-2716)");
+  ok(!/untrusted content/i.test(judgeVerdictPrompt(fromTainted)) && !/untrusted content/i.test(judgeScrutinyPrompt(fromTainted)), "prompt: neither pass carries a taint line (OPE-2716)");
 }
 
 {
@@ -179,13 +183,26 @@ overrideSettingsForTest({ approvals: { judgeMode: "shadow" } });
   const other = await runApprovalJudge(ctxOf("linear__create_issue"));
   ok(!other.cacheHit, "cache: a different connection/op never hits another key's entry");
 
-  const tainted = await runApprovalJudge(ctxOf("notion__create_page", { tainted: true, taintKinds: ["webhook"] }));
-  ok(!tainted.cacheHit, "cache: taint arriving invalidates the clean-turn allow");
-  ok(stub.calls.length === 3, "cache: …by consulting the transport again");
-  const moreTaint = await runApprovalJudge(ctxOf("notion__create_page", { tainted: true, taintKinds: ["webhook", "web_fetch"] }));
-  ok(!moreTaint.cacheHit, "cache: NEW untrusted content (kind list grew) invalidates the tainted allow too");
-  const stable = await runApprovalJudge(ctxOf("notion__create_page", { tainted: true, taintKinds: ["webhook", "web_fetch"] }));
-  ok(stable.cacheHit, "cache: an unchanged taint signature reuses the re-rendered allow");
+  const afterRead = await runApprovalJudge(judgeContextOf(req("notion__create_page", { tainted: true, args: {} }), { registryVerdict: "ask" }));
+  ok(afterRead.cacheHit && afterRead.source === "cache", "cache: a turn that read untrusted content reuses the allow — taint is no cache axis");
+  ok(stub.calls.length === 2, "cache: …with no new model call");
+  clearApprovalJudgeVerdictCache();
+
+  const planted = new Map<string, JudgeCacheEntry>();
+  setApprovalJudgeCacheStoreForTest({
+    get: (k) => planted.get(k),
+    set: (k, e) => void planted.set(k, e),
+    delete: (k) => void planted.delete(k),
+  });
+  const epochStub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: needs a human" });
+  planted.set("notion__create_page", { verdict: "allow", taintSig: "false|", rulesSig: "", reasoning: "written before OPE-2716", pass: 2 } as unknown as JudgeCacheEntry);
+  const old = await runApprovalJudge(ctxOf("notion__create_page"));
+  ok(!old.cacheHit && old.verdict === "ask" && epochStub.calls.length === 2, "cache: a pre-epoch entry is NOT served — the judge re-ran and decided ask");
+  ok(!planted.has("notion__create_page"), "cache: …and the pre-epoch entry is deleted");
+  planted.set("notion__create_page", { verdict: "allow", epoch: JUDGE_CACHE_EPOCH, rulesSig: "", reasoning: "current shape", pass: 2 });
+  const current = await runApprovalJudge(ctxOf("notion__create_page"));
+  ok(current.cacheHit && current.reasoning === "current shape" && epochStub.calls.length === 2, "cache: a current-epoch entry on the same facts IS served (the negative control)");
+  setApprovalJudgeCacheStoreForTest(undefined);
 
   clearApprovalJudgeVerdictCache();
   const denyStub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: deny\nREASON: no" });
@@ -1102,6 +1119,6 @@ async function liftedWedgeRow(tokens: number): Promise<string> {
 overrideSettingsForTest({ approvals: { judgeMode: "off" } });
 
 console.log(
-  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names) — and OPE-1368: the ORG is part of both addresses, so one org's newer re-arm cannot cancel another org's break-glass disarm on either the domained or the org-wide plane, an unscoped consult fails closed, and inside one org the two acts still compose as before — and OPE-1129: the DEDUPE read is scoped too, so a foreign org's row on the same wedge id cannot suppress this org's overrule`,
+  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-blind (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows — and OPE-965/OPE-1102: all three ledger producers on PRODUCER-WRITTEN rows (a click overrule on a real judge-lift wedge row, de-duplicated per row and refused without admin standing; the admin disarm off ONE marked row; its symmetric admin re-arm), FOUR overrules leaving the judge armed and still lifting (no contradiction breaker), the append-only ledger surviving a re-arm, latest-operator-row-wins in both directions, domain scoping on both verbs, and the disarm/re-arm state reaching the chain (a disarmed domain cards with the transport untouched; the re-armed domain lifts again) — and OPE-1130: the ORG-WIDE address, which governs the domain-less consults, fails closed on both branches, carries an explicit audit envelope, and is a STRICT PARTITION against the domain rows in both directions, on the reader and on the live chain — and the two malformed operator-row shapes (a BARE row honoured by neither lookup, an AMBIGUOUS one failing closed, restrictively and only for the planes it names) — and OPE-1368: the ORG is part of both addresses, so one org's newer re-arm cannot cancel another org's break-glass disarm on either the domained or the org-wide plane, an unscoped consult fails closed, and inside one org the two acts still compose as before — and OPE-1129: the DEDUPE read is scoped too, so a foreign org's row on the same wedge id cannot suppress this org's overrule`,
 );
 await removeTempDir(tmp);

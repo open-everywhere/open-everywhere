@@ -180,10 +180,11 @@ test("B — a discovered-tool row (MCP-authored bytes) fences AND taints the tur
   });
 
   assertConnectionSearchFenced(handle);
+  await expectTurnMarked(cursor, "B");
 
   const chain = await createRoutineChainRow(cursor);
-  expect(chain.detail?.tainted).toBe(true);
-  expect(chain.detail?.taintKinds).toEqual(["connector"]);
+  expect(chain.detail).not.toHaveProperty("tainted");
+  expect(chain.detail).not.toHaveProperty("taintKinds");
 });
 
 test("C — negative control: an eve-authored STATUS row (needsAuthorization) fences but does NOT taint", async () => {
@@ -195,10 +196,11 @@ test("C — negative control: an eve-authored STATUS row (needsAuthorization) fe
   });
 
   assertConnectionSearchFenced(handle);
+  expect(await taintMarksSince(cursor), "C: a clean turn wrote a taint mark").toEqual([]);
 
   const chain = await createRoutineChainRow(cursor);
-  expect(chain.detail?.tainted).toBe(false);
-  expect(chain.detail?.taintKinds ?? []).toEqual([]);
+  expect(chain.detail).not.toHaveProperty("tainted");
+  expect(chain.detail).not.toHaveProperty("taintKinds");
 });
 
 test("D — request_access grant-connector for an ungranted connector mints a real access.request card under the egress spoof, no network", async () => {
@@ -287,3 +289,14 @@ test("D — request_access grant-connector for an ungranted connector mints a re
 
   await awaitDelegationResult(negHandle, negForwarded, "the negative control delegation");
 });
+
+async function taintMarksSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
+  return (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark");
+}
+async function expectTurnMarked(cursor: AuditCursor, label: string): Promise<void> {
+  const marks = await waitFor(async () => {
+    const m = await taintMarksSince(cursor);
+    return m.length > 0 ? m : undefined;
+  }, `${label}: the tainted turn's taint.forward mark row`, 60_000);
+  expect(marks.length).toBeGreaterThan(0);
+}

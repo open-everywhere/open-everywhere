@@ -43,8 +43,6 @@ export function approvalJudgeCases(rules: readonly ResolvedPreApprovalRule[]): r
     argsJson,
     registryVerdict: "ask",
     unattended: false,
-    tainted: false,
-    taintKinds: [],
     requesterMessages: [ASK],
     requester,
     rules,

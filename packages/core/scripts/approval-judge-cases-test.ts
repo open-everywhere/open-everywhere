@@ -37,7 +37,7 @@ const ask = judgeLiftAsk(JUDGE_CASE_TOKEN, new Date(JUDGE_CASE_AT));
 for (const c of cases) {
   const ctx = c.context;
   ok(ctx.tool === "create_routine" && ctx.action === "routine.create" && ctx.registryVerdict === "ask", `${c.name}: a routine creation the registry would card`);
-  ok(ctx.unattended === false && ctx.tainted === false, `${c.name}: attended and clean, so no floor keeps it from the judge`);
+  ok(ctx.unattended === false, `${c.name}: attended, so the unattended fence does not keep it from the judge`);
   ok(ctx.domain === undefined && !judgeVerdictPrompt(ctx).includes("Domain:"), `${c.name}: no domain line — create_routine proposes with \`domain: null\``);
   ok(ctx.requesterMessages?.length === 1 && ctx.requesterMessages[0] === ask && ctx.earlierRequesterMessages === undefined, `🔴 ${c.name}: the ask is THIS turn's, in the live leg's own words`);
   const prompt = judgeVerdictPrompt(ctx);
@@ -49,7 +49,7 @@ for (const c of cases) {
 }
 const placeless = cases.map((c) => {
   const { surfaceKey: _s, target: _t, partition: _p, report: _r, createdBy: _c, ...rest } = JSON.parse(c.context.argsJson) as Record<string, unknown>;
-  return JSON.stringify({ ...rest, msgs: c.context.requesterMessages, rules: c.context.rules?.length, domain: c.context.domain, unattended: c.context.unattended, tainted: c.context.tainted });
+  return JSON.stringify({ ...rest, msgs: c.context.requesterMessages, rules: c.context.rules?.length, domain: c.context.domain, unattended: c.context.unattended });
 });
 ok(new Set(placeless).size === 1, "🔴 the three cases differ only in where the ask came from");
 const githubReport = (JSON.parse(cases[2]!.context.argsJson) as { report?: { kind?: string; surfaceKey?: string } }).report;

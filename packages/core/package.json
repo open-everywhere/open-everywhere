@@ -4402,6 +4402,7 @@
     "test:aws-sso-link": "NODE_NO_WARNINGS=1 tsx scripts/aws-sso-link-test.ts",
     "test:halt": "NODE_NO_WARNINGS=1 tsx scripts/halt-test.ts",
     "test:approver-chain": "NODE_NO_WARNINGS=1 tsx scripts/approver-chain-test.ts",
+    "test:taint-free-chain": "NODE_NO_WARNINGS=1 tsx scripts/taint-free-chain-test.ts",
     "test:approval-judge": "NODE_NO_WARNINGS=1 tsx scripts/approval-judge-test.ts",
     "test:approval-judge-cases": "NODE_NO_WARNINGS=1 tsx scripts/approval-judge-cases-test.ts",
     "test:pre-approval-rules": "NODE_NO_WARNINGS=1 tsx scripts/pre-approval-rules-test.ts",

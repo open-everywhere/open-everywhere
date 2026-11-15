@@ -4,8 +4,7 @@ A behavioural test of the taint plane (OPE-1150). It answers one question the th
 cannot: **given the fence bytes this deployment actually renders, does the model obey hostile text
 anyway?**
 
-The taint plane's mechanisms already have deterministic homes — the repo-root
-`scripts/taint-floor-fixture-test.ts` for the `taint:ask` floor over the real config,
+The taint plane's mechanisms already have deterministic homes —
 `tests/integration/taint/**` for propagation through a real turn, `scripts/taint-tiers-test.ts` for
 the source table row by row. All of them prove the machinery. None of them measures behaviour.
 
@@ -151,9 +150,9 @@ Three named consequences:
   SCRIPTED — it complies by construction, so it measures the MACHINERY and is never a second
   compliance rate to read beside leg 1's. This leg drives the half OPE-1147's decision turns on:
   once the fact is in the store, does the mark stop a later clean turn acting on it?
-- **Leg 2 resolves the chain, it does not post the card.** The `ask` verdict is the shipped chain's
-  real answer for the call the model made; that an `ask` actually mints a card and blocks execution
-  is held by `tests/integration/taint/routine-rule-floor-clamp.test.ts`.
+- **Leg 2 is retired (OPE-2716).** It measured the `taint:ask` floor, which OPE-2716 deleted, so the
+  leg refuses to run. OPE-2726 removes it. That a registry `ask` on `add_routine_rule` mints a card
+  is held by `tests/integration/approvals/routine-rule-cards.test.ts`.
 - **The offline seat's standing fidelity gap applies.** The synthetic config is one domain over
   three surfaces with one silo, so a prompt block whose content depends on the deployment's real
   world is shorter here than live. Treat an offline number as a prompt-text measurement, never as a

@@ -167,13 +167,12 @@ function allowingJudge(): { calls: string[] } {
   clearApprovalJudgeVerdictCache();
   const tainted = await resolveApproverChain(browserReq({ tainted: true }), { rules: RULES, judge: true });
   ok(tainted.verdict === "allow" && tainted.resolvedBy === "judge" && tainted.judge?.ruleId === RULE.id, "🔴 B: a TAINTED browser step reaches the judge and is lifted under the cited rule");
-  ok(tainted.tainted === true, "B: the chain resolution still records the real taint (the approval.chain row is honest)");
   ok(tainted.transforms.length === 0, "B: no taint arrow moved the browser step");
   const ctx = judgeContextOf(browserReq({ tainted: true }), { registryVerdict: "ask" }, RULES);
-  ok(ctx.tainted === false && ctx.taintBlind === true && ctx.taintKinds.length === 0, "B: the judge's context for a browser step carries no taint");
-  ok(/not considered for this action/.test(judgeVerdictPrompt(ctx)) && !/Turn ingested untrusted content: true/.test(judgeVerdictPrompt(ctx)), "B: the judge's prompt says taint is not considered");
-  const reading = judgeContextOf({ tool: "open_pull_request", action: "pr.open", unattended: false, tainted: true, principalId: "UANA" }, { registryVerdict: "ask" }, RULES);
-  ok(reading.tainted === true && reading.taintBlind === undefined && /Turn ingested untrusted content: true/.test(judgeVerdictPrompt(reading)), "B (control): a taint-reading row's context and prompt carry the taint");
+  ok(!("tainted" in ctx) && !("taintKinds" in ctx) && !("taintBlind" in ctx), "B: the judge's context for a browser step carries no taint field");
+  ok(!/untrusted content/i.test(judgeVerdictPrompt(ctx)), "B: the judge's prompt carries no taint line");
+  const other = judgeContextOf({ tool: "open_pull_request", action: "pr.open", unattended: false, tainted: true, principalId: "UANA" }, { registryVerdict: "ask" }, RULES);
+  ok(!("tainted" in other) && !/untrusted content/i.test(judgeVerdictPrompt(other)), "B: no other row's context or prompt carries taint either");
 
   stub.calls.length = 0;
   const windowRes = await resolveApproverChain(browserReq({ args: WINDOW_ARGS }), { rules: RULES, judge: true });
@@ -237,7 +236,7 @@ function allowingJudge(): { calls: string[] } {
       .find((d) => d["tool"] === "my_browser");
     if (shadowRow === undefined) await new Promise((r) => setTimeout(r, 20));
   }
-  ok(shadowRow !== undefined && shadowRow["switch"] === "personal-browser.judge" && shadowRow["ruleId"] === RULE.id && shadowRow["tainted"] === true, "A e2e: …and the propose plane writes ONE shadow row that names the switch, cites the config rule, and records the real taint");
+  ok(shadowRow !== undefined && shadowRow["switch"] === "personal-browser.judge" && shadowRow["ruleId"] === RULE.id && !("tainted" in shadowRow), "A e2e: …and the propose plane writes ONE shadow row that names the switch and cites the config rule, with no taint field (OPE-2716)");
   resetApprovalJudgeCompletion();
   overrideSettingsForTest({ approvals: { judgeMode: "off" } });
   policyMod.registerPersonalBrowserPolicy(ON);

@@ -380,7 +380,6 @@ const T_OTHER = resourceAddress("teams", CONTAINER_RESOURCE_TYPE, T_OTHER_ID);
   ok(row !== undefined, "post_message carries a TOOL_CONSEQUENCE row");
   ok(row!.tier === "gate:member", "post_message is gate:member — a post beyond the asking room is consequential");
   ok(row!.via.kind === "action-kind" && row!.via.action === "chat.post", "post_message proposes the chat.post ActionKind");
-  ok(row!.taint === "disclose", "post_message discloses taint on the card rather than auto-rejecting");
   const { actionKind } = await import("../agent/approvals/actions.js");
   await import("../agent/approvals/chat-post.js");
   ok(actionKind("chat.post") !== undefined, "the chat.post ActionKind is registered");

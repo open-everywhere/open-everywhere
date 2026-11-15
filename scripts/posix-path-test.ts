@@ -54,7 +54,7 @@ console.log("posix-path:");
     ["scripts/export-reach-lint.ts", "posixRelative(", 1],
     ["scripts/export-reach-lint.ts", "toPosixPath(", 1],
     ["scripts/manual-compaction-guard-lint.ts", "toPosixPath(", 1],
-    ["scripts/consequence-lint.ts", "posixRelative(", 3],
+    ["scripts/consequence-lint.ts", "posixRelative(", 2],
     ["scripts/ambient-env-lint.ts", "posixRelative(", 2],
     ["scripts/deployment-identity-test.ts", "toPosixPath(", 1],
     ["scripts/wake-retry-parity-test.ts", "posixRelative(", 1],

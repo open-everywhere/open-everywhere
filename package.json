@@ -307,7 +307,6 @@
     "test:core-dist-freshness": "NODE_NO_WARNINGS=1 tsx scripts/core-dist-freshness-test.ts",
     "test:e2e-engaged-fixture": "NODE_NO_WARNINGS=1 tsx scripts/e2e-engaged-fixture-test.ts",
     "test:memory-eval-fixture": "NODE_NO_WARNINGS=1 tsx scripts/memory-eval-fixture-test.ts",
-    "test:taint-floor-fixture": "NODE_NO_WARNINGS=1 tsx scripts/taint-floor-fixture-test.ts",
     "test:egress-proxy": "npm run test:egress-proxy-acl && npm run test:egress-proxy-boot",
     "test:egress-proxy-acl": "tsx deploy/egress-proxy/control/acl-test.ts",
     "test:egress-proxy-boot": "tsx deploy/egress-proxy/control/server-boot-test.ts",

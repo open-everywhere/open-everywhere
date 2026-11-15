@@ -6,11 +6,9 @@ import {
   classifyConnectorOpTier,
   isConnectorOpTool,
   judgeDeferSwitchStateOf,
-  judgeReadsTaint,
   judgeVerdictUncacheable,
 } from "./consequence.js";
 import type { ApprovalChainRequest, ChainResolution } from "./approver-chain.js";
-import { taintKindsThisTurn, untrustedIngestedThisTurn } from "./taint-signal.js";
 import { requesterMessagesByTurn } from "./requester-messages.js";
 import {
   PRE_APPROVAL_RULE_ID_PATTERN,
@@ -79,9 +77,6 @@ export interface ApprovalJudgeContext {
   readonly registryVerdict: "allow" | "ask";
   readonly domain?: string;
   readonly unattended: boolean;
-  readonly tainted: boolean;
-  readonly taintKinds: readonly string[];
-  readonly taintBlind?: true;
   readonly requesterMessages?: readonly string[];
   readonly earlierRequesterMessages?: readonly string[];
   readonly argsDigest?: string;
@@ -104,8 +99,6 @@ export function judgeContextOf(
   }
   const argsDigest = createHash("sha256").update(argsJson).digest("hex").slice(0, 32);
   if (argsJson.length > ARGS_JSON_CAP) argsJson = `${argsJson.slice(0, ARGS_JSON_CAP)}…[truncated]`;
-  const taintBlind = !judgeReadsTaint(req.tool);
-  const tainted = taintBlind ? false : (req.tainted ?? untrustedIngestedThisTurn());
   const { current: requesterMessages, earlier: earlierRequesterMessages } = requesterMessagesByTurn();
   return {
     tool: req.tool,
@@ -114,9 +107,6 @@ export function judgeContextOf(
     registryVerdict: res.registryVerdict,
     ...(req.domain !== undefined ? { domain: req.domain } : {}),
     unattended: req.unattended,
-    tainted,
-    taintKinds: tainted ? taintKindsThisTurn() : [],
-    ...(taintBlind ? { taintBlind: true as const } : {}),
     ...(requesterMessages.length > 0 ? { requesterMessages } : {}),
     ...(earlierRequesterMessages.length > 0 ? { earlierRequesterMessages } : {}),
     argsDigest,
@@ -140,9 +130,6 @@ function judgePromptPrefix(ctx: ApprovalJudgeContext): string {
     `Displaced per-verb default: ${ctx.registryVerdict}`,
     ...(ctx.domain !== undefined ? [`Domain: ${ctx.domain}`] : []),
     `Unattended (no human behind this turn): ${ctx.unattended}`,
-    ctx.taintBlind === true
-      ? "Turn ingested untrusted content: not considered for this action (every use of it follows a web page read). Judge the frozen action against the authored rules."
-      : `Turn ingested untrusted content: ${ctx.tainted}${ctx.taintKinds.length > 0 ? ` (${ctx.taintKinds.join(", ")})` : ""}`,
     ...(ctx.requesterMessages !== undefined && ctx.requesterMessages.length > 0
       ? ["Requester's visible messages:", ...ctx.requesterMessages.map((m) => `> ${m}`)]
       : []),
@@ -229,9 +216,11 @@ export function enforcedVerdictCacheKey(ctx: Pick<ApprovalJudgeContext, "tool" |
   return `${judgeVerdictCacheKey(ctx.tool)}#${act}`;
 }
 
+export const JUDGE_CACHE_EPOCH = 2;
+
 export interface JudgeCacheEntry {
   readonly verdict: "allow";
-  readonly taintSig: string;
+  readonly epoch: typeof JUDGE_CACHE_EPOCH;
   readonly rulesSig: string;
   readonly reasoning: string;
   readonly ruleId?: string;
@@ -309,10 +298,6 @@ export function clearApprovalJudgeVerdictCache(): void {
   }
 }
 
-function taintSigOf(ctx: ApprovalJudgeContext): string {
-  return `${ctx.tainted}|${ctx.taintKinds.join(",")}`;
-}
-
 function rulesSigOf(ctx: ApprovalJudgeContext): string {
   const rules = ctx.rules ?? [];
   if (rules.length === 0) return "";
@@ -340,12 +325,11 @@ export interface RunApprovalJudgeOptions {
 export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunApprovalJudgeOptions = {}): Promise<ApprovalJudgeRun> {
   const enforce = opts.enforce === true;
   const cacheKey = enforce ? enforcedVerdictCacheKey(ctx) : judgeVerdictCacheKey(ctx.tool);
-  const sig = taintSigOf(ctx);
   const rulesSig = rulesSigOf(ctx);
   const store = (enforce && isConnectorOpTool(ctx.tool)) || judgeVerdictUncacheable(ctx.tool) ? undefined : cacheStoreFor(enforce);
   const cached = store?.get(cacheKey);
   if (cached !== undefined) {
-    if (cached.taintSig !== sig || cached.rulesSig !== rulesSig) {
+    if ((cached as { epoch?: unknown }).epoch !== JUDGE_CACHE_EPOCH || cached.rulesSig !== rulesSig) {
       store?.delete(cacheKey);
     } else if (enforce && (cached.pass !== 2 || cached.ruleId === undefined)) {
     } else {
@@ -389,7 +373,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
         }
         if (!scrutiny) {
           const reasoning = "pass-1: routine — no scrutiny flagged";
-          if (!abandoned) store?.set(cacheKey, { verdict: "allow", taintSig: sig, rulesSig, reasoning, pass: 1 });
+          if (!abandoned) store?.set(cacheKey, { verdict: "allow", epoch: JUDGE_CACHE_EPOCH, rulesSig, reasoning, pass: 1 });
           return { verdict: "allow", source: "pass1", reasoning, cacheKey, cacheHit: false, passes: 1, pass1 };
         }
       }
@@ -432,7 +416,7 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext, opts: RunAppro
       if (parsed.verdict === "allow" && !abandoned) {
         store?.set(cacheKey, {
           verdict: "allow",
-          taintSig: sig,
+          epoch: JUDGE_CACHE_EPOCH,
           rulesSig,
           reasoning: parsed.reason,
           pass: 2,
@@ -569,8 +553,6 @@ export async function shadowJudgeAuditDetail(
     ...(run.ruleId !== undefined ? { ruleId: run.ruleId } : {}),
     ...(run.ruleCitation !== undefined ? { ruleCitation: run.ruleCitation } : {}),
     unattended: req.unattended,
-    tainted: ctx.taintBlind === true ? res.tainted : ctx.tainted,
-    ...(ctx.taintBlind === true ? { judgeTaintBlind: true } : {}),
     ...(req.domain !== undefined ? { domain: req.domain } : {}),
   };
 }

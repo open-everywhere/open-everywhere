@@ -675,7 +675,7 @@ The table below is **generated from the schema** — edit the schema, run `npm r
 | `stall.repeatThreshold` | `3` | Identical-(tool, args, result) run length before the NEXT identical call is nudged instead of executed. `0` disables the stall guard entirely. |
 | `storage.allowEphemeralMemory` | `false` | Accept a per-instance, ephemeral DM/personal memory store on a Vercel host (was `OE_ALLOW_EPHEMERAL_MEMORY=1`). Off (shipped), a Vercel host with no durable memory backing refuses to resolve the DM store: a memory write would report success and the fact would vanish at the next cold start. Set `DATABASE_URL` instead, which selects Postgres on its own. On is for a knowingly single-instance host only. Off a Vercel host the local floor is correct, and this setting is inert. |
 | `storage.allowEphemeralOperational` | `false` | Accept a per-instance, ephemeral operational store (the PGlite or sqlite floor) on a Vercel host (was `OE_ALLOW_EPHEMERAL_OPERATIONAL=1`). Off (shipped), a Vercel host with no hosted Postgres refuses to boot: the audit log, the spend ledger and break-glass revocations would be per-instance, so a revoke would report success and never take effect. Set `DATABASE_URL` instead. On is for a knowingly single-instance host only. Off a Vercel host the floor is correct, and this setting is inert. |
-| `taint.mode` | `"on"` | Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach the `taint: "gate"` sinks and both delegation legs. Those sinks are the tools that DECLARE `postTurnSurface: "arms" | "disarms"` — the ones that arm, rewrite or remove instruction and execution surface a later run obeys (routines, skills, agents, routine rules, webhook ingress). A build lint fails on any tool that writes such surface and declares nothing, so the set follows the code rather than a hand-kept list. At those sinks the mark FLOORS the verdict at `ask` — a human decides, and an unattended run denies because the `unattended` transform runs last and reads that ask; it does not refuse outright. It does not gate memory: a memory write is an ordinary file edit with no write verb to mark (OPE-389). `off` is a deployer's reviewed opt-out: no marks, no verdict floor, and no mark travels to a delegated worker in either direction — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **No environment variable can reach `off`** — it is a one-line diff in `agent/settings/settings.ts`, which is the bar disabling a security model deserves. |
+| `taint.mode` | `"on"` | Whether the tainted-turn model runs at all. `on` (shipped) marks a turn that ingests untrusted content and lets that marking reach both delegation legs. It moves no approval verdict: the approver chain, the consequence registry and the approval judge read no taint (OPE-2716). It does not gate memory: a memory write is an ordinary file edit with no write verb to mark (OPE-389). `off` is a deployer's reviewed opt-out: no marks, and no mark travels to a delegated worker in either direction — untrusted content is still FENCED, and every session records `taint.mode: off` in the audit trail. **No environment variable can reach `off`** — it is a one-line diff in `agent/settings/settings.ts`, which is the bar disabling a security model deserves. |
 | `taint.tierMode` | `"enforced"` | Whether the reviewed source-tier table DECIDES a read's untrusted-content marking (`enforced`) or only logs what it would have decided (`dryrun`). Enforcement is relaxation-only. |
 | `taint.undeclaredSurface` | `"clean"` | DEPRECATED ALIAS of `identity.undeclaredSurface` (OPE-2711), with the same values and the same shipped value. A deployment that still declares this key gets the same posture as if it declared `identity.undeclaredSurface`. Config load refuses a deployment that declares both keys with different values. OPE-2724 removes the alias. |
 | `teams.appId` | `(unset)` | The Azure Bot's application (client) id, a GUID (was `MICROSOFT_APP_ID` and `TEAMS_APP_ID`, OPE-2650). The Teams channel verifies each inbound token's audience against it, mints its Bot Connector token as it, and fills it into the app package. Empty (shipped) ⇒ unset: the Teams surface refuses inbound activity and posts nothing. The app password stays out of Git. See docs/deploy/surfaces/teams.md. |
@@ -853,11 +853,9 @@ export default defineSettings({
 });
 ```
 
-**What you get.** Reads no longer mark the turn; every `taint: "gate"` sink — the routine, skill,
-resident-agent, routine-rule and webhook-ingress verbs — resolves at its
-ordinary registry verdict, so a config lowering can auto-approve them again; approval cards and
-`approval.chain` rows stop carrying provenance
-disclosure; and — usually the reason people want this — **native delegation is never withdrawn**, so
+**What you get.** Reads no longer mark the turn; approval cards stop carrying provenance
+disclosure (the `approval.chain` row carries none in either mode, and no approval verdict reads taint
+since OPE-2716); and — usually the reason people want this — **native delegation is never withdrawn**, so
 a turn that read a web page can still delegate.
 
 **What `off` does not cost in memory.** A bullet added on a turn in which the envelope wrapped content
@@ -873,8 +871,9 @@ exactly as documented.
 
 **What it costs you, stated plainly.** The launder chain is open: an untrusted read followed by a
 delegation hands a child a clean signal, and there is no seam to forward the parent's taint into it.
-Standing instructions and durable webhook paths can be armed in the same turn that ingested the
-text asking for them. Those are real, and they are why the shipped default is `on`.
+Those are real, and they are why the shipped default is `on`. (Arming a standing instruction in
+the turn that ingested the text asking for it is no longer a cost of `off`: since OPE-2716 the chain
+treats that turn as a clean one in both modes.)
 
 **Your audit trail still says so.** Every session running `taint.mode: off` writes one
 `taint.mode` audit row, and every `approval.chain` row carries `taintMode: "off"` beside its

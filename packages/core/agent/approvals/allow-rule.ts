@@ -149,7 +149,7 @@ const ALLOW_RULE_TOOL_KINDS: ReadonlySet<string> = new Set(["pr.open", "routine.
 function subjectForRow(row: PendingActionRow, args: Record<string, unknown>): AllowRuleSubject | undefined {
   if (row.kind === "op.connector") {
     const { tainted: _legacyTaint, ...opArgs } = args;
-    const tool = judgedConnectorOpTool(row.kind, opArgs, { unattended: false, tainted: false, ...(row.domain ? { domain: row.domain } : {}) });
+    const tool = judgedConnectorOpTool(row.kind, opArgs, { unattended: false, ...(row.domain ? { domain: row.domain } : {}) });
     return tool === undefined ? undefined : connectorSubject(tool);
   }
   const tool = toolForActionKind(row.kind);

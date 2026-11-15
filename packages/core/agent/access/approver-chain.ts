@@ -1,9 +1,7 @@
 import { declaredStandingWrites } from "../routines/declared-permissions.js";
-import { classifyConnectorOp, classifyConnectorOpTier, isConnectorOpTool, judgeableConnectorOp, judgeDeferredTool, postTurnSurfaceFloors, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
+import { classifyConnectorOp, classifyConnectorOpTier, isConnectorOpTool, judgeableConnectorOp, judgeDeferredTool, RESUME_TOOL, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { CONNECTOR_INPUT_PREVIEW_CAP } from "../approvals/connector-op-offer.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
-import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
-import { taintMode, type TaintMode } from "./taint-enforcement.js";
 import {
   approvalJudgeAdminDisarmed,
   approvalJudgeMode,
@@ -47,23 +45,6 @@ export interface ApprovalChainRequest {
   readonly aws?: AwsScreenInput;
   readonly connectorOpRaise?: "write" | "destructive";
   readonly beneficiaryClicker?: boolean;
-}
-
-function chainTaintSignal(): boolean {
-  return untrustedIngestedThisTurn();
-}
-
-function chainTaintKinds(): readonly string[] {
-  return taintKindsThisTurn();
-}
-
-function taintedOf(req: ApprovalChainRequest): boolean {
-  return req.tainted ?? chainTaintSignal();
-}
-
-function taintModeNote(): { taintMode: TaintMode } | Record<string, never> {
-  const mode = taintMode();
-  return mode === "off" ? { taintMode: mode } : {};
 }
 
 export type ApproverLevel = "custom" | "surface" | "classifier" | "registry";
@@ -112,7 +93,6 @@ export interface ChainResolution {
   readonly registryVerdict: "allow" | "ask";
   readonly elements: readonly ChainElementResult[];
   readonly transforms: readonly AppliedTransform[];
-  readonly tainted: boolean;
   readonly denyAbsolute?: true;
   readonly judge?: ApprovalJudgeRun;
 }
@@ -124,21 +104,9 @@ export function registryVerdictOf(tool: string): "allow" | "ask" {
   return row.tier === "open" ? "allow" : "ask";
 }
 
-export function taintToleranceOf(tool: string): "gate" | "disclose" | undefined {
-  if (isConnectorOpTool(tool)) return classifyConnectorOp(tool) === "open" ? undefined : "disclose";
-  return taintToleranceOfRow(TOOL_CONSEQUENCE[tool]);
-}
+export type TransformStage = "mode" | "unattended" | "floor";
 
-export function taintToleranceOfRow(row: ConsequenceEntry | undefined): "gate" | "disclose" | undefined {
-  if (row === undefined) return "gate";
-  if (postTurnSurfaceFloors(row.postTurnSurface)) return "gate";
-  if (row.taint !== undefined) return row.taint;
-  return row.tier === "open" ? undefined : "gate";
-}
-
-export type TransformStage = "mode" | "unattended" | "taint" | "floor";
-
-export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "taint", "floor", "unattended"];
+export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "floor", "unattended"];
 
 export interface TransformRow {
   readonly name: string;
@@ -187,14 +155,6 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     reason: "ask-unattended",
     fires: (req) => req.unattended,
     to: () => "deny",
-  },
-  {
-    name: "taint:ask",
-    stage: "taint",
-    from: ["allow"],
-    reason: "taint-ask",
-    fires: (req) => taintedOf(req) && taintToleranceOf(req.tool) === "gate",
-    to: () => "ask",
   },
   {
     name: "beneficiary-clicker-floor",
@@ -368,7 +328,6 @@ export async function resolveApproverChain(
       registryVerdict: registryBaseline,
       elements: results,
       transforms: [],
-      tainted: taintedOf(req),
       denyAbsolute: true,
     };
   }
@@ -420,7 +379,6 @@ export async function resolveApproverChain(
           registryVerdict: registryBaseline,
           elements: results,
           transforms: [],
-          tainted: taintedOf(req),
           denyAbsolute: true,
           judge: judgeRun,
         };
@@ -458,7 +416,6 @@ export async function resolveApproverChain(
           registryVerdict: registryBaseline,
           elements: results,
           transforms,
-          tainted: taintedOf(req),
           ...(judgeRun !== undefined ? { judge: judgeRun } : {}),
         };
       }
@@ -473,7 +430,6 @@ export async function resolveApproverChain(
     registryVerdict: registryBaseline,
     elements: results,
     transforms,
-    tainted: taintedOf(req),
     ...(judgeRun !== undefined ? { judge: judgeRun } : {}),
   };
 }
@@ -507,9 +463,6 @@ export function chainAuditDetail(req: ApprovalChainRequest, res: ChainResolution
         }
       : {}),
     unattended: req.unattended,
-    tainted: taintedOf(req),
-    ...(taintedOf(req) && chainTaintKinds().length > 0 ? { taintKinds: [...chainTaintKinds()] } : {}),
-    ...taintModeNote(),
     ...(req.mode !== undefined ? { mode: req.mode.mode } : {}),
     ...(req.domain !== undefined ? { domain: req.domain } : {}),
   };
@@ -536,15 +489,8 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
     lines.push("transforms (in order):");
     for (const t of res.transforms) lines.push(`  ${t.name}: ${t.from} → ${t.to}${t.reason !== undefined ? ` (${t.reason})` : ""}`);
   }
-  const supplied = req.tainted !== undefined;
-  const kinds = !supplied && taintedOf(req) ? chainTaintKinds() : [];
-  const liveTainted = chainTaintSignal();
-  const liveKinds = supplied && liveTainted ? chainTaintKinds() : [];
   const context = [
     `unattended: ${req.unattended}`,
-    `tainted: ${taintedOf(req)}${kinds.length > 0 ? ` (${kinds.join(", ")})` : ""}` +
-      (supplied ? ` — supplied by the caller, not this turn's own signal (this turn: ${liveTainted}${liveKinds.length > 0 ? ` (${liveKinds.join(", ")})` : ""})` : "") +
-      (taintMode() === "off" ? " — taint.mode: off (the model is not running)" : ""),
     ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : []),
     ...(req.halted === true ? ["halt: ON"] : []),
   ];
@@ -595,15 +541,15 @@ export function preApprovalRulesForScopeKey(
 export function judgedConnectorOpTool(
   kind: string,
   args: unknown,
-  chain: { readonly unattended?: boolean; readonly tainted?: boolean; readonly domain?: string } | undefined,
+  chain: { readonly unattended?: boolean; readonly domain?: string } | undefined,
 ): string | undefined {
   if (kind !== CONNECTOR_OP_ACTION) return undefined;
-  if (chain?.unattended !== false || chain.tainted === true) return undefined;
+  if (chain?.unattended !== false) return undefined;
   if (typeof chain.domain !== "string" || chain.domain.length === 0) return undefined;
-  const a = args as { tool?: unknown; grain?: unknown; opTier?: unknown; credential?: unknown; tainted?: unknown; inputPreview?: unknown } | null | undefined;
+  const a = args as { tool?: unknown; grain?: unknown; opTier?: unknown; credential?: unknown; inputPreview?: unknown } | null | undefined;
   if (a === null || a === undefined || typeof a.tool !== "string") return undefined;
   if (typeof a.inputPreview !== "string" || a.inputPreview.length > CONNECTOR_INPUT_PREVIEW_CAP) return undefined;
-  if (a.grain === "once" || a.tainted === true || a.credential !== "domain") return undefined;
+  if (a.grain === "once" || a.credential !== "domain") return undefined;
   if (!isConnectorOpTool(a.tool) || !judgeableConnectorOp(a.tool)) return undefined;
   const nameTier = classifyConnectorOpTier(a.tool);
   if (a.opTier !== undefined && a.opTier !== "write" && a.opTier !== "destructive") return undefined;

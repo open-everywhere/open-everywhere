@@ -1,16 +1,5 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
-import { WORKER_ONLY_TOOLS_STANDING } from "../agent/access/worker-capability-index.generated.js";
-import { resolveApproverChain, taintToleranceOf } from "../agent/access/approver-chain.js";
-import {
-  judgeContextOf,
-  judgeVerdictPrompt,
-  runApprovalJudge,
-  registerApprovalJudgeCompletion,
-  resetApprovalJudgeCompletion,
-  clearApprovalJudgeVerdictCache,
-} from "../agent/access/approval-judge.js";
 import { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { openTaintTurn, seedIfTainted, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
@@ -67,129 +56,9 @@ async function inSession<T>(fn: (s: FakeSession) => T | Promise<T>, session = ne
   return eveContextStorage().run(session, () => fn(session));
 }
 
-const GATE_SINKS = Object.entries(TOOL_CONSEQUENCE)
-  .filter(([, e]) => e.postTurnSurface === "arms" || e.postTurnSurface === "disarms")
-  .map(([t]) => t);
-
 resetSettingsForTest();
 
-console.log("1 — every gated tool a worker can hold declares a taint tolerance:");
-{
-  const workerGated = WORKER_ONLY_TOOLS_STANDING.filter((t) => TOOL_CONSEQUENCE[t]?.tier !== "open" && TOOL_CONSEQUENCE[t] !== undefined);
-  ok(workerGated.length > 0, "[1] precondition: the worker's wide kit contains gated sinks at all — otherwise every assertion below is vacuous");
-
-  const undeclared = workerGated.filter((t) => TOOL_CONSEQUENCE[t]?.taint === undefined);
-  eq(undeclared, [], "[1] 🔴 EVERY gated tool a worker can hold DECLARES a taint tolerance. The withdrawal's stated premise — 'none of those declares a taint tolerance' — is FALSE, and this is the assertion that keeps it false");
-
-  const declaresGate = workerGated.filter((t) => TOOL_CONSEQUENCE[t]?.taint === "gate").sort();
-  eq(
-    declaresGate,
-    GATE_SINKS.filter((t) => workerGated.includes(t)).sort(),
-    "[1] 🔴 EXACTLY the declared standing-permission sinks carry the human ask-FLOOR. A row gaining `gate` WITHOUT answering the vector-1 predicate — a silent widening of the floor — fails here",
-  );
-  for (const sink of ["add_routine_rule", "remove_routine_rule", "declare_webhook", "rotate_webhook"]) {
-    ok(declaresGate.includes(sink), `[1] the worker still reaches "${sink}" and it still carries the floor — OPE-419 widened the set, it did not move it`);
-  }
-  ok(declaresGate.length >= 11, `[1] …and OPE-419's route-creating verbs joined it (worker-reachable floored sinks: ${declaresGate.length})`);
-
-  const declaresDisclose = workerGated.filter((t) => TOOL_CONSEQUENCE[t]?.taint === "disclose");
-  ok(
-    declaresDisclose.length > 0 && declaresDisclose.length === workerGated.length - declaresGate.length,
-    "[1] every OTHER worker-reachable gated sink declares `disclose` — provenance on the card and the audit row, NO verdict change: a judge signal, not a human card",
-  );
-  ok(declaresDisclose.includes("open_pull_request"), "[1] `open_pull_request` — named in the withdrawal's premise as declaring nothing — declares `disclose` AND is `judgeDefer`, which is the maintainer's ruling already implemented");
-
-  for (const t of ["bash", "write_file", "read_file"]) {
-    eq(TOOL_CONSEQUENCE[t]?.tier, "open", `[1] \`${t}\` is an OPEN row — sandbox-local, durable effects leave only via the gated verbs above; it carries no tolerance BY RULING`);
-    eq(taintToleranceOf(t), undefined, `[1] …so \`${t}\` has no taint tolerance to reach a transform — asserted \`=== undefined\`, not merely falsy`);
-  }
-  eq(TOOL_CONSEQUENCE.aws?.tier, "open", "[1] `aws` is open too — bounded by the bundle grant, the IAM role and the host-side argv screen at L2, not by a taint column");
-}
-
-console.log("2 — the two tolerances behave differently on a genuinely tainted turn:");
-{
-  const lowered = { approvers: [{ name: "domain-lower", approve: () => "allow" as const }] };
-
-  await inSession(async () => {
-    markUntrustedIngestedThisTurn("web");
-    ok(untrustedIngestedThisTurn(), "[2] precondition: the turn genuinely ingested untrusted content");
-
-    const pr = await resolveApproverChain({ tool: "open_pull_request", unattended: false }, lowered);
-    eq(pr.verdict, "allow", "[2] 🔴 A `disclose` worker sink stays LOWERED on a tainted turn — taint changes NO verdict there. It is a signal the judge and the card read, never a human floor");
-    ok(!pr.transforms.some((t) => t.reason === "taint-ask"), "[2] …and no `taint-ask` transform fired, asserted on the transform trail rather than inferred from the verdict");
-
-    const webhook = await resolveApproverChain({ tool: "declare_webhook", unattended: false }, lowered);
-    eq(webhook.verdict, "ask", "[2] 🔴 NEGATIVE CONTROL: a `gate` sink on the SAME turn, same lowering approver, is FLOORED at `ask` — the OPE-438 human floor, untouched by this ticket");
-    ok(webhook.transforms.some((t) => t.reason === "taint-ask"), "[2] …and the `taint-ask` transform is the named cause, so the two sinks differ for the reason claimed and not incidentally");
-
-    const fire = await resolveApproverChain({ tool: "declare_webhook", unattended: true }, lowered);
-    eq(fire.verdict, "deny", "[2] …and an UNATTENDED tainted run denies at a `gate` sink — nobody is there to read the card");
-    const firePr = await resolveApproverChain({ tool: "open_pull_request", unattended: true }, lowered);
-    eq(firePr.verdict, "allow", "[2] 🔴 …while the `disclose` sink still runs unattended. THIS is the whole cost difference between the two values, on one turn");
-  });
-
-  await inSession(async () => {
-    const webhook = await resolveApproverChain({ tool: "declare_webhook", unattended: false }, lowered);
-    eq(webhook.verdict, "allow", "[2] 🔴 CONTROL: on a CLEAN turn the same `gate` sink accepts the same lowering — so the floor above is caused by the TAINT, not by the sink being unlowerable");
-  });
-}
-
-console.log("3 — taint reaches the approval judge as a decision input:");
-{
-  const req = { tool: "open_pull_request", action: "pr.open", args: { repo: "o/r" }, unattended: false } as const;
-
-  await inSession(async () => {
-    markUntrustedIngestedThisTurn("web");
-    const ctx = judgeContextOf(req, { registryVerdict: "ask" });
-    eq(ctx.tainted, true, "[3] 🔴 the judge's context carries `tainted: true` — the maintainer's ruling in one field: the judge SEES the taint and decides");
-    ok(ctx.taintKinds.includes("web"), "[3] …and the KINDS, so the judge weighs `web` differently from `file-upload` rather than seeing one opaque bit");
-    const prompt = judgeVerdictPrompt(ctx);
-    ok(prompt.includes("Turn ingested untrusted content: true"), "[3] 🔴 …and it reaches the RENDERED PROMPT. A field the prompt builder drops is a field the model never sees — asserted on the bytes actually sent");
-    ok(prompt.includes("web"), "[3] …with the kind named in the prompt too");
-  });
-
-  await inSession(() => {
-    const ctx = judgeContextOf(req, { registryVerdict: "ask" });
-    eq(ctx.tainted, false, "[3] 🔴 NEGATIVE CONTROL: a CLEAN turn's judge context reads `=== false`, not merely falsy");
-    eq(ctx.taintKinds, [], "[3] …and carries no kinds at all");
-    ok(judgeVerdictPrompt(ctx).includes("Turn ingested untrusted content: false"), "[3] …and the prompt says so explicitly, so the judge can never read silence as cleanliness");
-  });
-}
-
-console.log("4 — the judge's allow cache is invalidated by taint arriving mid-turn:");
-{
-  let calls = 0;
-  registerApprovalJudgeCompletion(async (_p, pass) => {
-    calls++;
-    return pass === "scrutiny" ? "YES" : "VERDICT: allow\nREASON: routine\nRULE: taint-test-rule";
-  });
-  const rules = [{ id: "taint-test-rule", rule: "Opening a pull request is routine in this test.", scope: "org" }];
-  try {
-    await inSession(async () => {
-      clearApprovalJudgeVerdictCache();
-      const req = { tool: "open_pull_request", unattended: false } as const;
-
-      const first = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }, rules), { enforce: true });
-      eq(first.verdict, "allow", "[4] precondition: the judge allows on the clean turn");
-      eq(first.cacheHit, false, "[4] precondition: …and that was a real consult, not a cache read");
-      const afterFirst = calls;
-
-      const second = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }, rules), { enforce: true });
-      eq(second.cacheHit, true, "[4] precondition: an identical clean-turn consult IS served from cache — otherwise the invalidation below proves nothing");
-      eq(calls, afterFirst, "[4] …and cost no model calls");
-
-      markUntrustedIngestedThisTurn("web");
-      const third = await runApprovalJudge(judgeContextOf(req, { registryVerdict: "ask" }, rules), { enforce: true });
-      eq(third.cacheHit, false, "[4] 🔴 taint arriving MID-TURN drops the cached allow — the key is the taint SIGNATURE, so a verdict earned on clean content can never be spent on tainted content");
-      ok(calls > afterFirst, "[4] …and the judge genuinely re-ran, asserted on the completion call count rather than on the returned flag alone");
-    });
-  } finally {
-    resetApprovalJudgeCompletion();
-    clearApprovalJudgeVerdictCache();
-  }
-}
-
-console.log("5 — a native child of a tainted parent turn is MARKED, so sections 1-4 apply to it:");
+console.log("5 — a native child of a tainted parent turn is MARKED:");
 {
   await inSession(() => {
     const ctx = { session: { auth: { current: { attributes: { [OE_SPAWN_TAINTED_ATTR]: "true" } } } } };
@@ -222,7 +91,7 @@ console.log("5 — a native child of a tainted parent turn is MARKED, so section
     eq(
       untrustedIngestedThisTurn(),
       true,
-      "[5] 🔴 THE CARRIAGE, MEASURED: a native child of a TAINTED parent turn starts MARKED — so sections 1-4 above (the judge signal, the ask-floor, the cache invalidation) all apply to it",
+      "[5] 🔴 THE CARRIAGE, MEASURED: a native child of a TAINTED parent turn starts MARKED",
     );
   });
 

@@ -505,10 +505,9 @@ runs, indefinitely**. So the approval card is the last of four gates, not the on
 
 1. **A routine's own run can't add or remove a rule** — refused outright. No routine amends its own
    doctrine, however clean the run looks.
-2. **A turn that has read external content is floored at a human decision.** Both verbs declare
-   `taint: "gate"`, so a tainted turn's verdict cannot fall below a card. No lowering rule
-   auto-approves it, and a tainted run with nobody in the room is denied. `create_routine` and
-   `edit_routine` carry the identical floor.
+2. **Both verbs take a card.** They are `gate:member`, so a person reads the rule before it arms,
+   and a run with nobody in the room is denied. Since OPE-2716 a turn that read external content
+   decides exactly as a clean turn: a lowering rule that covers these verbs applies to both.
 3. **An unattended durable job doesn't hold either verb.** They're withheld from a job run that no
    human has spoken to, alongside the other self-modification verbs.
 4. **The card** freezes the exact wording and needs a verified person to click it.
@@ -2898,11 +2897,11 @@ Posture is the honest answer to *"why is a cron fine without a webhook's ceremon
 ingress: a cron's prompt and a webhook's prompt are both member-authored, in-channel and fixed. The
 difference is that a content-bearing hook's **payload** is written by someone outside your org,
 every time it fires, forever. Any fire that puts payload bytes in a prompt — **`content-bearing`
-*and* `projection`** — is therefore treated as **tainted**: the turn is marked, the mark reaches
-approval disclosure and every `taint: "gate"` sink, and native delegation withdraws for that
-turn. A fire is also **unattended**, so at those sinks the taint floor's `ask` becomes a deny — a
-hostile payload can never arm a routine, a skill, a resident agent, a standing rule or a webhook,
-whoever wrote it. A projection bounds how *much* of an outside party's text arrives, never how much
+*and* `projection`** — is therefore treated as **tainted**: the turn is marked, and the mark reaches
+approval disclosure. A fire is also **unattended**, so every gated verb's `ask` becomes a deny — a
+hostile payload cannot arm a routine, a skill, a resident agent, a standing rule or a webhook through
+a card, whoever wrote it. That deny is the unattended clamp's, not taint's (OPE-2716): a config
+lowering that covers one of those verbs applies to a fire as well. A projection bounds how *much* of an outside party's text arrives, never how much
 it is trusted. A `trigger-only` fire carries no such bytes and is not tainted.
 
 **Taint does not gate memory.** A memory write is an ordinary file edit with no write verb to

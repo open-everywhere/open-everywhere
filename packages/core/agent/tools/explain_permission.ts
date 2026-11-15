@@ -13,11 +13,10 @@ import type { BindableContext } from "../identity/binding.js";
 
 export default defineTool({
   description:
-    "Explain what would happen if a named tool were used HERE: resolves the real approver chain for this scope (config approvers, surface controls, the consequence registry, the domain's approval mode, unattended/taint transforms) and returns the full verdict trace — allow / deny / ask, which element decided it, and why. A simulation: nothing runs, nothing is proposed. Use to answer \"why can't you do that?\", \"would this need approval?\", or to preview a routine fire's permissions (unattended: true).",
+    "Explain what would happen if a named tool were used HERE: resolves the real approver chain for this scope (config approvers, surface controls, the consequence registry, the domain's approval mode, the floor and unattended transforms) and returns the full verdict trace — allow / deny / ask, which element decided it, and why. A simulation: nothing runs, nothing is proposed. Use to answer \"why can't you do that?\", \"would this need approval?\", or to preview a routine fire's permissions (unattended: true).",
   inputSchema: z.object({
     tool: z.string().min(1).describe("The tool name to simulate (e.g. \"create_ticket\", \"open_pull_request\", a connector op like \"notion__create_page\")."),
     unattended: z.boolean().optional().describe("Simulate an unattended (routine/webhook fire) context. Default: this turn's own attendance."),
-    tainted: z.boolean().optional().describe("Simulate a turn that ingested untrusted external content. Default: this turn's own taint signal."),
     domain: z.string().optional().describe("Simulate under a specific domain's policy/mode. Default: this surface's own domain."),
   }),
   outputSchema: z.object({
@@ -40,7 +39,6 @@ export default defineTool({
       ...(domain !== undefined ? { domain, mode: approvalModeForDomain(domain) } : {}),
       ...(acting !== undefined ? { principalId: acting } : {}),
       unattended: input.unattended ?? unattendedOf(ctx as BindableContext),
-      ...(input.tainted !== undefined ? { tainted: input.tainted } : {}),
     };
     const resolution = await resolveApproverChain(request, { approvers: access.approvers });
     return {

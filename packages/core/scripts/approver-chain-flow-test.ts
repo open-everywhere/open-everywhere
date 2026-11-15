@@ -266,81 +266,94 @@ const rotateArgs = {
 }
 
 {
-  const ruleArgs = {
+  const { addRoutine, newPolicyRuleId } = await import("../agent/routines/store.js");
+  const RULE_PARTITION = {
     org: "test-org",
-    partition: { org: "test-org", surfaceKey: "slack/T1/C_RULE" },
+    platform: "slack",
+    workspace: "T1",
+    surface: "C_RULE",
+    workspaceKey: "slack/T1",
     surfaceKey: "slack/T1/C_RULE",
-    routineId: "r-does-not-exist",
+    domainKey: "slack/T1/C_RULE",
+    key: "slack/T1/C_RULE",
+  };
+  const RULE_ROUTINE = "r-ope2716-rules";
+  await addRoutine(RULE_PARTITION, {
+    id: RULE_ROUTINE,
+    org: "test-org",
+    surfaceKey: "slack/T1/C_RULE",
+    target: { channelId: "C_RULE" },
+    trigger: { kind: "once", at: new Date(Date.now() + 86_400_000).toISOString() },
+    prompt: "summarise the minutes (OPE-2716 fixture routine)",
+    createdBy: "U_HUMAN",
+    status: "active",
+    nextRunAt: new Date(Date.now() + 86_400_000).toISOString(),
+    createdAt: new Date(Date.now() - 120_000).toISOString(),
+    promptGeneration: 1,
+    consecutiveFailures: 0,
+  } as never);
+  const ruleArgs = (ruleId: string) => ({
+    org: "test-org",
+    partition: RULE_PARTITION,
+    surfaceKey: "slack/T1/C_RULE",
+    routineId: RULE_ROUTINE,
     description: "every weekday at 09:00",
-    ruleId: "p-taint01",
-    rule: "Never post before 09:00 UTC.",
+    ruleId,
+    rule: `Never post before 09:00 UTC (${ruleId}).`,
     why: "the 2026-08-13 run woke the channel at 03:12.",
     source: "human" as const,
     countBefore: 0,
     requestedBy: "U_HUMAN",
-  };
-  const ruleInput = {
+  });
+  const ruleInput = (ruleId: string) => ({
     org: "test-org",
     kind: "routine.policy.add",
-    args: ruleArgs,
+    args: ruleArgs(ruleId),
     scopeKey: "slack/T1/C_RULE",
     domain: "rulefast",
     requestedBy: "U_HUMAN",
     channelId: "C_RULE",
     threadTs: null,
-  };
-  const ruleChainRow = (unattended: boolean, tainted: boolean): Promise<Record<string, unknown>> => chainRowFor({ action: "routine.policy.add", unattended, tainted });
-
-  {
-    const res = await requestApproval({ ...ruleInput, chain: { unattended: false, tainted: true } }, { postCard });
-    ok(res.autoApproved === undefined && typeof res.id === "string", "taint/attended: a tainted turn CARDS instead of being refused — the act reaches a human");
-    const row = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === res.id);
-    ok(row !== undefined && row.status === "pending", "taint/attended: a real pending row awaits the click");
-    const d = (await ruleChainRow(false, true)) as {
-      verdict?: string;
-      registryVerdict?: string;
-      tainted?: boolean;
-      transforms?: { name: string; from?: string; to?: string; reason?: string }[];
-    };
-    ok(d.verdict === "ask" && d.registryVerdict === "ask", "taint/attended: the approval.chain row shows ask despite the operator's lowering element");
-    ok(d.tainted === true, "taint/attended: the row DISCLOSES the provenance that caused it");
-    ok(
-      (d.transforms ?? []).some((t) => t.name === "taint:ask" && t.from === "allow" && t.to === "ask" && t.reason === "taint-ask"),
-      "taint/attended: the row names the arrow that refused the lowering — queryable, like every other transform",
-    );
+  });
+  const attendedRows = async (): Promise<Record<string, unknown>[]> =>
+    (await rowsFor("approval.chain"))
+      .map((r) => r.detail ?? {})
+      .filter((d) => d["action"] === "routine.policy.add" && d["unattended"] === false && d["domain"] === "rulefast");
+  const outcomes: string[] = [];
+  const ruleIds = { tainted: newPolicyRuleId(), clean: newPolicyRuleId() };
+  for (const [label, tainted] of [["tainted", true], ["clean", false]] as const) {
+    const ruleId = ruleIds[label];
+    const before = (await attendedRows()).length;
+    const res = await requestApproval({ ...ruleInput(ruleId), chain: { unattended: false, tainted } }, { postCard });
+    ok(res.autoApproved !== undefined && res.autoApproved.resolvedBy === "custom:rulefast-lower", `taint/${label}: the operator's lowering auto-approves (OPE-2716)`);
+    const rows = await attendedRows();
+    ok(rows.length === before + 1, `taint/${label}: the propose wrote exactly one approval.chain row`);
+    for (const d of rows) {
+      ok(d["verdict"] === "allow" && Array.isArray(d["transforms"]) && (d["transforms"] as unknown[]).length === 0, `taint/${label}: the row shows allow with NO transform`);
+      ok(!("tainted" in d) && !("taintKinds" in d) && !("taintMode" in d), `taint/${label}: the row carries no taint field`);
+    }
+    const d = rows[0]!;
+    outcomes.push(JSON.stringify({ verdict: d["verdict"], resolvedBy: d["resolvedBy"], transforms: d["transforms"] }));
   }
+  ok(outcomes[0] === outcomes[1], "taint: the tainted propose and its clean control resolve identically");
+  const armed = (await rowsFor("routine.policy.add")).map((r) => (r.detail ?? {})["ruleId"]);
+  ok(armed.includes(ruleIds.tainted) && armed.includes(ruleIds.clean), "taint: both lowered rules really ARMED — a routine.policy.add row for each");
 
   {
     let threw = "";
     try {
-      await requestApproval({ ...ruleInput, chain: { unattended: true, tainted: true } }, { postCard });
+      await requestApproval(
+        { ...ruleInput(newPolicyRuleId()), scopeKey: "slack/T1/C_PLAIN", domain: "plain", channelId: "C_PLAIN", chain: { unattended: true, tainted: true } },
+        { postCard },
+      );
     } catch (e) {
       threw = String(e);
     }
-    ok(threw.includes("DENIED") && threw.includes("ask-unattended"), "taint/unattended: a tainted run with nobody watching DENIES — ask with nobody to ask IS deny");
-    ok(
-      threw.includes("read external content") && threw.includes("nobody to ask"),
-      "taint/unattended: the refusal NAMES taint — a bare 'denied' is what makes a model conclude the tool is broken and answer as if it ran",
-    );
-    ok(
-      !threw.includes("arm the permission on the routine's creation card"),
-      "taint/unattended: …and it does NOT offer the standing-grant advice, which is false here — no grant lifts a taint floor",
-    );
-    const d = (await ruleChainRow(true, true)) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
-    ok(d.verdict === "deny" && d.tainted === true, "taint/unattended: the row carries the deny AND the taint that led to it");
-    ok(
-      (d.transforms ?? []).map((t) => t.name).join(",") === "taint:ask,unattended",
-      "taint/unattended: the row shows the ORDER — the taint floor raised it to ask, then unattended read that ask and denied",
-    );
-  }
-
-  {
-    const res = await requestApproval({ ...ruleInput, chain: { unattended: false, tainted: false } }, { postCard });
-    ok(res.autoApproved !== undefined, "taint/clean: a CLEAN turn's lowering still auto-approves — the floor is taint-conditional, not a blanket gate");
-    ok(res.autoApproved!.resolvedBy === "custom:rulefast-lower", "taint/clean: …resolved by the same element the tainted legs defeated");
-    const d = (await ruleChainRow(false, false)) as { verdict?: string; tainted?: boolean; transforms?: { name: string }[] };
-    ok(d.verdict === "allow" && d.tainted === false, "taint/clean: the row shows allow on an untainted turn");
-    ok((d.transforms ?? []).length === 0, "taint/clean: …and NO transform fired at all");
+    ok(threw.includes("DENIED") && threw.includes("ask-unattended"), "taint/unattended: an unlowered gated act with nobody watching DENIES");
+    ok(threw.includes("read external content"), "taint/unattended: …and the refusal tells the model to ask a person (the planner's taint refusal, OPE-2718)");
+    ok(!threw.includes("arm the permission on the routine's creation card"), "taint/unattended: …without advice to arm a card the planner would refuse");
+    const d = (await chainRowFor({ action: "routine.policy.add", unattended: true })) as { verdict?: string; transforms?: { name: string }[] };
+    ok(d.verdict === "deny" && (d.transforms ?? []).map((t) => t.name).join(",") === "unattended", "taint/unattended: the row shows the deny by the unattended arrow alone");
   }
 }
 

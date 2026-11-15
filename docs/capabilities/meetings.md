@@ -25,8 +25,8 @@ Two properties had to hold before a deployment could turn meetings on. Both hold
 - **The recap carries untrusted provenance (OPE-2464).** The recap is the bot's own post, written by a model
   from an untrusted transcript. When OE posts it, OE records the post, the thread it went into and, for
   seven days, its channel. A later turn that reads that post or that thread, or that wakes in that thread
-  or (within the seven days) anywhere in that channel, is marked as having read untrusted content, so the
-  taint floor applies to its actions. The limits are listed under [What does not work](#what-does-not-work). See [The recap, and why the transcript is
+  or (within the seven days) anywhere in that channel, is marked as having read untrusted content, so its
+  cards carry the taint disclosure. The limits are listed under [What does not work](#what-does-not-work). See [The recap, and why the transcript is
   untrusted](#the-recap-and-why-the-transcript-is-untrusted).
 
 ## The flow

@@ -86,7 +86,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "agent/access/bundles.ts",
     ],
     scenarios: ["S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY", "F-SEC"],
-    why: "The three S-TAINT-* legs and F-SEC's tainted-content probe are the only scenarios that gate on `taint.verdict`/tainted+taintKinds audit rows rather than reply text (doctrine P1.3), and S-TAINT-ROUTE-LIVE's ARM E is the only one that reads the repo-root approver lowering the `taint:ask` floor refuses.",
+    why: "The three S-TAINT-* legs and F-SEC's tainted-content probe are the only scenarios that gate on `taint.verdict`/tainted+taintKinds audit rows rather than reply text (doctrine P1.3), and S-TAINT-ROUTE-LIVE resolves the repo-root approvers (its ARM E's lowering fixture and the `taint:ask` floor were deleted by OPE-2716).",
   },
   {
     area: "identity",

@@ -577,13 +577,11 @@ classified as a delegating conversational seat.
 The withdrawal rested on one condition: no taint mark reached a native child, so a tainted seat would
 dispatch a child that ran CLEAN. The **forward leg** now marks that child before its first model call,
 measured end to end on the real host. The launder path is closed by propagation, not by absence.
-🔴 **The tool plane was never the reason, and stating it as one was false.** Every gated tool a worker
-can hold declares a taint tolerance. Every `gate` sink is worker-reachable, so a tainted worker's
-standing-instruction, skill/agent and ingress acts DO hit the human ask-floor; every other worker-reachable
-gated sink declares `disclose`, which is a judge signal rather than a card. `bash`, `write_file` and
-`read_file` carry no tolerance because they are `open` rows by the ratified in-sandbox cut — their
-durable effects leave only via the gated verbs above — and `aws` is bounded by its bundle grant, its
-IAM role and the host-side argv screen at L2.
+🔴 **The tool plane was never the reason, and stating it as one was false.** A worker's gated tools
+take the same approval chain as a seat's: the registry's `ask` cards them, and an unattended run
+denies. Since OPE-2716 no approval verdict reads taint. `bash`, `write_file` and `read_file` are `open`
+rows by the ratified in-sandbox cut — their durable effects leave only via the gated verbs — and `aws`
+is bounded by its bundle grant, its IAM role and the host-side argv screen at L2.
 Source: `packages/core/agent/access/native-delegation-state.ts` (`nativeAgentAllowedNow`), applied
 at `packages/core/agent/access/untrusted-projection.ts`; the tool-plane facts are pinned by
 `packages/core/scripts/taint-worker-plane-test.ts`.
@@ -802,30 +800,6 @@ parent published no fingerprint, and a mis-bound child in that case used to run.
 only when the child resolves a REGISTERED platform and still names no surface, so the local
 stand-in stays reachable for `eve dev`, evals and unit contexts.
 
-**gate tier** — a per-sink taint tolerance. A tool declaring `gate` is floored at a verdict of `ask`
-on a tainted turn: no lowering may auto-approve it, so a human decides, and an unattended run denies
-because the `unattended` transform runs last and reads that ask. `disclose` and an absent value are
-indistinguishable in behaviour and only put a line on the card. The tools that declare `gate` are
-exactly those that answer the **vector-1 predicate** with `arms` or `disarms` (below): the eleven
-verbs that create, rewrite or remove instruction and execution surface a later run obeys.
-Source: `packages/core/agent/access/approver-chain.ts` (`taintToleranceOf` / `taintToleranceOfRow`),
-the `taint:ask` transform row in the same file.
-
-**vector-1 predicate** — *does this tool arm, alter or remove surface that EXECUTES or INSTRUCTS
-after the turn ends?* One level deeper than "consequential" (the effect escapes the *conversation*):
-this asks whether the effect escapes the *turn*. Every tool answers it on its registry row, as
-`postTurnSurface: "arms" | "disarms" | "templated" | "none"`, and `arms`/`disarms` require the
-**gate tier** above. The answer is not optional and not a list somebody maintains: `lint:consequence`
-reads the tree's real durable writes (adding a routine, writing a skill, applying an agent spec,
-declaring a hook, minting an ingress secret) and fails the build on any tool that reaches one while
-declaring nothing — the direction a hand-kept list of dangerous verbs rots in.
-`templated` marks a tool that arms post-turn execution whose instruction text is a code literal the
-model never authors (`subscribe_pr`); it carries no floor.
-Source: `packages/core/agent/access/consequence.ts` (`postTurnSurface`, `POST_TURN_WRITE_PRIMITIVES`,
-`checkPostTurnSurface`).
-Not to be confused with: a **consequence tier** (`open`/`gate:member`/`gate:admin`), which is what a
-tool costs on ANY turn. The taint tolerance is a separate column that only a tainted turn reads.
-
 **ingestion kind** — the provenance label an ingestion site declares, and the only thing
 `classifyIngestion` reads to decide a source tier. The vocabulary is closed in code, and a site passes
 a kind rather than inlining a tier. Four kinds are worth naming here because their sources are easy to
@@ -890,8 +864,8 @@ the host previews that show model text (Linear's activity previews, the Slack ta
 the inbound A2A answer.
 Source: `packages/core/agent/access/sensitive-data.ts#SensitiveTier`, `packages/core/agent/access/sensitive-data.ts#SHIPPED_DETECTORS`,
 the sink table at `packages/core/agent/access/outbound-filter.ts#OUTBOUND_INTERNAL_TOOLS`.
-Not to be confused with: a **source tier** (is an INGESTED read untrusted), a **gate tier** (what a
-tainted turn does at a sink), or a **consequence tier** (what a tool costs on any turn). The
+Not to be confused with: a **source tier** (is an INGESTED read untrusted), or a **consequence tier**
+(what a tool costs on any turn). The
 sensitivity tier reads the bytes LEAVING, and it reads no taint.
 
 ---
@@ -1017,11 +991,11 @@ Source: `packages/core/agent/access/consequence.ts#deferToJudge`, `packages/core
 Not to be confused with: a **verdict** of `undefined`/`defer` from an element, which is silence, not
 a judge consult.
 
-**transform** — a POST-resolution arrow that may only move `allow` or `ask`. Four stages, in this
-fixed order: `mode` → `taint` → `floor` → `unattended`. A `deny` skips the pipeline entirely.
+**transform** — a POST-resolution arrow that may only move `allow` or `ask`. Three stages, in this
+fixed order: `mode` → `floor` → `unattended`. A `deny` skips the pipeline entirely.
 `unattended` runs LAST on purpose: it turns any surviving `ask` into a `deny`, including one the
-taint floor or the beneficiary-clicker floor has just produced, so no run without a human can be left
-holding a card nobody can click.
+beneficiary-clicker floor has just produced, so no run without a human can be left holding a card
+nobody can click. The `taint` stage is gone (OPE-2716): the chain reads no taint.
 Source: `packages/core/agent/access/approver-chain.ts#TransformStage`, `packages/core/agent/access/approver-chain.ts#TRANSFORM_STAGE_ORDER` (the order, and its doc comment says it in prose), `packages/core/agent/access/approver-chain.ts#TRANSFORM_TABLE`.
 Not to be confused with: an **element**. An element holds an opinion at a level; a transform edits
 the resolved answer.

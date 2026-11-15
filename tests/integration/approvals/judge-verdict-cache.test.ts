@@ -196,7 +196,7 @@ test("the enforce cache answers a second proposal in the SAME worker session: so
   const chains = rows.filter((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chains.map((c) => c.detail?.verdict)).toEqual(["allow", "allow"]);
   expect(chains.map((c) => c.detail?.resolvedBy)).toEqual(["judge", "judge"]);
-  expect(chains.map((c) => c.detail?.tainted)).toEqual([false, false]);
+  expect(chains.map((c) => "tainted" in (c.detail ?? {}))).toEqual([false, false]);
   expect(chains.map((c) => c.detail?.transforms)).toEqual([[], []]);
 
   const auto = rows.filter((r) => r.action === "approval.autoapproved" && r.detail?.kind === "routine.create");
@@ -247,7 +247,7 @@ test("the enforce cache does NOT cross sessions: a second delegation's worker co
   expect(results[0]!.output["created"]).toBe(true);
 });
 
-test("untrusted content mid-turn DROPS the cached allow: the same session re-consults the judge and the taint floor cards it", async () => {
+test("an untrusted read mid-turn: the second proposal is a fresh consult on its own frozen args, and both auto-approve — no taint floor, no card", async () => {
   await armSeams();
   await armEnforce();
   verdictWord = "allow";
@@ -263,42 +263,33 @@ test("untrusted content mid-turn DROPS the cached allow: the same session re-con
   });
   const rows = await approvalRows(cursor, 2);
   const judged = judgeRows(rows);
-  const clean = `consult ${before + 1}`;
-  const reJudged = `consult ${before + 2}`;
+  const first = `consult ${before + 1}`;
+  const second = `consult ${before + 2}`;
 
-  expect(judged.filter((j) => j.reason === clean)).toEqual([{ reason: clean, source: "pass2", cacheHit: false, passes: 2 }]);
-
-  expect(judged.filter((j) => j.reason === reJudged)).toEqual([{ reason: reJudged, source: "pass2", cacheHit: false, passes: 2 }]);
+  expect(judged.filter((j) => j.reason === first)).toEqual([{ reason: first, source: "pass2", cacheHit: false, passes: 2 }]);
+  expect(judged.filter((j) => j.reason === second)).toEqual([{ reason: second, source: "pass2", cacheHit: false, passes: 2 }]);
   expect(reasons.length).toBe(before + 2);
-
   expect(judged.filter((j) => j.source === "cache")).toEqual([]);
 
   const chains = rows.filter((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chains.length).toBe(2);
-  const cleanChain = chains.find((c) => c.detail?.tainted === false);
-  const taintedChain = chains.find((c) => c.detail?.tainted === true);
-  expect(cleanChain).toBeDefined();
-  expect(taintedChain).toBeDefined();
+  for (const c of chains) {
+    expect(c.detail?.verdict).toBe("allow");
+    expect(c.detail?.resolvedBy).toBe("judge");
+    expect(c.detail?.transforms).toEqual([]);
+    expect(c.detail).not.toHaveProperty("tainted");
+    expect(c.detail).not.toHaveProperty("taintKinds");
+  }
 
-  expect(cleanChain!.detail?.verdict).toBe("allow");
-  expect(cleanChain!.detail?.resolvedBy).toBe("judge");
-  expect(cleanChain!.detail?.transforms).toEqual([]);
-
-  expect(taintedChain!.detail?.taintKinds).toEqual(["file-upload"]);
-  expect(taintedChain!.detail?.transforms).toEqual([{ name: "taint:ask", from: "allow", to: "ask", reason: "taint-ask" }]);
-  expect(taintedChain!.detail?.verdict).toBe("ask");
-  expect(taintedChain!.detail?.resolvedBy).toBe("judge");
-
-  expect(rows.filter((r) => r.action === "approval.autoapproved" && r.detail?.kind === "routine.create").length).toBe(1);
-  const requested = rows.filter((r) => r.action === "approval.requested" && r.detail?.kind === "routine.create");
-  expect(requested.length).toBe(1);
-  expect(rows.filter((r) => r.action === "approval.expired").map((r) => r.detail?.cause)).toEqual([]);
+  expect(rows.filter((r) => r.action === "approval.autoapproved" && r.detail?.kind === "routine.create").length).toBe(2);
+  expect(rows.filter((r) => r.action === "approval.requested" && r.detail?.kind === "routine.create")).toEqual([]);
 
   const results = routineResults(handle);
   expect(results.length).toBe(2);
-  expect(results[0]!.output["created"]).toBe(true);
-  expect(results[0]!.output["pending"]).toBe(false);
-  expect(results[1]!.output["created"]).toBe(false);
-  expect(results[1]!.output["pending"]).toBe(true);
-  expect(results[1]!.output["autoApproved"]).toBeUndefined();
+  for (const r of results) {
+    expect(r.output["created"]).toBe(true);
+    expect(r.output["pending"]).toBe(false);
+    expect(r.output["autoApproved"]).toBe(true);
+  }
+
 });

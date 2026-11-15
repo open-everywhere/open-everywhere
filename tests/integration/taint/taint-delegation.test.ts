@@ -226,8 +226,8 @@ test("a delegated child taints itself: marking, injected judge verdict, refuse-t
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
-  expect(chain!.detail?.tainted).toBe(true);
-  expect(chain!.detail?.taintKinds).toEqual(["file-upload"]);
+  expect(chain!.detail).not.toHaveProperty("tainted");
+  expect(chain!.detail).not.toHaveProperty("taintKinds");
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.resolvedBy).toBe("judge");
   expect(chain!.detail?.verdict).toBe("deny");
@@ -330,7 +330,7 @@ test("negative control: the same run without the upload — no refusal, no marki
     cursor,
     kind: "routine.create",
   });
-  expect(chain.detail?.tainted).toBe(false);
+  expect(chain.detail).not.toHaveProperty("tainted");
   expect(chain.detail?.registryVerdict).toBe("ask");
 
   const parentTerminal = handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1);

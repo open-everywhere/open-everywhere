@@ -239,22 +239,20 @@ the registry default; `DENY_ALL` tightens everything to a fast, audited refusal.
 runs at the same stage and is not a mode at all**: the break-glass halt denies `allow` and `ask`
 alike, under `reason: "halt"`, whenever a halt row covers the call. `resume` is exempt from the halt
 arrow — otherwise a halt would deny its own lift — and exempt from `DANGEROUSLY_BYPASS` too, so a
-model turn inside one bypassed domain can never lift an org-wide stop without an admin click. Three
-more
-transforms run after modes, in this order: **taint** (`allow → ask`), which runs *after* modes
-precisely so a bypass can never lift the taint floor; then the **beneficiary-clicker floor**
-(`allow → ask`) — a kind whose click *mints live material* (a signing secret, on `webhook.rotate`)
+model turn inside one bypassed domain can never lift an org-wide stop without an admin click. Two
+more transforms run after modes, in this order. First the **beneficiary-clicker floor**
+(`allow → ask`), which runs *after* modes so a bypass can never lift it — a kind whose click *mints live material* (a signing secret, on `webhook.rotate`)
 cannot be safely auto-approved, because a chain-lowered `decidedBy` is `chain:<element>`, never a
 person, and minting and destroying a live key is not a decision an element may make; so no element,
 mode or bypass may leave one of these kinds auto-approved. (The reveal itself goes to the person who
 ASKED for the rotation, never to the approver. The floor is about who may *decide* the mint, not who
 receives it.) And **last of all, unattended** (`ask → deny`) — a
-routine/webhook fire that hits an undeclared gate, or either floor above, fails fast instead of
+routine/webhook fire that hits an undeclared gate, or the floor above, fails fast instead of
 posting a card into an empty room (declare the permission on the routine's creation card
 instead).
 
 **The position of `unattended` is itself a control.** It runs last so that it sees every `ask` the
-pipeline can produce, including the two floors' own. Run earlier, a floor could raise a verdict to
+pipeline can produce, including the floor's own. Run earlier, the floor could raise a verdict to
 `ask` *after* the arrow whose whole job is to stop cards landing where nobody can click them — and
 the run would sit holding a card forever.
 
@@ -275,7 +273,7 @@ judge off, transport error, an unreachable judge model, unparseable output, the 
 and an operator's standing per-domain disarm all land on the exact
 card the row produced before its flip, so the degraded mode *is* the unarmed chain. The judge
 runs before the clamps — which is what lets a routine fire's eligible action auto-lift instead
-of dying on a card in an empty room, while modes, taint and the floor still tighten whatever it
+of dying on a card in an empty room, while modes and the floor still tighten whatever it
 allows. It is reasoning-blind (request facts, standing policy, the requester's own visible
 messages — never the agent's reasoning, never tool outputs, and never a delegated worker's
 brief, which the parent *model* wrote and which is fenced out by session provenance at the
@@ -306,8 +304,8 @@ decides one frozen step (the op, the host, a submit, a key) against the scope's 
 allow runs that one step only. It grants no act window, so the next step asks again. The judge keeps no
 verdict cache for this row, in shadow or enforce, so an identical later step is a new consult. A card with no
 frozen step grants a window, so it is human-only and the chain does not consult the judge. The judge
-does not read taint for this row (`judgeTaintBlind`), because every browser step follows a page read,
-and taint would hold every step on its card. The residual risk is a page
+reads no taint, for this row or any other (OPE-2716), so a page read does not by itself hold a step
+on its card. The residual risk is a page
 that steers the agent into a step a rule allows. A rule written at site and op grain bounds it. The
 [browser never tier](../capabilities/personal-browser.md#the-never-tier) stays in front of the judge.
 
@@ -558,51 +556,40 @@ old behaviour because a *declared* room never reaches it.
 registry is not a `public` declaration, and the two produce different audit rows: a declaration
 produces `declared`, silence keeps producing `assumed`.
 
-**Taint is marking, not gating**, and the transform is the exception that proves it. Since OPE-2717
-no approval card discloses taint: the card warning line is gone (the maintainer's ruling,
-OPE-2715 row 10). The `approval.chain` audit row still carries the turn's taint until OPE-2716
-removes it. **Memory carries no taint disclosure either.** A bullet the turn writes carries no mark of its own: since the memory verbs
-were retired, a write is a freehand file edit captured at session end, and the capture seam sees
-file diffs rather than the turn that made them — so there is nothing to attribute, and
-re-deriving a mark would mean marking a whole SESSION, which this model deliberately refuses to
-do. What is durable there is the `memory.write` audit row, not the bullet; naming a fact's origin
-in the bullet's own prose is the agent's job (see
-[Memory](../capabilities/memory.md#the-shape-memory-keeps)). None of that changes a
-verdict. What does is the registry's per-sink `taint` column, and only its `gate` value. Every other
-sink declares `disclose`, which moves nothing.
+**Taint is marking, not gating — and since OPE-2716 the approver chain does not read it at all.**
+Since OPE-2717 no approval card discloses taint either: the card warning line is gone (Rowan's
+ruling, OPE-2715 row 10). **Memory carries no taint disclosure either.** A bullet the
+turn writes carries no mark of its own: since the memory verbs were retired, a write is a freehand
+file edit captured at session end, and the capture seam sees file diffs rather than the turn that
+made them — so there is nothing to attribute, and re-deriving a mark would mean marking a whole
+SESSION, which this model deliberately refuses to do. What is durable there is the `memory.write`
+audit row, not the bullet; naming a fact's origin in the bullet's own prose is the agent's job (see
+[Memory](../capabilities/memory.md#the-shape-memory-keeps)).
 
-**Which tools carry `gate` is derived, not listed.** Each tool answers one question on its registry
-row — *does this arm, alter or remove surface that executes or instructs after the turn ends?* — and
-an `arms`/`disarms` answer requires the floor. Today that is eleven verbs: the routine lifecycle
-(`create_routine`, `edit_routine`, `enable_routine`, `cancel_routine`), its rules
-(`add_routine_rule`, `remove_routine_rule`), skills (`create_skill`, `delete_skill`), resident agents
-(`create_agent`) and webhook ingress (`declare_webhook`, `rotate_webhook`). The number is not the
-control. `lint:consequence` scans the tree for the durable writes that land such surface — adding a
-routine, writing a skill, applying an agent spec, declaring a hook, minting an ingress secret — and
-fails the build on any tool that reaches one while declaring nothing. A hand-kept list of dangerous
-verbs rots in one direction only: the new tool is simply absent from it, and every gate stays green.
-This one cannot.
+**No verdict moves on taint (OPE-2716, the maintainer's ruling on OPE-2715, 2026-11-15).** The chain once
+floored fifteen arm/disarm sinks at `ask` on a tainted turn (the `taint:ask` arrow), and the judge
+read the bit in its prompt and its cache key. Both are gone, with the registry's `taint` and
+`postTurnSurface` columns. A turn that read untrusted content now decides exactly as a clean turn:
+each sink follows its consequence tier, and the `mode`, `floor` and `unattended` arrows, the judge
+and config allows apply as they do anywhere. The `approval.chain` row no longer carries `tainted`,
+`taintKinds` or `taintMode`; older rows that carry them still parse.
 
-**What `gate` does is floor the verdict at `ask` — it does not refuse.** A tainted turn may still
-propose one of those acts; what it may not do is have the act *auto-approved*. No lowering
-reaches below the floor: not a custom approver, not a config allow, not the judge, not a
-`DANGEROUSLY_BYPASS` domain. Attended, a human reads the card and decides. Unattended, the `unattended` transform reads that `ask` and denies it, which is exactly
-the old behaviour in the case that actually carries risk.
+**What this loosens, stated rather than hidden.** A lowering — a custom approver, a config allow, an
+armed judge's allow, a `DANGEROUSLY_BYPASS` domain — now lands on a turn that read a hostile page,
+for the routine, skill, agent, webhook, MCP-server, email-sender and meeting verbs alike. What still
+stands between injected text and those acts: the registry's own `ask` (a person reads the card), the
+`unattended` arrow (an empty room denies every `ask`), the judge's rule-citation requirement, the
+egress firewall, the outbound sensitive-data filter and the seat cuts. A deployment that lowers one of
+those verbs has chosen that the lowering applies on every turn.
 
-The reasoning for that shape, since it replaced a hard refusal: a wall a tainted turn cannot climb
-makes the turn useless, and useless security gets routed around — done by hand, or switched off.
-A card a human reads is a control that survives contact, and it carries strictly more information
-than a blank refusal ever did. The relaxation is paid for only where a human is present to be
-asked; where nobody is, the answer is unchanged. **The residual is stated rather than hidden:** an
-approval card converts a deterministic barrier into a human judgement at the moment injected text is
-trying to shape that judgement. Since OPE-2717 (OPE-2715 row 10, ruled) the card carries
-no provenance line. The only counterweight is the act itself, rendered by code from the frozen
-arguments (the quoted body, the figures, the target) — never by a summary of the tainted content.
-The routine kinds keep their own ⚠ line in the card detail until OPE-2718.
+Since OPE-2717 the card carries no provenance line either. What a person reads is the act itself,
+rendered by code from the frozen arguments (the quoted body, the figures, the target) — never a
+summary of the tainted content. The routine kinds keep their own ⚠ line in the card detail until
+OPE-2718.
 
 **And the whole model is opt-out-able, in one reviewed line.** A governed seam nobody can decline
 is a tax, not a feature — so `taint.mode: "off"` in `agent/settings/settings.ts` retires the marking model
-outright: no marks, no verdict floor and no disclosure. (Taint never withdraws the delegation verb:
+outright: no marks and no disclosure. (Taint never withdraws the delegation verb:
 the forward leg marks the child instead, and `off` takes that leg with it.) It ships **on**, and there is deliberately **no environment variable
 that reaches `off`**. No other behaviour setting can be pushed from the environment either — that
 list closed with OPE-411, and OPE-2411 deleted its one surviving name (`OE_MODEL_STACK`, a harness
@@ -610,9 +597,8 @@ seam for the e2e runner). Every behaviour change, taint included, costs a diff �
 in the history, the same bar this file holds `taint.mode` to. Two things `off` does *not* touch: the **fence** is
 unmoved in both modes (it keys on the source, it is what stops fetched prose reading as
 instructions, and it refuses nothing), and the **approval system** is entirely independent of it. And it cannot hide: a session
-running with the model off writes a `taint.mode` audit row, and every `approval.chain` row it
-produces carries `taintMode: "off"` beside its `tainted: false`, so an opted-out deployment can
-never read like one that ran the model and found nothing. See
+running with the model off writes a `taint.mode` audit row once per session, so an opted-out
+deployment can never read like one that ran the model and found nothing. See
 [the configuration reference](../deploy/configuration-reference.md#turning-the-tainted-turn-model-off)
 for what it costs you, stated plainly.
 
@@ -628,11 +614,10 @@ registry baseline, which element resolved it, and the transforms applied — so 
 no card?"* and *"config lowered this"* are queryable facts. The `explain_permission` tool (and
 the repo-side `npm run explain:permission` script) runs the same chain prospectively and
 prints the same trace: the audit row's retrospective twin, rendered by one shared formatter.
-Its `unattended` and `tainted` inputs are hypotheticals. When the caller supplies `tainted`, the
-trace marks that value as supplied and prints this turn's own signal beside it — so a simulated
-`tainted` never reads as a measurement of the turn. `unattended` has no such marker: the chain
-requires a value, so the call site always resolves one, and the trace cannot tell a supplied
-`unattended` from a measured one. Do not read the trace's `unattended:` as evidence about the turn.
+Its `unattended` input is a hypothetical, and it has no marker: the chain requires a value, so the
+call site always resolves one, and the trace cannot tell a supplied `unattended` from a measured one.
+Do not read the trace's `unattended:` as evidence about the turn. It takes no taint input, because the
+chain reads no taint (OPE-2716).
 
 Those rows are also what makes a grant's *fit* measurable rather than assumed: `permission_fit_report`
 reads them over a window and proposes both widenings (a grant too narrow for the work that keeps
@@ -766,7 +751,7 @@ Every section above states a control and where it is enforced. This one states w
 
 - **An instruction is not a gate, and this system ships both.** A gate is code that refuses — the consequence table, the approver chain, the compiled egress policy. An instruction is text in the model's prompt, and the model can lose track of it or be talked out of it. Read any sentence about agent behaviour and ask which of the two carries it. Two places rely on an instruction by design and say so: provider-executed `web_search` results are consumed inside the model call, so no in-tree wrapper can fence them; and the untrusted-content envelope tells the model how to treat what it wraps, while what actually bounds an induced attempt is egress scoping and the approval gates.
 - **An approval gate proves a human pressed the button. It does not prove the action was wise.** The tier is an annotation a PR author and reviewer assign in `packages/core/agent/access/consequence.ts`; **the runtime never classifies**. So a tool tiered `open` by mistake is not gated, and no runtime check notices — `npm run lint:consequence` proves the table is total and that a declared tier still matches its mechanism, never that the tier is the right one. The `gate:member` tier allows self-approval on purpose: it gates the model's proposal, not the member. And the **egress plane shows no card at all** — a `curl` from inside the sandbox reaches no tool, so the review for that plane happens in the bundle diff rather than at the moment of the write.
-- **Taint marks only what a platform lets it see, and it only ever loosens.** The external-content floor (`allow → ask`) needs an author positively refuted, or a room the operator declared external. Discord and Notion cannot refute an author at all, Teams only when a roster lookup answers, and on a **read** only Slack refutes for itself — so the plane fails by **under**-marking. Enforcement is relaxation-only: the reviewed table can drop a mark a call site would have set, never add one, so the call sites that still do not mark stay a counted gap rather than a closed one, counted by a `taint.verdict` audit row whose `detail.divergence` reads `under-taint` — one row per source kind per turn, never one per call site. The stricter answers ship ON: the shipped policy keeps an excluded author's text out entirely (`externalPolicy.authorGrain: "withhold"`) and does not engage in an external room at all (`roomGrain: "silent"`). `taint` and `engage` are the deliberate opt-outs. Neither strict answer widens what the plane can SEE: an author no platform refutes is still not excluded.
+- **Taint marks only what a platform lets it see, and it only ever loosens.** The external-content mark needs an author positively refuted, or a room the operator declared external. Discord and Notion cannot refute an author at all, Teams only when a roster lookup answers, and on a **read** only Slack refutes for itself — so the plane fails by **under**-marking. Enforcement is relaxation-only: the reviewed table can drop a mark a call site would have set, never add one, so the call sites that still do not mark stay a counted gap rather than a closed one, counted by a `taint.verdict` audit row whose `detail.divergence` reads `under-taint` — one row per source kind per turn, never one per call site. The stricter answers ship ON: the shipped policy keeps an excluded author's text out entirely (`externalPolicy.authorGrain: "withhold"`) and does not engage in an external room at all (`roomGrain: "silent"`). `taint` and `engage` are the deliberate opt-outs. Neither strict answer widens what the plane can SEE: an author no platform refutes is still not excluded.
 - **Self-hosting isolates the sandbox, not the operator.** The sandbox tiers are not interchangeable. Vercel Sandbox gives a hardware-virtualised microVM. Off Vercel, Open Everywhere selects `docker` (the default) or the dev-only `justbash`, and nothing else — a `sandbox.selfHostBackend` setting naming any other value, `microsandbox` included, refuses to boot. Plain Docker gives container isolation only, and Docker's own network policy is allow-all or deny-all. The egress-proxy sidecar does not front it: eve starts the session container on the daemon's default network, so the app refuses to boot on `docker` with the proxy wired (OPE-2407). (Eve's own `microsandbox` enforces default-deny egress but **not** at-boundary credential injection, measured at OPE-917, which is why a read credential would be written into the sandbox there — a finding held open by the boot refusal above, not a posture this deployment can select.) And self-hosting moves trust to you rather than removing it: the audit chain proves tampering to the operator, never to an outside party, because nothing anchors the chain to a witness the operator does not control.
 - **Nothing here defends the store or the host.** Org partitioning and RLS bound what a *session* reads. A person with database credentials, a platform admin, or anyone who can change tracked config and get it merged is outside every control on this page — which is why grants, domains and the trust registry are config-as-code behind branch protection and CODEOWNERS, and why that merge is the real privilege gate.
 

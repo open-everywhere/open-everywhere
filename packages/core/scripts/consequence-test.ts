@@ -8,15 +8,12 @@ import {
   checkActionKindRegistry,
   checkApprovalSites,
   checkConsequenceRegistry,
-  checkPostTurnSurface,
   findActionKindRegistrations,
   findEveApprovalSites,
-  findPostTurnWriteSites,
   NON_TOOL_ACTION_KINDS,
   TOOL_CONSEQUENCE,
   type ActionKindRegistration,
   type ConsequenceEntry,
-  type PostTurnWriteSite,
   type ToolSource,
 } from "../agent/access/consequence.js";
 import { actionKind } from "../agent/approvals/actions.js";
@@ -56,18 +53,14 @@ const gatedSource = (kind: string) => `
   ];
   const registry: Record<string, ConsequenceEntry> = {
     a_read: { tier: "open", via: { kind: "none" }, reason: "read" },
-    a_gate: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, taint: "disclose", reason: "gated" },
+    a_gate: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, reason: "gated" },
   };
   ok(chk(tools, policyOf, registry).length === 0, "a total, matching registry is clean");
 
-  const untainted: Record<string, ConsequenceEntry> = {
-    a_gate: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, reason: "gated, column forgotten" },
+  const noColumn: Record<string, ConsequenceEntry> = {
+    a_gate: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, reason: "gated, no taint column" },
   };
-  firesWith(
-    chk([{ name: "a_gate", source: gatedSource("test.member") }], policyOf, untainted),
-    "declares no taint tolerance",
-    "a gated row without a taint column FAILS (the tolerance is a decision, not an omission)",
-  );
+  ok(chk([{ name: "a_gate", source: gatedSource("test.member") }], policyOf, noColumn).length === 0, "a gated row needs no taint column (OPE-2716)");
 }
 
 firesWith(
@@ -165,7 +158,7 @@ firesWith(
 }
 
 firesWith(
-  chk([{ name: "t", source: "  approval: always()," }], policyOf, { t: { tier: "gate:member", via: { kind: "eve-hitl" }, reason: "x", taint: "gate" } }),
+  chk([{ name: "t", source: "  approval: always()," }], policyOf, { t: { tier: "gate:member", via: { kind: "eve-hitl" }, reason: "x" } }),
   "OE cards only",
   "eve-hitl with a gate:* tier FAILS (banned, OPE-2340)",
 );
@@ -178,7 +171,7 @@ firesWith(
   chk(
     [{ name: "t", source: 'requestApproval({ kind: "memory.purge" });\n  approval: once(),' }],
     policyOf,
-    { t: { tier: "gate:member", via: { kind: "action-kind", action: "memory.purge" }, reason: "x", taint: "gate" } },
+    { t: { tier: "gate:member", via: { kind: "action-kind", action: "memory.purge" }, reason: "x" } },
   ),
   "OE cards only",
   "a stray native `approval:` in an action-kind tool FAILS — the row cannot make eve's wait stop holding the turn",
@@ -244,7 +237,7 @@ firesWith(
     chk(
       [{ name: "bash", source: gatedSource("test.member") }],
       policyOf,
-      { bash: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, taint: "disclose", reason: "overridden + gated" } },
+      { bash: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, reason: "overridden + gated" } },
       ["bash"],
     ).length === 0,
     "an OE-overridden framework tool is scanned as an authored file (may be gated)",
@@ -433,107 +426,13 @@ firesWith(
   }
 }
 
-{
-  const scanned = findPostTurnWriteSites("f.ts", [
-    "import { addRoutine } from '../routines/store.js';",
-    "await addRoutine(p, routine);",
-    "export function addRoutine(_p: Partition, r: Routine) {",
-    "return getOperationalStore().addRoutine(routine);",
-    "const x = notAddRoutine(1);",
-  ].join("\n"));
-  ok(scanned.length === 1, `the scan finds exactly the one bare call (got ${JSON.stringify(scanned)})`);
-  ok(scanned[0]?.line === 2 && scanned[0]?.primitive === "addRoutine", "…and reports its line + primitive, so a problem message can point at the write");
-  ok(
-    findPostTurnWriteSites("f.ts", "export function addRoutine(a, b) { return 1; }").length === 0,
-    "a file that only DECLARES a primitive produces no site — otherwise routines/store.ts would need a pin it must not have",
-  );
-
-  const armsRow: ConsequenceEntry = {
-    tier: "gate:member",
-    via: { kind: "action-kind", action: "test.member" },
-    taint: "gate",
-    postTurnSurface: "arms",
-    reason: "arms a standing instruction",
-  };
-  const toolFile = "packages/core/agent/tools/t_arm.ts";
-  const kindFile = "packages/core/agent/approvals/t-arm.ts";
-  const site = (file: string): PostTurnWriteSite => ({ file, line: 7, primitive: "addRoutine" });
-  const regs: ActionKindRegistration[] = [{ file: kindFile, line: 3, ident: "tArm", kind: "test.member" }];
-
-  ok(
-    checkPostTurnSurface([{ name: "t_arm", source: "" }], [site(kindFile)], regs, { t_arm: armsRow }, {}).length === 0,
-    "a tool whose ActionKind module writes, and which declares `arms` with the gate floor, is clean",
-  );
-
-  const { postTurnSurface: _dropped, ...silent } = armsRow;
-  firesWith(
-    checkPostTurnSurface([{ name: "t_arm", source: "" }], [site(kindFile)], regs, { t_arm: silent }, {}),
-    "declares no `postTurnSurface`",
-    "a tool that reaches a durable post-turn write while declaring NOTHING fails (fail-closed, no default)",
-  );
-  firesWith(
-    checkPostTurnSurface([{ name: "t_arm", source: "await addRoutine(p, r);" }], [], [], { t_arm: silent }, {}),
-    "declares no `postTurnSurface`",
-    "…and a tool that writes DIRECTLY in its own source is caught the same way, with no ActionKind in the path",
-  );
-
-  for (const surface of ["arms", "disarms"] as const) {
-    firesWith(
-      checkPostTurnSurface([{ name: "t_arm", source: "" }], [site(kindFile)], regs, { t_arm: { ...armsRow, postTurnSurface: surface, taint: "disclose" } }, {}),
-      "must be floored at a human decision on a tainted turn",
-      `a "${surface}" row declaring taint "disclose" fails — this is the create_skill/create_routine defect, caught at build time`,
-    );
-  }
-  for (const surface of ["templated", "none"] as const) {
-    ok(
-      checkPostTurnSurface([{ name: "t_open", source: "await addRoutine(p, r);" }], [], [], { t_open: { tier: "open", via: { kind: "none" }, postTurnSurface: surface, reason: "no model-authored instruction" } }, {}).length === 0,
-      `a "${surface}" row needs no taint floor — the classification is not a synonym for the gate`,
-    );
-  }
-
-  firesWith(
-    checkPostTurnSurface([{ name: "t_arm", source: "" }], [site("packages/core/agent/routines/helper.ts")], regs, { t_arm: armsRow }, {}),
-    "but nothing attributes it",
-    "a write site in an untiered, unpinned module fails — the scan cannot be silenced by moving the write",
-  );
-  ok(
-    checkPostTurnSurface([{ name: "t_arm", source: "" }], [site(kindFile), site("packages/core/agent/routines/helper.ts")], regs, { t_arm: armsRow }, {
-      "packages/core/agent/routines/helper.ts": "a host loop, reviewed",
-    }).length === 0,
-    "…and a pinned non-tool writer with a stated reason is accepted — the escape hatch exists and is visible",
-  );
-
-  firesWith(
-    checkPostTurnSurface([{ name: "t_arm", source: "" }], [], [], { t_arm: armsRow }, {}),
-    "reaches no durable post-turn write that this scan can see",
-    "a row declaring the column while reaching no write fails — a claim nobody can trace to code reads as coverage",
-  );
-  firesWith(
-    checkPostTurnSurface([{ name: "t_arm", source: "" }], [site(kindFile)], regs, { t_arm: armsRow }, { "packages/core/agent/gone.ts": "used to write" }),
-    "contains no post-turn write site",
-    "a pinned non-tool writer that no longer writes fails — the same reverse check NON_TOOL_APPROVAL_SITES gets",
-  );
-
-  const realArming = Object.entries(TOOL_CONSEQUENCE).filter(([, e]) => e.postTurnSurface === "arms" || e.postTurnSurface === "disarms");
-  ok(realArming.length >= 11, `the real registry classifies at least the eleven known route-creating verbs as arming/disarming (saw ${realArming.length})`);
-  ok(
-    realArming.every(([, e]) => e.taint === "gate"),
-    "every real arming/disarming row carries the taint floor — the invariant holds on the shipped table, not only on crafted ones",
-  );
-  for (const tool of ["create_skill", "create_agent", "create_routine", "edit_routine", "enable_routine"]) {
-    ok(TOOL_CONSEQUENCE[tool]?.postTurnSurface === "arms", `${tool} is declared "arms" — the OPE-419 gap, closed`);
-  }
-  ok(
-    TOOL_CONSEQUENCE.create_routine?.judgeDefer === true,
-    "create_routine KEEPS its judge-defer flip — the floor bounds the judge on tainted turns and does not overturn the shadow evidence behind the flip",
-  );
-  for (const tool of ["run_routine_now", "record_watch_state", "record_job_state", "complete_job", "report_run_failed"]) {
-    ok(TOOL_CONSEQUENCE[tool]?.postTurnSurface === "none", `${tool} answers the predicate "none" — declared and reviewed, not absent`);
-  }
-  ok(
-    Object.values(TOOL_CONSEQUENCE).filter((e) => e.postTurnSurface !== undefined).every((e) => e.reason.length > 60),
-    "every classified row carries a real reason, not a rubber stamp",
-  );
+for (const [tool, entry] of Object.entries(TOOL_CONSEQUENCE)) {
+  const keys = Object.keys(entry);
+  ok(!keys.includes("taint") && !keys.includes("postTurnSurface") && !keys.includes("judgeTaintBlind"), `${tool}: no taint, postTurnSurface or judgeTaintBlind column`);
 }
+ok(
+  TOOL_CONSEQUENCE.create_routine?.judgeDefer === true,
+  "create_routine KEEPS its judge-defer flip — the shadow evidence behind it is unchanged",
+);
 
 console.log(`✓ ${n} consequence-registry assertions passed`);

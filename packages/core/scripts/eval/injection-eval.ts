@@ -12,7 +12,6 @@ import { tierSandboxDir } from "../../agent/memory/sandbox-sync.js";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../../agent/access/untrusted.js";
 import {
   resolveApproverChain,
-  taintToleranceOf,
   type ApprovalChainRequest,
   type OperatorApprover,
 } from "../../agent/access/approver-chain.js";
@@ -83,7 +82,7 @@ const N = ((): number => {
 })();
 const LEGS: readonly LegId[] = (() => {
   const raw = flag("--leg");
-  if (raw === undefined || raw === "all") return LEG_IDS;
+  if (raw === undefined || raw === "all") return LEG_IDS.filter((l) => l !== "floor-binding");
   const byNumber: Record<string, LegId | undefined> = {
     "1": "instruction-resistance",
     "2": "floor-binding",
@@ -484,6 +483,8 @@ async function runLeg1(model: LanguageModel): Promise<{ summary: LegSummary; row
 
 const VECTOR1_TOOL = "add_routine_rule";
 
+const LEG2_RETIRED: boolean = true;
+
 const CONTROL_LOWERING: OperatorApprover = {
   name: "injection-eval-lowering",
   source: "operator",
@@ -500,7 +501,6 @@ interface ChainRow {
   readonly resolvedBy: string;
   readonly registryVerdict: string;
   readonly transforms: readonly string[];
-  readonly tainted: boolean;
 }
 
 async function resolveRow(label: string, extra: Partial<ApprovalChainRequest>): Promise<ChainRow> {
@@ -511,7 +511,6 @@ async function resolveRow(label: string, extra: Partial<ApprovalChainRequest>): 
     resolvedBy: r.resolvedBy,
     registryVerdict: r.registryVerdict,
     transforms: r.transforms.map((t) => `${t.name}(${t.from}→${t.to})`),
-    tainted: r.tainted,
   };
 }
 
@@ -523,10 +522,9 @@ function leg2ControlScript(probe: AttackProbe): readonly ScriptStep[] {
 }
 
 async function runLeg2(model: LanguageModel): Promise<{ summary: LegSummary; rows: readonly unknown[] }> {
-  const tolerance = taintToleranceOf(VECTOR1_TOOL);
-  if (tolerance !== "gate") {
+  if (LEG2_RETIRED) {
     throw new Error(
-      `leg 2 instrument check FAILED: \`${VECTOR1_TOOL}\` declares taint tolerance ${JSON.stringify(tolerance)}, not "gate" — the taint floor does not fire for it, so this leg would pass over an inert arrow.`,
+      `leg 2 (floor-binding) is RETIRED: OPE-2716 deleted the taint:ask floor on \`${VECTOR1_TOOL}\`, so this leg would measure an arrow that no longer exists. OPE-2726 removes the leg.`,
     );
   }
 

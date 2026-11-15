@@ -6,14 +6,11 @@ import {
   checkActionKindRegistry,
   checkApprovalSites,
   checkConsequenceRegistry,
-  checkPostTurnSurface,
   findActionKindRegistrations,
   findEveApprovalSites,
-  findPostTurnWriteSites,
   TOOL_CONSEQUENCE,
   type ActionKindRegistration,
   type ApprovalSite,
-  type PostTurnWriteSite,
 } from "@open-everywhere/core/agent/access/consequence.js";
 import { readAuthoredTools, readFrameworkToolNames, readSubagentToolNames } from "./read-mounted-tools.js";
 import { actionKind, registeredActionKinds } from "@open-everywhere/core/agent/approvals/actions.js";
@@ -97,13 +94,6 @@ const registrations: ActionKindRegistration[] = agentFiles.flatMap((f) =>
 );
 problems.push(...checkActionKindCoverage(registrations, kinds));
 
-const writeSites: PostTurnWriteSite[] = agentFiles.flatMap((f) => findPostTurnWriteSites(posixRelative(root, f), readFileSync(f, "utf8")));
-if (writeSites.length === 0) {
-  console.error("✗ consequence-lint: found no post-turn write sites in the agent tree — refusing to report clean against a scan that read nothing");
-  process.exit(1);
-}
-problems.push(...checkPostTurnSurface([...tools.values()], writeSites, registrations));
-
 if (problems.length > 0) {
   console.error(`✗ consequence-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));
   process.exit(1);
@@ -113,7 +103,5 @@ console.log(
   `✓ consequence-lint: total over all mounted agent tools (${tools.size} OE-authored + ${frameworkOnly} eve-framework + ${subagentNames.length} declared subagent), every declaration matching its runtime gate; ` +
     `total over the ActionKind plane too (${kinds.length} registered kinds, each either proposed by a tiered tool or pinned in NON_TOOL_ACTION_KINDS with its bar cross-checked, and all ${registrations.length} \`registerActionKind\` site(s) on disk confirmed present in that enumeration); ` +
     `and ${approvalSites.length} eve-native \`approval:\` site(s) outside agent/tools/, every one accounted for. ` +
-    `The VECTOR-1 plane is total too (OPE-419): all ${writeSites.length} durable post-turn write site(s) on disk are attributed to a tool or accounted for as non-tool, ` +
-    `every tool that reaches one declares \`postTurnSurface\`, and every "arms"/"disarms" row carries the \`taint: "gate"\` floor. ` +
     `Connector/MCP operations are a separate plane (§3 grain 2 — the verb classifier plus bundles' raise-only \`connectorOps\`), not rows in this table: their names are injected at runtime.`,
 );

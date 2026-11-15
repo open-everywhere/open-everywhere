@@ -75,13 +75,12 @@ const ctx = {
 }
 
 {
-  const res = await tool.execute({ tool: "open_pull_request", tainted: true }, ctx);
-  ok(res.trace.includes("tainted: true — supplied by the caller"), "simulate: a SUPPLIED tainted names itself supplied in the trace");
-  ok(res.trace.includes("this turn: false"), "simulate: …and the trace discloses this turn's own signal beside it");
-}
-{
-  const res = await tool.execute({ tool: "open_pull_request" }, ctx);
-  ok(res.trace.includes("tainted: false") && !res.trace.includes("supplied by the caller"), "simulate: an UNSUPPLIED tainted is a live read and is NOT marked supplied (=== absent)");
+  const shape = (tool as unknown as { inputSchema: { shape: Record<string, unknown> } }).inputSchema.shape;
+  ok(!("tainted" in shape), "simulate: the input schema has no `tainted` field");
+  const stale = await tool.execute({ tool: "open_pull_request", tainted: true }, ctx);
+  const plain = await tool.execute({ tool: "open_pull_request" }, ctx);
+  ok(!/taint/i.test(stale.trace) && !/taint/i.test(plain.trace), "simulate: the trace carries no taint line");
+  ok(stale.verdict === plain.verdict && stale.trace === plain.trace, "simulate: a stale `tainted: true` input changes nothing");
 }
 
 {

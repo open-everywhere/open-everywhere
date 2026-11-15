@@ -424,6 +424,7 @@ test:aws-output
 test:aws-sso-link
 test:aws-sso-callback
 test:approver-chain
+test:taint-free-chain
 test:halt
 test:approver-chain-flow
 test:auto-approved-reply

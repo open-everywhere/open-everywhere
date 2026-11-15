@@ -43,8 +43,9 @@ the job, another person's message, or an ask from an earlier turn. A routine fir
 One limit applies. While a job is the only one open in the work session, every worker the work
 session starts in that turn joins that job. So a second worker, started for other work in the same
 conversation, also sees that person's ask. The judge can then allow its act when the person's words
-plausibly cover it. Write rules that name the act and its arguments, not only that a person asked. On a tainted turn the taint floor still turns a judge allow on `create_routine` back into
-a card (§4).
+plausibly cover it. Write rules that name the act and its arguments, not only that a person asked. A judge allow lands on
+a turn that read untrusted content exactly as on a clean turn: no taint floor turns it back into a card
+(OPE-2716), so the rule's wording is the bound.
 
 Whether a rule covers an act is the judge **model's** reading of the rule against the act. The
 parts that do not depend on that reading are code: the citation must name a rule this scope
@@ -237,7 +238,7 @@ untouched:
 | **Arming** | Rules act only in `enforce` mode, the shipped `approvals.judgeMode`. In `shadow` or `off` they lift nothing. |
 | **The citation** | An enforced allow must cite a rule this scope carries. An allow that cites no rule, or a rule that does not exist, is an `ask`. |
 | **Deny** | A deny from any element, or from the judge itself, is absolute and skips everything. |
-| **The clamps** | Modes, the taint floor and the unattended clamp run *after* the judge. They still tighten a rule-driven allow exactly as they tighten any other. |
+| **The clamps** | Modes, the beneficiary-clicker floor and the unattended clamp run *after* the judge. They still tighten a rule-driven allow exactly as they tighten any other. |
 | **The human-only class** | Every admin act (a `gate:admin` row, such as `set_spend_limit`) needs a person's click, and so does erasing remembered facts (`purge_memory`). So does a routine whose creation card declares a standing write — `pr.open`, or a connector tool that is not a read ([declared permissions](../capabilities/proactivity-and-routines.md)). The judge is not consulted for either, so no rule can lift them, and the verdict row records `source: "human-only"`. |
 | **The connector fence** | A connector card reaches the chain only for an op whose name tiers it `write` or `destructive` (a delete reaches it since 2026-10-10), on the domain's credential, in an attended turn that read no external content, in a room with exactly one domain, with an input the card shows in full (`access/approver-chain.ts` `judgedConnectorOpTool`). An op whose name carries no recognised verb keeps its card. The card freezes the op's effective tier as `opTier`, and the judge reads it. A write-named op that an operator's `connectorOps` raise or a server's `destructiveHint` made destructive keeps its card, because the judge reads an op mostly by its name. Every other connector card keeps its old road and never meets the judge. A judge allow runs that one call, and only the judge can lift the card. |
 | **The cache** | An enforced cached allow is keyed on the act's whole arguments, the requester and `unattended` (`approval-judge.ts` `enforcedVerdictCacheKey`), so it never answers for a different act. |

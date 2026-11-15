@@ -155,6 +155,7 @@ test("enforce + a judge ALLOW auto-approves a gated verb: chain allow via judge,
 
   const { handle, cursor } = await driveProposal({ ids: "a1", prompt: "summarise the numbers every weekday morning (a1)" });
   const rows = await approvalRows(cursor);
+  expect(await taintMarksSince(cursor), "①: a clean turn wrote a taint mark").toEqual([]);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
@@ -162,7 +163,7 @@ test("enforce + a judge ALLOW auto-approves a gated verb: chain allow via judge,
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.verdict).toBe("allow");
   expect(chain!.detail?.resolvedBy).toBe("judge");
-  expect(chain!.detail?.tainted).toBe(false);
+  expect(chain!.detail).not.toHaveProperty("tainted");
   expect(chain!.detail?.unattended).toBe(false);
   expect(chain!.detail?.transforms).toEqual([]);
   expect(chain!.detail?.denyAbsolute).toBeUndefined();
@@ -201,7 +202,7 @@ test("enforce + a judge ALLOW auto-approves a gated verb: chain allow via judge,
   expect(result.output["pendingId"]).toBe(auto!.detail?.id);
 });
 
-test("the taint:ask floor clamps a judge allow: a NON-EMPTY transform ladder, and the floored ask takes the card path", async () => {
+test("a judge ALLOW on a turn that read an upload auto-approves exactly as on a clean turn: no taint floor, no transform, no card", async () => {
   await armSeams();
   await setJudgeMode("enforce");
   scrutinyAnswer = "YES";
@@ -213,36 +214,34 @@ test("the taint:ask floor clamps a judge allow: a NON-EMPTY transform ladder, an
     readUpload: true,
   });
   const rows = await approvalRows(cursor);
+  await expectTurnMarked(cursor, "②");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chain).toBeDefined();
-  expect(chain!.detail?.tainted).toBe(true);
-  expect(chain!.detail?.taintKinds).toEqual(["file-upload"]);
-
-  expect(chain!.detail?.transforms).toEqual([{ name: "taint:ask", from: "allow", to: "ask", reason: "taint-ask" }]);
-
+  expect(chain!.detail?.transforms).toEqual([]);
+  expect(chain!.detail).not.toHaveProperty("tainted");
+  expect(chain!.detail).not.toHaveProperty("taintKinds");
   expect(chain!.detail?.resolvedBy).toBe("judge");
   expect(chain!.detail?.registryVerdict).toBe("ask");
-  expect(chain!.detail?.verdict).toBe("ask");
+  expect(chain!.detail?.verdict).toBe("allow");
 
   const verdict = rows.find((r) => r.action === "approval.judge.verdict" && r.detail?.tool === "create_routine");
   expect(verdict).toBeDefined();
   expect(verdict!.detail?.verdict).toBe("allow");
-  expect(verdict!.detail?.enforcedVerdict).toBe("ask");
+  expect(verdict!.detail?.enforcedVerdict).toBe("allow");
 
-  const requested = rows.find((r) => r.action === "approval.requested");
-  expect(requested).toBeDefined();
-  expect(requested!.detail?.kind).toBe("routine.create");
-  expect(typeof requested!.detail?.id).toBe("string");
-  expect(rows.filter((r) => r.action === "approval.autoapproved").map((r) => r.detail?.kind)).toEqual([]);
-  expect(rows.filter((r) => r.action === "approval.expired").map((r) => r.detail?.cause)).toEqual([]);
+  const auto = rows.find((r) => r.action === "approval.autoapproved");
+  expect(auto).toBeDefined();
+  expect(auto!.detail?.kind).toBe("routine.create");
+  expect(auto!.detail?.resolvedBy).toBe("judge");
+  expect(rows.filter((r) => r.action === "approval.requested").map((r) => r.detail?.kind)).toEqual([]);
 
   const result = routineResult(handle);
   expect(result.isError).toBe(false);
-  expect(result.output["created"]).toBe(false);
-  expect(result.output["pending"]).toBe(true);
-  expect(result.output["autoApproved"]).toBeUndefined();
-  expect(result.output["pendingId"]).toBe(requested!.detail?.id);
+  expect(result.output["autoApproved"]).toBe(true);
+  expect(result.output["created"]).toBe(true);
+  expect(result.output["pending"]).toBe(false);
+  expect(result.output["pendingId"]).toBe(auto!.detail?.id);
 });
 
 test("judgeMode shadow: an approval.judge.shadow row records a would-be allow while the enforced verdict stays ask", async () => {
@@ -260,7 +259,7 @@ test("judgeMode shadow: an approval.judge.shadow row records a would-be allow wh
   expect(chain!.detail?.resolvedBy).toBe("registry");
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.transforms).toEqual([]);
-  expect(chain!.detail?.tainted).toBe(false);
+  expect(chain!.detail).not.toHaveProperty("tainted");
   expect(chain!.detail?.judge).toBeUndefined();
 
   const shadow = await waitForAuditRows({
@@ -279,7 +278,7 @@ test("judgeMode shadow: an approval.judge.shadow row records a would-be allow wh
   expect(shadow.detail?.resolvedBy).toBe("registry");
   expect(shadow.detail?.reasoning).toBe("shadow would have allowed this");
   expect(shadow.detail?.passes).toBe(2);
-  expect(shadow.detail?.tainted).toBe(false);
+  expect(shadow.detail).not.toHaveProperty("tainted");
 
   expect(rows.filter((r) => r.action === "approval.judge.verdict").map((r) => r.detail?.tool)).toEqual([]);
   expect(rows.some((r) => r.action === "approval.requested")).toBe(true);
@@ -319,3 +318,14 @@ test("judgeMode off: the judge transport is never called, neither judge row is w
   expect(result.isError).toBe(false);
   expect(result.output["pending"]).toBe(true);
 });
+
+async function taintMarksSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
+  return (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark");
+}
+async function expectTurnMarked(cursor: AuditCursor, label: string): Promise<void> {
+  const marks = await waitFor(async () => {
+    const m = await taintMarksSince(cursor);
+    return m.length > 0 ? m : undefined;
+  }, `${label}: the tainted turn's taint.forward mark row`, 60_000);
+  expect(marks.length).toBeGreaterThan(0);
+}

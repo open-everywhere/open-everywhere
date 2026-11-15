@@ -292,14 +292,11 @@ async function verdictRow(kind: string, where: (d: Record<string, unknown>) => b
     ["an op with no recognised verb (execute_sql)", { tool: "supabase__execute_sql", grain: "destructive", opTier: "destructive" }],
     ["an op with no recognised verb a server called a write", { tool: "notion__frobnicate_widget", opTier: "write" }],
     ["a delete on a person's own account", { ...DELETE, credential: "personal" }],
-    ["a delete in a tainted turn", DELETE, { ...ATTENDED, tainted: true }],
     ["a delete in an unattended run", DELETE, { unattended: true, domain: "team" }],
     ["a delete in a room with no single domain", DELETE, { unattended: false }],
     ["a delete whose input the card truncated", { ...DELETE, inputPreview: `${"x".repeat(600)}…` }],
     ["a person's own account", { credential: "personal" }],
     ["an unknown credential", { credential: undefined }],
-    ["a tainted turn", {}, { ...ATTENDED, tainted: true }],
-    ["a card frozen as tainted", { tainted: true }],
     ["an unattended run", {}, { unattended: true, domain: "team" }],
     ["a chain bag that never says attended", {}, { domain: "team" }],
     ["a room with no single domain", {}, { unattended: false }],
@@ -366,6 +363,18 @@ async function verdictRow(kind: string, where: (d: Record<string, unknown>) => b
     .filter((d) => d.action === "op.connector" && d.verdict === "allow" && d.tool === "notion__delete_block");
   await eq(deleteRows.length, 3, "6i connector delete: one allow row per lifted delete");
   await eq(deleteRows.every((d) => d.ruleId === "connector-delete-asked-for-here"), true, "6i connector delete: each verdict row CITES connector-delete-asked-for-here");
+
+  for (const [what, over, chain, rule] of [
+    ["a write in a tainted turn", {}, { ...ATTENDED, tainted: true }, COVERED],
+    ["a write on a card frozen as tainted", { tainted: true }, ATTENDED, COVERED],
+    ["a delete in a tainted turn", DELETE, { ...ATTENDED, tainted: true }, COVERED_DELETE],
+  ] as const) {
+    clearApprovalJudgeVerdictCache();
+    const judge = judgeAnswers(rule);
+    const r = await requestApproval(connectorOp(over, chain) as never, { postCard });
+    await eq(r.autoApproved?.resolvedBy, "judge", `6j connector, no taint fence: ${what} is lifted by the judge under a cited rule`);
+    await eq(judge.calls > 0, true, `6j connector, no taint fence: the judge model was asked about ${what}`);
+  }
   {
     const judge = judgeAnswers(COVERED);
     const before = (await readAudit({ org: "test-org" })).filter((r) => r.action === "approval.chain").length;

@@ -185,6 +185,7 @@ test("add_routine_rule, clean turn: no lowering route exists on this deployment 
     ],
   });
   const rows = await approvalRows(cursor, "add_routine_rule");
+  expect(await taintMarksSince(cursor), "①: a clean turn wrote a taint mark").toEqual([]);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "add_routine_rule");
   expect(chain).toBeDefined();
@@ -192,7 +193,7 @@ test("add_routine_rule, clean turn: no lowering route exists on this deployment 
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.verdict).toBe("ask");
   expect(chain!.detail?.resolvedBy).toBe("registry");
-  expect(chain!.detail?.tainted).toBe(false);
+  expect(chain!.detail).not.toHaveProperty("tainted");
   expect(chain!.detail?.transforms).toEqual([]);
 
   const requested = rows.find((r) => r.action === "approval.requested");
@@ -208,10 +209,8 @@ test("add_routine_rule, clean turn: no lowering route exists on this deployment 
   expect(result.output["pendingId"]).toBe(requested!.detail?.id);
 });
 
-test("add_routine_rule, tainted turn: still registry ask — taint disclosed, verdict unchanged because there is nothing to floor", async () => {
+test("add_routine_rule, tainted turn: decides as the clean turn — registry ask, card path, no taint field on the chain row", async () => {
   await armSeams();
-  const { taintToleranceOf } = await import("@open-everywhere/core/agent/access/approver-chain.js");
-  expect(taintToleranceOf("add_routine_rule")).toBe("gate");
 
   const { handle, cursor } = await driveChild({
     ids: "r2",
@@ -225,11 +224,12 @@ test("add_routine_rule, tainted turn: still registry ask — taint disclosed, ve
     ],
   });
   const rows = await approvalRows(cursor, "add_routine_rule");
+  await expectTurnMarked(cursor, "②");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "add_routine_rule");
   expect(chain).toBeDefined();
-  expect(chain!.detail?.tainted).toBe(true);
-  expect(chain!.detail?.taintKinds).toEqual(["file-upload"]);
+  expect(chain!.detail).not.toHaveProperty("tainted");
+  expect(chain!.detail).not.toHaveProperty("taintKinds");
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.verdict).toBe("ask");
   expect(chain!.detail?.resolvedBy).toBe("registry");
@@ -247,10 +247,8 @@ test("add_routine_rule, tainted turn: still registry ask — taint disclosed, ve
   expect(result.output["autoApproved"]).toBeUndefined();
 });
 
-test("remove_routine_rule, tainted turn: still registry ask — the seeded rule survives, taint disclosed", async () => {
+test("remove_routine_rule, tainted turn: decides as the clean turn — registry ask, the seeded rule survives", async () => {
   await armSeams();
-  const { taintToleranceOf } = await import("@open-everywhere/core/agent/access/approver-chain.js");
-  expect(taintToleranceOf("remove_routine_rule")).toBe("gate");
 
   const { handle, cursor } = await driveChild({
     ids: "r3",
@@ -261,11 +259,12 @@ test("remove_routine_rule, tainted turn: still registry ask — the seeded rule 
     ],
   });
   const rows = await approvalRows(cursor, "remove_routine_rule");
+  await expectTurnMarked(cursor, "③");
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "remove_routine_rule");
   expect(chain).toBeDefined();
-  expect(chain!.detail?.tainted).toBe(true);
-  expect(chain!.detail?.taintKinds).toEqual(["file-upload"]);
+  expect(chain!.detail).not.toHaveProperty("tainted");
+  expect(chain!.detail).not.toHaveProperty("taintKinds");
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.verdict).toBe("ask");
   expect(chain!.detail?.resolvedBy).toBe("registry");
@@ -293,10 +292,11 @@ test("remove_routine_rule, clean turn: still registry ask — never auto-approve
     childCalls: [{ tool: "remove_routine_rule", input: { routineId, ruleId: seededRuleId2 } }],
   });
   const rows = await approvalRows(cursor, "remove_routine_rule");
+  expect(await taintMarksSince(cursor), "④: a clean turn wrote a taint mark").toEqual([]);
 
   const chain = rows.find((r) => r.action === "approval.chain" && r.detail?.tool === "remove_routine_rule");
   expect(chain).toBeDefined();
-  expect(chain!.detail?.tainted).toBe(false);
+  expect(chain!.detail).not.toHaveProperty("tainted");
   expect(chain!.detail?.registryVerdict).toBe("ask");
   expect(chain!.detail?.verdict).toBe("ask");
   expect(chain!.detail?.resolvedBy).toBe("registry");
@@ -313,3 +313,14 @@ test("remove_routine_rule, clean turn: still registry ask — never auto-approve
   expect(result.output["pending"]).toBe(true);
   expect(result.output["autoApproved"]).toBeUndefined();
 });
+
+async function taintMarksSince(cursor: AuditCursor): Promise<Awaited<ReturnType<typeof rowsSinceCursor>>> {
+  return (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "mark");
+}
+async function expectTurnMarked(cursor: AuditCursor, label: string): Promise<void> {
+  const marks = await waitFor(async () => {
+    const m = await taintMarksSince(cursor);
+    return m.length > 0 ? m : undefined;
+  }, `${label}: the tainted turn's taint.forward mark row`, 60_000);
+  expect(marks.length).toBeGreaterThan(0);
+}

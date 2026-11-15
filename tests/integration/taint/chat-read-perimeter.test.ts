@@ -236,11 +236,11 @@ test("a member-authored chat read is FENCED but does NOT mark: an over-taint tai
   expect(rows.filter((r) => r.action === "taint.forward"), "a clean seat turn must write no forward row of either leg").toEqual([]);
 
   const chain = chainRow(rows);
-  expect(chain.detail?.tainted).toBe(false);
-  expect(chain.detail?.taintKinds ?? []).toEqual([]);
+  expect(chain.detail).not.toHaveProperty("tainted");
+  expect(chain.detail).not.toHaveProperty("taintKinds");
 });
 
-test("the same read returning a REFUTED non-member's message marks the SEAT's turn and the mark reaches the worker: a forward mark+adopt join, a tainted chain row, and no divergence row", async () => {
+test("the same read returning a REFUTED non-member's message marks the SEAT's turn and the mark reaches the worker: a forward mark+adopt join, and no divergence row", async () => {
   await armSeams();
   authoredByNonMember = true;
   nonce = `oe-marked-${randomBytes(4).toString("hex")}`;
@@ -278,7 +278,7 @@ test("the same read returning a REFUTED non-member's message marks the SEAT's tu
   for (const a of joined) expect(String(a.detail?.session)).toBe(worker);
 
   const chain = chainRow(rows);
-  expect(chain.detail?.tainted).toBe(true);
+  expect(chain.detail).not.toHaveProperty("tainted");
 
   expect(readerVerdictRows(rows)).toEqual([]);
 

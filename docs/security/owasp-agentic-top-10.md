@@ -28,14 +28,15 @@ that a deployment is "OWASP compliant", and no such status exists. Read the
 **The control.** Content from outside the trust boundary is wrapped in an
 `<untrusted_external_data>` envelope with a fresh nonce, so the model reads it as data
 (`packages/core/agent/access/untrusted.ts`). The ingestion marks the turn as tainted
-(`packages/core/agent/access/taint-enforcement.ts`), and a consequential tool on a tainted turn asks a
-human. The tool-set projection applies the same fence to connector and MCP results before each model
+(`packages/core/agent/access/taint-enforcement.ts`), and the approval card discloses that. A
+consequential tool asks a human through its registry tier on every turn; no approval verdict reads
+taint (OPE-2716). The tool-set projection applies the same fence to connector and MCP results before each model
 call (`packages/core/agent/access/untrusted-projection.ts`).
 
 - Proved by: `npm run test:untrusted`, `npm run test:untrusted-projection`, `npm run test:taint`.
 - **The gap.** An envelope tells the model what is data. It does not stop a model that ignores it,
-  which is why the taint gate exists beside it. `taint.mode` can turn the tainted-turn model off, and
-  a deployment that does so loses the ask-floor. Provider-executed web search runs at the provider, so
+  which is why the approval chain exists beside it. Since OPE-2716 that chain does not tighten on a
+  tainted turn: a lowering (a config allow, an armed judge) applies whatever the turn read. Provider-executed web search runs at the provider, so
   no in-tree seam can fence its results.
 
 ## ASI02 — Tool misuse and exploitation

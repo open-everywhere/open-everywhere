@@ -49,6 +49,7 @@ import {
   noteRoutineRunPermissionRefusal,
   peekCardPostedThisTurn,
 } from "./card-signal.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
 import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
@@ -493,7 +494,6 @@ export async function requestApproval(
       org: input.org,
       principalId: input.requestedBy,
       unattended: input.chain?.unattended ?? true,
-      ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
       ...(chainDomain != null ? { mode: approvalModeForDomain(chainDomain) } : {}),
       halted: (await resolveHalt(haltScopeFor({ org: input.org, scopeKey: input.scopeKey, domain: chainDomain, ...(input.requestedBy !== undefined ? { principalId: input.requestedBy } : {}) }))).halted,
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
@@ -572,10 +572,11 @@ export async function requestApproval(
             `The judge's reasoning is recorded in the audit log (approval.judge.verdict); if this looks wrong, a person can propose the action themselves, and the operator can review this verb's defer flip.`,
         );
       }
-      const taintedDeny = resolution.tainted && reason === "ask-unattended";
+      const proposalTainted = input.chain?.tainted ?? untrustedIngestedThisTurn();
+      const taintedDeny = proposalTainted && reason === "ask-unattended";
       const card: RoutinePermissionCardOutcome =
         reason === "ask-unattended"
-          ? await offerRoutinePermissionCardForProposal(input, { tainted: resolution.tainted, deps })
+          ? await offerRoutinePermissionCardForProposal(input, { tainted: proposalTainted, deps })
           : { clause: "" };
       if (card.armedBy !== undefined) {
         const store = getOperationalStore();

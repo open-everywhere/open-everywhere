@@ -16,7 +16,6 @@ export const COUNTED_FACT_KEYS = [
   "worker-only-thread",
   "grant-refund-cap-per-turn",
   "grant-once-max-attempts-per-turn",
-  "taint-gate-sinks",
   "env-pending-migration",
 ] as const;
 
@@ -111,13 +110,6 @@ export const COUNTED_CLAIMS: readonly CountedClaim[] = [
     fact: "grant-once-max-attempts-per-turn",
     kind: "scalar",
     pattern: String.raw`The (\w+) refund is\s+refused and the row stays spent`,
-  },
-  {
-    id: "approver-chain/taint-gate-sink-count",
-    doc: "packages/core/agent/access/approver-chain.ts",
-    fact: "taint-gate-sinks",
-    kind: "count",
-    pattern: String.raw`predicate answers gate for (\d+) rows of\n\s*// TOOL_CONSEQUENCE today`,
   },
   {
     id: "config-as-code/env-pending-migration",

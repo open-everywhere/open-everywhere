@@ -200,12 +200,7 @@ export interface ConsequenceEntry {
   readonly reason: string;
   readonly judgeDefer?: true;
   readonly judgeDeferSwitch?: JudgeDeferSwitch;
-  readonly judgeTaintBlind?: true;
-  readonly taint?: "gate" | "disclose";
-  readonly postTurnSurface?: PostTurnSurface;
 }
-
-type TaintTolerance = "gate" | "disclose";
 
 export type JudgeDeferSwitch = "personal-browser.judge";
 
@@ -221,19 +216,8 @@ export function judgeDeferSwitchStateOf(tool: string): "off" | "shadow" | "enfor
   return sw === undefined ? undefined : judgeDeferSwitchState(sw);
 }
 
-export function judgeReadsTaint(tool: string): boolean {
-  return TOOL_CONSEQUENCE[tool]?.judgeTaintBlind !== true;
-}
-
 export function judgeVerdictUncacheable(tool: string): boolean {
-  const row = TOOL_CONSEQUENCE[tool];
-  return row?.judgeTaintBlind === true || row?.judgeDeferSwitch !== undefined;
-}
-
-export type PostTurnSurface = "arms" | "disarms" | "templated" | "none";
-
-export function postTurnSurfaceFloors(surface: PostTurnSurface | undefined): boolean {
-  return surface === "arms" || surface === "disarms";
+  return TOOL_CONSEQUENCE[tool]?.judgeDeferSwitch !== undefined;
 }
 
 const open = (reason: string): ConsequenceEntry => ({ tier: "open", via: { kind: "none" }, reason });
@@ -242,10 +226,9 @@ const delegated = (helper: string, module: string, reason: string): ConsequenceE
   via: { kind: "delegated-roles", helper, module },
   reason,
 });
-const member = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, taint, reason });
-const admin = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, taint, reason });
+const member = (action: string, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, reason });
+const admin = (action: string, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, reason });
 const deferToJudge = (entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, judgeDefer: true });
-const postTurn = (surface: PostTurnSurface, entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, postTurnSurface: surface });
 
 export const RESUME_TOOL = "resume";
 
@@ -374,52 +357,52 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
 
 
-  cancel_routine: postTurn("disarms", member("routine.cancel", "gate",
-    "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms. `disarms` (OPE-419), so a tainted turn is floored at that human decision: 'cancel the routine that watches for X' is the cheapest sentence a hostile page can plant, and it is the same act remove_routine_rule has been floored for since OPE-438",
-  )),
-  edit_routine: postTurn("arms", member("routine.edit", "gate",
-    "self-modification at instruction granularity (OPE-147): rewrites the TRUSTED text a standing routine hands to unattended future fires — the create_routine rubric applied to the moment that text changes, which is the moment a human must read it. The card renders before AND after, which cancel+create could not. Confirming also bumps the routine's authority generation, revoking every standing grant keyed on the old text, so an edit can never launder approvals onto an instruction nobody read. `arms` (OPE-419): this row's own sentence — trusted text on an unwitnessed future run — IS the vector-1 predicate, so the taint floor that add_routine_rule carried for a CLAUSE now covers the whole prompt too",
-  )),
-  enable_routine: postTurn("arms", member("routine.enable", "gate",
-    "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button. `arms` (OPE-419): re-arming an unattended future run off fetched bytes is the act the floor exists for",
-  )),
-  delete_skill: postTurn("disarms", member("skill.delete", "gate",
-    "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms. `disarms` (OPE-419) for cancel_routine's reason — a runbook that says 'never do Y' is exactly what a hostile page wants gone, and deleting it changes every future turn that would have loaded it",
-  )),
-  add_routine_rule: postTurn("arms", member("routine.policy.add", "gate",
-    "self-modification at RULE granularity (OPE-141): arms a standing instruction that is rendered as TRUSTED text into every future unattended fire of one routine, indefinitely — the create_routine/edit_routine rubric axis, scoped to a clause instead of the whole prompt, and with a longer reach than either because it is never re-read by anyone once armed. Deliberately NOT a lighter gate than edit_routine despite touching less text: what makes an instruction consequential here is that an unwatched run obeys it, which is equally true of one sentence. This tool HARD-REFUSES inside a routine fire (the host-set ROUTINE_MARKER stamp), so no run can amend its own doctrine, and it is absent from JOB_WAKE_TOOLS. On a TAINTED turn it declares `taint: \"gate\"` (as every row whose `postTurnSurface` arms or disarms does; everywhere else a tainted turn merely DISCLOSES its provenance and the verdict is unchanged — OPE-307): the verdict is floored at a human decision, so no lowering can auto-approve it off fetched content and an unattended tainted run denies (OPE-438). The fire refusal plus that floor are what buy the right to render the block trusted at all. OPE-419 turned the four-name enumeration behind that floor into the DECLARED `postTurnSurface` column this row now carries, so a new tool that arms a future run joins the floor or fails the build",
-  )),
-  remove_routine_rule: postTurn("disarms", member("routine.policy.remove", "gate",
-    "behaviour-persisting removal (OPE-141): dropping a standing rule silently takes away a guardrail a human armed after an incident, and every later fire stops following it with no notice — the cancel_routine/delete_skill shape, reversible by re-adding, but a human confirms against the rule's stated reason. It carries add_routine_rule's routine-fire refusal and its tainted-turn floor for a sharper reason than symmetry: stripping the rule written to stop an attack is an easier act than authoring a malicious one. There is deliberately no edit verb — an edit is remove + add, two cards, so each wording is read on its own and no rule's provenance is mutated under a rewrite",
-  )),
+  cancel_routine: member("routine.cancel",
+    "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms. 'cancel the routine that watches for X' is the cheapest sentence a hostile page can plant, so the card stays on every turn and an unattended run denies",
+  ),
+  edit_routine: member("routine.edit",
+    "self-modification at instruction granularity (OPE-147): rewrites the TRUSTED text a standing routine hands to unattended future fires — the create_routine rubric applied to the moment that text changes, which is the moment a human must read it. The card renders before AND after, which cancel+create could not. Confirming also bumps the routine's authority generation, revoking every standing grant keyed on the old text, so an edit can never launder approvals onto an instruction nobody read. the edited prompt is trusted text on an unwitnessed future run",
+  ),
+  enable_routine: member("routine.enable",
+    "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button. re-arming an unattended future run is the act the card exists for",
+  ),
+  delete_skill: member("skill.delete",
+    "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms. For cancel_routine's reason, a runbook that says 'never do Y' is exactly what a hostile page wants gone, and deleting it changes every future turn that would have loaded it",
+  ),
+  add_routine_rule: member("routine.policy.add",
+    "self-modification at RULE granularity (OPE-141): arms a standing instruction that is rendered as TRUSTED text into every future unattended fire of one routine, indefinitely — the create_routine/edit_routine rubric axis, scoped to a clause instead of the whole prompt, and with a longer reach than either because it is never re-read by anyone once armed. Deliberately NOT a lighter gate than edit_routine despite touching less text: what makes an instruction consequential here is that an unwatched run obeys it, which is equally true of one sentence. This tool HARD-REFUSES inside a routine fire (the host-set ROUTINE_MARKER stamp), so no run can amend its own doctrine, and it is absent from JOB_WAKE_TOOLS. The fire refusal and the card a person reads are what buy the right to render the block trusted at all",
+  ),
+  remove_routine_rule: member("routine.policy.remove",
+    "behaviour-persisting removal (OPE-141): dropping a standing rule silently takes away a guardrail a human armed after an incident, and every later fire stops following it with no notice — the cancel_routine/delete_skill shape, reversible by re-adding, but a human confirms against the rule's stated reason. It carries add_routine_rule's routine-fire refusal for a sharper reason than symmetry: stripping the rule written to stop an attack is an easier act than authoring a malicious one. There is deliberately no edit verb — an edit is remove + add, two cards, so each wording is read on its own and no rule's provenance is mutated under a rewrite",
+  ),
 
-  declare_webhook: postTurn("arms", member("webhook.declare", "gate",
-    "proposes an inbound webhook in either shape: FUSED (an ingress bound to a standing instruction and a named channel, which runs unattended with that channel's full existing access on anyone's POST, indefinitely) or EMIT-ONLY (an ingress and nothing else, whose consequences are decided later by separately-approved `event` routines). Which is exactly why this tool arms nothing: approving OPENS A PULL REQUEST, and the privilege gate is the MERGE, behind branch protection + CODEOWNERS on the config repo. An unmerged PR declares nothing, and even a merged one authenticates nobody until the signing secret exists — no secret is minted, seen, or transported by this flow, so there is no disclosure axis and no private-delivery precondition (arming a `broker: \"db\"` hook's value is rotate_webhook's separate, card-gated act). Same tier and same two-step as request_access, whose flow it reuses. Declares `taint: \"gate\"`: a durable external wake path aimed at a named channel may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  )),
-  propose_mcp_server: postTurn("arms", member("mcp-server.propose", "gate",
-    "proposes ONE entry for the app's agent/access/mcp-servers.ts (OPE-2420): a vendor's hosted MCP server that, once merged, every internal person who can DM the agent reaches as themselves through their own sign-in. Approving OPENS A PULL REQUEST on the config repo; the privilege gate is the MERGE, behind branch protection and CODEOWNERS. No secret is minted, seen or transported: a static client names its secret's REF. The tool refuses an external or guest conversation, a turn that a non-member's message woke, and a turn with no acting person, before any card; a message READ during the turn from an author refuted as a non-member taints it, and while `taint.mode` is on the `gate` floor below covers that. `arms` (OPE-419): a merged entry adds connector tools to future turns. Declares `taint: \"gate\"`: the entry is researched off fetched vendor pages, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  )),
-  meeting_join: postTurn("arms", member("meeting.join", "gate",
-    "sends OE's own meeting bot into a meeting (OPE-2459): it opens a long-lived box that records other people's audio for up to the policy cap and bills meeting hours, so a person approves exactly what the card states (platform, host, cap, where the audio goes, retention). Member tier, not admin: the ADMIN decision is the merged agent/meetings/policy.ts, which lists the hosts and the organiser tenants OE may join; the click only picks this meeting. The tool refuses before any card a room or DM that is not confirmed internal, a turn a non-member's message woke, a turn with no acting person, a host or Teams tenant the policy does not list, and Zoom. `arms` (OPE-419): approving opens a long-lived box that keeps executing after the turn (a recorder in someone's meeting) and whose callbacks post into the room later, so it is post-turn execution surface; the bot's program and the recap post's structure are code, and the recap's fields come from a tool-less model over the fenced, untrusted transcript. Declares `taint: \"gate\"`: a link pulled from fetched content must never send a recorder without a person's decision, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  )),
-  propose_email_sender: postTurn("arms", member("email.sender", "gate",
-    "proposes ONE allowed sender for one of the deployment's ROOM inboxes (OPE-2440): once merged, mail from that address (or that exact domain) that passes sender authentication reaches the domain's standing seat, and replies to it are allowed. Approving OPENS A PULL REQUEST adding one line to agent/email/senders.ts; the privilege gate is the MERGE, behind branch protection and CODEOWNERS. No secret is involved. The tool refuses an external conversation (every mail from outside the org binds external), a turn a non-member's message woke and a turn with no acting person before any card, and refuses a personal inbox, the agent's own address and a rule that already admits the sender. `arms` (OPE-419): a merged sender is a durable external wake path into a seat. Declares `taint: \"gate\"`: an address pulled from fetched or forwarded content must never be admitted without a person's decision, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  )),
-  meeting_recap: postTurn("arms", member("meeting.recap", "gate",
-    "reads ONE meeting's transcript from the meeting platform itself (OPE-2471: Microsoft Teams, Google Meet or Zoom) with the ORGANISATION'S credential, which can read meetings the asking person was not in, and posts a recap of everyone's words into this thread. A person approves exactly what the card states (platform, meeting, the Meet organiser OE reads as, whose credential reads it, no stored transcript). Member tier, not admin: the ADMIN decision is the merged agent/meetings/policy.ts `native` block, which declares the org's credential per platform and the org's own tenants and Workspace domains; the click only picks this meeting. A member tier card can be approved by the asker, so the merged `native` block is the only control on whose meetings the org's credential can read, and nobody in the meeting takes part in the decision. The tool refuses before any card a room or DM that is not confirmed internal, a turn a non-member's message woke, a turn with no acting person, a platform with no declared credential, and a Teams tenant or Meet organiser domain outside the org. `arms` (OPE-419): a transcript that is not ready leaves a watch the 15-minute meeting sweep reads again, and that sweep posts into the room after the turn; the recap's fields come from a tool-less model over the fenced, untrusted transcript and the post's structure is code. Declares `taint: \"gate\"`: a link pulled from fetched content must never read a meeting transcript without a person's decision, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438)",
-  )),
+  declare_webhook: member("webhook.declare",
+    "proposes an inbound webhook in either shape: FUSED (an ingress bound to a standing instruction and a named channel, which runs unattended with that channel's full existing access on anyone's POST, indefinitely) or EMIT-ONLY (an ingress and nothing else, whose consequences are decided later by separately-approved `event` routines). Which is exactly why this tool arms nothing: approving OPENS A PULL REQUEST, and the privilege gate is the MERGE, behind branch protection + CODEOWNERS on the config repo. An unmerged PR declares nothing, and even a merged one authenticates nobody until the signing secret exists — no secret is minted, seen, or transported by this flow, so there is no disclosure axis and no private-delivery precondition (arming a `broker: \"db\"` hook's value is rotate_webhook's separate, card-gated act). Same tier and same two-step as request_access, whose flow it reuses.",
+  ),
+  propose_mcp_server: member("mcp-server.propose",
+    "proposes ONE entry for the app's agent/access/mcp-servers.ts (OPE-2420): a vendor's hosted MCP server that, once merged, every internal person who can DM the agent reaches as themselves through their own sign-in. Approving OPENS A PULL REQUEST on the config repo; the privilege gate is the MERGE, behind branch protection and CODEOWNERS. No secret is minted, seen or transported: a static client names its secret's REF. The tool refuses an external or guest conversation, a turn that a non-member's message woke, and a turn with no acting person, before any card. A merged entry adds connector tools to future turns.",
+  ),
+  meeting_join: member("meeting.join",
+    "sends OE's own meeting bot into a meeting (OPE-2459): it opens a long-lived box that records other people's audio for up to the policy cap and bills meeting hours, so a person approves exactly what the card states (platform, host, cap, where the audio goes, retention). Member tier, not admin: the ADMIN decision is the merged agent/meetings/policy.ts, which lists the hosts and the organiser tenants OE may join; the click only picks this meeting. The tool refuses before any card a room or DM that is not confirmed internal, a turn a non-member's message woke, a turn with no acting person, a host or Teams tenant the policy does not list, and Zoom. Approving opens a long-lived box that keeps executing after the turn (a recorder in someone's meeting) and whose callbacks post into the room later, so it is post-turn execution surface; the bot's program and the recap post's structure are code, and the recap's fields come from a tool-less model over the fenced, untrusted transcript.",
+  ),
+  propose_email_sender: member("email.sender",
+    "proposes ONE allowed sender for one of the deployment's ROOM inboxes (OPE-2440): once merged, mail from that address (or that exact domain) that passes sender authentication reaches the domain's standing seat, and replies to it are allowed. Approving OPENS A PULL REQUEST adding one line to agent/email/senders.ts; the privilege gate is the MERGE, behind branch protection and CODEOWNERS. No secret is involved. The tool refuses an external conversation (every mail from outside the org binds external), a turn a non-member's message woke and a turn with no acting person before any card, and refuses a personal inbox, the agent's own address and a rule that already admits the sender. A merged sender is a durable external wake path into a seat.",
+  ),
+  meeting_recap: member("meeting.recap",
+    "reads ONE meeting's transcript from the meeting platform itself (OPE-2471: Microsoft Teams, Google Meet or Zoom) with the ORGANISATION'S credential, which can read meetings the asking person was not in, and posts a recap of everyone's words into this thread. A person approves exactly what the card states (platform, meeting, the Meet organiser OE reads as, whose credential reads it, no stored transcript). Member tier, not admin: the ADMIN decision is the merged agent/meetings/policy.ts `native` block, which declares the org's credential per platform and the org's own tenants and Workspace domains; the click only picks this meeting. A member tier card can be approved by the asker, so the merged `native` block is the only control on whose meetings the org's credential can read, and nobody in the meeting takes part in the decision. The tool refuses before any card a room or DM that is not confirmed internal, a turn a non-member's message woke, a turn with no acting person, a platform with no declared credential, and a Teams tenant or Meet organiser domain outside the org. A transcript that is not ready leaves a watch the 15-minute meeting sweep reads again, and that sweep posts into the room after the turn; the recap's fields come from a tool-less model over the fenced, untrusted transcript and the post's structure is code.",
+  ),
   meeting_leave: open(
     "stops a meeting bot THIS conversation sent (OPE-2459): it removes a recorder and never adds one, so it posts no card. It finds only meetings whose origin is this conversation, so one room cannot stop another room's bot, and it refuses a room that is not confirmed internal, a non-member wake and a turn with no acting person, like meeting_join. It does not read the meetings switch, so a room can recall its bot after meetings are turned off. Audited as meeting.ended with the stopper",
   ),
-  my_browser: { ...member("browser.personal.act", "disclose",
-    "drives the person's OWN browser (OPE-2441): a persistent profile that holds their signed-in sessions, on the deployment's own sandbox backend, reachable only from their internal DM (never a channel, a group DM, a guest or an outside account, a non-member wake, or a turn with no person) and only to the hosts their DM's egress declaration admits. Reading a page is open and taints the turn. A click, a keystroke, a select or a key press on a site acts in the person's NAME on an account they are signed in to, so it escapes the conversation: the tool posts a `browser.personal.act` card for that site, into the person's DM, and the owner's own click grants it for the policy's window. Password, one-time-code and card fields are refused outright, whatever the card says. THE NEVER TIER (OPE-2672): a finance, trading or payment site (personal-browser/never-tier.ts, plus the policy's `neverHosts`) gets no card and no act at all, whoever approves, and the box refuses a submit of a form that holds a card or bank field on any site. THE JUDGE (OPE-2672): only while the policy's `judge` switch reads `enforce` (and `approvals.judgeMode` is `enforce`), a card that froze ONE step (op, Enter, key — never typed text) is defer-flipped, and a judge allow that cites an authored pre-approval rule runs that one step once and grants no window; a card with no step, and every other chain lowering (a config rule, a bypass), is refused in execute. The judge is taint-blind here (ruling B): every step follows a page read, so its rules are written at site and op grain, and the rule's author accepts that page text can steer which step is asked for. `close` and `forget` touch only the person's own browser. Declares `taint: \"disclose\"`, not gate: it arms nothing that runs after the turn, so it answers no vector-1 predicate. TAUGHT DRAFTS (OPE-2454): `drafts` shows a paused draft the person taught by demonstration (fenced, because its labels came from pages), `discard` deletes one, `rehearse` is a test run that sends the box only reads (`go` and `find`, each a GET or a page read in the signed-in session) and so needs no card, and `propose` posts the second card this tool raises, `browser.personal.propose` (pinned in NON_TOOL_ACTION_KINDS, because the policy table has one kind per tool), whose owner-only click opens a skill pull request on the config repo through the dream cycle's own path (memory/dream/skill-proposal-pr.ts): it never merges, the `memory.skillProposalPr` switch and the `loadAccessRequests().dryRun` switch govern it, and merging is the human decision that arms the skill",
-  ), judgeDeferSwitch: "personal-browser.judge", judgeTaintBlind: true },
-  my_browser_handoff: member("browser.personal.handback", "disclose",
-    "gives the person the controls of their OWN browser (OPE-2441): it takes the take-over lock FOR the person (every agent action is then refused), host-posts a private single-use watch link into their DM, and posts a `browser.personal.handback` card whose owner-only approval returns the controls to the agent. It reduces what the agent can do and adds no reach: the same DM-only, internal-only, member-wake, person-present refusal as my_browser. Declares `taint: \"disclose\"`: a tainted turn handing the controls TO the person is not a sink, and the card it raises can only hand them back, by the owner's own click. With `teach` (OPE-2454) the box also records the person's demonstration — page addresses (origin and path) and the labels of what they use, never the text they type into a field — for up to ten minutes, and the hand-back saves it as a paused draft on the person's own row; nothing runs a draft on its own. A path can carry an id or a token and a label can repeat typed text, which is why proposing a draft takes the owner's own click",
+  my_browser: { ...member("browser.personal.act",
+    "drives the person's OWN browser (OPE-2441): a persistent profile that holds their signed-in sessions, on the deployment's own sandbox backend, reachable only from their internal DM (never a channel, a group DM, a guest or an outside account, a non-member wake, or a turn with no person) and only to the hosts their DM's egress declaration admits. Reading a page is open and taints the turn. A click, a keystroke, a select or a key press on a site acts in the person's NAME on an account they are signed in to, so it escapes the conversation: the tool posts a `browser.personal.act` card for that site, into the person's DM, and the owner's own click grants it for the policy's window. Password, one-time-code and card fields are refused outright, whatever the card says. THE NEVER TIER (OPE-2672): a finance, trading or payment site (personal-browser/never-tier.ts, plus the policy's `neverHosts`) gets no card and no act at all, whoever approves, and the box refuses a submit of a form that holds a card or bank field on any site. THE JUDGE (OPE-2672): only while the policy's `judge` switch reads `enforce` (and `approvals.judgeMode` is `enforce`), a card that froze ONE step (op, Enter, key — never typed text) is defer-flipped, and a judge allow that cites an authored pre-approval rule runs that one step once and grants no window; a card with no step, and every other chain lowering (a config rule, a bypass), is refused in execute. Every step follows a page read, so the judge's rules are written at site and op grain, and the rule's author accepts that page text can steer which step is asked for. `close` and `forget` touch only the person's own browser. The card carries the taint disclosure. TAUGHT DRAFTS (OPE-2454): `drafts` shows a paused draft the person taught by demonstration (fenced, because its labels came from pages), `discard` deletes one, `rehearse` is a test run that sends the box only reads (`go` and `find`, each a GET or a page read in the signed-in session) and so needs no card, and `propose` posts the second card this tool raises, `browser.personal.propose` (pinned in NON_TOOL_ACTION_KINDS, because the policy table has one kind per tool), whose owner-only click opens a skill pull request on the config repo through the dream cycle's own path (memory/dream/skill-proposal-pr.ts): it never merges, the `memory.skillProposalPr` switch and the `loadAccessRequests().dryRun` switch govern it, and merging is the human decision that arms the skill",
+  ), judgeDeferSwitch: "personal-browser.judge" },
+  my_browser_handoff: member("browser.personal.handback",
+    "gives the person the controls of their OWN browser (OPE-2441): it takes the take-over lock FOR the person (every agent action is then refused), host-posts a private single-use watch link into their DM, and posts a `browser.personal.handback` card whose owner-only approval returns the controls to the agent. It reduces what the agent can do and adds no reach: the same DM-only, internal-only, member-wake, person-present refusal as my_browser. Handing the controls TO the person is not a sink, and the card it raises can only hand them back, by the owner's own click. With `teach` (OPE-2454) the box also records the person's demonstration — page addresses (origin and path) and the labels of what they use, never the text they type into a field — for up to ten minutes, and the hand-back saves it as a paused draft on the person's own row; nothing runs a draft on its own. A path can carry an id or a token and a label can repeat typed text, which is why proposing a draft takes the owner's own click",
   ),
-  rotate_webhook: postTurn("arms", member("webhook.rotate", "gate",
-    "mints and DISCLOSES a signing secret for an ingress a merged PR ALREADY declared — it widens nothing (no new endpoint, no new authority, no new audience), and the DISCLOSURE is the whole reason for the bar. It is also the only way a `broker: \"db\"` hook ever gets a value at all, which is what lets a declared hook go live without a redeploy; refused by name for any other broker, whose value is set outside this deployment. This is likewise the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. Whether the superseded key keeps working is the DECLARATION's own choice — a second `secretRef` entry is the overlap, ended by a PR rather than a timer — so the model cannot choose that window either. Declares `taint: \"gate\"`: minting a live signing secret may never be auto-approved off fetched content, so a tainted turn is floored at a human decision and an unattended tainted run denies (OPE-438). `arms` (OPE-419): the mint is what makes a DECLARED ingress actually able to wake this deployment, so it creates post-turn execution surface even though it declares no new endpoint",
-  )),
+  rotate_webhook: member("webhook.rotate",
+    "mints and DISCLOSES a signing secret for an ingress a merged PR ALREADY declared — it widens nothing (no new endpoint, no new authority, no new audience), and the DISCLOSURE is the whole reason for the bar. It is also the only way a `broker: \"db\"` hook ever gets a value at all, which is what lets a declared hook go live without a redeploy; refused by name for any other broker, whose value is set outside this deployment. This is likewise the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. Whether the superseded key keeps working is the DECLARATION's own choice — a second `secretRef` entry is the overlap, ended by a PR rather than a timer — so the model cannot choose that window either. The mint is what makes a DECLARED ingress actually able to wake this deployment, so it creates post-turn execution surface even though it declares no new endpoint",
+  ),
   list_webhooks: open(
     "read of this deployment's OWN declared inbound-webhook inventory: id, scheme, shape (fused vs emit-only), target, posture, read grant. It also returns `appSources` (OPE-2609): the keys of connected apps whose own events reach here (routines/ask-watch.ts `watchableEventSources`), the same list the seat block names, and no secret or credential state beyond \"reaches\". NEVER a secret ref — a pointer straight at the vault row — and tools/list_webhooks.ts projects field-by-field so a new field on the hook type cannot silently join the disclosure. The hook id IS returned and that is not a relaxation: a declared id is a short human-chosen token merged in a reviewed diff and printed in the repo, unlike the deleted chat-created class's ids which were 128 random bits and WERE the endpoint URL. Same tier and same reasoning as list_routines: membership IS the read tier for a surface's own standing behaviour",
   ),
@@ -433,24 +416,24 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "ARMS a bounded capture window on ONE hook (OPE-211), after which its deliveries' filter documents are retained until the window closes. It reaches no external host, emits nothing, mints and discloses no secret, and DISCLOSES NOTHING AT THE MOMENT IT RUNS — it changes what a later, separately-gated read can show. Gated by the hook's own `readableBy`, the SAME check applied to the read, deliberately: arming is what creates the thing reading discloses, so a weaker gate on the write than on the read would let a room cause retention it cannot itself inspect. `open` rather than gated for the same reason as its two neighbours — `readableBy` is the per-hook confidentiality decision and a tier on top would shadow it — and the retention it starts is bounded IN CODE three independent ways (a row cap, a wall-clock ceiling the caller cannot exceed, and an absolute sweep that runs regardless of both), self-expiring with no operator action. REFUSED BY NAME for `trigger-only` hooks, whose whole posture is that payloads are never retained; that refusal is the reason this tool cannot be used to route around a posture. Re-arming CLEARS the previous window, so it is also the forget action",
   ),
 
-  record_watch_state: postTurn("none", open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker")),
-  record_follow_up: postTurn("none", open("writes a follow-up note onto the calling routine's OWN row, located via the dispatcher-stamped marker")),
-  report_run_failed: postTurn("none", open(
+  record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
+  record_follow_up: open("writes a follow-up note onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
+  report_run_failed: open(
     "a fire declaring that ITS OWN run did not do its work (OPE-177) — writes `lastOutcome: failed` plus a capped one-line reason onto the calling routine's OWN row (marker-located, never a supplied id), which the three-strike fold then honours. It is the only routine verb whose entire reach is to make the routine do LESS: it cannot post, cannot widen anything, and its worst case is a routine that stops early and announces that it did. Gating it would put a confirmation in front of the honesty mechanism, on a path with no human present to click it. The declared text is model-authored and quarantined to the audit rows, never to the host-composed disable notice",
-  )),
-  record_job_state: postTurn("none", open("writes a durable-job's progress ledger onto the calling job's OWN row (OPE-55), located via the dispatcher-stamped marker; cap-bounded, aims at nobody else")),
-  complete_job: postTurn("none", open(
+  ),
+  record_job_state: open("writes a durable-job's progress ledger onto the calling job's OWN row (OPE-55), located via the dispatcher-stamped marker; cap-bounded, aims at nobody else"),
+  complete_job: open(
     "a durable job declaring ITSELF done and retiring (OPE-55) — flips its OWN row (marker-located, never a supplied id) to the terminal `done` status; reaching a job's intended done-state from inside its own run, not a guardrail removal (cancel_routine is that). Reversible by re-creating the job; audited (routine.complete)",
-  )),
-  subscribe_pr: postTurn("templated", open(
-    "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; READ-scoped credential only; the chain is hard-capped (MAX_CHECKS_PER_SUBSCRIPTION, budget carried on the routine ROW so a prompt rewrite can't reset it) and self-retires on merge/close; cancellable with cancel_routine, which stays the ONLY manual off switch (a `stop` param here would be a second, ungated removal path). `templated` rather than `arms`: the surface it creates executes after the turn, but its INSTRUCTION is `subscribePrPrompt` in scm/pr-watch's caller — a code literal a tainted turn cannot reach — and its only inputs are a repo the grant already allows and a PR number. Flooring it would card the common flow on every turn that had read a PR body, which is most of them, to protect text the model never writes. That trade is the reason for the value, and it is the row to revisit first if the prompt ever stops being code-templated",
-  )),
-  run_routine_now: postTurn("none", open(
-    "brings a routine's ALREADY-ARMED run forward (OPE-147): sets nextRunAt to now so the ordinary dispatcher tick fires it — no new fire path, no new audience, no new authority, and every consequential thing the fired turn attempts re-gates on its own. The prompt is the one a human already read on the routine.create card, and the schedule is unchanged. Host-rate-limited to one manual run per routine per dispatcher tick, audited (routine.run_now with the real requester; the resulting fire's routine.fire row carries manual:true), and it REFUSES without a verified principal — so a fire, which has none, can never re-trigger itself or another routine. `none` (OPE-419) despite naming a routine by id: it writes only `nextRunAt`, arming no new authority, no new audience and not one word of instruction — the prompt it brings forward is the one a human already read on the routine.create card",
-  )),
-  test_routine: postTurn("none", open(
+  ),
+  subscribe_pr: open(
+    "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; READ-scoped credential only; the chain is hard-capped (MAX_CHECKS_PER_SUBSCRIPTION, budget carried on the routine ROW so a prompt rewrite can't reset it) and self-retires on merge/close; cancellable with cancel_routine, which stays the ONLY manual off switch (a `stop` param here would be a second, ungated removal path). The surface it creates executes after the turn, but its INSTRUCTION is `subscribePrPrompt` in scm/pr-watch's caller — a code literal the model cannot reach — and its only inputs are a repo the grant already allows and a PR number. Flooring it would card the common flow on every turn that had read a PR body, which is most of them, to protect text the model never writes. That trade is the reason for the value, and it is the row to revisit first if the prompt ever stops being code-templated",
+  ),
+  run_routine_now: open(
+    "brings a routine's ALREADY-ARMED run forward (OPE-147): sets nextRunAt to now so the ordinary dispatcher tick fires it — no new fire path, no new audience, no new authority, and every consequential thing the fired turn attempts re-gates on its own. The prompt is the one a human already read on the routine.create card, and the schedule is unchanged. Host-rate-limited to one manual run per routine per dispatcher tick, audited (routine.run_now with the real requester; the resulting fire's routine.fire row carries manual:true), and it REFUSES without a verified principal — so a fire, which has none, can never re-trigger itself or another routine. Despite naming a routine by id, it writes only `nextRunAt`, arming no new authority, no new audience and not one word of instruction — the prompt it brings forward is the one a human already read on the routine.create card",
+  ),
+  test_routine: open(
     "runs an ALREADY-ARMED routine ONCE as a TEST (OPE-2515): it stamps a request on the row and the ordinary dispatcher tick fires it, with the routine's real reads and the real model, into a host-posted thread of its own in the routine's own room. It changes strictly LESS than run_routine_now: the fire carries a host-set test stamp, every tool outside the test-run read list is replaced by a recording stub at the toolset projection (access/test-run-fence.ts), and the connector fence refuses every connector write before a card or a declared lift (connections/connector-auth.ts). No schedule, counter or outcome moves. Rate-limited to one test per routine per dispatcher tick, audited (routine.test_requested with the real requester), and it REFUSES without a verified principal, so a fire can never start a test. `none`: it writes only the request, arming no authority, no audience and no instruction",
-  )),
+  ),
   revoke_routine_permissions: open(
     "de-escalation only (OPE-152): withdraws a routine's STANDING permissions so it goes back to drawing an approval card for every gated action, leaving the routine itself running. There is no configuration in which it widens anything — after it runs the routine can do strictly less unattended — so gating it would put a confirmation in front of the brake pedal. It still REFUSES without a verified principal, for attribution (the routine.grants_revoked audit row names who withdrew them — a PERSISTED action string, OPE-1303), and the permissions it deletes were each minted by a human's click in the first place",
   ),
@@ -520,64 +503,60 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "de-escalation only: removes an account from the CALLER'S OWN link-set, and there is no configuration in which it widens anything — afterwards that account is attributed to strictly fewer things. Gating the off switch for your own identity would mean needing someone else's permission to stop being associated with an account, which is the one direction this must never require. Refuses without an ACTING principal (so a fire cannot detach its creator's accounts) and audited (identity.link.unlinked)",
   ),
 
-  create_skill: postTurn("arms", member("skill.create", "gate",
-    "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour). `arms` (OPE-419), and the taint floor came with the declaration: the row's own words are the vector-1 predicate, and it sat outside the four-name enumeration only because the enumeration was hand-picked. A skill's text is read on a LATER turn, by a run that has no memory of the page this one fetched, which is the exact deferred-instruction shape the floor exists to stop being auto-approvable",
+  create_skill: member("skill.create",
+    "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour). A skill's text is read on a LATER turn, by a run that has no memory of the page this one fetched, which is the exact deferred-instruction shape the floor exists to stop being auto-approvable",
+  ),
+  create_routine: deferToJudge(member("routine.create",
+    "self-modification: a standing scheduled behaviour that outlives the turn. The strongest case in the table: the model AUTHORS the prompt, and the dispatcher renders it as trusted text to an unattended run, on a schedule, indefinitely. Everything add_routine_rule is floored for is true here of the whole instruction rather than one clause",
   )),
-  create_routine: postTurn("arms", deferToJudge(member("routine.create", "gate",
-    "self-modification: a standing scheduled behaviour that outlives the turn. `arms` (OPE-419) — the strongest case in the table: the model AUTHORS the prompt, and the dispatcher renders it as trusted text to an unattended run, on a schedule, indefinitely. Everything add_routine_rule is floored for is true here of the whole instruction rather than one clause",
-  ))),
-  purge_memory: deferToJudge(member("memory.purge", "disclose", "hard-to-reverse: ERASES memory across every writable silo (and the frozen args carry only the bullets' hashes — GDPR redaction)")),
-  open_pull_request: deferToJudge(member("pr.open", "disclose",
+  purge_memory: deferToJudge(member("memory.purge", "hard-to-reverse: ERASES memory across every writable silo (and the frozen args carry only the bullets' hashes — GDPR redaction)")),
+  open_pull_request: deferToJudge(member("pr.open",
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
   )),
-  request_access: deferToJudge(member("access.request", "disclose", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate")),
-  create_agent: postTurn("arms", member("agent.create", "gate",
-    "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate. `arms` (OPE-419): a resident agent instructs every future turn in its channel, which is post-turn instruction surface of the widest grain in the table. The merge gate does NOT make the floor redundant — declare_webhook opens a PR too and has carried the floor since OPE-438, because what a reviewer reads is a diff the model wrote off fetched bytes",
-  )),
-  set_state: member("ticket.set_state", "disclose", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
-  assign: member("ticket.assign", "disclose", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
-  create_ticket: member("ticket.create", "disclose",
+  request_access: deferToJudge(member("access.request", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate")),
+  create_agent: member("agent.create",
+    "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate. A resident agent instructs every future turn in its channel, which is post-turn instruction surface of the widest grain in the table. The merge gate does NOT make the floor redundant — declare_webhook opens a PR too and has carried the floor since OPE-438, because what a reviewer reads is a diff the model wrote off fetched bytes",
+  ),
+  set_state: member("ticket.set_state", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
+  assign: member("ticket.assign", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
+  create_ticket: member("ticket.create",
     "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
   ),
-  delegate_to_agent: member("a2a.delegate", "disclose",
-    "audience-expanding: a delegated task leaves this deployment for another organisation's agent (a declared A2A agent, OPE-2425), with the asker's identity attached, and that agent acts on it — so the card, which renders the agent, its host and the exact task text, is the injection gate before the model's bytes reach a system nobody in the room controls. `disclose`, as for a connector write: the delegation arms no post-turn surface, and the remote agent's own answer taints the turn that reads it. The click arms ONE more call with the same input (`approvalArmsCall`); only that call sends",
+  delegate_to_agent: member("a2a.delegate",
+    "audience-expanding: a delegated task leaves this deployment for another organisation's agent (a declared A2A agent, OPE-2425), with the asker's identity attached, and that agent acts on it — so the card, which renders the agent, its host and the exact task text, is the injection gate before the model's bytes reach a system nobody in the room controls. The remote agent's own answer taints the turn that reads it. The click arms ONE more call with the same input (`approvalArmsCall`); only that call sends",
   ),
   check_agent_task: open("read of the state and result of a task THIS conversation delegated to a declared A2A agent in the last 24 hours (OPE-2425); it sends no new task and changes nothing on the remote side, it reaches only the declared agent's host, and its result is fenced as untrusted"),
-  post_message: member("chat.post", "disclose",
+  post_message: member("chat.post",
     "audience-expanding: a message posted into a container the turn did NOT arrive in interrupts named humans who never asked, is attributed to the deployment, and cannot be un-seen after an edit — and the model authors the body, so the card (which renders the destination and the full text) is the injection gate before those bytes reach a room that never asked for them",
   ),
-  dm_person: member("chat.dm", "disclose",
+  dm_person: member("chat.dm",
     "audience-expanding: a direct message interrupts one named human who never asked, is attributed to the deployment, and cannot be un-seen after an edit — so the FIRST message to a person takes the card, which renders the recipient, the full text and the host footer, and is the injection gate before the agent starts a correspondence nobody invited. 🔴 THE CARD DOES NOT REPEAT: later messages to that same person FLOW (OPE-893 — \"ask for forgiveness, not permission ... give the user a way to make it stop\"), so from the second message on the model's bytes reach a person with no reviewer between. What remains is the operator's grant, an audit row per delivery, and the recipient's own stop (set_dm_delivery), which outranks every grant",
   ),
-  write_canvas: member("canvas.write", "disclose",
+  write_canvas: member("canvas.write",
     "durable + irreversible: a canvas outlives the conversation that asked for it, the whole room reads it, and a rewrite replaces what people wrote there — so the card quotes the start of the markdown and says how many characters it does not show (the full text rides the card's detail, as for chat.post), and is the injection gate for model-authored text",
   ),
-  update_list: member("list.write", "disclose",
+  update_list: member("list.write",
     "durable + irreversible: a List is the room's shared tracker, and an added or changed row (an owner, a status, a due date) is what people act on — so the card quotes EVERY row before it lands (a change too long for one quote refuses at propose time, so no row is cut), and is the injection gate for model-authored cells",
   ),
 
-  set_spend_limit: deferToJudge(admin("spend.set", "disclose", "self-modification + money: changes what the org will spend")),
-  clear_spend_limit: admin("spend.clear", "disclose", "reverts a spend control — same bar as setting one"),
-  revoke_connector: admin("connector.revoke", "disclose", "kills a live capability for a scope — an org-level control change"),
-  clear_connector_override: admin("connector.clear", "disclose", "re-arms a revoked capability — same bar as the revoke"),
+  set_spend_limit: deferToJudge(admin("spend.set", "self-modification + money: changes what the org will spend")),
+  clear_spend_limit: admin("spend.clear", "reverts a spend control — same bar as setting one"),
+  revoke_connector: admin("connector.revoke", "kills a live capability for a scope — an org-level control change"),
+  clear_connector_override: admin("connector.clear", "re-arms a revoked capability — same bar as the revoke"),
   halt: open(
     "THE BRAKE PEDAL (OPE-1602): stops every consequential act at an address, at once, with no card. `open` for the reason `task_cancel`, `set_dm_delivery` and `stand_down` are open, at deployment scale — a card needs an approver who is present and clicking, which during an incident is exactly what is not guaranteed, so a carded brake is a brake that works only when you do not need it. After it runs the agent can do strictly LESS: it takes no address from the model (a two-value enum; the key is derived host-side from the seat's own binding), spends nothing, sends nothing, and reads no memory. The accepted cost, stated rather than hidden: an `open` verb is one a poisoned turn can call, so a halt is a denial of service the model can trigger — loud (every seat says it is halted), visible (one `admin.halt.set` row) and reversible by an admin. The reverse direction is `resume`, which widens and is therefore carded",
   ),
-  [RESUME_TOOL]: admin(
-    "halt.resume",
-    "disclose",
+  [RESUME_TOOL]: admin("halt.resume",
     "lifts the break-glass halt — the WIDENING half of the pair, so it is carded where `halt` is not (WIDEN-SLOW / NARROW-FAST). 🔴 It is the one verb the halt arrow in access/approver-chain.ts EXEMPTS by name: it routes through the chain, which is the place the halt denies, so without the exemption a halt would deny its own lift and no chat door could reopen the deployment. The control MCP's own `resume` is the independent second door and never touches the chain",
   ),
   memory_admin_list: {
     tier: "gate:admin",
     via: { kind: "admin-roles" },
-    taint: "disclose",
     reason: "audience-expanding read: enumerates silos beyond this room's own memory — role-scoped disclosure (access/roles.ts adminControlRoles)",
   },
   memory_admin_read: {
     tier: "gate:admin",
     via: { kind: "admin-roles" },
-    taint: "disclose",
     reason: "audience-expanding read: pulls another room's silo contents into this one — role-scoped disclosure",
   },
 };
@@ -796,162 +775,6 @@ export function checkApprovalSites(
   return problems;
 }
 
-const POST_TURN_WRITE_PRIMITIVES: readonly string[] = [
-  "addRoutine",
-  "updateRoutine",
-  "updateRoutineIf",
-  "removeRoutine",
-  "putDomainSkill",
-  "deleteDomainSkill",
-  "applyAgentSpec",
-  "applyHookDeclaration",
-  "insertMcpServerEntry",
-  "mintSecretFor",
-  "openMeeting",
-  "upsertEmailSenderEntry",
-  "startNativeRecap",
-];
-
-export interface PostTurnWriteSite {
-  readonly file: string;
-  readonly line: number;
-  readonly primitive: string;
-}
-
-const NON_TOOL_POST_TURN_WRITERS: Readonly<Record<string, string>> = {
-  "packages/core/agent/operational/store.ts": "the operational-store INTERFACE that declares the routine verbs; a type signature, not a call site",
-  "packages/core/agent/schedules/dispatch.ts": "the HOST dispatcher tick. It patches nextRunAt/lastOutcome on rows it is already firing, outside any session — there is no turn here to be tainted",
-  "packages/core/agent/routines/outcome-fold.ts": "the host-side outcome fold (three-strike disable + stall detection). It reads what a fire DID and writes bookkeeping; it never authors instruction text",
-  "packages/core/agent/schedules/routine-test-run.ts": "the HOST test-run step of the dispatcher tick (OPE-2515). It clears a routine's own test request when it starts the test fire, outside any session; it never authors instruction text",
-  "packages/core/agent/schedules/routine-attention.ts": "the HOST check-in step of the dispatcher tick (OPE-2511). It records a posted Keep going card and pauses a routine nobody checked in on, outside any session; it never authors instruction text",
-  "packages/core/agent/schedules/event-reach-sweep.ts": "the HOST event-reach step of the dispatcher tick (OPE-2547). It marks an event routine whose app stopped delivering, after posting one host-composed line into its room, and clears the mark when the app delivers again, outside any session; it never authors instruction text",
-  "packages/core/agent/approvals/routine-attention.ts": "the `routine.attention` click (OPE-2511), a NON_TOOL_ACTION_KIND the dispatcher raises. A verified member click clears the check-in count or lifts the check-in's own pause; it never authors instruction text",
-  "packages/core/agent/control/writes.ts": "the control-plane MCP write surface — operator-authenticated over its own transport, not a tool the model can call in a turn",
-  "packages/core/agent/control/server.ts": "the control-plane MCP server that mounts those writes; same plane, same reason",
-  "packages/core/agent/approvals/routine-suggest.ts":
-    "the `routine.suggest` click (OPE-2662), a NON_TOOL_ACTION_KIND the host raises. When the first-day card's second routine fails to arm, it disables the needs-you watch the same click armed a moment before, so the person keeps both or neither. It only stops a routine, and it never authors instruction text",
-  "packages/core/agent/home/doing-home.ts":
-    "the person's Home tab (OPE-2522): a Pause or Remove click from the VERIFIED viewer, on a routine in their own DM that they created, delivered by the surface's signed interaction outside any session. It only stops or deletes a routine, and it never authors instruction text, so there is no turn here to be tainted",
-};
-
-const WRITE_DECL = (primitive: string): RegExp => new RegExp(`\\b(?:function|async)\\s+${primitive}\\s*\\(`);
-const WRITE_CALL = (primitive: string): RegExp => new RegExp(`(?<![\\w$.])${primitive}\\s*\\(`);
-
-export function findPostTurnWriteSites(file: string, source: string): PostTurnWriteSite[] {
-  const found: PostTurnWriteSite[] = [];
-  source.split("\n").forEach((line, i) => {
-    for (const primitive of POST_TURN_WRITE_PRIMITIVES) {
-      if (WRITE_DECL(primitive).test(line)) continue;
-      if (WRITE_CALL(primitive).test(line)) found.push({ file, line: i + 1, primitive });
-    }
-  });
-  return found;
-}
-
-function toolSlugOf(file: string): string | undefined {
-  const m = /(?:^|[\\/])agent[\\/]tools[\\/]([A-Za-z0-9_]+)\.ts$/.exec(file);
-  return m?.[1];
-}
-
-export function checkPostTurnSurface(
-  tools: readonly ToolSource[],
-  treeWriteSites: readonly PostTurnWriteSite[],
-  registrations: readonly ActionKindRegistration[],
-  registry: Readonly<Record<string, ConsequenceEntry>> = TOOL_CONSEQUENCE,
-  nonToolWriters: Readonly<Record<string, string>> = NON_TOOL_POST_TURN_WRITERS,
-): string[] {
-  const problems: string[] = [];
-
-  const toolsByKind = new Map<string, string[]>();
-  for (const [tool, entry] of Object.entries(registry)) {
-    if (entry.via.kind !== "action-kind") continue;
-    const list = toolsByKind.get(entry.via.action) ?? [];
-    list.push(tool);
-    toolsByKind.set(entry.via.action, list);
-  }
-  const kindsByFile = new Map<string, string[]>();
-  for (const r of registrations) {
-    if (r.kind === undefined) continue;
-    const list = kindsByFile.get(r.file) ?? [];
-    list.push(r.kind);
-    kindsByFile.set(r.file, list);
-  }
-
-  const reachedBy = new Map<string, PostTurnWriteSite[]>();
-  const reach = (tool: string, site: PostTurnWriteSite): void => {
-    const list = reachedBy.get(tool) ?? [];
-    if (!list.some((s) => s.file === site.file && s.line === site.line && s.primitive === site.primitive)) list.push(site);
-    reachedBy.set(tool, list);
-  };
-
-  for (const tool of tools) {
-    for (const site of findPostTurnWriteSites(`${tool.name} (tool source)`, tool.source)) reach(tool.name, site);
-  }
-
-  const attributedFiles = new Set<string>();
-  for (const site of treeWriteSites) {
-    const slug = toolSlugOf(site.file);
-    if (slug !== undefined) {
-      attributedFiles.add(site.file);
-      reach(slug, site);
-      if (registry[slug] === undefined) {
-        problems.push(
-          `${site.file}:${site.line} calls the post-turn write "${site.primitive}" from a tool file with no TOOL_CONSEQUENCE row for "${slug}" — tier it first (checkConsequenceRegistry owns that), then declare its \`postTurnSurface\``,
-        );
-      }
-      continue;
-    }
-    const kinds = kindsByFile.get(site.file) ?? [];
-    const owners = kinds.flatMap((k) => toolsByKind.get(k) ?? []);
-    if (owners.length > 0) {
-      attributedFiles.add(site.file);
-      for (const owner of owners) reach(owner, site);
-      continue;
-    }
-    if (nonToolWriters[site.file] !== undefined) {
-      attributedFiles.add(site.file);
-      continue;
-    }
-    problems.push(
-      `${site.file}:${site.line} calls the post-turn write "${site.primitive}" but nothing attributes it: the file is not an agent/tools/ file, registers no ActionKind a tiered tool proposes, and has no NON_TOOL_POST_TURN_WRITERS row (access/consequence.ts). Route the write through a tiered tool's ActionKind, or account for the file there with what actually drives it — an unattributed write is post-turn surface no \`postTurnSurface\` declaration covers`,
-    );
-  }
-
-  for (const [tool, sites] of [...reachedBy].sort(([a], [b]) => a.localeCompare(b))) {
-    const entry = registry[tool];
-    if (entry === undefined) continue;
-    const where = sites.map((s) => `${s.primitive} at ${s.file}:${s.line}`).join(", ");
-    if (entry.postTurnSurface === undefined) {
-      problems.push(
-        `tool "${tool}" reaches a durable post-turn write (${where}) but declares no \`postTurnSurface\` — answer the vector-1 predicate on its TOOL_CONSEQUENCE row ("arms" | "disarms" | "templated" | "none"; fail-closed, there is deliberately no default, because a hand-kept list of route-creating tools rots fail-open)`,
-      );
-      continue;
-    }
-    if (postTurnSurfaceFloors(entry.postTurnSurface) && entry.taint !== "gate") {
-      problems.push(
-        `tool "${tool}" declares \`postTurnSurface: "${entry.postTurnSurface}"\` but \`taint: ${entry.taint === undefined ? "(none)" : `"${entry.taint}"`}\` — a tool that ${entry.postTurnSurface === "arms" ? "arms" : "removes"} post-turn instruction/execution surface must be floored at a human decision on a tainted turn; set \`taint: "gate"\``,
-      );
-    }
-  }
-
-  for (const [tool, entry] of Object.entries(registry)) {
-    if (entry.postTurnSurface !== undefined && !reachedBy.has(tool)) {
-      problems.push(
-        `tool "${tool}" declares \`postTurnSurface: "${entry.postTurnSurface}"\` but reaches no durable post-turn write that this scan can see — either the write moved somewhere POST_TURN_WRITE_PRIMITIVES does not name (add it), or the row is stale and should drop the column (a claim nobody can trace to code reads as coverage)`,
-      );
-    }
-  }
-  for (const file of Object.keys(nonToolWriters)) {
-    if (!attributedFiles.has(file)) {
-      problems.push(
-        `NON_TOOL_POST_TURN_WRITERS accounts for "${file}" but it contains no post-turn write site — remove the entry (a stale reason reads as coverage of something that is gone)`,
-      );
-    }
-  }
-
-  return problems;
-}
-
 export interface ToolSource {
   readonly name: string;
   readonly source: string;
@@ -985,12 +808,6 @@ export function checkConsequenceRegistry(
         `tool "${tool.name}" has NO consequence declaration — add it to access/consequence.ts's TOOL_CONSEQUENCE (there is deliberately no default tier)`,
       );
       continue;
-    }
-
-    if (entry.tier !== "open" && entry.taint === undefined) {
-      problems.push(
-        `tool "${tool.name}" is gated (${entry.tier}) but declares no taint tolerance — add \`taint: "gate" | "disclose"\` to its TOOL_CONSEQUENCE row (fail-closed: an undeclared gated sink floors a tainted turn at a human decision, and that must be a decision, not an omission)`,
-      );
     }
 
     const hasPropose = REQUEST_APPROVAL.test(tool.source);

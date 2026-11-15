@@ -65,7 +65,7 @@ async function workerSession(handle: ScriptedHandle, seatSession: string | undef
   return String(child.sessionId);
 }
 
-async function routineChainRow(cursor: AuditCursor, label: string): Promise<Record<string, unknown>> {
+async function routineChainRow(cursor: AuditCursor, label: string): Promise<Record<string, unknown> & { uploadAdopted: boolean }> {
   const rows = await waitForAuditRows({
     probe: async () => {
       const got = await rowsSinceCursor(cursor, ["approval.chain"]);
@@ -75,7 +75,9 @@ async function routineChainRow(cursor: AuditCursor, label: string): Promise<Reco
     actions: ["approval.chain"],
     cursor,
   });
-  return rows.detail as Record<string, unknown>;
+  const adopted = (await rowsSinceCursor(cursor, ["taint.forward"], { limit: 200 })).filter((r) => r.detail?.leg === "adopt");
+  const uploadAdopted = adopted.some((r) => Array.isArray(r.detail?.kinds) && (r.detail!.kinds as unknown[]).includes("file-upload"));
+  return { ...(rows.detail as Record<string, unknown>), uploadAdopted };
 }
 
 const RUN_TWO_CHILD = (tag: string) => ({
@@ -94,7 +96,7 @@ const RUN_TWO_CHILD = (tag: string) => ({
   ],
 });
 
-async function continueOwnWorker(tag: string, readsUpload: boolean): Promise<Record<string, unknown>> {
+async function continueOwnWorker(tag: string, readsUpload: boolean): Promise<Record<string, unknown> & { uploadAdopted: boolean }> {
   const cursor = await auditCursor();
   const dispatched = disposeLater(
     registerScript({
@@ -159,16 +161,16 @@ test("P1 — a worker that read hostile content in run 1 is TAINTED in run 2; a 
   await armSeams();
 
   const dirty = await continueOwnWorker("ope2251p1", true);
-  expect(dirty.tainted).toBe(true);
-  expect(dirty.taintKinds).toContain("file-upload");
+  expect(dirty).not.toHaveProperty("tainted");
+  expect(dirty.uploadAdopted).toBe(true);
   expect(dirty.registryVerdict).toBe("ask");
 
   const clean = await continueOwnWorker("ope2251p1c", false);
-  expect(clean.taintKinds ?? []).not.toContain("file-upload");
+  expect(clean.uploadAdopted).toBe(false);
   expect(clean.registryVerdict).toBe("ask");
 });
 
-async function continueFromParent(tag: string, parentTainted: boolean): Promise<Record<string, unknown>> {
+async function continueFromParent(tag: string, parentTainted: boolean): Promise<Record<string, unknown> & { uploadAdopted: boolean }> {
   const cursorOne = await auditCursor();
   const turnOne = disposeLater(
     registerScript({
@@ -237,11 +239,11 @@ test("P2 — a TAINTED parent turn that continues a clean worker taints the work
   await armSeams();
 
   const tainted = await continueFromParent("ope2251p2", true);
-  expect(tainted.tainted).toBe(true);
-  expect(tainted.taintKinds).toContain("file-upload");
+  expect(tainted).not.toHaveProperty("tainted");
+  expect(tainted.uploadAdopted).toBe(true);
 
   const clean = await continueFromParent("ope2251p2c", false);
-  expect(clean.taintKinds ?? []).not.toContain("file-upload");
+  expect(clean.uploadAdopted).toBe(false);
 });
 
 test("P3 — a task opened in one room is REFUSED from another room of the same seat, and ADMITTED from its own", async () => {
