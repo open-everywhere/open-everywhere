@@ -144,7 +144,6 @@ export default windowGated("spawn_thread_session", defineTool({
         domain: own.domain,
         origin,
         parentAuthAttributes: c.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
-        tainted,
         grain: "thread",
         ...(own.windowId !== undefined ? { seatWindowId: own.windowId } : {}),
         turnId: currentTurnId(c),
@@ -190,7 +189,7 @@ export default windowGated("spawn_thread_session", defineTool({
     return {
       seatId: seatToken,
       thread: threadKey,
-      note: `Opened a thread seat to own this thread — it stays live across messages and forwards real work to its own work session with \`work\`. You keep watching the channel${tainted ? " (the brief carries this turn's untrusted-content taint forward)" : ""}.`,
+      note: `Opened a thread seat to own this thread — it stays live across messages and forwards real work to its own work session with \`work\`. You keep watching the channel.`,
     };
   },
 }), canSpawnThreadFromWindow);

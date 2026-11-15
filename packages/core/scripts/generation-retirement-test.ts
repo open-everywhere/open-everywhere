@@ -406,7 +406,7 @@ async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token:
   await drainGenerationRetirements(blind.from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING }, throwOn: "delegation" }), labelsFor });
   eq(blind.reset.length, 0, "🔴 §13: a THROWN owed-delegation read refuses the retirement — a read that proves nothing is not permission");
 
-  const taint = readFileSync(join(REPO_ROOT, "packages/core/agent/hooks/spawn-taint.ts"), "utf8");
+  const taint = readFileSync(join(REPO_ROOT, "packages/core/agent/hooks/delegation-settlement.ts"), "utf8");
   ok(
     /await noteGenerationDelegation\(deploymentOrg\(\), ownWindowToken, started\.taskId\);/.test(taint),
     "🔴 §13: the DISPATCH edge (the `task.started` handler at eve 0.70) records the owed delegation against the seat's own window token",

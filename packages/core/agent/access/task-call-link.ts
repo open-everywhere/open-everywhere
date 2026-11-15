@@ -11,7 +11,6 @@ export type TaskCallLink = {
   tool?: string;
   parentSessionId?: string;
   kind?: string;
-  taintOff?: true;
 };
 
 export function taskCallKey(taskId: string): string {
@@ -20,7 +19,7 @@ export function taskCallKey(taskId: string): string {
 
 function parseTaskCallLink(raw: string | null): TaskCallLink | undefined {
   if (raw === null) return undefined;
-  const parsed = JSON.parse(raw) as { callId?: unknown; childToken?: unknown; agentId?: unknown; tool?: unknown; parentSessionId?: unknown; kind?: unknown; taintOff?: unknown } | null;
+  const parsed = JSON.parse(raw) as { callId?: unknown; childToken?: unknown; agentId?: unknown; tool?: unknown; parentSessionId?: unknown; kind?: unknown } | null;
   const callId = parsed?.callId;
   const childToken = parsed?.childToken;
   const agentId = parsed?.agentId;
@@ -35,7 +34,6 @@ function parseTaskCallLink(raw: string | null): TaskCallLink | undefined {
     ...(typeof tool === "string" && tool.length > 0 ? { tool } : {}),
     ...(typeof parentSessionId === "string" && parentSessionId.length > 0 ? { parentSessionId } : {}),
     ...(typeof parsed?.kind === "string" && parsed.kind.length > 0 ? { kind: parsed.kind } : {}),
-    ...(parsed?.taintOff === true ? { taintOff: true as const } : {}),
   };
 }
 

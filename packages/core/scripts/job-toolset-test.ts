@@ -10,10 +10,8 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-job-toolset-"))
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN, normalizeFenceNonce } from "../agent/access/untrusted.js";
 import {
   JOB_FIRE_ATTR,
-  JOB_TAINT_ATTR,
   jobFireAttrs,
   jobFireStamped,
-  jobTaintStamped,
   resolveJobWakePosture,
   allowedOnRestrictedJobWake,
   restrictToolsetForJobWake,
@@ -371,9 +369,7 @@ ok(applyJobStateObservation("note", true).patch.jobState === "note", "the write 
   ok(!rejected.accepted && Object.keys(rejected.patch).length === 0, "a REJECTED oversize write persists nothing at all (a crashed/overlong turn never touches the row)");
 }
 
-ok(jobFireAttrs(true, false)[JOB_TAINT_ATTR] === undefined, "a job fire built with no ledger flag carries no taint stamp");
-ok(Object.keys(jobFireAttrs(false, true)).length === 0, "a NON-job routine never carries either stamp");
-ok(jobTaintStamped({ [JOB_TAINT_ATTR]: "true" }) && !jobTaintStamped({}), "jobTaintStamped is a positive-only read");
+eq(jobFireAttrs(true), { [JOB_FIRE_ATTR]: "true" }, "🔴 OPE-2720: a job fire carries the job-fire stamp ONLY — no `oe_job_tainted`");
 {
   const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
   const legacyJob = {
@@ -391,7 +387,7 @@ ok(jobTaintStamped({ [JOB_TAINT_ATTR]: "true" }) && !jobTaintStamped({}), "jobTa
   } as never;
   const attrs = routineFireAttributes(legacyJob, { team_id: "T1", channel_id: "C1" }, "channel", true);
   ok(attrs[JOB_FIRE_ATTR] === "true", "a legacy jobTainted row still fires as a job");
-  ok(attrs[JOB_TAINT_ATTR] === undefined, "🔴 OPE-2718: …and its fire carries NO job taint stamp, whatever the legacy row says");
+  ok(attrs["oe_job_tainted"] === undefined, "🔴 OPE-2718: …and its fire carries NO job taint stamp, whatever the legacy row says");
 }
 
 {

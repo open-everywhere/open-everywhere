@@ -83,7 +83,6 @@ async function forward(requestId: string, who: "U_ALICE" | "U_BOB", origin: type
     binding: bindingFor(who) as never,
     requester: { kind: "requester", principalId: who },
     nonMemberWake: false,
-    tainted: false,
     atIso: new Date().toISOString(),
   });
 }

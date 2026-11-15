@@ -8,7 +8,7 @@ import { getConfig } from "../access/config.js";
 import type { Domain } from "../memory/domain.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { domainMembershipProbe, type DomainMembershipAnswer } from "../access/domain-membership.js";
-import { taintKindsThisTurn, untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -39,7 +39,6 @@ import {
   rememberDomainQuestionOutcome,
   routedMembershipRooms,
   renderDomainQuestion,
-  taintStampFor,
   type DomainQuestionRefusal,
 } from "../channels/domain-question.js";
 
@@ -193,7 +192,7 @@ export default windowGated(
             wakeId: deliveryWakeId,
             domain: seat.domain,
             message: renderDomainQuestion({ id, domain: target, asker: principal, roomSurfaceKey: room.surfaceKey, question }),
-            authAttributes: taintStampFor(tainted, taintKindsThisTurn()),
+            authAttributes: {},
           })
         : undefined;
       if (first) await rememberDomainQuestionOutcome(store, org, id, dispatched === true, nowIso);

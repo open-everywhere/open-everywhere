@@ -11,10 +11,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import memoryHook from "../agent/hooks/memory.js";
-import spawnTaintHook from "../agent/hooks/spawn-taint.js";
+import settlementHook from "../agent/hooks/delegation-settlement.js";
 import { conflictName } from "../agent/hooks/memory.js";
 import { MAX_FLUSH_HOLDS, SETTLEMENT_FLUSH_ACTION, liveTaskIds, noteTaskDispatched, noteTaskViews } from "../agent/hooks/settlement-flush.js";
-import { adoptTaskTaint } from "../agent/hooks/spawn-taint.js";
+import { taskCallLink } from "../agent/access/task-call-link.js";
 import { installTaskWake } from "../agent/channels/task-wake.js";
 import { pendingDelegationOwing } from "../agent/access/pending-delegation-signal.js";
 import { registerConfig } from "../agent/access/config.js";
@@ -180,7 +180,7 @@ const SEEDED = "# payments brain\n- pricing is reviewed quarterly\n";
 tiers.set(tierId(BRAIN), { files: { "MEMORY.md": SEEDED }, version: 1 });
 
 const memory = memoryHook as unknown as { events: Record<string, (event: unknown, ctx: HookContext) => void | Promise<void>> };
-const taint = spawnTaintHook as unknown as { events: Record<string, (event: unknown, ctx: HookContext) => void | Promise<void>> };
+const taint = settlementHook as unknown as { events: Record<string, (event: unknown, ctx: HookContext) => void | Promise<void>> };
 
 const ORG = deploymentOrg();
 const WINDOW = formatWindowToken({ domain: "payments", windowId: workWindowId("slack_T1_C1"), generation: 3 });
@@ -606,7 +606,7 @@ console.log("9. the OPE-719 discriminator — the delete survives the awaits, an
       inheritedWakeId: undefined,
     });
     ok(installed.outcome.length > 0, "harness: installTaskWake really ran between the delete and the read");
-    await adoptTaskTaint({ taskId: "task_R", status: "completed", agentId: "ag_task_R" }, s.sessionId);
+    await taskCallLink(ORG, "task_R");
 
     eq(liveTaskIds() as string[], [], "🔴 (b) REFUTED: the delete SURVIVES both awaits — one container, mutated in place, read back by the same handler");
   });
@@ -623,7 +623,7 @@ console.log("9. the OPE-719 discriminator — the delete survives the awaits, an
       turnId: (s2.ctx as unknown as { session: { turn: { id: string } } }).session.turn.id,
       inheritedWakeId: undefined,
     });
-    await adoptTaskTaint({ taskId: "task_S", status: "working", agentId: "ag_task_S" }, s2.sessionId);
+    await taskCallLink(ORG, "task_S");
     eq(liveTaskIds() as string[], ["task_S"], "NEGATIVE CONTROL: a working view is STILL there after the same two awaits");
   });
 

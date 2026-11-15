@@ -46,7 +46,6 @@ import {
   windowEnabledFor,
   dispatchTaskWindow,
   buildRedriveReinject,
-  OE_SPAWN_TAINTED_ATTR,
   type UnifiedReceiveTarget,
 } from "../agent/channels/unified.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -432,7 +431,6 @@ try {
     domain: DOMAIN,
     origin: slackOrigin,
     parentAuthAttributes: { team_id: "T1" },
-    tainted: true,
     grain: "task",
   });
   eq(fetchCalls.length, 1, "cold dispatchTaskWindow self-calls exactly once");
@@ -442,7 +440,7 @@ try {
   eq(sent.window, { wakeId: "child-wake-1", origin: slackOrigin, addressing: "direct-mention" }, "window (wakeId+origin+owed-reply addressing) rides the hop");
   eq(sent.surfaceKey, SURFACE, "resolved window-enabled surfaceKey rides the hop");
   eq(sent.auth.attributes?.oe_grain, "task", "grain stamp rides the hop");
-  eq(sent.auth.attributes?.[OE_SPAWN_TAINTED_ATTR], "true", "taint-forward stamp rides the hop");
+  eq(sent.auth.attributes?.["oe_spawn_tainted"], undefined, "🔴 OPE-2720: no taint-forward stamp rides the hop");
   ok(
     verifyWebhookSignature(SECRET, String(fetchCalls[0].init.body), (fetchCalls[0].init.headers as Record<string, string>)[SELF_DISPATCH_SIGNATURE_HEADER]),
     "the self-call is HMAC-signed",
@@ -452,7 +450,7 @@ try {
 
   await assert.rejects(
     () =>
-      dispatchTaskWindow({ token: taskToken, message: "m", wakeId: "w", domain: DOMAIN, origin: slackOrigin, tainted: false }),
+      dispatchTaskWindow({ token: taskToken, message: "m", wakeId: "w", domain: DOMAIN, origin: slackOrigin }),
     /self-dispatch POST/,
     "cold dispatchTaskWindow throws loudly when the self-call fails",
   );
@@ -471,7 +469,7 @@ try {
   delete process.env.OE_SPAWN_DISPATCH_SECRET;
   delete process.env.OE_PUBLIC_BASE_URL;
   await assert.rejects(
-    () => dispatchTaskWindow({ token: taskToken, message: "m", wakeId: "w", domain: DOMAIN, origin: slackOrigin, tainted: false }),
+    () => dispatchTaskWindow({ token: taskToken, message: "m", wakeId: "w", domain: DOMAIN, origin: slackOrigin }),
     /OE_PUBLIC_BASE_URL/,
     "no path at all → dispatchTaskWindow throws the instructive not-configured error",
   );
@@ -511,7 +509,6 @@ try {
     wakeId: "child-wake-2",
     domain: DOMAIN,
     origin: slackOrigin,
-    tainted: false,
   });
   eq(fetchCalls.length, coldCalls, "warm dispatchTaskWindow makes NO self-call");
   eq(received.length, 2, "warm dispatch delivered in-process to the captured receive");

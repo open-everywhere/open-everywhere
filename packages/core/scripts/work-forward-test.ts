@@ -182,33 +182,24 @@ console.log("§7 a follow-up continues its task from its own room only:");
   eq(delivered.length, mid, "…and nothing reaches the work session");
 }
 
-console.log("§8 the result wake names the seat's wake, and a tainted hop keeps its classes:");
+console.log("§8 the result wake names the seat's wake, and no hop carries a taint stamp:");
 {
   const note = work.renderWorkResultNote({ requestId: "R1", taskId: "agent-x", status: "completed", dispatchWakeId: WAKE });
   ok(note.split("\n").includes(`for wake ${WAKE}`), "🔴 the result wake's host note names the seat's dispatching wake on a line of its own");
-  const taintedSend = await inSession(async () => {
+  const send = await inSession(async () => {
     const at = delivered.length;
-    await workTool.forwardWork({ message: "read it" }, seatCtx("call-8"), { ...deps(), tainted: () => true, taintKinds: () => ["file-upload"] });
-    return delivered[at]!;
+    await workTool.forwardWork({ message: "read it" }, seatCtx("call-8"), deps());
+    return delivered[at]! as unknown as Record<string, unknown>;
   });
-  eq(taintedSend.tainted, true, "a tainted seat turn forwards the bit");
-  eq(taintedSend.taintKinds, ["file-upload"], "🔴 …and the classes it reached, which the two-tier forward stamp carried to the child");
-  const { seedIfTainted } = await import("../agent/hooks/spawn-taint.js");
-  const { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR } = await import("../agent/channels/unified.js");
-  const { taintKindsThisTurn, untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
-  const seeded = (attributes: Record<string, unknown>) =>
-    inSession(() => {
-      seedIfTainted({ session: { auth: { current: { attributes } } } } as never);
-      return { tainted: untrustedIngestedThisTurn(), kinds: [...taintKindsThisTurn()] };
-    });
-  eq(seeded({ [OE_SPAWN_TAINTED_ATTR]: "true", [OE_SPAWN_TAINT_KINDS_ATTR]: "file-upload,not-a-kind" }), { tainted: true, kinds: ["file-upload"] }, "🔴 the receiving turn adopts the carried class, and the table drops a name it does not know");
-  eq(seeded({ [OE_SPAWN_TAINTED_ATTR]: "true" }), { tainted: true, kinds: [] }, "a bare stamp still taints, with no breakdown");
-  eq(seeded({ [OE_SPAWN_TAINT_KINDS_ATTR]: "file-upload" }), { tainted: false, kinds: [] }, "🔴 classes WITHOUT the taint stamp mark nothing — the bit is the seed, the classes only name it");
+  ok(!("tainted" in send) && !("taintKinds" in send), "🔴 OPE-2720: the forward carries no taint bit and no taint classes — the worker taint carriage is deleted");
+  const { workResultAttributes } = await import("../agent/channels/unified.js");
+  const resultBag = workResultAttributes({ requestId: "R1", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false });
+  ok(!("oe_spawn_tainted" in resultBag) && !("oe_spawn_taint_kinds" in resultBag), "🔴 OPE-2720: …and the result wake's bag carries no taint stamp either");
 }
 
 console.log("§9 the seat's result-wake turn foots what the work session's worker read:");
 {
-  const spawnTaint = (await import("../agent/hooks/spawn-taint.js")).default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void>> };
+  const settlement = (await import("../agent/hooks/delegation-settlement.js")).default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void>> };
   const { delegatedProvenanceKey } = await import("../agent/channels/delegated-provenance.js");
   const { connectorReadsThisTurn } = await import("../agent/channels/reply-provenance.js");
   const READS = "subagent:wrun-W:call-read-1";
@@ -218,7 +209,7 @@ console.log("§9 the seat's result-wake turn foots what the work session's worke
     channel: { kind: "unified", continuationToken: `unified:${SEAT_TOKEN}` },
     session: { id: "sess-seat", turn: { id: turn }, auth: { current: { attributes: { oe_wake_id: RESULT_WAKE, ...attrs } } } },
   });
-  const handler = spawnTaint.events["actions.requested"];
+  const handler = settlement.events["actions.requested"];
   ok(typeof handler === "function", "the seat's step edge that spends a forwarded job's reads exists");
   const spendIn = (attrs: Record<string, unknown>, turn: string) =>
     inSession(async () => {
@@ -749,7 +740,7 @@ await inSession(async () => {
   ok(await pendingOf("call-stopped", "det-stopped"), "a sign-in in a call the host then stopped");
   eq(await settleSignIn({ org: ORG, ran: true, detourId: (await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-stopped", "call-stopped"))?.detourId, file: undefined }, settleDeps), "cleared", "the stopped settlement clears the marks");
   await signIn.forgetWorkSignIn(ORG, "subagent:sess-w:call-stopped");
-  eq(await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-stopped", "call-later"), undefined, "forgetWorkSignIn removes the row (spawn-taint calls it when `ran && signInRow`, a host stop included — checked by reading)");
+  eq(await signIn.readWorkSignIn(ORG, "subagent:sess-w:call-stopped", "call-later"), undefined, "forgetWorkSignIn removes the row (the hub calls it when `ran && signInRow`, a host stop included — checked by reading)");
   eq(await resumeSignedInWork({ ...record, detourId: "det-stopped" }, { ...deps(), take: signIn.takeSignInResume }), false, "…and a later sign-in claims nothing");
 
   ok(await pendingOf("call-e3", "det-dropped"), "a third pending job");
@@ -763,8 +754,8 @@ console.log("§16 the D20 join refusals: the agent validate, and actions.request
   const { guardTaskContinuations } = await import("../agent/access/worker-continuation.js");
   const { noteContinuationTurn } = await import("../agent/access/continuation-turn-state.js");
   const { delegatedTaskDispatchAuthority } = await import("../agent/channels/task-wake.js");
-  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
-  const requested = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["actions.requested"]!;
+  const settlement = await import("../agent/hooks/delegation-settlement.js");
+  const requested = (settlement.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["actions.requested"]!;
   const { asSchema } = await import("ai");
   const { AuthKey } = (await import(pathToFileURL(join(eveDist, "dist/src/context/keys.js")).href)) as { AuthKey: unknown };
   const taskIdInput = (await import(pathToFileURL(join(eveDist, "dist/src/execution/tasks/task-id-input.js")).href)) as { withTaskIdSchema(schema: unknown): unknown };
@@ -867,8 +858,8 @@ console.log("§16 the D20 join refusals: the agent validate, and actions.request
 
 console.log("§17 a withheld settlement clears W's own ledger entry even when its seat wake is a replay:");
 {
-  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
-  const settledHook = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["task.settled"]!;
+  const settlement = await import("../agent/hooks/delegation-settlement.js");
+  const settledHook = (settlement.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["task.settled"]!;
   const { noteGenerationDelegation, generationOwedTaskIds } = await import("../agent/channels/generation-retirement.js");
   const { workSessionLedgerId } = await import("../agent/channels/work-generation.js");
   const W_TOKEN = work.workTokenForSeat(SEAT_TOKEN)!;

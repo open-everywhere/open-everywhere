@@ -263,7 +263,7 @@ console.log("§5 the delivery");
   ok(r.ok && sent.length === 1, "a DM target is sent to");
   const attrs = sent[0]!.auth.attributes ?? {};
   ok(attrs[FIRE_UNATTENDED_ATTR] === "true" && attrs[FIRE_PRINCIPAL_ATTR] === "UANA", "the fire is unattended, with the person as the ATTESTED principal");
-  ok(attrs["oe_grain"] === "standing" && attrs[OE_TAINTED_FIRE_ATTR] === "true", "the DM standing grain and the taint stamp ride the fire");
+  ok(attrs["oe_grain"] === "standing" && attrs[OE_TAINTED_FIRE_ATTR] === undefined, "the DM standing grain rides the fire, and no taint stamp does (OPE-2720)");
   ok(attrs[COVER_RECAP_MARKER_ATTR] === "2", "the marker counts the questions");
   const roomTarget = async () => ({ ok: true as const, surfaceKey: "slack/T1/C1", dispatch: { channel: {} as never, target: { channelId: "C1" }, mode: "channel" as const, attributes: {} } });
   const refused = await recap.deliverCoverRecap({ to, appAuth: { attributes: {} } as never, resolveTarget: roomTarget as never }, d);

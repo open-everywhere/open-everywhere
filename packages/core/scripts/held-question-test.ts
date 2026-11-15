@@ -51,7 +51,7 @@ const { heldQuestionNonMemberKey, nonMemberAnsweredIds } = heldQuestion;
 const { untrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const spawnTaintHook = (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
+const settlementHook = (await import("../agent/hooks/delegation-settlement.js")).default as unknown as {
   events: Record<string, (e: unknown, c: unknown) => unknown>;
 };
 const heldQuestionHook = (await import("../agent/hooks/held-question.js")).default as unknown as {
@@ -77,8 +77,8 @@ function seatCtx(turnId: string) {
 }
 
 function turnStarted(ctx: never): void {
-  spawnTaintHook.events["turn.started"]!({}, ctx);
-  spawnTaintHook.events["step.started"]!({}, ctx);
+  settlementHook.events["turn.started"]!({}, ctx);
+  settlementHook.events["step.started"]!({}, ctx);
 }
 
 const store = getOperationalStore();

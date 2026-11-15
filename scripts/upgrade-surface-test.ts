@@ -35,7 +35,7 @@ const STEP: Readonly<Record<SurfaceKind, Step>> = {
 };
 const KINDS = Object.keys(STEP) as SurfaceKind[];
 
-const BASELINE_SIZE: Readonly<Record<SurfaceKind, number>> = { table: 40, roster: 169, slackScope: 20, slackEvent: 8, env: 4, route: 51, schedule: 6 };
+const BASELINE_SIZE: Readonly<Record<SurfaceKind, number>> = { table: 40, roster: 168, slackScope: 20, slackEvent: 8, env: 4, route: 51, schedule: 6 };
 
 const linesOf = (r: ReleaseNote): readonly string[] => [r.summary, ...r.breaking, ...r.manualSteps, ...r.configMigrations.map((m) => m.description)];
 

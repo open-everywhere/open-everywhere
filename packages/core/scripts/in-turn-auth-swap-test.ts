@@ -69,15 +69,15 @@ function stepCtx(turnId: string, bag: { principal: string; wakeId?: string; deli
   } as never;
 }
 
-const spawnTaintHook = (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
+const settlementHook = (await import("../agent/hooks/delegation-settlement.js")).default as unknown as {
   events: Record<string, (e: unknown, c: unknown) => unknown>;
 };
 function turnStarted(ctx: never, _turnId: string): void {
-  spawnTaintHook.events["turn.started"]!({}, ctx);
-  spawnTaintHook.events["step.started"]!({}, ctx);
+  settlementHook.events["turn.started"]!({}, ctx);
+  settlementHook.events["step.started"]!({}, ctx);
 }
 function stepStarted(ctx: never, _turnId: string): void {
-  spawnTaintHook.events["step.started"]!({}, ctx);
+  settlementHook.events["step.started"]!({}, ctx);
 }
 
 const A = { principal: "U_A", wakeId: "wake-A-0001", deliveryId: "dlv-A-0001" };

@@ -18,7 +18,7 @@ import { DM_REFUSED_ACTION, DM_RESUME_ACTION, DM_STOP_ACTION, personAddress } fr
 import { PROVENANCE_FOOTER_PREFIX, PROVENANCE_READ_TIER, REPLY_PROVENANCE_ACTION } from "../../agent/channels/reply-provenance.js";
 import { replyCarriesSubstance } from "../../agent/channels/reply-post.js";
 import { REACTION_FEEDBACK_ACTION } from "../../agent/channels/reaction-ingest.js";
-import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/spawn-taint.js";
+import { DELEGATED_PROVENANCE_ACTION } from "../../agent/hooks/delegation-settlement.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 import { SETTINGS } from "../../agent/settings/settings.js";
 import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
@@ -8990,7 +8990,7 @@ export const SCENARIOS: readonly Scenario[] = [
           `🔴 NOT-JOINED: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row names ANY chunk of the reply (${JSON.stringify(chunkIds)}), and no reply.edit re-rendered a chunk. ` +
             `The window carries ${delegated.length} delegation row(s) (${[...new Set(delegated.map((r) => r.action))].join(", ") || "none"}) and ${carried.length} ${DELEGATED_PROVENANCE_ACTION} row(s). ` +
             "READ THOSE TWO NUMBERS FIRST — they name which half broke. Delegation rows with NO carriage row means the SETTLE never carried: check `settleDelegatedReads` in `applyTaskSettlement` " +
-            "(hooks/spawn-taint.ts), and check the worker wrote at all — the carriage joins through the task-to-call join row (`access/task-call-link.ts`), which every deployment writes whatever `taint.mode` says, so a missing row means the dispatch write was lost, the row's six-hour TTL lapsed, or the task predates OPE-2712. That settle is " +
+            "(hooks/delegation-settlement.ts), and check the worker wrote at all — the carriage joins through the task-to-call join row (`access/task-call-link.ts`), which every deployment writes whatever `taint.mode` says, so a missing row means the dispatch write was lost, the row's six-hour TTL lapsed, or the task predates OPE-2712. That settle is " +
             "FAIL-SOFT: it catches every store error and returns `found: 0`, so an operational store that is down costs the footer and looks exactly like a worker that read nothing. A carriage row " +
             "with no provenance row means the reads reached the ledger and the REPLY did not read it: check `applyReplyProvenance` at the choke point the seat posted through. NEITHER kind of row, on a turn " +
             "that read, means the ledger seam itself is unwired — `noteConnectorRead` is called at hooks/connector-audit.ts, at channels/read-reach.ts and at channels/delegated-provenance.ts, so check ALL THREE. The remaining cause is " +

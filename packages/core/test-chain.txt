@@ -107,7 +107,6 @@ test:request-claim-guard
 test:memory-write-intent
 test:memory-provenance
 test:memory-turn-provenance
-test:taint-provenance-join
 test:markdown
 test:memory-supersede
 test:graph
@@ -257,7 +256,6 @@ test:chat-nonmember-taint
 test:read-nonmember-author
 test:dated-read
 test:external-policy
-test:taint-worker-plane
 test:skill-taint-envelope
 test:describe-image
 test:post-file
@@ -320,7 +318,8 @@ test:bot-display-name
 test:session-id-codec
 test:subagent-session
 test:native-subagent
-test:background-task-taint
+test:background-task-settlement
+test:task-tool-names
 test:task-call-link
 test:parked-child-lifecycle
 test:task-wake-identity

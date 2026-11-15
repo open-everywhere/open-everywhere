@@ -57,7 +57,7 @@ const { recordRequesterIdentity } = await import("../agent/access/requester-iden
 const { renderWakeEnvelope } = await import("../agent/channels/wake-envelope.js");
 const { bindFrom } = await import("../agent/identity/binding.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const spawnTaintHook = (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
+const settlementHook = (await import("../agent/hooks/delegation-settlement.js")).default as unknown as {
   events: Record<string, (e: unknown, c: unknown) => unknown>;
 };
 
@@ -124,8 +124,8 @@ function seatCtx(turnId: string, who: { principal: string; deliveryId: string })
 }
 
 function turnStarted(ctx: never): void {
-  spawnTaintHook.events["turn.started"]!({}, ctx);
-  spawnTaintHook.events["step.started"]!({}, ctx);
+  settlementHook.events["turn.started"]!({}, ctx);
+  settlementHook.events["step.started"]!({}, ctx);
 }
 
 const askBy = (authorId: string): string =>
@@ -188,12 +188,12 @@ await contextStorage.run(new ContextContainer(), async () => {
   const ctxA = nativeCtx("turn_h4", A);
   turnStarted(ctxA);
   recordRequesterIdentity(ctxA as never, "turn_h4", askBy(A.principal));
-  await spawnTaintHook.events["actions.requested"]!(delegate("call-own"), ctxA);
+  await settlementHook.events["actions.requested"]!(delegate("call-own"), ctxA);
   const own = await delegatedRow("call-own");
   eq(own?.binding?.principalId, A.principal, "H4: with no swap the binding names A");
   eq(own?.requester, { kind: "requester", principalId: A.principal }, "H4: …and the requester names A — both halves from A's own act");
 
-  await spawnTaintHook.events["actions.requested"]!(delegate("call-swapped"), nativeCtx("turn_h4", B));
+  await settlementHook.events["actions.requested"]!(delegate("call-swapped"), nativeCtx("turn_h4", B));
   eq(await delegatedRow("call-swapped"), null, "🔴 H4 THE FIX: after a swap NO row binds B's live identity to A's ask — the child resolves no authority and fails closed");
 });
 

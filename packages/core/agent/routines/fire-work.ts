@@ -15,7 +15,6 @@ import type { OperationalStore } from "../operational/store.js";
 import { appendAudit } from "../audit/audit.js";
 import { OE_REQUESTER_CANDIDATES_ATTR, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED, type RequesterVerdict } from "../access/requester-identity.js";
 import { INVOKER_POSTURE_ATTR, resolveInvokerPosture, type InvokerPosture } from "../access/invoker-posture.js";
-import { OE_TAINTED_FIRE_ATTR } from "../access/taint-signal.js";
 import { FIRE_PRINCIPAL_ATTR, type SurfaceBinding } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import { oneAttrValue, routineManualStamped, routineMarker, routineSilentStamped } from "./routine.js";
@@ -69,11 +68,6 @@ export function fireRowOf(attributes: Readonly<Record<string, unknown>>): WorkFi
     ...(marker !== null ? { marker } : {}),
     ...(creator !== undefined && creator.length > 0 ? { creator } : {}),
   };
-}
-
-export function fireTainted(attributes: Readonly<Record<string, unknown>>): boolean {
-  const attrs = attributes as Record<string, string | readonly string[]>;
-  return oneAttrValue(attrs[OE_TAINTED_FIRE_ATTR]) === "true";
 }
 
 export function firePosture(auth: { readonly authenticator?: string; readonly principalId?: string; readonly attributes?: Readonly<Record<string, unknown>> }): InvokerPosture {
@@ -155,7 +149,6 @@ export async function forwardFireToWork(
   }
   const posture = firePosture(input.auth);
   const fire: WorkFireRow = { ...fireRowOf(fireAttributes), posture };
-  const tainted = fireTainted(fireAttributes);
   const atIso = deps.now();
   const row: WorkRequestRow = {
     requestId,
@@ -166,7 +159,6 @@ export async function forwardFireToWork(
     binding,
     requester: FIRE_REQUESTER,
     nonMemberWake: false,
-    tainted,
     atIso,
     fire,
   };
@@ -188,7 +180,6 @@ export async function forwardFireToWork(
     requester: FIRE_REQUESTER,
     nonMemberWake: false,
     seatWakeId: input.wakeId,
-    tainted,
     invokerPosture: posture,
     fireAttributes,
   };
@@ -221,7 +212,6 @@ export async function forwardFireToWork(
         workGeneration: generation.generation,
         ...(generation.runtime !== undefined ? { workRuntime: generation.runtime } : {}),
         briefLen: input.message.length,
-        tainted,
         fire: true,
         owesRoom: fire.owesRoom,
         ...(fire.marker !== undefined ? { routineId: fire.marker.id } : {}),

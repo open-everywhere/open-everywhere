@@ -28,13 +28,11 @@ import {
   renderDomainAnswerPost,
   renderDomainQuestion,
   standingWindowOfSeat,
-  taintStampFor,
   type DomainQuestionRow,
   type DomainQuestionStore,
   nonMemberWakeOf,
 } from "../agent/channels/domain-question.js";
 import { domainAnswerNote } from "../agent/tools/answer_domain_question.js";
-import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR } from "../agent/channels/unified.js";
 import { dmWindowRegistryKey, unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { dmWindowKey, formatWindowToken, taskWindowId, threadSeatWindowId, workWindowId } from "../agent/channels/window-key.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
@@ -274,13 +272,14 @@ console.log("§8 the deliveries");
   ok(renderDomainAnswerPost({ domain: LAUNCH, question: "x".repeat(400), answer: "no", declined: true }).includes("…"), "a long question is cut in the fallback post");
 }
 
-console.log("§9 taint rides");
+console.log("§9 no taint stamp rides");
 {
-  ok(Object.keys(taintStampFor(false, ["connector"])).length === 0, "an untainted hop stamps nothing");
-  const stamp = taintStampFor(true, ["connector", "made-up-class"]);
-  ok(stamp[OE_SPAWN_TAINTED_ATTR] === "true", "🔴 a tainted hop stamps the taint bit the next turn's seed reads");
-  ok(stamp[OE_SPAWN_TAINT_KINDS_ATTR] === "connector", "🔴 only admitted ingestion classes ride beside the bit");
-  ok(taintStampFor(true, [])[OE_SPAWN_TAINT_KINDS_ATTR] === undefined, "a tainted hop with no named class stamps the bit alone");
+  const { readFileSync } = await import("node:fs");
+  for (const tool of ["ask_domain", "answer_domain_question"]) {
+    const src = readFileSync(new URL(`../agent/tools/${tool}.ts`, import.meta.url), "utf8");
+    ok(/authAttributes: \{\},/.test(src), `🔴 ${tool}: the seat-to-seat hop passes an empty auth bag — no taint stamp rides it`);
+    ok(!/taintStampFor|oe_spawn_tainted|OE_SPAWN_TAINTED_ATTR/.test(src), `🔴 ${tool}: …and names no taint stamp at all`);
+  }
 }
 
 console.log("§10 the note");

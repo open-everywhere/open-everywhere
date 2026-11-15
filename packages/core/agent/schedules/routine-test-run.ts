@@ -20,7 +20,6 @@ import { describeTrigger, type Routine } from "../routines/routine.js";
 import { routineWords } from "../routines/schedule-words.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { preFireFallback, runPreFire, type PreFireOutcome } from "../routines/pre-fire.js";
-import { taintedFireAttrs } from "../access/taint-signal.js";
 import { routinePartition } from "../routines/partition.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { appendAudit } from "../audit/audit.js";
@@ -319,7 +318,6 @@ export async function dispatchTestRuns(all: readonly Routine[], args: TestRunDis
           ...args.appAuth.attributes,
           ...routineFireAttributes(r, dest!.attributes, mode, internal, creatorInternal, fireId),
           ...(arm!.attributes?.(dest!, root) ?? {}),
-          ...taintedFireAttrs(plan !== undefined ? !plan.redacted || pre.tainted : pre.tainted),
           ...testRunAttrs(test, root),
         },
       };

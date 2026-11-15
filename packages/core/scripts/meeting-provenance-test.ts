@@ -20,7 +20,7 @@ const { classifyIngestion } = await import("../agent/access/taint-tiers.js");
 const { untrustedIngestedThisTurn, taintKindsThisTurn } = await import("../agent/access/taint-signal.js");
 const { authoredModelProjectionFor } = await import("../agent/access/window-gated.js");
 const { deploymentOrg } = await import("../agent/identity/binding.js");
-const { markIfTurnLocusCarriesMeetingPost } = await import("../agent/hooks/spawn-taint.js");
+const { markIfTurnLocusCarriesMeetingPost } = await import("../agent/hooks/taint-turn.js");
 const meetingSweep = (await import("../agent/schedules/meeting-sweep.js")).default as unknown as { run: () => Promise<void> };
 await import("../agent/tools/read_thread.js");
 import type { OperationalStore } from "../agent/operational/store.js";

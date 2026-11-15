@@ -191,7 +191,7 @@ function harness(opts: { verified?: boolean; parsed?: InboundEmail | null; seen?
   ok(out.kind === "admitted" && out.route === "dm" && out.tainted, "a declared person's forward reaches their DM seat, tainted");
   const p = h.dms[0]!;
   ok(p.surfaceKey.startsWith("email/agent.acme.com/dm-rowan-"), "the DM dispatch carries the per-person DM key");
-  ok(p.auth.attributes.oe_tainted_fire === "true", "the forward stamps the opening-prompt taint carriage");
+  ok(p.auth.attributes.oe_tainted_fire === undefined, "🔴 OPE-2720: the forward stamps NO opening-prompt taint carriage — the remainder rides inside the untrusted fence");
   ok(p.auth.attributes[OE_NON_REQUESTER_ATTR] === "email-remainder", "🔴 the forward stamps the non-requester carriage, which does not depend on taint (OPE-2713)");
   ok(p.trigger.author === "Rowan Hale", "the trigger names the declared person");
   ok(!p.trigger.body.includes("IGNORE PREVIOUS"), "the forwarded text is not in the trigger body");

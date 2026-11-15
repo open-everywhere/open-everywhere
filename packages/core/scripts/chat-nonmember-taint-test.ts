@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { stampNonMemberChatAuth, OE_CHAT_NONMEMBER_ATTR } from "../agent/identity/non-member.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
-import { TAINT_SEED_ATTRS, openTaintTurn } from "../agent/hooks/spawn-taint.js";
+import { openTaintTurn } from "../agent/hooks/taint-turn.js";
 import { classifyIngestion } from "../agent/access/taint-tiers.js";
 import { decideIngestion } from "../agent/access/taint-enforcement.js";
 
@@ -23,8 +23,6 @@ function eq<T>(actual: T, expected: T, msg: string): void {
 }
 
 console.log("4. the carriage:");
-
-ok(TAINT_SEED_ATTRS.includes(OE_CHAT_NONMEMBER_ATTR), "the attribute is in TAINT_SEED_ATTRS — the ONE thing that connects the stamp to the consumer");
 
 class FakeSession {
   private readonly store = new Map<string, unknown>();
@@ -89,6 +87,11 @@ await eveContextStorage().run(new FakeSession(), async () => {
 await eveContextStorage().run(new FakeSession(), async () => {
   boundary("turn-1", { [OE_CHAT_NONMEMBER_ATTR]: ["true"] });
   ok(untrustedIngestedThisTurn() === true, "the ARRAY spelling eve can hand back also seeds — the same collapse every other stamp reader makes");
+});
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  boundary("turn-1", { oe_spawn_tainted: "true", oe_spawn_taint_kinds: "connector", oe_tainted_fire: "true", oe_job_tainted: "true", oe_parent_turn_tainted: "sess-p|turn_0" });
+  ok(untrustedIngestedThisTurn() === false, "🔴 OPE-2720: a bag that still carries every retired taint stamp opens a CLEAN turn — the stamps are ignored, and only the guest seed is left");
 });
 
 console.log("5. the table is untouched:");

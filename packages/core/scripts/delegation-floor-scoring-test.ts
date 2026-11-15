@@ -23,7 +23,7 @@ const { FLOOR_ASKS, DELEGATION_TOOL_NAME, scoreFloorTurn, summariseFloorRun } = 
 const { DELEGATION_FLOOR, renderWorkerCapabilityIndex } = await import("../agent/access/worker-capabilities.js");
 const { WORKER_ONLY_TOOLS_STANDING } = await import("../agent/access/worker-capability-index.generated.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+const hub = await import("../agent/hooks/delegation-settlement.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
@@ -84,7 +84,7 @@ type BindableContext = import("../agent/identity/binding.js").BindableContext;
   const { ContextContainer, contextStorage } = await import(absUrl("dist/src/context/container.js"));
   const { SessionKey } = await import(absUrl("dist/src/context/keys.js"));
 
-  const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+  const hooks = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
   const dispatchHook = hooks["action.result"]!;
   const startedHook = hooks["task.started"]!;
   const turnStarted = hooks["turn.started"]!;

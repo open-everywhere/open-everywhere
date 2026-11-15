@@ -18,7 +18,7 @@ import {
 } from "../agent/access/taint-enforcement.js";
 import { ingestUntrusted, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
-import { openTaintTurn } from "../agent/hooks/spawn-taint.js";
+import { openTaintTurn } from "../agent/hooks/taint-turn.js";
 import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
 import { renderContext } from "../agent/channels/context-render.js";
 import { subscribePrPrompt } from "../agent/tools/subscribe_pr.js";
@@ -461,7 +461,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   eq(tier({ kind: "webhook", label: "list_recent_events" }), "untrusted", "list_recent_events declares `webhook` — a stored delivery is still a delivery");
   eq(tier({ kind: "webhook", label: "read_webhook_history" }), "untrusted", "read_webhook_history declares `webhook` — same kind as the live dispatch path");
   eq(tier({ kind: "routine-event", label: "read_routine_transcript" }), "untrusted", "read_routine_transcript declares `routine-event` — the loosest fit in the sweep, and every candidate kind agrees on the verdict");
-  eq(tier({ kind: "delegation-result", label: "task_result" }), "untrusted", "delegation-result stays untrusted even though no site has declared it since OPE-1145 item 2 — the switch stays total and keeps the safe default; a worker's real taint now travels through access/subagent-taint.ts's durable marker instead");
+  eq(tier({ kind: "delegation-result", label: "task_result" }), "untrusted", "delegation-result stays untrusted even though no site has declared it since OPE-1145 item 2 — the switch stays total and keeps the safe default; no worker's taint reaches its parent since OPE-2720 deleted the return leg");
   eq(tier({ kind: "chat-message", label: "wake-envelope:slack" }), "trusted", "the render-time chat sites declare `chat-message` — TRUSTED, which is why `taintsToday: false` is silence and not a divergence");
 }
 

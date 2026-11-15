@@ -1,12 +1,10 @@
 import { createHash } from "node:crypto";
 import { domainForChannel, type Domain } from "../memory/domain.js";
 import type { DomainMembershipRoom } from "../access/domain-membership.js";
-import { INGESTION_KINDS } from "../access/taint-tiers.js";
 import { nonMemberWakeFromAuth, type MemberPlaneAuthLike } from "../access/member-plane.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { delegatedNonMemberWakeThisTurn } from "../identity/delegated-binding.js";
 import type { BindableContext } from "../identity/binding.js";
-import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR } from "./unified.js";
 import { isUnifiedWakeOrigin, type UnifiedWakeOrigin } from "./unified-window.js";
 import { grainUsesUnifiedWindow, supervisorGrainFor, dmWindowRegistryKey } from "./unified-supervisor.js";
 import { dmAnchorDomain, dmAnchorSurfaceForToken, isDmAnchorWindowToken, isTaskWindowId, isThreadSeatWindowId, isWorkWindowId, parseWindowToken } from "./window-key.js";
@@ -408,8 +406,3 @@ export function renderDomainAnswerPost(input: { readonly domain: Pick<Domain, "n
   return [input.declined ? `The ${label} domain did not answer “${asked}”:` : `From the ${label} domain, on “${asked}”:`, "", input.answer.trim()].join("\n");
 }
 
-export function taintStampFor(tainted: boolean, kinds: readonly string[]): Record<string, string> {
-  if (!tainted) return {};
-  const named = [...new Set(kinds.filter((k) => (INGESTION_KINDS as readonly string[]).includes(k)))];
-  return { [OE_SPAWN_TAINTED_ATTR]: "true", ...(named.length > 0 ? { [OE_SPAWN_TAINT_KINDS_ATTR]: named.join(",") } : {}) };
-}

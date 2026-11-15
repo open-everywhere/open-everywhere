@@ -9,7 +9,7 @@ import { READ_ADAPTERS } from "@open-everywhere/core/agent/channels/channel-read
 import { bindFrom, deploymentOrg, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { markMeetingPostTarget, markMeetingPostId, turnLocusCarriesMeetingPost, TOP_LEVEL_MARK_TTL_MS } from "@open-everywhere/core/agent/meetings/provenance.js";
 import { untrustedIngestedThisTurn } from "@open-everywhere/core/agent/access/taint-signal.js";
-import { markIfTurnLocusCarriesMeetingPost } from "@open-everywhere/core/agent/hooks/spawn-taint.js";
+import { markIfTurnLocusCarriesMeetingPost } from "@open-everywhere/core/agent/hooks/taint-turn.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { buildDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 import { discordReadAdapter } from "@open-everywhere/provider-discord/agent/channels/discord-read.js";

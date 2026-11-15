@@ -235,10 +235,6 @@ export async function collectRoutineInputs(input: {
 
 export const COLLECTED_BLOCK_TAG = "[collected]";
 
-export function collectionCarriesData(results: readonly CollectedInput[]): boolean {
-  return results.some((r) => r.ok);
-}
-
 export function renderCollectedBlock(results: readonly CollectedInput[]): string {
   if (results.length === 0) return "";
   const lines: string[] = [

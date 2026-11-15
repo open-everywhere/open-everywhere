@@ -869,9 +869,9 @@ both modes. `taint.mode` governs what the *host* does with a read, never what th
 The approval system itself is untouched — cards, modes, the floor and the deny-invariant all work
 exactly as documented.
 
-**What it costs you, stated plainly.** The launder chain is open: an untrusted read followed by a
-delegation hands a child a clean signal, and there is no seam to forward the parent's taint into it.
-Those are real, and they are why the shipped default is `on`. (Arming a standing instruction in
+**What it costs you, stated plainly.** `off` drops the per-turn mark on the turn that read the
+content. Since OPE-2720 an untrusted read followed by a delegation hands the child a clean signal in
+both modes, because the worker taint carriage is deleted, so that is no longer a cost of `off`. (Arming a standing instruction in
 the turn that ingested the text asking for it is no longer a cost of `off`: since OPE-2716 the chain
 treats that turn as a clean one in both modes.)
 

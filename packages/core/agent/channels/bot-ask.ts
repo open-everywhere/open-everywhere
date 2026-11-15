@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { isUnifiedWakeOrigin, mintWakeId, type UnifiedWakeOrigin } from "./unified-window.js";
-import { dmSeatForSurface, taintStampFor } from "./domain-question.js";
+import { dmSeatForSurface } from "./domain-question.js";
 import { dispatchSeatMessage } from "./unified.js";
 import { postUnifiedReply } from "./unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -283,8 +283,8 @@ function renderBotReplyPost(input: { readonly row: BotAskRow; readonly reply: st
   return [`${botAskBotName(input.row)} replied to your ask:`, "", cut(input.reply, BOT_ASK_REPLY_MAX_CHARS).text].join("\n");
 }
 
-function botReplyTaintStamp(): Record<string, string> {
-  return { ...taintStampFor(true, ["chat-message"]), [BOT_ASK_RELAY_ATTR]: "true" };
+function botReplyRelayStamp(): Record<string, string> {
+  return { [BOT_ASK_RELAY_ATTR]: "true" };
 }
 
 export type BotReplyRoute = "dm-seat" | "posted" | "failed";
@@ -310,7 +310,7 @@ export async function relayBotReply(edges: BotReplyRelayEdges, input: { readonly
         wakeId,
         domain: seat.domain,
         message: renderBotReplyForDmSeat({ row, reply: input.reply, slot: input.slot, wakeId }),
-        authAttributes: botReplyTaintStamp(),
+        authAttributes: botReplyRelayStamp(),
       })
       .catch(() => false);
     if (woke) route = "dm-seat";

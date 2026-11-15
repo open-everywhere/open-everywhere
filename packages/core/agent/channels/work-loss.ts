@@ -134,7 +134,6 @@ async function wakeSeatWithFailedJob(input: {
         requester: row.requester,
         nonMemberWake: row.nonMemberWake,
         requestId,
-        tainted: row.tainted,
       });
     },
   });

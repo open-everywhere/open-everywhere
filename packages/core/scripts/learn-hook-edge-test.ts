@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-credentials-config-pr
+
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

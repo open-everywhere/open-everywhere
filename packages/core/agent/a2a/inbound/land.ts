@@ -1,7 +1,6 @@
 import type { RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../../access/config.js";
 import { ingestUntrusted } from "../../access/untrusted.js";
-import { taintedFireAttrs } from "../../access/taint-signal.js";
 import { INVOKER_POSTURE_ATTR } from "../../access/invoker-posture.js";
 import { deploymentOrg } from "../../identity/binding.js";
 import { a2aInboundFireAttributes } from "../../routines/fire-auth.js";
@@ -65,7 +64,7 @@ export function inboundFireAuth(caller: A2aInboundCaller, taskId: string): { aut
     authenticator: "a2a-inbound",
     principalType: "service",
     principalId: `a2a:${caller.name}`,
-    attributes: a2aInboundFireAttributes(a2aInboundIdentityAttributes(caller.name, taskId), { attr: INVOKER_POSTURE_ATTR, value: "untrusted-remote" }, taintedFireAttrs(true)),
+    attributes: a2aInboundFireAttributes(a2aInboundIdentityAttributes(caller.name, taskId), { attr: INVOKER_POSTURE_ATTR, value: "untrusted-remote" }),
   };
 }
 

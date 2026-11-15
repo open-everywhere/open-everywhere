@@ -157,7 +157,7 @@ test("a Teams seat's SECOND turn reads the first turn, its worker reads only the
   expect(String(started.detail?.call ?? ""), "the row carries no call id, so it is not a dispatch record").not.toBe("");
   expect(
     started.detail?.continuation,
-    "`continuation` is not `false` on a first dispatch — a fresh dispatch was recorded as a continuation (hooks/spawn-taint.ts `noteTaskStarted`)",
+    "`continuation` is not `false` on a first dispatch — a fresh dispatch was recorded as a continuation (hooks/delegation-settlement.ts `noteTaskStarted`)",
   ).toBe(false);
   expect(JSON.stringify(started.detail), "the delegation audit row carries the brief's text").not.toContain(DELEGATION_BRIEF);
 

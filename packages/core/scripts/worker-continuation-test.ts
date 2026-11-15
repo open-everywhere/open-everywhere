@@ -365,63 +365,6 @@ const noMessage = await inSession(async () => await validate({ outputSchema: { t
 eq(noMessage.success, false, "🔴 §4 NEGATIVE CONTROL: eve's own `message` requirement still fails a call that carries ONLY the dropped field");
 
 {
-  const settings = await import("../agent/settings/settings.js");
-  settings.overrideSettingsForTest({ taint: { mode: "on" } });
-  eq(settings.getSettings().taint.mode, "on", "§5 precondition: the taint plane is ON, so every assertion below is about it");
-  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
-  const { markUntrustedIngestedThisTurn, untrustedIngestedThisTurn, taintKindsThisTurn } = await import("../agent/access/taint-signal.js");
-  const ATTRS = { oe_platform: "slack", oe_grain: "standing", team_id: "T0EXAMPLE", channel_id: "C0EXCHAN003", trust_checked: "true" };
-  const ctxFor = (sessionId: string, turnId: string, sequence: number, child: boolean) => ({
-    channel: child ? { kind: "subagent", continuationToken: `subagent:sess-parent:call_${sessionId}` } : { kind: "unified" },
-    session: {
-      id: sessionId,
-      ...(child ? { parent: { sessionId: "sess-parent", callId: `call_${sessionId}`, rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } } } : {}),
-      turn: { id: turnId, sequence },
-      auth: { current: { attributes: { ...ATTRS }, principalId: "UPROBE2251", principalType: "slack-user" } },
-    },
-    agent: { name: "oe", nodeId: "__root__" },
-  });
-  const twoTurns = (sessionId: string, taintRunOne: boolean, child = true) => {
-    const container = new ContextContainer();
-    const runOne = contextStorage.run(container, () => {
-      spawnTaint.openTaintTurn(ctxFor(sessionId, "turn_0", 0, child) as never);
-      if (taintRunOne) markUntrustedIngestedThisTurn("file-upload");
-      return untrustedIngestedThisTurn();
-    });
-    const runTwo = contextStorage.run(container, () => {
-      spawnTaint.openTaintTurn(ctxFor(sessionId, "turn_1", 1, child) as never);
-      return { tainted: untrustedIngestedThisTurn(), kinds: [...taintKindsThisTurn()] };
-    });
-    return { runOne, runTwo };
-  };
-  const dirty = twoTurns("sess-sticky-dirty", true);
-  eq(dirty.runOne, true, "§5 precondition: run 1 of the child read hostile content and is tainted");
-  eq(dirty.runTwo.tainted, true, "🔴 §5 P1: run 2 of the SAME child — a continuation by taskId — opens TAINTED, because run 1's hostile content is still in its history");
-  eq(dirty.runTwo.kinds, ["file-upload"], "🔴 §5 …and it names the class run 1 read, so its approval cards and memory bullets carry the right disclosure");
-  const clean = twoTurns("sess-sticky-clean", false);
-  eq(clean.runTwo.tainted, false, "🔴 §5 NEGATIVE CONTROL: a child whose run 1 was CLEAN opens run 2 clean — the slot is not a blanket taint on every continuation");
-  const root = twoTurns("sess-sticky-root", true, false);
-  eq(root.runOne, true, "§5 precondition: a ROOT session's turn 1 is tainted");
-  eq(root.runTwo.tainted, false, "🔴 §5 a ROOT session is NOT sticky: its turns are independent wakes, and a sticky seat would taint every later conversation the window serves");
-  const laterTurn = (sessionId: string, stampTurn: string, pinTurn: string) => {
-    const container = new ContextContainer();
-    contextStorage.run(container, () => spawnTaint.openTaintTurn(ctxFor(sessionId, "turn_0", 0, true) as never));
-    return contextStorage.run(container, () => {
-      const c = ctxFor(sessionId, "turn_1", 1, true);
-      (c.session.auth.current.attributes as Record<string, unknown>).oe_parent_turn_tainted = `sess-parent|${stampTurn}|file-upload`;
-      (c.session.auth.current.attributes as Record<string, unknown>).oe_dispatch_turn = `sess-parent|${pinTurn}`;
-      spawnTaint.openTaintTurn(c as never);
-      return { tainted: untrustedIngestedThisTurn(), kinds: [...taintKindsThisTurn()] };
-    });
-  };
-  eq(laterTurn("sess-fwd-fresh", "turn_7", "turn_7"), { tainted: true, kinds: ["file-upload"] }, "🔴 §5 P2: a continuation from a TAINTED parent turn — stamp and pin name the same turn — taints the worker's later turn, with the class");
-  eq(laterTurn("sess-fwd-stale", "turn_3", "turn_7"), { tainted: false, kinds: [] }, "🔴 §5 P2 NEGATIVE CONTROL: a STALE stamp from an earlier parent turn, sent from a later turn, is NOT adopted");
-  settings.overrideSettingsForTest({ taint: { mode: "off" } });
-  const off = twoTurns("sess-sticky-off", true);
-  eq(off.runTwo.tainted, false, "§5 `taint.mode: off` re-marks nothing, like every other taint producer");
-}
-
-{
   const { ensureDelegatedTaskBinding, rememberDelegatedTaskWake, DelegatedTaskBindingUnavailableError } = await import("../agent/channels/task-wake.js");
   const { delegatedRequesterThisTurn, delegatedWakeThisTurn } = await import("../agent/identity/delegated-binding.js");
   const childCtx = (callId: string, turnId: string | undefined, sequence: number | undefined) => ({

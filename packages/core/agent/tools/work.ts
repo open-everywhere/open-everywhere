@@ -5,7 +5,6 @@ import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { forwardsToWorkSession } from "../access/work-session.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { notePendingDelegation } from "../access/pending-delegation-signal.js";
-import { taintKindsThisTurn, untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { currentSessionId, currentTurnId, currentWakeId, deploymentOrg, platformIdentityAttributesFor, type BindableContext } from "../identity/binding.js";
 import { resolveUnifiedWakeAuthority } from "../channels/unified-window.js";
 import { dispatchWorkRequest } from "../channels/unified.js";
@@ -46,8 +45,6 @@ export interface ForwardWorkDeps {
   readonly dispatch: typeof dispatchWorkRequest;
   readonly markEventSeen?: MarkEventSeen;
   readonly forgetEventSeen?: ForgetEventSeen;
-  readonly tainted: () => boolean;
-  readonly taintKinds: () => readonly string[];
   readonly audit: (row: Parameters<typeof appendAudit>[0]) => Promise<unknown>;
   readonly resolveWork?: (input: { readonly org: string; readonly seatToken: string; readonly surfaceKey: string; readonly atIso: string }) => Promise<WorkGeneration>;
   readonly notifyLost?: typeof notifyLostWorkRequests;
@@ -59,8 +56,6 @@ const LIVE_DEPS: ForwardWorkDeps = {
   org: deploymentOrg,
   store: getOperationalStore,
   dispatch: dispatchWorkRequest,
-  tainted: untrustedIngestedThisTurn,
-  taintKinds: taintKindsThisTurn,
   audit: appendAudit,
   resolveWork: (input) => resolveWorkGeneration(input),
   notifyLost: notifyLostWorkRequests,
@@ -95,8 +90,6 @@ export async function forwardWork(input: { readonly message: string; readonly ta
   if (callId === undefined || callId.length === 0) throw new Error("work: this call carries no call id, so the job cannot be forwarded once-only. It was NOT forwarded.");
   const requestId = workRequestIdFor(callId);
   const turnId = currentTurnId(c);
-  const tainted = deps.tainted();
-  const taintKinds = tainted ? deps.taintKinds() : [];
   const seatSessionId = currentSessionId(c);
   const identity = platformIdentityAttributesFor(c, authority.binding);
   const ownAccountAsk = ownAccountStampToForward(c);
@@ -130,7 +123,6 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     binding: authority.binding,
     requester: authority.requester,
     nonMemberWake: authority.nonMemberWake,
-    tainted,
     atIso,
     ...(requesterAsks.length > 0 ? { requesterAsks } : {}),
   });
@@ -190,9 +182,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     nonMemberWake: authority.nonMemberWake,
     ...(seatSessionId !== undefined ? { seatSessionId } : {}),
     seatWakeId: wakeId,
-    tainted,
     invokerPosture: currentInvokerPosture(),
-    ...(taintKinds.length > 0 ? { taintKinds } : {}),
     ...(identity !== undefined ? { identity } : {}),
     ...(ownAccountAsk !== undefined ? { ownAccountAsk } : {}),
   };
@@ -243,7 +233,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
       workGeneration: parseWindowToken(deliveryToken)?.generation ?? generation.generation,
       ...(generation.runtime !== undefined && route.kind !== "holding" ? { workRuntime: generation.runtime } : {}),
       ...(recorded === undefined && input.taskId !== undefined ? { continuation: fresh !== undefined ? `fresh-${fresh.reason}` : route.kind } : {}),
-      briefLen: input.message.length, askCount: requesterAsks.length, tainted, ...(seatSessionId !== undefined ? { seatSessionId } : {}) },
+      briefLen: input.message.length, askCount: requesterAsks.length, ...(seatSessionId !== undefined ? { seatSessionId } : {}) },
   }).catch(() => undefined);
 
   return {

@@ -359,9 +359,9 @@ ok(providerNamers.length === 0, `PARITY: no provider bundle names it either — 
     noteDurableMemoryWrite("turn_w", { kind: "operational", road: "status-board", version: "v-2" });
     const facts = factWritesThisTurn("turn_w");
     ok(facts.length === 1 && facts[0]!.silo === "it-memory-brain", "OPE-2343: the work session reads its own FACT writes, and only those");
-    carried = workResultAttributes({ requestId: "q-w", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false, tainted: false, memoryWrites: facts })[OE_WORK_RESULT_WRITES_ATTR];
+    carried = workResultAttributes({ requestId: "q-w", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false, memoryWrites: facts })[OE_WORK_RESULT_WRITES_ATTR];
     ok(typeof carried === "string", "OPE-2343: the result wake carries them");
-    ok(!(OE_WORK_RESULT_WRITES_ATTR in workResultAttributes({ requestId: "q-w", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false, tainted: false })), "OPE-2343: a result wake with no writes carries no attribute");
+    ok(!(OE_WORK_RESULT_WRITES_ATTR in workResultAttributes({ requestId: "q-w", requester: { kind: "unverified", reason: "t" }, nonMemberWake: false })), "OPE-2343: a result wake with no writes carries no attribute");
   });
   await inEveContext(new FakeEveContext(), async () => {
     ok(applyMemoryClaimGuard(CLAIM, factStoredThisTurn("turn_seat")).withheld.length === 1, "OPE-2343 NEGATIVE CONTROL: before adoption the seat's guard strikes the claim — the measured defect");

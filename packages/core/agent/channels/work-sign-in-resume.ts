@@ -60,7 +60,6 @@ export async function dispatchSignInResume(org: string, resume: SignInResume, de
       requester: row.requester,
       nonMemberWake: row.nonMemberWake,
       requestId: resume.requestId,
-      tainted: row.tainted,
       quiet: true,
     });
   } catch {

@@ -1,6 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { defineState } from "eve/context";
-import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR, dispatchWorkResult } from "../channels/unified.js";
+import { dispatchWorkResult } from "../channels/unified.js";
 import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE_WORK_RESULT_QUIET_ATTR, OE_WORK_RESULT_READS_ATTR, WORK_RESULT_WAKE_ACTION, postWorkResultOnce, readWorkBrief, spendWorkReportPromise, workReportPromised, readWorkCall, readWorkRequest, rememberWorkCall, workLedgerId, readWorkTaskRequest, rememberWorkTask, renderWorkResultWake, workResultText, workTokenForSeat, workCancelRedeemed, type WorkRequestRow } from "../channels/work.js";
 import { fireFoldOutcome, foldWorkFire } from "../routines/fire-work-fold.js";
 import { answerA2aInboundTask } from "../a2a/inbound/answer.js";
@@ -16,23 +15,7 @@ import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { isWorkSessionContext } from "../access/work-session.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { mintWakeId } from "../channels/unified-window.js";
-import {
-  beginTaintTurn,
-  markUntrustedIngestedThisTurn,
-  registerTaintFlipObserver,
-  registerTaintKindObserver,
-  taintKindsThisTurn,
-  untrustedIngestedThisTurn,
-  OE_TAINTED_FIRE_ATTR,
-} from "../access/taint-signal.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
-import { INGESTION_KINDS, type IngestionKind } from "../access/taint-tiers.js";
-import {
-  markSubagentTainted,
-  claimSubagentCallClean,
-  markSubagentCallTainted,
-  subagentCallTaintRecord,
-} from "../access/subagent-taint.js";
 import { rememberTaskCall, taskCallLink, type TaskCallLink } from "../access/task-call-link.js";
 import {
   readAgentStarted,
@@ -48,8 +31,6 @@ import {
   type TaskStarted,
   type TaskSummary,
 } from "../access/background-tasks.js";
-import { JOB_TAINT_ATTR } from "../access/job-posture.js";
-import { beginTaintVerdictTurn, registerTaintVerdictSink, taintEnabled, taintMode, type TaintVerdictRow } from "../access/taint-enforcement.js";
 import { appendAudit } from "../audit/audit.js";
 import { auditErrorDetail, auditErrorFrames } from "../audit/tool-action.js";
 import {
@@ -62,11 +43,8 @@ import {
   inheritedWakeStampOf,
   isSubagentChildContext,
   isUnifiedWindowContext,
-  turnOriginPlatform,
   type BindableContext,
 } from "../identity/binding.js";
-import { READ_ADAPTERS } from "../channels/channel-read.js";
-import { turnLocusCarriesMeetingPost } from "../meetings/provenance.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { advanceDelegatedTaskWake, delegatedTaskDispatchAuthority, installTaskWake, openTaskWake, rememberDelegatedTaskBinding, rememberDelegatedTaskWake } from "../channels/task-wake.js";
 import { noteStepDelivery, noteTurnBoundary, taskWakeThisTurn, uningressedTurn } from "../access/task-wake-signal.js";
@@ -79,7 +57,7 @@ import { requesterThisTurn } from "../access/requester-identity.js";
 import { noteSettlementDispatchAuthority, settlementDispatchAuthorityThisTurn } from "../access/settlement-dispatch-signal.js";
 import { claimPromisedReport, notePendingDelegation, noteDelegationSettled, noteSettlementReportOwed, settlementReportOwedOn } from "../access/pending-delegation-signal.js";
 import { clearGenerationDelegation, noteGenerationDelegation } from "../channels/generation-retirement.js";
-import { delegatedSecondAddress, delegatingParentLink, heldTurnWakeProvable, settleDelegatedReads } from "../channels/delegated-provenance.js";
+import { delegatedSecondAddress, heldTurnWakeProvable, settleDelegatedReads } from "../channels/delegated-provenance.js";
 import { stampReadReach } from "../channels/read-reach.js";
 import { resolvePartition } from "../memory/partition.js";
 import { adoptCarriedWrites, factWritesThisTurn, OE_WORK_RESULT_WRITES_ATTR } from "../memory/write-evidence.js";
@@ -88,473 +66,6 @@ import { flushWorkSettlement } from "./work-flush.js";
 import { currentSeatToken, isSameWorkSession, workSessionLedgerId, workTokenHoldingTask } from "../channels/work-generation.js";
 import type { MemoryPersistContext } from "./memory.js";
 import type { AuditDetail } from "../audit/scrubbed-text.js";
-
-const TAINT_VERDICT_ACTION = "taint.verdict";
-
-export function taintVerdictIdentityDetail(
-  turn: { readonly sessionId?: string; readonly turnId?: string } | null | undefined,
-  subagent: { readonly parent: { readonly sessionId?: string } | null } | null | undefined,
-): { sessionId?: string; turnId?: string; parentSessionId?: string } {
-  const out: { sessionId?: string; turnId?: string; parentSessionId?: string } = {};
-  if (turn?.sessionId) out.sessionId = turn.sessionId;
-  if (turn?.turnId) out.turnId = turn.turnId;
-  const parent = subagent?.parent?.sessionId;
-  if (parent && parent !== turn?.sessionId) out.parentSessionId = parent;
-  return out;
-}
-
-function liveTaintVerdictIdentity(): { sessionId?: string; turnId?: string; parentSessionId?: string } {
-  try {
-    return taintVerdictIdentityDetail(turnIdentity.get(), subagentIdentity.get());
-  } catch {
-    return {};
-  }
-}
-
-registerTaintVerdictSink((row: TaintVerdictRow) => {
-  void appendAudit({
-    org: deploymentOrg(),
-    platform: "ingest",
-    workspace: row.kind,
-    action: TAINT_VERDICT_ACTION,
-    detail: { ...row, ...liveTaintVerdictIdentity() },
-  }).catch(() => undefined);
-});
-
-const LOCUS_CHECKED_MAX = 512;
-const locusCheckedTurns = new Set<string>();
-
-export async function markIfTurnLocusCarriesMeetingPost(bind: BindableContext, sessionId: string | undefined, turnId: string | undefined): Promise<void> {
-  if (untrustedIngestedThisTurn()) return;
-  const turnKey = sessionId !== undefined && sessionId.length > 0 && turnId !== undefined && turnId.length > 0 ? `${sessionId}:${turnId}` : undefined;
-  if (turnKey !== undefined && locusCheckedTurns.has(turnKey)) return;
-  let locus: { platform: string; container: string; threadRoot?: string } | undefined;
-  try {
-    const platform = turnOriginPlatform(bind);
-    const address = platform === undefined ? undefined : READ_ADAPTERS[platform]?.wakeAddress(bind);
-    if (platform !== undefined && address !== undefined) locus = { platform, ...address };
-  } catch {
-    locus = undefined;
-  }
-  if (locus === undefined) return;
-  if (await turnLocusCarriesMeetingPost(deploymentOrg(), locus, Date.now(), turnKey)) {
-    markUntrustedIngestedThisTurn("chat-message");
-    return;
-  }
-  if (turnKey === undefined) return;
-  locusCheckedTurns.add(turnKey);
-  if (locusCheckedTurns.size > LOCUS_CHECKED_MAX) locusCheckedTurns.delete(locusCheckedTurns.values().next().value as string);
-}
-
-export const TAINT_SEED_ATTRS: readonly string[] = [
-  OE_SPAWN_TAINTED_ATTR,
-  OE_TAINTED_FIRE_ATTR,
-  JOB_TAINT_ATTR,
-  OE_CHAT_NONMEMBER_ATTR,
-];
-
-function currentAttrs(ctx: HookContext): Record<string, unknown> | undefined {
-  return (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;
-}
-
-function stampedTrue(v: unknown): boolean {
-  const first = Array.isArray(v) ? v[0] : v;
-  return first === "true" || first === true;
-}
-
-export function seedIfTainted(ctx: HookContext): void {
-  try {
-    const attrs = currentAttrs(ctx);
-    for (const name of TAINT_SEED_ATTRS) {
-      if (stampedTrue(attrs?.[name])) {
-        const raw = attrs?.[OE_SPAWN_TAINT_KINDS_ATTR];
-        const first = Array.isArray(raw) ? raw[0] : raw;
-        const kinds = typeof first === "string" ? first.split(",").filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k)) : [];
-        adoptKinds(kinds);
-        return;
-      }
-    }
-  } catch {
-  }
-}
-
-export function openTaintTurn(ctx: HookContext): void {
-  rememberSubagentIdentity(ctx);
-  rememberTurnIdentity(ctx);
-  let turnId: string | undefined;
-  try {
-    turnId = currentTurnId(ctx as unknown as BindableContext);
-  } catch {
-    turnId = undefined;
-  }
-  beginTaintTurn(turnId);
-  beginTaintVerdictTurn(turnId);
-  adoptParentTurnTaint(ctx);
-  seedIfTainted(ctx);
-  reseedStickyChildTaint();
-  recordDispatchTurnForChildren();
-  announceTaintOff(ctx);
-}
-
-const TAINT_MODE_ACTION = "taint.mode";
-
-const taintModeAnnounced = defineState<boolean>("open-everywhere.taint-mode-announced", () => false);
-
-export function announceTaintOff(ctx: HookContext): boolean {
-  try {
-    if (taintEnabled()) return false;
-    let first = false;
-    taintModeAnnounced.update((cur) => {
-      if (cur === true) return true;
-      first = true;
-      return true;
-    });
-    if (!first) return false;
-    const sessionId = (ctx as { session?: { id?: string } }).session?.id;
-    void appendAudit({
-      org: deploymentOrg(),
-      platform: "ingest",
-      workspace: "taint",
-      action: TAINT_MODE_ACTION,
-      detail: {
-        mode: taintMode(),
-        ...(typeof sessionId === "string" && sessionId.length > 0 ? { session: sessionId } : {}),
-        marking: "disabled",
-        fencing: "unchanged",
-      },
-    }).catch(() => undefined);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const subagentIdentity = defineState<{ org: string; sessionId: string; parent: { sessionId: string; callId: string } | null } | null>(
-  "open-everywhere.subagent-taint.identity",
-  () => null,
-);
-
-function readParentLink(ctx: HookContext): { sessionId: string; callId: string } | null {
-  return delegatingParentLink(ctx);
-}
-
-function rememberSubagentIdentity(ctx: HookContext): void {
-  try {
-    const c = ctx as unknown as BindableContext;
-    const sessionId = (c as { session?: { id?: string } }).session?.id;
-    const child = isSubagentChildContext(c) && typeof sessionId === "string" && sessionId.length > 0;
-    const parent = child ? readParentLink(ctx) : null;
-    let firstSightingWithParent = false;
-    subagentIdentity.update((cur) => {
-      if (!child) return null;
-      firstSightingWithParent = cur === null && parent !== null;
-      return { org: deploymentOrg(), sessionId, parent };
-    });
-    if (firstSightingWithParent && parent !== null) {
-      void claimSubagentCallClean(deploymentOrg(), parent.sessionId, parent.callId);
-    }
-  } catch {
-  }
-}
-
-const stickyChildTaint = defineState<readonly string[] | null>("open-everywhere.subagent-taint.sticky", () => null);
-
-function recordStickyChildTaint(): void {
-  try {
-    if (subagentIdentity.get() === null) return;
-    let kinds: readonly string[] = [];
-    try {
-      kinds = taintKindsThisTurn();
-    } catch {
-      kinds = [];
-    }
-    stickyChildTaint.update((cur) => [...new Set([...(cur ?? []), ...kinds])]);
-  } catch {
-  }
-}
-
-export function reseedStickyChildTaint(): boolean {
-  if (!taintEnabled()) return false;
-  try {
-    if (subagentIdentity.get() === null) return false;
-    const sticky = stickyChildTaint.get();
-    if (sticky === null) return false;
-    adoptKinds(sticky.filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k)));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-registerTaintFlipObserver(() => {
-  recordTurnTaintForChildren();
-
-  let who: { org: string; sessionId: string; parent: { sessionId: string; callId: string } | null } | null = null;
-  try {
-    who = subagentIdentity.get();
-  } catch {
-    who = null;
-  }
-  if (who === null) return;
-  recordStickyChildTaint();
-  void markSubagentTainted(who.org, who.sessionId);
-  writeCallTaintMarker();
-});
-
-let callTaintMarkerQueue: Promise<unknown> = Promise.resolve();
-
-function writeCallTaintMarker(): void {
-  let who: { org: string; sessionId: string; parent: { sessionId: string; callId: string } | null } | null = null;
-  try {
-    who = subagentIdentity.get();
-  } catch {
-    who = null;
-  }
-  if (who === null || who.parent === null) return;
-  let kinds: readonly string[] = [];
-  try {
-    kinds = taintKindsThisTurn();
-  } catch {
-    kinds = [];
-  }
-  const link = who.parent;
-  const org = who.org;
-  callTaintMarkerQueue = callTaintMarkerQueue.then(() => markSubagentCallTainted(org, link.sessionId, link.callId, kinds)).catch(() => undefined);
-}
-
-registerTaintKindObserver(() => {
-  recordTurnTaintForChildren();
-  recordStickyChildTaint();
-  writeCallTaintMarker();
-});
-
-const TAINT_FORWARD_ACTION = "taint.forward";
-
-export const OE_PARENT_TURN_TAINTED_ATTR = "oe_parent_turn_tainted";
-
-export const OE_DISPATCH_TURN_ATTR = "oe_dispatch_turn";
-
-interface ForwardStamp {
-  readonly sessionId: string;
-  readonly turnId: string;
-  readonly kinds: readonly IngestionKind[];
-  readonly raw: string;
-}
-
-function renderForwardStamp(sessionId: string, turnId: string, kinds: readonly string[]): string {
-  const named = kinds.filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k));
-  return named.length > 0 ? `${sessionId}|${turnId}|${named.join(",")}` : `${sessionId}|${turnId}`;
-}
-
-function parseForwardStamp(value: unknown): ForwardStamp | null {
-  if (typeof value !== "string" || value.length === 0) return null;
-  const parts = value.split("|");
-  if (parts.length < 2 || parts.length > 3) return null;
-  const [sessionId, turnId, tail] = parts;
-  if (sessionId === undefined || sessionId.length === 0 || turnId === undefined || turnId.length === 0) return null;
-  const kinds = (tail ?? "").split(",").filter((k): k is IngestionKind => (INGESTION_KINDS as readonly string[]).includes(k));
-  return { sessionId, turnId, kinds, raw: value };
-}
-
-const turnIdentity = defineState<{ org: string; sessionId: string; turnId: string; attrs: Record<string, unknown> | null } | null>(
-  "open-everywhere.taint-forward.turn-identity",
-  () => null,
-);
-
-const turnTaintRecorded = defineState<string | null>("open-everywhere.taint-forward.recorded", () => null);
-
-function writableAuthAttrs(ctx: HookContext): Record<string, unknown> | null {
-  try {
-    const current = (ctx as { session?: { auth?: { current?: { attributes?: unknown } } } }).session?.auth?.current;
-    if (current === undefined || current === null) return null;
-    const attrs = current.attributes;
-    if (typeof attrs === "object" && attrs !== null) return attrs as Record<string, unknown>;
-    const fresh: Record<string, unknown> = {};
-    (current as { attributes?: unknown }).attributes = fresh;
-    return (current as { attributes?: unknown }).attributes === fresh ? fresh : null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberTurnIdentity(ctx: HookContext): void {
-  try {
-    const c = ctx as unknown as BindableContext;
-    const sessionId = (c as { session?: { id?: string } }).session?.id;
-    const turnId = currentTurnId(c);
-    const attrs = writableAuthAttrs(ctx);
-    turnIdentity.update(() =>
-      typeof sessionId === "string" && sessionId.length > 0 && typeof turnId === "string" && turnId.length > 0
-        ? { org: deploymentOrg(), sessionId, turnId, attrs }
-        : null,
-    );
-  } catch {
-  }
-}
-
-function refreshTurnIdentity(ctx: HookContext): void {
-  try {
-    const attrs = writableAuthAttrs(ctx);
-    if (attrs === null) return;
-    turnIdentity.update((cur) => (cur === null ? cur : { ...cur, attrs }));
-  } catch {
-  }
-}
-
-export function recordTurnTaintForChildren(): boolean {
-  try {
-    if (!untrustedIngestedThisTurn()) return false;
-    const who = turnIdentity.get();
-    if (who === null || who.attrs === null) return false;
-    const stamp = renderForwardStamp(who.sessionId, who.turnId, taintKindsThisTurn());
-    who.attrs[OE_PARENT_TURN_TAINTED_ATTR] = stamp;
-    if (who.attrs[OE_PARENT_TURN_TAINTED_ATTR] !== stamp) return false;
-    let first = false;
-    turnTaintRecorded.update((cur) => {
-      if (cur === who.turnId) return cur;
-      first = true;
-      return who.turnId;
-    });
-    if (first) {
-      void appendAudit({
-        org: who.org,
-        platform: "ingest",
-        workspace: "taint",
-        action: TAINT_FORWARD_ACTION,
-        detail: { leg: "mark", session: who.sessionId, turn: who.turnId },
-      }).catch(() => undefined);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function readParentSession(ctx: HookContext): string | null {
-  const sessionId = (ctx as { session?: { parent?: { sessionId?: unknown } } }).session?.parent?.sessionId;
-  if (typeof sessionId === "string" && sessionId.length > 0) return sessionId;
-  return readParentLink(ctx)?.sessionId ?? null;
-}
-
-const adoptedForwardStamps = defineState<readonly string[]>("open-everywhere.taint-forward.adopted-stamps", () => []);
-
-function memoKey(raw: string, turnId: string | undefined): string {
-  return typeof turnId === "string" && turnId.length > 0 ? `${raw}@${turnId}` : raw;
-}
-
-const MAX_REMEMBERED_STAMPS = 16;
-
-function matchingForwardStamp(ctx: HookContext): ForwardStamp | null {
-  try {
-    const parentSession = readParentSession(ctx);
-    if (parentSession === null) return null;
-    const raw = currentAttrs(ctx)?.[OE_PARENT_TURN_TAINTED_ATTR];
-    const stamp = parseForwardStamp(Array.isArray(raw) ? raw[0] : raw);
-    if (stamp === null || stamp.sessionId !== parentSession) return null;
-    {
-      const rawPin = currentAttrs(ctx)?.[OE_DISPATCH_TURN_ATTR];
-      const pin = parseForwardStamp(Array.isArray(rawPin) ? rawPin[0] : rawPin);
-      if (pin === null || pin.sessionId !== parentSession || pin.turnId !== stamp.turnId) return null;
-    }
-    let ownTurnId: string | undefined;
-    try {
-      ownTurnId = currentTurnId(ctx as unknown as BindableContext);
-    } catch {
-      ownTurnId = undefined;
-    }
-    const memo = adoptedForwardStamps.get();
-    if (memo.includes(memoKey(stamp.raw, ownTurnId))) return stamp;
-    return memo.some((k) => k === stamp.raw || k.startsWith(`${stamp.raw}@`)) ? null : stamp;
-  } catch {
-    return null;
-  }
-}
-
-function recordDispatchTurnForChildren(): boolean {
-  try {
-    const who = turnIdentity.get();
-    if (who === null || who.attrs === null) return false;
-    const pin = renderForwardStamp(who.sessionId, who.turnId, []);
-    who.attrs[OE_DISPATCH_TURN_ATTR] = pin;
-    return who.attrs[OE_DISPATCH_TURN_ATTR] === pin;
-  } catch {
-    return false;
-  }
-}
-
-const parentTurnTaintAdopted = defineState<string | null>("open-everywhere.taint-forward.adopted", () => null);
-
-export function adoptedParentTurnTaintThisTurn(ctx: HookContext): boolean {
-  try {
-    const recorded = parentTurnTaintAdopted.get();
-    if (recorded === null) return false;
-    let turnId: string | undefined;
-    try {
-      turnId = currentTurnId(ctx as unknown as BindableContext);
-    } catch {
-      turnId = undefined;
-    }
-    if (recorded.length === 0 || typeof turnId !== "string" || turnId.length === 0) return true;
-    return recorded === turnId;
-  } catch {
-    return false;
-  }
-}
-
-function adoptKinds(kinds: readonly IngestionKind[]): void {
-  if (kinds.length === 0) markUntrustedIngestedThisTurn();
-  else for (const kind of kinds) markUntrustedIngestedThisTurn(kind);
-}
-
-export function adoptParentTurnTaint(ctx: HookContext): boolean {
-  if (!taintEnabled()) return false;
-  try {
-    const stamp = matchingForwardStamp(ctx);
-    if (stamp === null) return false;
-    let ownTurnId: string | undefined;
-    try {
-      ownTurnId = currentTurnId(ctx as unknown as BindableContext);
-    } catch {
-      ownTurnId = undefined;
-    }
-    parentTurnTaintAdopted.update(() => (typeof ownTurnId === "string" ? ownTurnId : ""));
-    adoptedForwardStamps.update((cur) => {
-      const key = memoKey(stamp.raw, ownTurnId);
-      return cur.includes(key) ? cur : [...cur, key].slice(-MAX_REMEMBERED_STAMPS);
-    });
-    adoptKinds(stamp.kinds);
-    const sessionId = (ctx as { session?: { id?: string } }).session?.id;
-    void appendAudit({
-      org: deploymentOrg(),
-      platform: "ingest",
-      workspace: "taint",
-      action: TAINT_FORWARD_ACTION,
-      detail: {
-        leg: "adopt",
-        ...(typeof sessionId === "string" && sessionId.length > 0 ? { session: sessionId } : {}),
-        parentSession: stamp.sessionId,
-        parentTurn: stamp.turnId,
-        kinds: [...stamp.kinds],
-      },
-    }).catch(() => undefined);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function adoptSubagentTaint(callId: string, ownSessionId: string): Promise<boolean> {
-  if (!taintEnabled()) return false;
-  try {
-    const record = await subagentCallTaintRecord(deploymentOrg(), ownSessionId, callId);
-    if (record?.tainted === false) return false;
-    adoptKinds(record?.kinds ?? []);
-    return true;
-  } catch {
-    markUntrustedIngestedThisTurn();
-    return true;
-  }
-}
 
 export const TASK_STARTED_ACTION = "delegation.task_started";
 
@@ -606,9 +117,6 @@ interface TurnFailedData {
   readonly details?: unknown;
 }
 
-function dispatchingParentSession(link: TaskCallLink, ownSessionId: string): string {
-  return link.parentSessionId !== undefined && link.parentSessionId.length > 0 ? link.parentSessionId : ownSessionId;
-}
 export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string, workRequestId?: string): Promise<TaskCallLink | null> {
   const org = deploymentOrg();
   let link: TaskCallLink | null = null;
@@ -616,8 +124,7 @@ export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string
   let replay = false;
   try {
     if (ownSessionId.length > 0) {
-      const stored = await taskCallLink(org, receipt.taskId);
-      const already = stored?.taintOff === true && taintEnabled() ? undefined : stored;
+      const already = await taskCallLink(org, receipt.taskId);
       if (already !== undefined) {
         replay = already.callId === receipt.callId;
         continuation = !replay;
@@ -629,7 +136,6 @@ export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string
           parentSessionId: ownSessionId,
           kind: receipt.kind,
           ...(receipt.tool.length > 0 ? { tool: receipt.tool } : {}),
-          ...(taintEnabled() ? {} : { taintOff: true as const }),
         };
         await rememberTaskCall(org, receipt.taskId, link);
       }
@@ -676,8 +182,6 @@ function noteUnreadableTaskEvent(edge: "task.started" | "task.settled", data: un
     action: TASK_UNREADABLE_ACTION,
     detail: {
       edge,
-      marker: "unreadable",
-      adopted: false,
       task: bounded(raw?.taskId),
       status: bounded(raw?.status),
       kind: bounded(raw?.kind),
@@ -696,11 +200,10 @@ function noteDispatchAuthorityLost(
   reason: string,
 ): void {
   console.warn(
-    `[open-everywhere:spawn-taint] delegated dispatch has NO exact wake at ${edge} (${reason}) — ` +
+    `[open-everywhere:delegation-settlement] delegated dispatch has NO exact wake at ${edge} (${reason}) — ` +
       `no dispatch-authority row is written, so no task wake is minted and this settlement will ` +
-      `install no reply address: the reply fence refuses it under \`task-wake-unread\`. Taint is ` +
-      `unaffected and still carries on the call-keyed marker. The child still launches: eve 0.70 ` +
-      `offers this seat no edge that can refuse it.`,
+      `install no reply address: the reply fence refuses it under \`task-wake-unread\`. The child ` +
+      `still launches: eve 0.70 offers this seat no edge that can refuse it.`,
   );
   void appendAudit({
     org: deploymentOrg(),
@@ -710,8 +213,6 @@ function noteDispatchAuthorityLost(
     detail: {
       edge,
       reason,
-      marker: "unauthorized",
-      adopted: false,
       ...(taskId.length > 0 ? { task: taskId } : {}),
       call: callId,
       ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
@@ -719,42 +220,9 @@ function noteDispatchAuthorityLost(
   }).catch(() => undefined);
 }
 
-export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): Promise<boolean> {
-  const org = deploymentOrg();
-  let marker: "clean" | "tainted" | "lost" | "off" = "off";
-  let adopted = false;
-  let kinds: readonly IngestionKind[] = [];
-  try {
-    if (taintEnabled()) {
-      const link = await taskCallLink(org, view.taskId);
-      if (link === undefined) {
-        marker = "lost";
-      } else {
-        const recorded = link.parentSessionId;
-        if (link.taintOff === true) {
-          marker = "lost";
-        } else if (recorded !== undefined && recorded.length > 0 && recorded !== ownSessionId) {
-          marker = "lost";
-        } else {
-          const parentSession = dispatchingParentSession(link, ownSessionId);
-          const record = await subagentCallTaintRecord(org, parentSession, link.callId);
-          marker = record === undefined ? "lost" : record.tainted ? "tainted" : "clean";
-          if (record?.tainted === true) kinds = record.kinds;
-        }
-      }
-      if (marker !== "clean") {
-        adoptKinds(kinds);
-        adopted = true;
-      }
-    }
-  } catch {
-    marker = "lost";
-    kinds = [];
-    markUntrustedIngestedThisTurn();
-    adopted = true;
-  }
+function noteTaskSettledRow(view: TaskSummary, ownSessionId: string): void {
   void appendAudit({
-    org,
+    org: deploymentOrg(),
     platform: "ingest",
     workspace: "delegation",
     action: TASK_SETTLED_ACTION,
@@ -763,12 +231,8 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
       status: view.status,
       ...(ownSessionId.length > 0 ? { session: ownSessionId } : {}),
       agent: view.agentId ?? "",
-      marker,
-      adopted,
-      kinds: [...kinds],
     },
   }).catch(() => undefined);
-  return adopted;
 }
 
 export type SettlementFromEvent = {
@@ -784,8 +248,8 @@ export async function applyTaskSettlement(
   ownSessionId: string,
   ctx: HookContext,
   settlement: SettlementFromEvent = {},
-): Promise<boolean> {
-  if (views.length === 0) return false;
+): Promise<void> {
+  if (views.length === 0) return;
   const failure = views.length === 1 ? settlement.failure : undefined;
   const edge: DelegationFailureEdge = settlement.taskSettled === true || failure !== undefined ? "task-settled" : "settlement";
   const settlementLink = views.length === 1 ? settlement.link : undefined;
@@ -892,13 +356,10 @@ export async function applyTaskSettlement(
       );
     }
   }
-  let any = false;
-  for (const view of views) any = (await adoptTaskTaint(view, ownSessionId)) || any;
-  if (any) recordTurnTaintForChildren();
-  return any;
+  for (const view of views) noteTaskSettledRow(view, ownSessionId);
 }
 
-export async function settleFromTaskSettled(settled: TaskSettled, ownSessionId: string, ctx: HookContext): Promise<boolean> {
+export async function settleFromTaskSettled(settled: TaskSettled, ownSessionId: string, ctx: HookContext): Promise<void> {
   let view = settledTaskSummary(settled);
   const links = new Map<string, TaskCallLink | undefined>();
   try {
@@ -909,7 +370,7 @@ export async function settleFromTaskSettled(settled: TaskSettled, ownSessionId: 
   const link = links.get(view.taskId);
   if (link?.agentId !== undefined) view = { ...view, agentId: link.agentId };
   noteTaskSettled(view);
-  return applyTaskSettlement([view], ownSessionId, ctx, {
+  await applyTaskSettlement([view], ownSessionId, ctx, {
     taskSettled: true,
     links,
     authorizeRedispatch: true,
@@ -1028,7 +489,6 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
   const output = (event as { data?: { output?: unknown } } | undefined)?.data?.output;
   const sequence = (event as { sequence?: unknown } | undefined)?.sequence;
   const settlementSeq = `${settled.callId}:${typeof sequence === "number" || typeof sequence === "string" ? String(sequence) : "0"}`;
-  const tainted = row.tainted || untrustedIngestedThisTurn();
   const childToken = (await taskCallLink(org, settled.taskId).catch(() => undefined))?.childToken;
   const stop = childToken === undefined ? undefined : await readWorkStop(org, childToken, settled.callId);
   const signInRow = childToken === undefined ? undefined : await readWorkSignIn(org, childToken, settled.callId);
@@ -1106,8 +566,6 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
         requester: row.requester,
         nonMemberWake: row.nonMemberWake,
         requestId,
-        tainted,
-        ...(tainted ? { taintKinds: taintKindsThisTurn() } : {}),
         ...(readsToken !== undefined && readsToken.length > 0 ? { readsToken } : {}),
         ...(row.fire?.posture !== undefined ? { invokerPosture: row.fire.posture } : {}),
         ...(row.fire?.creator !== undefined ? { fireCreator: row.fire.creator } : {}),
@@ -1137,14 +595,13 @@ async function wakeSeatWithWorkResult(settled: TaskSettled, event: unknown, ctx:
         ? { outcome: a2aWrite === "written" ? "a2a-answered" : a2aWrite === "gone" ? "a2a-task-gone" : "a2a-answer-failed", fire: true }
         : silentFire
         ? { outcome: "silent-fire", fire: true }
-        : { outcome: delivered ? "delivered" : "failed", wakeId, tainted, reportOwed, seatRotated, ...(row.fire !== undefined ? { fire: true } : {}), ...(stop !== undefined ? { stoppedBy: "egress-own-account", connector: stop.connector } : {}), ...(signIn !== undefined ? { signIn: quietSignIn ? "quiet" : "said", connector: signIn.connector } : {}) },
+        : { outcome: delivered ? "delivered" : "failed", wakeId, reportOwed, seatRotated, ...(row.fire !== undefined ? { fire: true } : {}), ...(stop !== undefined ? { stoppedBy: "egress-own-account", connector: stop.connector } : {}), ...(signIn !== undefined ? { signIn: quietSignIn ? "quiet" : "said", connector: signIn.connector } : {}) },
   );
 }
 
 export default defineHook({
   events: {
     "turn.started": (_event, ctx) => {
-      openTaintTurn(ctx);
       noteContinuationTurn(ctx as unknown as BindableContext);
       const bind = ctx as unknown as BindableContext;
       noteTurnBoundary(currentTurnId(bind), deliveryStampOf(bind));
@@ -1155,12 +612,6 @@ export default defineHook({
     },
 
     "step.started": (_event, ctx) => {
-      try {
-        refreshTurnIdentity(ctx);
-        recordDispatchTurnForChildren();
-        recordTurnTaintForChildren();
-      } catch {
-      }
       try {
         const bind = ctx as unknown as BindableContext;
         noteStepDelivery(currentTurnId(bind), deliveryStampOf(bind));
@@ -1300,7 +751,6 @@ export default defineHook({
       if (typeof ownSessionId !== "string" || ownSessionId.length === 0) return;
       const bind = ctx as unknown as BindableContext;
       const turnId = currentTurnId(bind);
-      await markIfTurnLocusCarriesMeetingPost(bind, ownSessionId, turnId);
       if (!isWorkSessionContext(bind)) {
         const readsToken = deliveryAttr(bind, OE_WORK_RESULT_READS_ATTR);
         const resultRequest = deliveryAttr(bind, OE_WORK_RESULT_ATTR);
@@ -1387,9 +837,6 @@ export default defineHook({
         }
 
         if (result?.kind !== "subagent-result" || typeof result.callId !== "string") return;
-        if (await adoptSubagentTaint(result.callId, ownSessionId)) {
-          recordTurnTaintForChildren();
-        }
         await flushSettledMemory(ctx as unknown as MemoryPersistContext, "delegation-returned");
       } catch {
       }

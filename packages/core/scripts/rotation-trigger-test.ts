@@ -205,7 +205,7 @@ const OFF = {
   const mustNotRotate = [
     "packages/core/agent/routines/job.ts",
     "packages/core/agent/channels/task-wake.ts",
-    "packages/core/agent/access/subagent-taint.ts",
+    "packages/core/agent/hooks/delegation-settlement.ts",
   ];
   for (const rel of mustNotRotate) {
     let src: string;
@@ -220,3 +220,5 @@ const OFF = {
 }
 
 console.log(`✓ rotation-trigger: ${n} assertions passed (OPE-345 chain: expiry primary, counters demoted to backstops; OPE-794 context-size rung leads them)`);
+
+// proves: SET-032, SET-033, SET-035, SET-036

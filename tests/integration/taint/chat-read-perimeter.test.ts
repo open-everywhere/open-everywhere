@@ -140,9 +140,9 @@ async function armRows(cursor: AuditCursor, want: { verdictRow: boolean; forward
     rows = await waitForAuditRows({
       probe: async () => {
         const got = await rowsSinceCursor(cursor, ACTIONS);
-        return forwardLeg(got, "mark").length > 0 && forwardLeg(got, "adopt").length > 0 ? got : undefined;
+        return forwardLeg(got, "mark").length > 0 ? got : undefined;
       },
-      label: "this arm's taint.forward mark AND adopt rows to land — the seat's taint did not propagate to its worker",
+      label: "this arm's taint.forward mark row to land — the chat read did not mark the seat's turn",
       actions: ACTIONS,
       cursor,
       timeoutMs: ROW_WAIT_MS,
@@ -240,7 +240,7 @@ test("a member-authored chat read is FENCED but does NOT mark: an over-taint tai
   expect(chain.detail).not.toHaveProperty("taintKinds");
 });
 
-test("the same read returning a REFUTED non-member's message marks the SEAT's turn and the mark reaches the worker: a forward mark+adopt join, and no divergence row", async () => {
+test("the same read returning a REFUTED non-member's message marks the SEAT's turn, the mark crosses to no other session, and no divergence row lands", async () => {
   await armSeams();
   authoredByNonMember = true;
   nonce = `oe-marked-${randomBytes(4).toString("hex")}`;
@@ -261,21 +261,8 @@ test("the same read returning a REFUTED non-member's message marks the SEAT's tu
   ).toBeGreaterThanOrEqual(1);
 
   const started = (await rowsSinceCursor(cursor, ["delegation.task_started"], { limit: 200 })).find((r) => String(r.detail?.task) === taskId);
-  const work = String(started?.detail?.session);
   expect(typeof started?.detail?.session, "W's task_started row for this arm's task").toBe("string");
-  expect(work).not.toBe(seat);
-  expect(
-    marked.filter((m) => String(m.detail?.session) === work).length,
-    `the work session ${work} wrote no taint.forward mark row — the forward laundered the seat's read`,
-  ).toBeGreaterThanOrEqual(1);
-  const worker = String(handle.requests.find((r) => r.role === "child")?.sessionId);
-  const adopted = forwardLeg(rows, "adopt");
-  const joined = adopted.filter((a) =>
-    String(a.detail?.parentSession) === work &&
-    marked.some((m) => String(m.detail?.session) === work && String(m.detail?.turn) === String(a.detail?.parentTurn)),
-  );
-  expect(joined.length, "no worker adopted the work session's tainted turn — an untrusted read can be laundered by delegating").toBeGreaterThanOrEqual(1);
-  for (const a of joined) expect(String(a.detail?.session)).toBe(worker);
+  expect(forwardLeg(rows, "adopt"), "no session may adopt a parent turn's mark — the carriage is deleted").toEqual([]);
 
   const chain = chainRow(rows);
   expect(chain.detail).not.toHaveProperty("tainted");

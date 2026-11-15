@@ -258,7 +258,7 @@ Start from `tests/integration/taint/taint-delegation.test.ts` — it is the work
   - **What decides the window is a store read, not the fixture.** `barrierDispatchWitness` asks
     whether this test left a turn OWED to it, and reads the two mechanisms that leave a row at the
     DISPATCH, before the turn they owe can be served: `delegation.task_started` (a worker was
-    dispatched, `hooks/spawn-taint.ts`) and a `turn.supervisor_prose_dropped` row the turn had **not**
+    dispatched, `hooks/delegation-settlement.ts`) and a `turn.supervisor_prose_dropped` row the turn had **not**
     already answered through the `reply` tool (a corrective re-drive is owed, `channels/unified.ts`,
     which AWAITS that append before it builds the re-injection). A test with neither waits **250 ms**;
     a test with either waits the full **1 500 ms**, unchanged. A settlement row arriving, or the

@@ -92,7 +92,6 @@ export async function relayWorkCancel(
         nonMemberWake: input.delivery.nonMemberWake,
         seatWakeId: input.delivery.seatWakeId,
         cancel: true,
-        tainted: false,
       });
       delivered = true;
     },

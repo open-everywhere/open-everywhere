@@ -72,7 +72,6 @@ function requestRow(requestId: string, principalId: string): WorkRequestRow {
     binding: { ...binding, principalId } as never,
     requester: { kind: "requester", principalId },
     nonMemberWake: false,
-    tainted: requestId === "req-alice",
     atIso: "2026-10-06T00:00:00.000Z",
   };
 }
@@ -257,7 +256,7 @@ console.log("§5 needs-reissue wakes the asking room's seat once, with no child 
   ok(!(await key.wakeSeatNeedsReissue({ requestId: "req-alice", edge: "task.started", reason: "stamp-names-another-request", taskId: "agent-9" }, deps)), "🔴 a second edge for the SAME request wakes nothing: one notice per job");
   eq(sent.length, 1, "exactly one wake was delivered");
   const w = sent[0]!;
-  eq([w.seatToken, w.origin, w.requestId, (w.requester as { principalId?: unknown }).principalId, w.tainted], [SEAT_TOKEN_LIVE, ORIGIN, "req-alice", "U_ALICE", true], "🔴 the wake goes to the LIVE generation of the seat alice's request row names (OPE-2341), and her room, under her authority, with the forward's taint bit");
+  eq([w.seatToken, w.origin, w.requestId, (w.requester as { principalId?: unknown }).principalId, "tainted" in w], [SEAT_TOKEN_LIVE, ORIGIN, "req-alice", "U_ALICE", false], "🔴 the wake goes to the LIVE generation of the seat alice's request row names (OPE-2341), and her room, under her authority, and with no taint bit (OPE-2720)");
   const message = String(w.message);
   ok(message.includes("req-alice") && message.includes("NOT run") && message.includes("call `work` once more"), "the validate notice tells the seat the job did not run, and to forward it again");
   const ran = key.renderNeedsReissueNote({ requestId: "req-alice", dispatchWakeId: "wake-req-alice", taskId: "agent-9", edge: "task.started" });

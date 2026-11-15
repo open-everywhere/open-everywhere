@@ -1,6 +1,5 @@
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { jobFireAttrs } from "../access/job-posture.js";
-import { taintedFireAttrs } from "../access/taint-signal.js";
 import type { SessionMode } from "../access/resolver.js";
 import { FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR, FIRE_UNATTENDED_ATTR } from "../identity/binding.js";
 import { isJobRoutine, isRoutineModelRole, isSilentRoutine, routinePermissionKey, ROUTINE_MARKER, type Routine } from "./routine.js";
@@ -61,12 +60,11 @@ export function surfaceWebhookFireAttributes(
   };
 }
 
-export function a2aInboundFireAttributes(identity: Readonly<Record<string, string>>, posture: { readonly attr: string; readonly value: string }, taint: Readonly<Record<string, string>>): Record<string, string> {
+export function a2aInboundFireAttributes(identity: Readonly<Record<string, string>>, posture: { readonly attr: string; readonly value: string }): Record<string, string> {
   return {
     ...identity,
     [FIRE_UNATTENDED_ATTR]: "true",
     [posture.attr]: posture.value,
-    ...taint,
   };
 }
 
@@ -83,7 +81,6 @@ export function personalWatchFireAttributes(
     [FIRE_UNATTENDED_ATTR]: "true",
     [FIRE_PRINCIPAL_ATTR]: personId,
     ...rootDmGrainAttrs(isDm),
-    ...taintedFireAttrs(true),
     [PERSONAL_WATCH_MARKER_ATTR]: findingKind,
   };
 }
@@ -96,7 +93,6 @@ export function coverRecapFireAttributes(personId: string, questions: number, de
     [FIRE_UNATTENDED_ATTR]: "true",
     [FIRE_PRINCIPAL_ATTR]: personId,
     ...rootDmGrainAttrs(isDm),
-    ...taintedFireAttrs(true),
     [COVER_RECAP_MARKER_ATTR]: String(questions),
   };
 }

@@ -218,7 +218,6 @@ export async function wakeSeatNeedsReissue(
         requester: row.requester,
         nonMemberWake: row.nonMemberWake,
         requestId: input.requestId,
-        tainted: row.tainted,
       });
     },
   });
@@ -250,7 +249,6 @@ export async function readWorkForward(store: WorkRowStore, org: string, requestI
       typeof f.message !== "string" ||
       typeof f.surfaceKey !== "string" ||
       typeof f.seatWakeId !== "string" ||
-      typeof f.tainted !== "boolean" ||
       typeof f.nonMemberWake !== "boolean" ||
       typeof f.origin !== "object" ||
       typeof f.binding !== "object" ||

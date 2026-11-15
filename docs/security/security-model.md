@@ -589,8 +589,8 @@ summary of the tainted content. Since OPE-2718 the routine kinds carry no ⚠ li
 
 **And the whole model is opt-out-able, in one reviewed line.** A governed seam nobody can decline
 is a tax, not a feature — so `taint.mode: "off"` in `agent/settings/settings.ts` retires the marking model
-outright: no marks and no disclosure. (Taint never withdraws the delegation verb:
-the forward leg marks the child instead, and `off` takes that leg with it.) It ships **on**, and there is deliberately **no environment variable
+outright: no marks and no disclosure. (Taint never withdraws the delegation verb, and since
+OPE-2720 no mark crosses to a child in either mode: the worker taint carriage is deleted.) It ships **on**, and there is deliberately **no environment variable
 that reaches `off`**. No other behaviour setting can be pushed from the environment either — that
 list closed with OPE-411, and OPE-2411 deleted its one surviving name (`OE_MODEL_STACK`, a harness
 seam for the e2e runner). Every behaviour change, taint included, costs a diff — reviewed,

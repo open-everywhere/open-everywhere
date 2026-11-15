@@ -39,7 +39,7 @@ async function settledRows(org: string): Promise<AuditEntry[]> {
   return readAudit({ org, action: ACTION });
 }
 
-const hook = (await import("../agent/hooks/spawn-taint.js")).default;
+const hook = (await import("../agent/hooks/delegation-settlement.js")).default;
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -78,7 +78,7 @@ const LIVE_STACK =
 console.log("§1 the hook binds an arm at turn.failed");
 {
   const events = (hook as { events?: Record<string, unknown> }).events ?? {};
-  ok(typeof events["turn.failed"] === "function", "🔴 hooks/spawn-taint.ts binds `turn.failed` — a body nothing dispatches to is a row that never exists");
+  ok(typeof events["turn.failed"] === "function", "🔴 hooks/delegation-settlement.ts binds `turn.failed` — a body nothing dispatches to is a row that never exists");
   ok(typeof events["action.result"] === "function", "…and the existing delegation arms are untouched beside it");
 }
 

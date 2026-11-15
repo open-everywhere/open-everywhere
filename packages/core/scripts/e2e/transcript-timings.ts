@@ -419,7 +419,6 @@ export interface DelegationTiming {
   readonly spawnedAt: string;
   readonly returnedAt: string | null;
   readonly hasError: boolean;
-  readonly adopted: boolean | null;
   readonly wallMs: number | null;
   readonly dispatchMs: number | null;
   readonly bootMs: number | null;
@@ -527,7 +526,6 @@ export function joinDelegations(
       spawnedAt: spawn.ts,
       returnedAt: ret?.ts ?? null,
       hasError: status !== null && status !== "completed" && status !== "cancelled",
-      adopted: ret ? detailBool(ret, "adopted") : null,
       wallMs,
       dispatchMs,
       bootMs,

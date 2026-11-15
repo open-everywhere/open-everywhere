@@ -78,5 +78,5 @@ test("a DM seat's delegated worker settles completed, with no delegation.task_fa
 
   expect([...new Set(settled.map((r) => r.detail?.status))], "the settlement edge wrote a completed row and nothing else").toEqual(["completed"]);
 
-  expect(Object.keys(settled[0]!.detail ?? {}).sort()).toEqual(["adopted", "agent", "kinds", "marker", "session", "status", "task"]);
+  expect(Object.keys(settled[0]!.detail ?? {}).sort()).toEqual(["agent", "session", "status", "task"]);
 });

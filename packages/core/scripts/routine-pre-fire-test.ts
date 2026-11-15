@@ -49,7 +49,6 @@ const {
   MAX_ROUTINE_COLLECTORS,
   assertCollectorDeclarable,
   collectRoutineInputs,
-  collectionCarriesData,
   collectorDeclaration,
   describeCollectorFailure,
   listRoutineCollectors,
@@ -246,7 +245,6 @@ const READ_KIND = connectorToolPermissionKind(READ_TOOL);
   const allowed = await collectRoutineInputs({ org: "acme", routineId: "r-1", names: ["queue"], heldKinds: [READ_KIND] });
   ok(allowed[0]?.ok === true && allowed[0].body === "body of queue", "collect: NEGATIVE CONTROL — with the declared permission held, the same collector reads");
   ok(reads === 1, "collect: …and the reader ran exactly once");
-  ok(collectionCarriesData(allowed) && !collectionCarriesData(refused), "collect: a collection carries data only when something actually collected — a fire whose every read failed carries only our own prose");
 
   const wrongTool = await collectRoutineInputs({ org: "acme", routineId: "r-1", names: ["queue"], heldKinds: [connectorToolPermissionKind("notion__list_pages")] });
   ok(wrongTool[0]?.ok === false, "collect: a permission for a DIFFERENT tool on the same connection does not lift this collector");
@@ -569,7 +567,7 @@ const T0 = new Date("2026-07-02T12:00:01.000Z");
     "fallback: what actually broke rides `detail`, which reaches the audit row and no model",
   );
   ok(open.gate.fire, "fallback: a routine with NO gate still FIRES — there is nothing to fail closed about, and cancelling it would be a new silence");
-  ok(!open.tainted, "fallback: 🔴 a fire whose every read failed is NOT tainted — it carries only our own prose");
+  ok(!("tainted" in open), "fallback: 🔴 OPE-2720: the outcome carries no `tainted` field — no dispatch site stamps a fire tainted now");
 
   const gated = preFireFallback(routine({ id: "r-fallback-gated", collectors: ["queue"], gate: "always.no" }), new Error("boom"));
   ok(!gated.gate.fire, "fallback: 🔴 NEGATIVE CONTROL — a routine that declares a GATE fails CLOSED on the same break");
@@ -600,7 +598,7 @@ const T0 = new Date("2026-07-02T12:00:01.000Z");
   ok(refusedFire !== undefined, "e2e collect: 🔴 a refused collector never blocks the fire — a lost input is a fact the run is told, not a reason to cancel it");
   ok(refusedFire!.message.includes("NOT COLLECTED"), "e2e collect: 🔴 …and the refusal is NAMED in the message the model reads");
   ok(!refusedFire!.message.includes("COLLECTED-BODY-queue"), "e2e collect: …with none of the body it was not permitted to read");
-  ok(refusedFire!.attrs[OE_TAINTED_FIRE_ATTR] === undefined, "e2e collect: 🔴 a fire whose every read FAILED is NOT tainted — it carries only our own prose, and stamping it anyway would degrade the signal for every fire that collects");
+  ok(refusedFire!.attrs[OE_TAINTED_FIRE_ATTR] === undefined, "e2e collect: a fire whose every read FAILED carries no taint stamp");
   const failedRows = (await readAudit({ org: ORG, action: ROUTINE_AUDIT.collectFailed, limit: 50 })).map((r) => r.detail as Record<string, unknown>);
   ok(failedRows.some((d) => d["routineId"] === "r-collect"), "e2e collect: 🔴 the failure is recorded on the run — a `routine.collect_failed` row, so 'saw nothing' and 'could not look' stay different facts after the event");
 
@@ -619,7 +617,7 @@ const T0 = new Date("2026-07-02T12:00:01.000Z");
   ok(okFire!.message.includes("Do the work."), "e2e collect: the fire still carries the operator's own prompt");
   ok(okFire!.message.indexOf("Do the work.") < okFire!.message.indexOf("COLLECTED-BODY-queue"), "e2e collect: …and the collected body sits BELOW it");
   ok(okFire!.message.indexOf(UNTRUSTED_OPEN) < okFire!.message.indexOf("COLLECTED-BODY-queue"), "e2e collect: …inside the untrusted fence, on the real dispatch path");
-  ok(okFire!.attrs[OE_TAINTED_FIRE_ATTR] === "true", "e2e collect: 🔴 a fire CARRYING collected bytes is stamped TAINTED — the fired turn seeds its taint signal from this, since the fence was applied on the dispatcher's tick where the taint half is a no-op");
+  ok(okFire!.attrs[OE_TAINTED_FIRE_ATTR] === undefined, "e2e collect: 🔴 OPE-2720: a fire CARRYING collected bytes carries NO taint stamp either — the collected block is fenced, and no dispatch site stamps a fire tainted");
 }
 
 {

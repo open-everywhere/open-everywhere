@@ -86,7 +86,6 @@
     "hook/routine-silence",
     "hook/sandbox-lifecycle",
     "hook/session-park",
-    "hook/spawn-taint",
     "hook/spend",
     "hook/stall-guard",
     "hook/telemetry",

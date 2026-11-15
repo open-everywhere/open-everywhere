@@ -35,7 +35,6 @@ import { touchThreadSeatActivity } from "./thread-seat-state.js";
 import { setSurfaceReaction } from "./surface-message-ops.js";
 import { drainGenerationRetirements } from "./generation-retirement.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
-import { INGESTION_KINDS } from "../access/taint-tiers.js";
 import { INVOKER_POSTURE_ATTR, narrowerInvokerPosture, type InvokerPosture } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
 import {
@@ -841,16 +840,6 @@ export function buildRedriveReinject(domain: string | undefined, rawToken: strin
   };
 }
 
-export const OE_SPAWN_TAINTED_ATTR = "oe_spawn_tainted";
-
-export const OE_SPAWN_TAINT_KINDS_ATTR = "oe_spawn_taint_kinds";
-
-function taintKindsAttrValue(tainted: boolean, kinds: readonly string[] | undefined): string | undefined {
-  if (!tainted || kinds === undefined) return undefined;
-  const named = [...new Set(kinds.filter((k) => (INGESTION_KINDS as readonly string[]).includes(k)))];
-  return named.length > 0 ? named.join(",") : undefined;
-}
-
 export async function dispatchTaskWindow(input: {
   readonly token: string;
   readonly message: string;
@@ -858,7 +847,6 @@ export async function dispatchTaskWindow(input: {
   readonly domain: string;
   readonly origin: UnifiedWakeOrigin;
   readonly parentAuthAttributes?: Record<string, unknown>;
-  readonly tainted: boolean;
   readonly grain?: "task" | "thread";
   readonly taskLabel?: string;
   readonly turnId?: string;
@@ -881,7 +869,6 @@ export async function dispatchTaskWindow(input: {
   const requesterCandidates = requesterCandidatesStampForDispatch(input.turnId);
   if (requesterCandidates !== undefined) attributes[OE_REQUESTER_CANDIDATES_ATTR] = requesterCandidates;
   else delete attributes[OE_REQUESTER_CANDIDATES_ATTR];
-  if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   attributes[OE_NON_REQUESTER_ATTR] = "task-brief";
   await deliverUnifiedDispatch({
     message: input.message,
@@ -970,8 +957,6 @@ export async function dispatchWorkRequest(input: {
   readonly seatSessionId?: string;
   readonly seatWakeId: string;
   readonly cancel?: boolean;
-  readonly tainted: boolean;
-  readonly taintKinds?: readonly string[];
   readonly invokerPosture?: InvokerPosture;
   readonly identity?: Readonly<Record<string, string | readonly string[]>>;
   readonly ownAccountAsk?: string;
@@ -998,9 +983,6 @@ export async function dispatchWorkRequest(input: {
   if (input.seatSessionId !== undefined) attributes[OE_WORK_SEAT_SESSION_ATTR] = input.seatSessionId;
   else delete attributes[OE_WORK_SEAT_SESSION_ATTR];
   attributes[OE_WORK_SEAT_WAKE_ATTR] = input.seatWakeId;
-  if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
-  const forwardKinds = taintKindsAttrValue(input.tainted, input.taintKinds);
-  if (forwardKinds !== undefined) attributes[OE_SPAWN_TAINT_KINDS_ATTR] = forwardKinds;
   if (input.ownAccountAsk !== undefined && input.ownAccountAsk.length > 0) attributes[OE_OWN_ACCOUNT_ASK_ATTR] = input.ownAccountAsk;
   const payload = {
     message: input.message,
@@ -1018,8 +1000,6 @@ export function workResultAttributes(input: {
   readonly requestId: string;
   readonly requester: RequesterVerdict;
   readonly nonMemberWake: boolean;
-  readonly tainted: boolean;
-  readonly taintKinds?: readonly string[];
   readonly readsToken?: string;
   readonly invokerPosture?: InvokerPosture;
   readonly fireCreator?: string;
@@ -1040,9 +1020,6 @@ export function workResultAttributes(input: {
     attributes[OE_REQUESTER_CANDIDATES_ATTR] = JSON.stringify(input.requester.candidates);
   }
   if (input.nonMemberWake) attributes[OE_CHAT_NONMEMBER_ATTR] = "true";
-  if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
-  const resultKinds = taintKindsAttrValue(input.tainted, input.taintKinds);
-  if (resultKinds !== undefined) attributes[OE_SPAWN_TAINT_KINDS_ATTR] = resultKinds;
   if (input.readsToken !== undefined) attributes[OE_WORK_RESULT_READS_ATTR] = input.readsToken;
   if (input.reportOwed === true) attributes[OE_WORK_RESULT_OWED_ATTR] = "true";
   if (input.quiet === true) attributes[OE_WORK_RESULT_QUIET_ATTR] = "true";
@@ -1062,8 +1039,6 @@ export async function dispatchWorkResult(input: {
   readonly requester: RequesterVerdict;
   readonly nonMemberWake: boolean;
   readonly requestId: string;
-  readonly tainted: boolean;
-  readonly taintKinds?: readonly string[];
   readonly readsToken?: string;
   readonly invokerPosture?: InvokerPosture;
   readonly fireCreator?: string;

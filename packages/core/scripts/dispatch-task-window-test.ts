@@ -17,7 +17,7 @@ import {
   OE_TASK_LABEL_ATTR,
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
-import { divertToUnifiedWindow, dispatchTaskWindow, OE_SPAWN_TAINTED_ATTR, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
+import { divertToUnifiedWindow, dispatchTaskWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { truncateTaskLabel } from "../agent/channels/turn-delivery.js";
 import { parseWindowToken, isTaskWindowToken, taskWindowId, formatWindowToken } from "../agent/channels/window-key.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -102,11 +102,10 @@ await dispatchTaskWindow({
   domain: "payments",
   origin: slackOrigin,
   parentAuthAttributes: { [OE_PLATFORM_ATTR]: "slack", some: "carried" },
-  tainted: true,
 });
 ok(received.length === 1, "dispatchTaskWindow dispatched exactly once (non-blocking, returns after handing off)");
 eq(received[0].target.token, taskToken, "dispatched on the TASK window token");
-ok(received[0].auth.attributes?.[OE_SPAWN_TAINTED_ATTR] === "true", "tainted parent ⇒ child auth carries the oe_spawn_tainted stamp");
+ok(received[0].auth.attributes?.["oe_spawn_tainted"] === undefined, "🔴 OPE-2720: the child auth carries NO `oe_spawn_tainted` stamp — the worker taint carriage is deleted");
 ok(received[0].auth.attributes?.some === "carried", "parent auth attributes are forwarded verbatim (egress/capability inheritance)");
 ok(received[0].target.origin.platform === "slack", "the child owns the SAME origin thread the parent was handling");
 
@@ -117,10 +116,9 @@ await dispatchTaskWindow({
   wakeId: mintWakeId(),
   domain: "payments",
   origin: slackOrigin,
-  parentAuthAttributes: {},
-  tainted: false,
+  parentAuthAttributes: { oe_spawn_tainted: "true" },
 });
-ok(received[0].auth.attributes?.[OE_SPAWN_TAINTED_ATTR] === undefined, "untainted parent ⇒ NO taint stamp on the child auth");
+ok(received[0].auth.attributes?.["oe_spawn_tainted"] === "true", "an old bag's retired stamp rides verbatim — the dispatch neither adds nor strips it, and nothing reads it");
 
 console.log("2b. dispatchTaskWindow taskLabel stamp (OPE-508):");
 received.length = 0;
@@ -131,7 +129,6 @@ await dispatchTaskWindow({
   domain: "payments",
   origin: slackOrigin,
   parentAuthAttributes: {},
-  tainted: false,
   taskLabel: "Investigate the deploy failure",
 });
 eq(received[0].auth.attributes?.[OE_TASK_LABEL_ATTR], "Investigate the deploy failure", "a supplied taskLabel is stamped verbatim onto the child's opening auth");
@@ -144,7 +141,6 @@ await dispatchTaskWindow({
   domain: "payments",
   origin: slackOrigin,
   parentAuthAttributes: {},
-  tainted: false,
 });
 ok(!("oe_task_label" in (received[0].auth.attributes ?? {})), "omitting taskLabel leaves the oe_task_label key genuinely ABSENT from the child's auth (not stamped blank)");
 
@@ -169,7 +165,6 @@ console.log("2c. dispatchTaskWindow who-asked stamp (OPE-675):");
     domain: "payments",
     origin: slackOrigin,
     parentAuthAttributes: {},
-    tainted: false,
   });
   eq(
     received[0].auth.attributes?.[OE_REQUESTER_ATTR],
@@ -185,7 +180,6 @@ console.log("2c. dispatchTaskWindow who-asked stamp (OPE-675):");
     domain: "payments",
     origin: slackOrigin,
     parentAuthAttributes: { [OE_REQUESTER_ATTR]: "U_PREVIOUS_ASKER" },
-    tainted: false,
   });
   ok(
     received[0].auth.attributes?.[OE_REQUESTER_ATTR] !== "U_PREVIOUS_ASKER",
@@ -208,7 +202,6 @@ console.log("2d. dispatchTaskWindow candidate-set stamp (OPE-683):");
     domain: "payments",
     origin: slackOrigin,
     parentAuthAttributes: { [OE_REQUESTER_CANDIDATES_ATTR]: JSON.stringify(["U_ORG_A", "U_ORG_B"]) },
-    tainted: false,
   });
   ok(
     received[0].auth.attributes?.[OE_REQUESTER_CANDIDATES_ATTR] === undefined,
@@ -228,7 +221,6 @@ console.log("2d. dispatchTaskWindow candidate-set stamp (OPE-683):");
     domain: "payments",
     origin: slackOrigin,
     parentAuthAttributes: { [OE_REQUESTER_CANDIDATES_ATTR]: JSON.stringify(["U_ORG_A", "U_ORG_B"]), oe_unrelated_probe: "kept" },
-    tainted: false,
   });
   ok(
     received[0].auth.attributes?.["oe_unrelated_probe"] === "kept",

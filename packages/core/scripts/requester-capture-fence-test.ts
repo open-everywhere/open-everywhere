@@ -21,7 +21,6 @@ import { JOB_FIRE_ATTR } from "../agent/access/job-posture.js";
 import { INVOKER_POSTURE_ATTR } from "../agent/access/invoker-posture.js";
 import { nonMemberChatAttrs, OE_CHAT_NONMEMBER_ATTR } from "../agent/identity/non-member.js";
 import { carriesNonRequesterStamp, nonRequesterAttrs, NON_REQUESTER_KINDS, OE_NON_REQUESTER_ATTR } from "../agent/identity/non-requester.js";
-import { OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
 import { requesterAsksThisTurn, requesterMessagesThisTurn } from "../agent/access/requester-messages.js";
 import { judgeContextOf } from "../agent/access/approval-judge.js";
 import { noteContinuationTurn } from "../agent/access/continuation-turn-state.js";
@@ -151,7 +150,7 @@ const memberDelivered = await deliveredBag(() =>
 
 const taskToken = formatWindowToken({ domain: "fence", windowId: taskWindowId("slack/C_RCF", "1720000000.001"), generation: 1 });
 const taskBriefBag = await deliveredBag(() =>
-  dispatchTaskWindow({ token: taskToken, message: "do the thing", wakeId: mintWakeId(), domain: "fence", origin, parentAuthAttributes: { ...MEMBER_BAG }, tainted: false }),
+  dispatchTaskWindow({ token: taskToken, message: "do the thing", wakeId: mintWakeId(), domain: "fence", origin, parentAuthAttributes: { ...MEMBER_BAG } }),
 );
 const seatMessageBag = await deliveredBag(() => dispatchSeatMessage({ token: SEAT_TOKEN, origin, wakeId: mintWakeId(), domain: "fence", message: "Question from the payments domain: …", authAttributes: {} }));
 const botRelayBag = await deliveredBag(() => dispatchSeatMessage({ token: SEAT_TOKEN, origin, wakeId: mintWakeId(), domain: "fence", message: "The other bot replied: …", authAttributes: { [BOT_ASK_RELAY_ATTR]: "true" } }));
@@ -200,7 +199,7 @@ function runMatrix(mode: string): void {
 
   refusedByStamp(`[${mode}] a routine fire`, routineFireAttributes(fireRoutine, {}, "channel", true, true, "fire_rcf"), FIRE_UNATTENDED_ATTR);
   refusedByStamp(`[${mode}] a webhook fire`, surfaceWebhookFireAttributes("hook_rcf", {}, false, true), FIRE_UNATTENDED_ATTR);
-  refusedByStamp(`[${mode}] an inbound A2A task`, a2aInboundFireAttributes({ oe_a2a_caller: "acme" }, { attr: INVOKER_POSTURE_ATTR, value: "untrusted-remote" }, {}), FIRE_UNATTENDED_ATTR);
+  refusedByStamp(`[${mode}] an inbound A2A task`, a2aInboundFireAttributes({ oe_a2a_caller: "acme" }, { attr: INVOKER_POSTURE_ATTR, value: "untrusted-remote" }), FIRE_UNATTENDED_ATTR);
   {
     const jobBag = routineFireAttributes(jobRoutine, {}, "channel", true, true, "fire_job");
     eq(jobBag[JOB_FIRE_ATTR], "true", `[${mode}] precondition: the real fire builder stamps a job routine's fire with the job-fire stamp`);
@@ -225,7 +224,7 @@ function runMatrix(mode: string): void {
 
   {
     const parent = { sessionId: "sess-rcf-parent", callId: "call_rcf", turn: { id: "turn_3", sequence: 3 } };
-    const child = deliver({ ...MEMBER_BAG, [OE_PARENT_TURN_TAINTED_ATTR]: "sess-rcf-parent|turn_3" }, { kind: "subagent", token: "subagent:sess-rcf-parent:call_rcf", parent });
+    const child = deliver({ ...MEMBER_BAG, oe_parent_turn_tainted: "sess-rcf-parent|turn_3" }, { kind: "subagent", token: "subagent:sess-rcf-parent:call_rcf", parent });
     eq(child.messages, [], `[${mode}] 🔴 a native child carrying the parent's forward stamp captures nothing`);
     const clean = deliver({ ...MEMBER_BAG }, { kind: "subagent", token: "subagent:sess-rcf-parent:call_rcf", parent });
     eq(clean.messages, [], `[${mode}] 🔴 …and a native child with NO stamp captures nothing either: the delegation identity is the refusal`);
@@ -280,7 +279,7 @@ resetSettingsForTest();
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const src = readFileSync(join(here, "../agent/hooks/requester-messages.ts"), "utf8");
-  for (const sym of ["spawn-taint", "taint-signal", "TAINT_SEED_ATTRS", "adoptedParentTurnTaintThisTurn", "OE_SPAWN_TAINTED_ATTR", "OE_TAINTED_FIRE_ATTR", "JOB_TAINT_ATTR", "untrustedIngestedThisTurn"]) {
+  for (const sym of ["spawn-taint", "taint-turn", "taint-signal", "TAINT_SEED_ATTRS", "adoptedParentTurnTaintThisTurn", "OE_SPAWN_TAINTED_ATTR", "OE_TAINTED_FIRE_ATTR", "JOB_TAINT_ATTR", "untrustedIngestedThisTurn"]) {
     ok(!src.includes(sym), `🔴 hooks/requester-messages.ts names no taint symbol: ${sym}`);
   }
 }

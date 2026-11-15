@@ -18,7 +18,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { readAudit } = await import("../agent/audit/audit.js");
 const { auditReplyPost } = await import("../agent/channels/reply-post.js");
 const { notePromisedReport, SETTLEMENT_REPORT_SKIPPED_ACTION } = await import("../agent/access/pending-delegation-signal.js");
-const spawnTaint = (await import("../agent/hooks/spawn-taint.js")).default as unknown as { events: Record<string, (e: unknown, c: unknown) => unknown> };
+const hub = (await import("../agent/hooks/delegation-settlement.js")).default as unknown as { events: Record<string, (e: unknown, c: unknown) => unknown> };
 const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
   readonly execute: (i: Record<string, unknown>, c: unknown) => Promise<{ acknowledged?: boolean }>;
 };
@@ -61,7 +61,7 @@ const resultCtx = (sessionId: string, turnId: string, attributes: Record<string,
 const skippedRows = async (): Promise<Record<string, unknown>[]> =>
   (await readAudit({ org: ORG, action: SETTLEMENT_REPORT_SKIPPED_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
-const turnStarted = spawnTaint.events["turn.started"]!;
+const turnStarted = hub.events["turn.started"]!;
 ok(typeof turnStarted === "function", "the seat's turn edge that arms the result wake's duty exists");
 
 async function resultTurn(sessionId: string, turnId: string, attributes: Record<string, unknown>, before?: () => void) {
@@ -84,7 +84,7 @@ async function resultTurn(sessionId: string, turnId: string, attributes: Record<
 console.log("§1 a rotated seat session that holds no promise still owes the report:");
 {
   const REQ = "req-2360-rotated";
-  const attributes = workResultAttributes({ requestId: REQ, requester: REQUESTER, nonMemberWake: false, tainted: false, reportOwed: true });
+  const attributes = workResultAttributes({ requestId: REQ, requester: REQUESTER, nonMemberWake: false, reportOwed: true });
   const before = (await skippedRows()).length;
   const turn = await resultTurn("sess-rotated-2360", "turn-2360-a", attributes);
   ok(
@@ -102,20 +102,20 @@ console.log("§1 a rotated seat session that holds no promise still owes the rep
 
 console.log("§2 a result wake with no promise owes nothing:");
 {
-  const attributes = workResultAttributes({ requestId: "req-2360-unpromised", requester: REQUESTER, nonMemberWake: false, tainted: false });
+  const attributes = workResultAttributes({ requestId: "req-2360-unpromised", requester: REQUESTER, nonMemberWake: false });
   eq(attributes[work.OE_WORK_RESULT_OWED_ATTR], undefined, "§2: a result wake built without a promise carries no promise stamp");
   const before = (await skippedRows()).length;
   const turn = await resultTurn("sess-unpromised-2360", "turn-2360-b", attributes);
   ok(turn.first.acknowledged === true && turn.first.error === undefined, `🔴 §2 NEGATIVE CONTROL: \`no_reply\` is accepted when nobody was promised the result (got ${JSON.stringify(turn.first)})`);
   eq((await skippedRows()).length, before, "§2: …and no skipped row is written");
-  const forged = workResultAttributes({ requestId: "req-2360-forged", requester: REQUESTER, nonMemberWake: false, tainted: false, reportOwed: false });
+  const forged = workResultAttributes({ requestId: "req-2360-forged", requester: REQUESTER, nonMemberWake: false, reportOwed: false });
   eq(forged[work.OE_WORK_RESULT_OWED_ATTR], undefined, "§2: `reportOwed: false` stamps nothing");
 }
 
 console.log("§3 a session promise without the stamp still arms the duty:");
 {
   const REQ = "req-2360-same-session";
-  const attributes = workResultAttributes({ requestId: REQ, requester: REQUESTER, nonMemberWake: false, tainted: false });
+  const attributes = workResultAttributes({ requestId: REQ, requester: REQUESTER, nonMemberWake: false });
   const before = (await skippedRows()).length;
   const turn = await resultTurn("sess-same-2360", "turn-2360-c", attributes, () => notePromisedReport(work.workLedgerId(REQ)));
   ok(typeof turn.first.error === "string", `§3: the session promise alone refuses the first \`no_reply\` (got ${JSON.stringify(turn.first)})`);

@@ -80,7 +80,8 @@ Every consequential action is recorded with **who / what / where / when**:
   rows, and together they answer "what did this seat commission, and what came of it". A dispatch
   writes **`delegation.task_started`** (the task id, the call id, eve's task kind and the tool); a
   task reaching a terminal state writes **`delegation.task_settled`** (the same ids, eve's own status
-  word, and what the taint plane made of the child's marker). Those two are also the parked-worker
+  word, and the child's own session id; until OPE-2720 it also carried the taint verdict on the
+  child's marker). Those two are also the parked-worker
   census — one settled row per worker that parks until its parent generation is retired.
   **A settlement that moves the worker's SOURCES onto the seat writes `delegation.provenance_carried`.**
   Every conversational seat is worker-only for the connector ops, so the ordinary shape of a connector
@@ -107,10 +108,9 @@ Every consequential action is recorded with **who / what / where / when**:
   `taint.mode: "off"` deployment dispatched the task before that change reached it. Or the settle could not read the operational
   store: the carriage is **fail-soft** and catches every store error, so an outage costs the
   sources line and leaves the same absence. The three look identical from the audit trail, so do not read an
-  absent row as proof of the first cause. **The worker's TAINT verdict never travels
-  this way**: taint says what a worker read and
-  rides its own marker, provenance says which system a reply drew on, and the two planes settle on the
-  same edge and share nothing.
+  absent row as proof of the first cause. **No worker TAINT verdict travels this way**, and since
+  OPE-2720 none travels to the seat at all: taint says what a worker read, provenance says which
+  system a reply drew on, and the two share nothing.
   **A delegation that DIES writes `delegation.task_failed`.** It carries the task id where one exists,
   the call id, the tool, eve's error class in `errorClass` (`SUBAGENT_EXECUTION_FAILED` and its
   siblings), eve's own error TEXT in `error`, and the seat's turn id. It never carries the child's
@@ -139,19 +139,18 @@ Every consequential action is recorded with **who / what / where / when**:
   one and a member's own message could sit in the same string; a field on an event has no such
   neighbour, so that hazard is structurally absent rather than merely guarded.
   **An event OE's reader REFUSED writes `delegation.task_unreadable`**, not a settlement row. It
-  reached no edge and adopted no taint, which is the fail-OPEN direction, so the row exists to make
-  a too-strict reader countable instead of silent; it carries `edge`, `marker: "unreadable"`,
-  `adopted: false` and eve's own unadmitted values as bounded diagnostics. It is NOT deduplicated
+  reached no edge and settled nothing, so the row exists to make a too-strict reader countable
+  instead of silent; it carries `edge` and eve's own unadmitted values as bounded diagnostics. It is NOT deduplicated
   across redeliveries, so a count of these rows is a count of DELIVERIES, not of events.
   🔴 **A dispatch that reached no exact authority writes `delegation.dispatch_unauthorized`**, which is
   neither a settlement nor a refused event. It replaced five throws that claimed to refuse a child
   launch and stopped nothing at eve 0.70 (OPE-2250 step 4): `task.started` is not cancellable in eve's
   own table, and an authored hook's throw at `actions.requested` is swallowed by eve's dispatch
   try/catch. What the state costs the dispatch is its ADDRESS — no task wake is minted, so the
-  settlement installs no reply address and the reply fence refuses it under `task-wake-unread`. Taint
-  is unaffected: the call-keyed marker still carries, because `oe-task-call:<taskId>` is written
-  unconditionally at dispatch. The row carries `edge`, `reason`, `marker: "unauthorized"`,
-  `adopted: false` and `call`. **Filter on `reason` and expect five values across two edges** —
+  settlement installs no reply address and the reply fence refuses it under `task-wake-unread`. The
+  join row `oe-task-call:<taskId>` is still written, unconditionally, at dispatch. The row carries
+  `edge`, `reason` and `call`. (Until OPE-2720 this row and `delegation.task_unreadable` also carried
+  the taint fields `marker` and `adopted`.) **Filter on `reason` and expect five values across two edges** —
   `settlement-turn-no-authority`, `settlement-turn-ambiguous-authority`, `dispatch-wake-not-durable`
   and `unified-turn-no-wake` at `actions.requested`, plus `authority-row-absent-at-task-started` at
   `task.started`. (A sixth, `authority-row-absent-before-advance`, was briefly declared and named here

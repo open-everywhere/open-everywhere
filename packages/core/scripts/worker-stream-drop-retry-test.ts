@@ -326,11 +326,11 @@ async function settledRows(): Promise<AuditEntry[]> {
   return readAudit({ org: "default", action: ACTION });
 }
 
-const spawnTaint = (await import("../agent/hooks/spawn-taint.js")).default;
-const events = (spawnTaint as { events?: Record<string, unknown> }).events ?? {};
+const hub = (await import("../agent/hooks/delegation-settlement.js")).default;
+const events = (hub as { events?: Record<string, unknown> }).events ?? {};
 const turnStarted = events["turn.started"] as ((event: unknown, ctx: HookContext) => void) | undefined;
 const turnFailed = events["turn.failed"] as ((event: unknown, ctx: HookContext) => Promise<void>) | undefined;
-assert.ok(turnStarted !== undefined && turnFailed !== undefined, "both spawn-taint arms must exist for §6 to mean anything");
+assert.ok(turnStarted !== undefined && turnFailed !== undefined, "both delegation-settlement arms must exist for §6 to mean anything");
 
 function workerCtx(sessionId: string): HookContext {
   return { session: { id: sessionId }, channel: { continuationToken: "subagent:wrun_PARENT:call_ABC" } } as unknown as HookContext;

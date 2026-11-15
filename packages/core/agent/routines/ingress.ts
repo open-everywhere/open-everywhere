@@ -5,7 +5,6 @@ import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolveRoutineTarget, type DispatchTarget } from "../schedules/routine-dispatch.js";
 import { mintWakeId } from "../channels/unified-window.js";
-import { taintedFireAttrs } from "../access/taint-signal.js";
 import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
 import { recheckFireCreator, type CreatorStandingCheck } from "./fire-creator.js";
@@ -330,7 +329,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       authenticator: ev.source,
       principalType: "service",
       principalId: `${ev.source}:webhook`,
-      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal, fireWakeId), ...taintedFireAttrs(!ev.redacted || pre.tainted) },
+      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal, fireWakeId) },
     };
     const message = eventPrompt(
       r,

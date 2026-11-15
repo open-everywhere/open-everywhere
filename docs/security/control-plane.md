@@ -1636,9 +1636,9 @@ turn's received message text, rendered quoted and under review. The capture fenc
 captures** the delivery kinds below, because no person wrote them. It refuses two session shapes,
 five host-set stamps and one turn shape (the last paragraph below):
 
-- a delivery inside a native delegation child. Only a native child adopts the parent's forward stamp
-  (`oe_parent_turn_tainted`), so this arm refuses every delivery that adopts it. A tainted parent seat
-  turn's own bag also carries the stamp, and the fence does not read it;
+- a delivery inside a native delegation child, by its delegation identity (`isSubagentChildContext`):
+  the child's brief is the parent model's words. The retired forward stamp (`oe_parent_turn_tainted`,
+  deleted by OPE-2720) plays no part;
 - a delivery inside the work session, because its every delivery wraps the seat model's brief;
 - `oe_fire_unattended`: a routine, webhook, schedule, job or inbound A2A fire;
 - `oe_job_fire`: a durable-job fire;

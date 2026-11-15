@@ -150,13 +150,13 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   const shared = routineFireAttributes(r, dest.attributes, dest.mode, true, undefined, fireId);
   ok(
     JSON.stringify(rest) === JSON.stringify(shared),
-    "OPE-143: the fan-out's attribute bag is EXACTLY routineFireAttributes plus the declared delta — not a parallel shape that can drift",
+    "OPE-143: the fan-out's attribute bag is EXACTLY routineFireAttributes — not a parallel shape that can drift",
   );
   ok(
-    taint === "true",
-    "OPE-159: a NON-redacted (content-bearing) event fire stamps the taint attribute — its prompt carries an outside party's bytes, so the fired session must not run with a clean taint signal",
+    taint === undefined,
+    "🔴 OPE-2720: a content-bearing event fire carries NO taint stamp — the prompt's outside bytes ride inside the untrusted fence, and no producer stamps a fire",
   );
-  ok(Object.keys(actual).length === Object.keys(shared).length + 1, "…and the taint stamp is the ONLY thing added to the shared bag");
+  ok(Object.keys(actual).length === Object.keys(shared).length, "…so the bag is EXACTLY the shared bag, with nothing added");
 }
 
 {

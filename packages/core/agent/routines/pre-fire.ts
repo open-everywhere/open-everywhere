@@ -1,6 +1,6 @@
 import { auditErrorDetail } from "../audit/tool-action.js";
 import { auditCollectorFailures } from "./fire-audit.js";
-import { COLLECTOR_DETAIL_MAX_CHARS, collectRoutineInputs, collectionCarriesData, describeCollectorFailure, type CollectedInput } from "./collector.js";
+import { COLLECTOR_DETAIL_MAX_CHARS, collectRoutineInputs, describeCollectorFailure, type CollectedInput } from "./collector.js";
 import { evaluateRoutineGate, type RoutineGateOutcome } from "./gate.js";
 import { routinePermissionKinds } from "./declared-permissions.js";
 import type { Routine } from "./routine.js";
@@ -8,10 +8,9 @@ import type { Routine } from "./routine.js";
 export interface PreFireOutcome {
   readonly collected: readonly CollectedInput[];
   readonly gate: RoutineGateOutcome;
-  readonly tainted: boolean;
 }
 
-const NOTHING: PreFireOutcome = { collected: [], gate: { fire: true, why: "no condition gate declared" }, tainted: false };
+const NOTHING: PreFireOutcome = { collected: [], gate: { fire: true, why: "no condition gate declared" } };
 
 export async function runPreFire(r: Routine, nowIso: string): Promise<PreFireOutcome> {
   const names = r.collectors ?? [];
@@ -36,11 +35,10 @@ export async function runPreFire(r: Routine, nowIso: string): Promise<PreFireOut
     return {
       collected,
       gate: { fire: false, gate: r.gate, why: `the pre-fire collection failed — failing closed: ${collectionError}` },
-      tainted: false,
     };
   }
 
-  return { collected, gate: evaluateRoutineGate(r.gate, collected), tainted: collectionCarriesData(collected) };
+  return { collected, gate: evaluateRoutineGate(r.gate, collected) };
 }
 
 function collectionFailed(names: readonly string[], error: string): readonly CollectedInput[] {
@@ -56,6 +54,5 @@ export function preFireFallback(r: Routine, err: unknown): PreFireOutcome {
   return {
     collected: collectionFailed(r.collectors ?? [], auditErrorDetail(err).error),
     gate: { fire: r.gate === undefined, gate: r.gate, why: `the pre-fire step failed — failing closed: ${auditErrorDetail(err).error}` },
-    tainted: false,
   };
 }

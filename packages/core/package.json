@@ -614,10 +614,6 @@
       "types": "./dist/agent/access/source-scoped-mount.d.ts",
       "default": "./dist/agent/access/source-scoped-mount.js"
     },
-    "./agent/access/subagent-taint.js": {
-      "types": "./dist/agent/access/subagent-taint.d.ts",
-      "default": "./dist/agent/access/subagent-taint.js"
-    },
     "./agent/access/surface-work-grant.js": {
       "types": "./dist/agent/access/surface-work-grant.d.ts",
       "default": "./dist/agent/access/surface-work-grant.js"
@@ -2006,6 +2002,10 @@
       "types": "./dist/agent/hooks/control-refusal.d.ts",
       "default": "./dist/agent/hooks/control-refusal.js"
     },
+    "./agent/hooks/delegation-settlement.js": {
+      "types": "./dist/agent/hooks/delegation-settlement.d.ts",
+      "default": "./dist/agent/hooks/delegation-settlement.js"
+    },
     "./agent/hooks/egress.js": {
       "types": "./dist/agent/hooks/egress.d.ts",
       "default": "./dist/agent/hooks/egress.js"
@@ -2102,10 +2102,6 @@
       "types": "./dist/agent/hooks/settlement-flush.d.ts",
       "default": "./dist/agent/hooks/settlement-flush.js"
     },
-    "./agent/hooks/spawn-taint.js": {
-      "types": "./dist/agent/hooks/spawn-taint.d.ts",
-      "default": "./dist/agent/hooks/spawn-taint.js"
-    },
     "./agent/hooks/spend.js": {
       "types": "./dist/agent/hooks/spend.d.ts",
       "default": "./dist/agent/hooks/spend.js"
@@ -2113,6 +2109,10 @@
     "./agent/hooks/stall-guard.js": {
       "types": "./dist/agent/hooks/stall-guard.d.ts",
       "default": "./dist/agent/hooks/stall-guard.js"
+    },
+    "./agent/hooks/taint-turn.js": {
+      "types": "./dist/agent/hooks/taint-turn.d.ts",
+      "default": "./dist/agent/hooks/taint-turn.js"
     },
     "./agent/hooks/telemetry.js": {
       "types": "./dist/agent/hooks/telemetry.d.ts",
@@ -4220,7 +4220,6 @@
     "test:chat-nonmember-taint": "NODE_NO_WARNINGS=1 tsx scripts/chat-nonmember-taint-test.ts",
     "test:read-nonmember-author": "NODE_NO_WARNINGS=1 tsx scripts/read-nonmember-author-test.ts",
     "test:dated-read": "NODE_NO_WARNINGS=1 tsx scripts/dated-read-test.ts",
-    "test:taint-worker-plane": "NODE_NO_WARNINGS=1 tsx scripts/taint-worker-plane-test.ts",
     "test:skill-taint-envelope": "NODE_NO_WARNINGS=1 tsx scripts/skill-taint-envelope-test.ts",
     "test:surface-tool-gate": "NODE_NO_WARNINGS=1 tsx scripts/surface-tool-gate-test.ts",
     "test:propose-venue": "NODE_NO_WARNINGS=1 tsx scripts/propose-venue-test.ts",
@@ -4414,7 +4413,8 @@
     "test:permission-homeostasis": "NODE_NO_WARNINGS=1 tsx scripts/permission-homeostasis-test.ts",
     "test:permission-fit-report": "NODE_NO_WARNINGS=1 tsx scripts/permission-fit-report-test.ts",
     "test:native-subagent": "NODE_NO_WARNINGS=1 tsx scripts/native-subagent-test.ts",
-    "test:background-task-taint": "NODE_NO_WARNINGS=1 tsx scripts/background-task-taint-test.ts",
+    "test:background-task-settlement": "NODE_NO_WARNINGS=1 tsx scripts/background-task-settlement-test.ts",
+    "test:task-tool-names": "NODE_NO_WARNINGS=1 tsx scripts/task-tool-names-test.ts",
     "test:task-call-link": "NODE_NO_WARNINGS=1 tsx scripts/task-call-link-test.ts",
     "test:parked-child-lifecycle": "NODE_NO_WARNINGS=1 tsx scripts/parked-child-lifecycle-test.ts",
     "test:task-wake-identity": "NODE_NO_WARNINGS=1 tsx scripts/task-wake-identity-test.ts",
@@ -4456,7 +4456,6 @@
     "test:name-drop-wake-audit": "NODE_NO_WARNINGS=1 tsx scripts/name-drop-wake-audit-test.ts",
     "test:memory-provenance": "NODE_NO_WARNINGS=1 tsx scripts/memory-provenance-test.ts",
     "test:memory-turn-provenance": "NODE_NO_WARNINGS=1 tsx scripts/memory-turn-provenance-test.ts",
-    "test:taint-provenance-join": "NODE_NO_WARNINGS=1 tsx scripts/taint-provenance-join-test.ts",
     "test:repo-capabilities": "NODE_NO_WARNINGS=1 tsx scripts/repo-capabilities-test.ts",
     "test:pr-mint-capabilities": "NODE_NO_WARNINGS=1 tsx scripts/pr-mint-capabilities-test.ts",
     "test:config-repo-mint": "NODE_NO_WARNINGS=1 tsx scripts/config-repo-mint-test.ts",

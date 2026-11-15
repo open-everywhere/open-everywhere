@@ -113,7 +113,7 @@ async function postReport(routineId: string, origin: UnifiedWakeOrigin, opts: { 
   const requestId = workRequestIdFor(`fire:${fireWake}`);
   const binding = { org: ORG, platform: "slack", workspace: TEAM, surface: CHAN, mode: "channel", visibility: "public", trust: "internal", principalId: "U-OWNER", principalAttested: true, target: { channelId: CHAN } };
   const attributes = {
-    ...workResultAttributes({ requestId, requester: FIRE_REQUESTER, nonMemberWake: false, tainted: false, fireRoutine: { id: routineId, surfaceKey: SURFACE } }),
+    ...workResultAttributes({ requestId, requester: FIRE_REQUESTER, nonMemberWake: false, fireRoutine: { id: routineId, surfaceKey: SURFACE } }),
     [OE_FROZEN_SURFACE_BINDING_ATTR]: JSON.stringify(binding),
   };
   const ctx = { channel: { kind: "unified" }, session: { id: `s-${routineId}`, auth: { current: { attributes } } } } as never;
@@ -161,9 +161,9 @@ async function attentionOf(id: string) {
   const id = "r-digest";
   await routineStore.addRoutine({} as never, routine({ id, attention: { runs: 101, warnedAtRun: 100, cardId: "card-1" } }));
 
-  const attrs = workResultAttributes({ requestId: "q-1", requester: FIRE_REQUESTER, nonMemberWake: false, tainted: false, fireRoutine: { id, surfaceKey: SURFACE } });
+  const attrs = workResultAttributes({ requestId: "q-1", requester: FIRE_REQUESTER, nonMemberWake: false, fireRoutine: { id, surfaceKey: SURFACE } });
   ok(attrs[WORK_FIRE_ROUTINE_ATTR] === id && attrs[WORK_FIRE_ROUTINE_SURFACE_ATTR] === SURFACE, "🔴 stamp: a fire's result wake names its routine");
-  const jobAttrs = workResultAttributes({ requestId: "q-2", requester: FIRE_REQUESTER, nonMemberWake: false, tainted: false });
+  const jobAttrs = workResultAttributes({ requestId: "q-2", requester: FIRE_REQUESTER, nonMemberWake: false });
   ok(!(WORK_FIRE_ROUTINE_ATTR in jobAttrs) && !(WORK_FIRE_ROUTINE_SURFACE_ATTR in jobAttrs), "stamp: a seat's job's result wake names no routine");
 
   const ts = await postReport(id, TOP);
@@ -357,7 +357,7 @@ async function postNativeReport(r: Routine, threadTs?: string): Promise<string> 
   ok((await store.getRoutineReportThread(ORG, `slack/${CHAN}`, ts2, new Date().toISOString())) === null, "record: …and no thread under its own ts, because Slack threads do not nest");
 
   const fireWake = mintWakeId();
-  const resultAttrs = workResultAttributes({ requestId: workRequestIdFor(`fire:${fireWake}`), requester: FIRE_REQUESTER, nonMemberWake: false, tainted: false, fireRoutine: { id, surfaceKey: SURFACE } });
+  const resultAttrs = workResultAttributes({ requestId: workRequestIdFor(`fire:${fireWake}`), requester: FIRE_REQUESTER, nonMemberWake: false, fireRoutine: { id, surfaceKey: SURFACE } });
   const resultAudit = replyAuditFor({ channel: { kind: "unified" }, session: { id: "s-seat", auth: { current: { attributes: resultAttrs } } } } as never, "tool", fireWake);
   ok(resultAudit.fireRoutine === undefined && resultAudit.routine?.id === id, "audit: a result wake names its routine through `routine`, never `fireRoutine`");
 

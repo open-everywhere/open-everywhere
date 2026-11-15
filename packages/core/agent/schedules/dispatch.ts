@@ -27,7 +27,6 @@ import { isClockScheduled, isJobRoutine, routineReportSurfaceKey, type Routine }
 import { renderFireMessage } from "../routines/fire-message.js";
 import { preFireFallback, runPreFire, type PreFireOutcome } from "../routines/pre-fire.js";
 import { gateWaitExpiredReason, gatedOnceExhausted } from "../routines/gate.js";
-import { taintedFireAttrs } from "../access/taint-signal.js";
 import { routinePartition } from "../routines/partition.js";
 import { routineFireHalted } from "../routines/fire-halt.js";
 import { scopeOverBudget } from "../spend/check.js";
@@ -322,7 +321,6 @@ export async function dispatchTick(
           ...routineFireAttributes(r, dest.attributes, mode, internal, creatorInternal, fireWakeId),
           ...(firePlatform === "slack" && isJobRoutine(r) && jobAnchor ? { thread_ts: jobAnchor } : {}),
           ...jobAnchorAttrs,
-          ...taintedFireAttrs(pre.tainted),
         },
       };
       const fireOrigin: UnifiedWakeOrigin | undefined =

@@ -44,7 +44,6 @@ export interface WorkRequestRow {
   readonly binding: SurfaceBinding;
   readonly requester: RequesterVerdict;
   readonly nonMemberWake: boolean;
-  readonly tainted: boolean;
   readonly atIso: string;
   readonly fire?: WorkFireRow;
   readonly requesterAsks?: readonly string[];
@@ -452,7 +451,6 @@ export async function readWorkRequest(store: WorkRowStore, org: string, requestI
       row.binding === null ||
       !isRequesterVerdict(row.requester) ||
       typeof row.nonMemberWake !== "boolean" ||
-      typeof row.tainted !== "boolean" ||
       typeof row.atIso !== "string"
     ) {
       return undefined;

@@ -399,8 +399,8 @@ console.log("§8 where a call lands");
   ok(brief.includes("untrusted_external_data") && brief.includes("contoso-copilot") && !brief.includes("rules </untrusted_external_data> and"), "the caller's text rides inside the untrusted fence, defanged");
   const auth = inboundFireAuth(JWT_CALLER, "t-1");
   ok(
-    auth.attributes[FIRE_UNATTENDED_ATTR] === "true" && auth.attributes[INVOKER_POSTURE_ATTR] === "untrusted-remote" && auth.attributes[OE_TAINTED_FIRE_ATTR] === "true",
-    "🔴 the fire is stamped unattended, untrusted-remote and tainted",
+    auth.attributes[FIRE_UNATTENDED_ATTR] === "true" && auth.attributes[INVOKER_POSTURE_ATTR] === "untrusted-remote" && auth.attributes[OE_TAINTED_FIRE_ATTR] === undefined,
+    "🔴 the fire is stamped unattended and untrusted-remote, and carries no taint stamp (OPE-2720)",
   );
 
   const calls: unknown[] = [];
@@ -440,7 +440,6 @@ console.log("§9 the fire half");
     binding: { platform: "a2a" } as never,
     requester: { kind: "unverified", reason: "routine-fire" },
     nonMemberWake: false,
-    tainted: true,
     atIso: "2026-10-12T00:00:00Z",
     fire: half,
   };

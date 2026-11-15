@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { beginTaintTurn, markUntrustedIngestedThisTurn, untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
-import { openTaintTurn, TAINT_SEED_ATTRS } from "../agent/hooks/spawn-taint.js";
+import { openTaintTurn } from "../agent/hooks/taint-turn.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../agent/identity/non-member.js";
+
+const TAINT_SEED_ATTRS: readonly string[] = [OE_CHAT_NONMEMBER_ATTR];
 import { renderChainResolution, resolveApproverChain, type ApprovalChainRequest } from "../agent/access/approver-chain.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
@@ -89,6 +92,10 @@ await inSession(async () => {
   }
   boundary("turn-array", { [TAINT_SEED_ATTRS[0]]: ["true"] });
   ok(untrustedIngestedThisTurn() === true, "a seed attribute in eve's `string[]` spelling taints the turn as well");
+  for (const attr of ["oe_spawn_tainted", "oe_tainted_fire", "oe_job_tainted"]) {
+    boundary(`turn-retired-${attr}`, { [attr]: "true" });
+    ok(untrustedIngestedThisTurn() === false, `🔴 OPE-2720: a wake carrying the retired \`${attr}\` stamp opens a CLEAN turn — the attribute is ignored`);
+  }
 });
 
 await inSession(async () => {

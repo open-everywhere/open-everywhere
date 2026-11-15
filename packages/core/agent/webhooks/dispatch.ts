@@ -4,7 +4,6 @@ import { NO_REPLY_SENTINEL } from "../channels/turn-delivery.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { ingestUntrusted } from "../access/untrusted.js";
-import { taintedFireAttrs } from "../access/taint-signal.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { surfaceWebhookFireAttributes } from "../routines/fire-auth.js";
 import { checkFireDisclosure } from "../routines/fire-disclosure.js";
@@ -170,7 +169,7 @@ export async function fireWebhook(
     authenticator: "webhook",
     principalType: "service",
     principalId: `webhook:${hook.id}`,
-    attributes: { ...surfaceWebhookFireAttributes(hook.id, dest.attributes, isDm, internal), ...taintedFireAttrs(configHookPosture(hook) !== "trigger-only") },
+    attributes: { ...surfaceWebhookFireAttributes(hook.id, dest.attributes, isDm, internal) },
   };
 
   const message = renderWebhookMessage(hook, rawBody, args.headers ?? {}, now, surfaceKey);

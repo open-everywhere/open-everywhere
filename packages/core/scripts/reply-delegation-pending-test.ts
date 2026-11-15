@@ -37,7 +37,7 @@ const { maybeRedrive } = await import("../agent/channels/unified-redrive.js");
 const { DELEGATION_PENDING_REFUSAL_REASON, delegationPendingRefusalMessage } = await import("../agent/access/pending-delegation-signal.js");
 const turnDelivery = await import("../agent/channels/turn-delivery.js");
 const { withReplierPrefix } = turnDelivery;
-const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+const hub = await import("../agent/hooks/delegation-settlement.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
 
@@ -83,7 +83,7 @@ interface Armed {
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const arm = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
 
-const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+const hooks = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
 const hook = hooks["action.result"]!;
 const startedHook = hooks["task.started"]!;
 const requestedHook = hooks["actions.requested"]!;
@@ -1092,7 +1092,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
 }
 
 {
-  const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+  const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
   const turnStarted = events["turn.started"]!;
   const settlementWake = events["task.settled"]!;
   const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
@@ -1266,7 +1266,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
 }
 
 {
-  const { TASK_FAILED_ACTION } = spawnTaint;
+  const { TASK_FAILED_ACTION } = hub;
   const failedRows = async (): Promise<Record<string, unknown>[]> =>
     (await readAudit({ org: ORG, action: TASK_FAILED_ACTION })).map((r) => (r.detail ?? {}) as Record<string, unknown>);
 
@@ -1316,7 +1316,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   });
 
   {
-    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
     const turnStarted = events["turn.started"]!;
     const settlementWake = events["task.settled"]!;
 
@@ -1541,7 +1541,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 
   {
-    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_LATER", "154.1");
     const wOther = await wake("C_STATUS_OTHER", "154.2");
@@ -1566,7 +1566,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 
   {
-    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_MINTED");
     const TASK = "task_2668e2";
@@ -1585,7 +1585,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
     });
   }
   {
-    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_STEER");
     const wNewer = await wake("C_STATUS_STEER");
@@ -1604,7 +1604,7 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 
   {
-    const events = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_STEER_M");
     const wNewer = await wake("C_STATUS_STEER_M");

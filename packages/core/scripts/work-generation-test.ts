@@ -199,7 +199,6 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
     binding: { principalId: "discord/u1" } as never,
     requester: { kind: "requester", principalId: "discord/u1" } as never,
     nonMemberWake: false,
-    tainted: false,
     atIso: at(0),
   };
   await rememberWorkRequest(store, ORG, row);
@@ -235,7 +234,6 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
     binding: { principalId: "discord/u1" } as never,
     requester: { kind: "requester", principalId: "discord/u1" } as never,
     nonMemberWake: false,
-    tainted: false,
     atIso: at(0),
   };
   await rememberWorkRequest(store, ORG, row);
@@ -312,7 +310,6 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
     binding: { principalId: "discord/u1" } as never,
     requester: { kind: "requester", principalId: "discord/u1" } as never,
     nonMemberWake: false,
-    tainted: false,
     atIso: at(0),
   });
   await noteGenerationDelegation(org, W, workSessionLedgerId("req-hook-park"), store);

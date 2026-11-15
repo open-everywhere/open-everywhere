@@ -522,7 +522,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   {
     action: "delegation.task_settled",
     fields: ["task", "status", "agent"],
-    proves: "a worker finished and its verdict was carried back — the row a delegated reply must sit beside",
+    proves: "a worker finished and its status was recorded — the row a delegated reply must sit beside",
   },
   {
     action: "delegation.continuation_admitted",
@@ -537,17 +537,17 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   { action: "delegation.task_failed", fields: ["task"], proves: "a worker failed rather than quietly producing nothing", notExercised: "needs a worker that FAILS rather than settles; the pack has no fixture that makes one fail on demand." },
   {
     action: "delegation.task_unreadable",
-    fields: ["edge", "marker", "adopted", "status", "task"],
-    proves: "eve sent an event on a task edge that OE's reader REFUSED, so it reached no edge and adopted no taint — the fail-OPEN arm, made countable instead of silent",
+    fields: ["edge", "status", "task"],
+    proves: "eve sent an event on a task edge that OE's reader REFUSED, so it reached no edge and nothing settled — made countable instead of silent",
     notExercised:
-      "needs eve to send a task event OE's reader refuses, which on a real host means an eve release that moved a shape. `scripts/background-task-taint-test.ts` T4 drives it at the unit tier with a hand-built unreadable payload.",
+      "needs eve to send a task event OE's reader refuses, which on a real host means an eve release that moved a shape. `scripts/background-task-settlement-test.ts` T4 drives it at the unit tier with a hand-built unreadable payload.",
   },
   {
     action: "delegation.dispatch_unauthorized",
-    fields: ["edge", "reason", "marker", "adopted", "call"],
+    fields: ["edge", "reason", "call"],
     proves: "a delegated dispatch got NO exact dispatch authority, so no task wake is minted and its settlement installs no reply address — the reply fence refuses it under `task-wake-unread`. The state the old throw claimed to prevent, now counted instead of silently passed",
     notExercised:
-      "needs a unified seat delegating on a turn that reaches no exact wake. `scripts/background-task-taint-test.ts` PART 4D covers THREE of the five reasons through the real handlers: it asserts the row for `unified-turn-no-wake` and `settlement-turn-ambiguous-authority` on `actions.requested` (with a non-delegating action as the negative control), and drives `authority-row-absent-at-task-started` on `task.started`, asserting both its row and the absent task wake. NOT covered: `settlement-turn-no-authority`, which needs no fault and is simply not driven; and `dispatch-wake-not-durable`, which needs `rememberDelegatedTaskWake` to throw and so needs a store fault this tier cannot provoke.",
+      "needs a unified seat delegating on a turn that reaches no exact wake. `scripts/background-task-settlement-test.ts` PART 4D covers THREE of the five reasons through the real handlers: it asserts the row for `unified-turn-no-wake` and `settlement-turn-ambiguous-authority` on `actions.requested` (with a non-delegating action as the negative control), and drives `authority-row-absent-at-task-started` on `task.started`, asserting both its row and the absent task wake. NOT covered: `settlement-turn-no-authority`, which needs no fault and is simply not driven; and `dispatch-wake-not-durable`, which needs `rememberDelegatedTaskWake` to throw and so needs a store fault this tier cannot provoke.",
   },
   {
     action: "delegation.provenance_carried",

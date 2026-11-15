@@ -34,7 +34,7 @@ const { replyFoldTarget, refuseIfShouldFold, REPLY_FOLD_REFUSAL_REASON, REPLY_FO
 const { platformFailureClass } = await import("../agent/channels/platform-failure.js");
 const { CredentialEndpointError } = await import("../agent/access/credential-endpoints.js");
 const { SETTLEMENT_REPORT_POSTED_ACTION, SETTLEMENT_REPORT_SKIPPED_ACTION } = await import("../agent/access/pending-delegation-signal.js");
-const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+const hub = await import("../agent/hooks/delegation-settlement.js");
 const { recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
 const { recordRequesterIdentity } = await import("../agent/access/requester-identity.js");
 
@@ -95,7 +95,7 @@ interface Armed {
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const armReply = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]!({}, ctx) as Armed | null;
 
-const hooks = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+const hooks = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
 const startedHook = hooks["task.started"]!;
 const requestedHook = hooks["actions.requested"]!;
 const turnStarted = hooks["turn.started"]!;

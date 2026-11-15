@@ -3,19 +3,11 @@ import { classifyConnectorOpTier, isReservedNamespaceTool } from "./consequence.
 
 export const JOB_FIRE_ATTR = "oe_job_fire";
 
-export const JOB_TAINT_ATTR = "oe_job_tainted";
-
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
 
-export function jobFireAttrs(isJobFire: boolean, ledgerTainted = false): Record<string, string> {
+export function jobFireAttrs(isJobFire: boolean): Record<string, string> {
   if (!isJobFire) return {};
-  return ledgerTainted ? { [JOB_FIRE_ATTR]: "true", [JOB_TAINT_ATTR]: "true" } : { [JOB_FIRE_ATTR]: "true" };
-}
-
-export function jobTaintStamped(attributes: Attrs): boolean {
-  const v = attributes?.[JOB_TAINT_ATTR];
-  const first = typeof v === "string" ? v : Array.isArray(v) ? v[0] : undefined;
-  return first === "true";
+  return { [JOB_FIRE_ATTR]: "true" };
 }
 
 export function jobFireStamped(attributes: Attrs): boolean {

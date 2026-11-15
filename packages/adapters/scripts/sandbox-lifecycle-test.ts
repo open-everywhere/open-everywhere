@@ -731,3 +731,5 @@ const parentCtx = {
 }
 
 console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe, backend selection + docker stop + the subagent-child guard, the OPE-595 live-background-task stop guard, the OPE-2341 work-session idle rule, OPE-722 id-record augmentation of Sandbox.list)\n`);
+
+// proves: SET-045

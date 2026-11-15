@@ -413,7 +413,7 @@ console.log("§6 the delivery");
   ok(attrs[FIRE_UNATTENDED_ATTR] === "true", "the fire is marked unattended");
   ok(attrs[FIRE_PRINCIPAL_ATTR] === "UALICE", "the person is the attested principal");
   ok(attrs["oe_grain"] === "standing", "the DM standing grain is stamped, so the nudge gets narrow hands");
-  ok(attrs[OE_TAINTED_FIRE_ATTR] === "true", "the fire is tainted, because the facts carry external text");
+  ok(attrs[OE_TAINTED_FIRE_ATTR] === undefined, "🔴 OPE-2720: the fire carries no taint stamp");
   ok(attrs[PERSONAL_WATCH_MARKER_ATTR] === "calendar-conflict", "the marker names the finding's kind");
   const roomTarget = async () => ({ ok: true as const, surfaceKey: "slack/T1/C1", dispatch: { channel: {} as never, target: { channelId: "C1" }, mode: "channel" as const, attributes: {} } });
   const refusedRoom = await deliverWatchNudge({ to, appAuth: { attributes: {} } as never, resolveTarget: roomTarget as never }, { org: ORG, principalKey: "slack/T1/UALICE", finding, calibrationAsk: false, now: NOW });

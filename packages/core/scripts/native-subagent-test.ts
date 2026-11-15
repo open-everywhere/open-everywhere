@@ -26,7 +26,6 @@ import {
   SUBAGENT_CHANNEL_KIND,
   type BindableContext,
 } from "../agent/identity/binding.js";
-import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
 import { OE_NON_REQUESTER_ATTR } from "../agent/identity/non-requester.js";
 import { canDelegateFromSeat, resolveOwnWindowToken } from "../agent/access/delegation-mount.js";
 import { resolveLeanSeatPosture } from "../agent/access/lean-seat.js";
@@ -138,7 +137,7 @@ await inSession(async () => {
   recordDeliveredWakes("turn_parent", envelope);
   recordRequesterIdentity(parentCtx, "turn_parent", envelope);
   const spawnEvents = (
-    (await import("../agent/hooks/spawn-taint.js")).default as unknown as {
+    (await import("../agent/hooks/delegation-settlement.js")).default as unknown as {
       events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
     }
   ).events;
@@ -289,7 +288,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   inSession(() => {
     setNativeDelegationSeat("allow");
     markUntrustedIngestedThisTurn();
-    eq(nativeAgentAllowedNow(), true, "🔴 D6 TAINT IS NOT A CONJUNCT (OPE-471): a tainted turn KEEPS its delegation verb, because the forward leg stamps the child's opening auth — asserted `=== true`, not merely truthy");
+    eq(nativeAgentAllowedNow(), true, "🔴 D6 TAINT IS NOT A CONJUNCT (OPE-471): a tainted turn KEEPS its delegation verb, because taint is not a delegation condition — asserted `=== true`, not merely truthy");
     const toolset = makeToolset();
     projectToolSet(toolset as unknown as Record<string, unknown>);
     ok("agent" in toolset, "…and the projection seam leaves `agent` in place on a tainted turn");
@@ -414,182 +413,10 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 }
 
 {
-  const { markSubagentTainted, subagentWasTainted, subagentTaintKey, subagentCallTaintKey, subagentCallTaintStatus, claimSubagentCallClean, markSubagentCallTainted } =
-    await import("../agent/access/subagent-taint.js");
-  const { getOperationalStore } = await import("../agent/operational/provider.js");
-  const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
-  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
-
-  ok(subagentTaintKey("sess-child").startsWith("oe-subagent-taint:"), "the marker key is NAMESPACED, so it can never collide with a minted one-shot task token in the slice they share");
-
-  ok(!(await subagentWasTainted("default", "sess-clean-child")), "an unmarked child reads as NOT tainted");
-  await markSubagentTainted("default", "sess-dirty-child");
-  ok(await subagentWasTainted("default", "sess-dirty-child"), "🔴 D7: a marked child reads back as tainted, durably and cross-session — the parent runs in a different session and cannot see the child's in-memory slot");
-  ok(!(await subagentWasTainted("default", "sess-clean-child")), "…and the marker is per-child, not a global bit");
-
-  ok(subagentCallTaintKey("sess-parent", "call_x").startsWith("oe-subagent-taint-by-call:"), "🔴 D7 OPE-437: the call-keyed marker is namespaced SEPARATELY from the session-keyed one, so the two rows for one delegation never collide");
-  ok((await subagentCallTaintStatus("default", "sess-parent", "call_never_written")) === undefined, "🔴 D7 OPE-437: an unwritten call marker reads back `undefined`, distinct from `false` — this is the bit the fail-closed read below depends on");
-  await claimSubagentCallClean("default", "sess-parent", "call_probe");
-  eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), false, "…a CLEAN claim reads back as the literal boolean `false`, not `undefined`");
-  await markSubagentCallTainted("default", "sess-parent", "call_probe");
-  eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), true, "…and the tainted write (the flip observer's) overwrites it to `true`");
-
-  await claimSubagentCallClean("default", "sess-parent", "call_probe");
-  eq(await subagentCallTaintStatus("default", "sess-parent", "call_probe"), true, "🔴 D7 OPE-437 MONOTONIC: a CLEAN claim arriving AFTER a tainted write does NOT clobber it — the claim is put-if-absent, so the row settles on tainted whichever of the two lands last");
-
-  await (async () => {
-    const childHookCtx = { ...(childCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    inSession(() => {
-      spawnTaint.openTaintTurn(childHookCtx as never);
-      markUntrustedIngestedThisTurn();
-    });
-    await new Promise((r) => setTimeout(r, 50));
-    ok(await subagentWasTainted("default", "sess-child"), "🔴 D7 CHILD SIDE: a child that taints itself persists the session-keyed marker at MARK time, through the taint-signal flip observer — no dependence on any child lifecycle event");
-    eq(await subagentCallTaintStatus("default", "sess-parent", "call_1"), true, "🔴 D7 OPE-437 CHILD SIDE: the SAME flip ALSO persists the call-keyed marker, addressed by the PARENT's own session id + callId taken from `ctx.session.parent` — no `subagent.called` event involved anywhere in this path");
-  })();
-
-  await (async () => {
-    const seededChildHookCtx = {
-      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_seeded" },
-      session: {
-        id: "sess-seeded-child",
-        parent: { sessionId: "sess-parent", callId: "call_seeded", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
-        auth: { current: { attributes: { ...PARENT_ATTRS, oe_spawn_tainted: "true" }, principalId: "UPROBE393", principalType: "slack-user" } },
-      },
-      agent: { name: "oe", nodeId: "__root__" },
-    };
-    inSession(() => {
-      spawnTaint.openTaintTurn(seededChildHookCtx as never);
-      ok(untrustedIngestedThisTurn(), "precondition: the seed attribute taints the child INSIDE openTaintTurn — the clean claim and the tainted write are issued on the same tick");
-    });
-    await new Promise((r) => setTimeout(r, 50));
-    eq(await subagentCallTaintStatus("default", "sess-parent", "call_seeded"), true, "🔴 D7 OPE-437 SAME TICK: a child tainted from its very first turn settles the call marker on TAINTED — the eager clean claim cannot win the race, because it is put-if-absent and the tainted write is an upsert");
-  })();
-
-  inSession(() => {
-    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    spawnTaint.openTaintTurn(parentHookCtx as never);
-    markUntrustedIngestedThisTurn();
-  });
-  await new Promise((r) => setTimeout(r, 50));
-  ok(!(await subagentWasTainted("default", "sess-parent")), "…and a ROOT session's own taint writes no session-keyed marker: one slot read, no I/O, on every ordinary turn in the deployment");
-
-  await (async () => {
-    let adopted = false;
-    await contextStorage.run(new ContextContainer(), async () => {
-      const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-      spawnTaint.openTaintTurn(parentHookCtx as never);
-      ok(!untrustedIngestedThisTurn(), "the parent's turn starts CLEAN");
-      adopted = await spawnTaint.adoptSubagentTaint("call_1", "sess-parent");
-      ok(untrustedIngestedThisTurn(), "🔴 D7 PARENT SIDE: a TAINTED child's result marks the parent's own turn — the subagent-result lands RAW in the parent's history with no toModelOutput seam (OPE-73 class), so without this the parent would `remember`, `create_routine` and `create_skill` over hostile-derived prose with a clean signal");
-    });
-    eq(adopted, true, "…and the adoption reports that it fired");
-  })();
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const cleanChildHookCtx = {
-      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_clean" },
-      session: {
-        id: "sess-clean-child-2",
-        parent: { sessionId: "sess-parent", callId: "call_clean", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
-        auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } },
-      },
-      agent: { name: "oe", nodeId: "__root__" },
-    };
-    inSession(() => spawnTaint.openTaintTurn(cleanChildHookCtx as never));
-    await new Promise((r) => setTimeout(r, 50));
-    eq(await subagentCallTaintStatus("default", "sess-parent", "call_clean"), false, "the eager claim leaves a POSITIVE known-clean row for a child that never taints");
-
-    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    spawnTaint.openTaintTurn(parentHookCtx as never);
-    const adopted = await spawnTaint.adoptSubagentTaint("call_clean", "sess-parent");
-    eq(adopted, false, "🔴 D7 NEGATIVE CONTROL: a CLEAN child does NOT taint the parent — asserted `=== false`, not merely falsy or absent");
-    eq(untrustedIngestedThisTurn(), false, "…and the parent's own turn signal reads `=== false` too — the bit is the child's own judgement about its own turn, and over-tainting is the failure mode OPE-299 removed");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    ok((await subagentCallTaintStatus("default", "sess-parent", "call_lost")) === undefined, "…precondition: no marker exists for this call at all — the exact 'signal cannot be established' case");
-    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    spawnTaint.openTaintTurn(parentHookCtx as never);
-    ok(!untrustedIngestedThisTurn(), "the parent's turn starts CLEAN");
-    const adopted = await spawnTaint.adoptSubagentTaint("call_lost", "sess-parent");
-    eq(adopted, true, "🔴 D7 OPE-437 FAIL CLOSED: a subagent-result whose taint record was lost marks the parent tainted — the return leg no longer answers 'not tainted' for a signal it could not establish");
-    eq(untrustedIngestedThisTurn(), true, "…and the parent's own turn signal is set, so every downstream consequential sink (remember, create_routine, create_skill) gates as if the parent had read untrusted content");
-  });
-}
-
-{
-  const { subagentCallTaintRecord, subagentCallTaintStatus, markSubagentCallTainted } = await import("../agent/access/subagent-taint.js");
-  const { untrustedIngestedThisTurn, taintKindsThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
-  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
-
-  await markSubagentCallTainted("default", "sess-parent", "call_kinds", ["web", "github"]);
-  eq((await subagentCallTaintRecord("default", "sess-parent", "call_kinds"))?.kinds, ["web", "github"], "🔴 OPE-1251: the kinds are stored beside the marker and read back in order");
-  eq(await subagentCallTaintStatus("default", "sess-parent", "call_kinds"), true, "…and the boolean reader still answers `true` over the widened row — the widening is additive, so a reader that only wants the bit reads one");
-
-  await markSubagentCallTainted("default", "sess-parent", "call_bogus", ["web", "not-a-real-kind"]);
-  eq((await subagentCallTaintRecord("default", "sess-parent", "call_bogus"))?.kinds, ["web"], "🔴 OPE-1251: an unknown class in the row is dropped on read, exactly as `parseForwardStamp` admits the forward leg's tail");
-
-  await markSubagentCallTainted("default", "sess-parent", "call_old");
-  eq((await subagentCallTaintRecord("default", "sess-parent", "call_old"))?.kinds, [], "🔴 OPE-1251: a row with no `kinds` field reads as tainted with an EMPTY class list, never as unreadable");
-
-  await (async () => {
-    const twoSourceChildCtx = {
-      channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_two" },
-      session: {
-        id: "sess-two-source-child",
-        parent: { sessionId: "sess-parent", callId: "call_two", rootSessionId: "sess-parent", turn: { id: "turn_1", sequence: 1 } },
-        auth: { current: { attributes: { ...PARENT_ATTRS }, principalId: "UPROBE393", principalType: "slack-user" } },
-      },
-      agent: { name: "oe", nodeId: "__root__" },
-    };
-    inSession(() => {
-      spawnTaint.openTaintTurn(twoSourceChildCtx as never);
-      markUntrustedIngestedThisTurn("web");
-      markUntrustedIngestedThisTurn("github");
-    });
-    await new Promise((r) => setTimeout(r, 50));
-    eq(
-      [...((await subagentCallTaintRecord("default", "sess-parent", "call_two"))?.kinds ?? [])].sort(),
-      ["github", "web"],
-      "🔴 OPE-1251 CHILD SIDE: a child that read a page AND a diff stores BOTH classes — a row holding only `web` would be the first-mark-only defect the forward leg already fixed",
-    );
-  })();
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    spawnTaint.openTaintTurn(parentHookCtx as never);
-    eq(await spawnTaint.adoptSubagentTaint("call_two", "sess-parent"), true, "OPE-1251: the sync return leg still adopts — the kinds ride the existing adoption");
-    eq([...taintKindsThisTurn()].sort(), ["github", "web"], "🔴 OPE-1251 PARENT SIDE: the PARENT's own turn now names `web` and `github`, which is what its next memory bullet and its next approval card print");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    spawnTaint.openTaintTurn(parentHookCtx as never);
-    eq(await spawnTaint.adoptSubagentTaint("call_old", "sess-parent"), true, "OPE-1251 NEGATIVE CONTROL: a class-less tainted child still marks the parent");
-    eq(untrustedIngestedThisTurn(), true, "…the bit is set");
-    eq([...taintKindsThisTurn()], [], "🔴 …and the parent names NO class — asserted empty, so nothing here is inventing one");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const parentHookCtx = { ...(parentCtx as unknown as Record<string, unknown>), agent: { name: "oe", nodeId: "__root__" } };
-    spawnTaint.openTaintTurn(parentHookCtx as never);
-    eq(await spawnTaint.adoptSubagentTaint("call_lost_kinds", "sess-parent"), true, "OPE-1251: a lost record still fails CLOSED");
-    eq([...taintKindsThisTurn()], [], "🔴 …and names no class, because none could be read — failing closed is about the bit, never about naming a source that was never established");
-  });
-}
-
-{
-  const { subagentTaintKey, subagentCallTaintKey } = await import("../agent/access/subagent-taint.js");
-  const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
-  const spawnTaint = await import("../agent/hooks/spawn-taint.js");
+  const hub = await import("../agent/hooks/delegation-settlement.js");
   const { readFileSync } = await import("node:fs");
 
-  const ATTR = spawnTaint.OE_PARENT_TURN_TAINTED_ATTR;
-
-  const PIN = spawnTaint.OE_DISPATCH_TURN_ATTR;
-
-  const hook = spawnTaint.default as unknown as {
+  const hook = hub.default as unknown as {
     events: {
       "turn.started": (event: unknown, ctx: unknown) => Promise<void> | void;
       "action.result": (event: unknown, ctx: unknown) => Promise<void> | void;
@@ -617,8 +444,6 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     },
     agent: { name: "oe", nodeId: "__root__" },
   });
-
-  const bagOf = (ctx: ReturnType<typeof fwdCtx>): Record<string, unknown> => ctx.session.auth.current.attributes;
 
   {
     const dist = (rel: string) => readFileSync(join(eveRoot, "dist/src", rel), "utf8");
@@ -682,312 +507,13 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     );
   }
 
-  await contextStorage.run(new ContextContainer(), async () => {
-    const parent = fwdCtx({ id: "sess-fwd-parent", turn: { id: "turn_7", sequence: 7 }, attributes: { oe_spawn_tainted: "true" } });
-    await turnStarted(parent);
-    ok(untrustedIngestedThisTurn(), "precondition: the seed attribute tainted the parent's turn — synchronously, inside openTaintTurn");
-    eq(
-      bagOf(parent)[ATTR],
-      "sess-fwd-parent|turn_7",
-      "🔴 D9 PARENT SIDE: a tainted turn stamps `<sessionId>|<turnId>` onto its OWN auth attributes — the bag eve copies verbatim into every native child it dispatches. NO kind tail here: this turn was tainted by a SEED ATTRIBUTE, which knows the turn is tainted and not by what (OPE-1215)",
-    );
-    eq(
-      bagOf(parent)[PIN],
-      "sess-fwd-parent|turn_7",
-      "🔴 D9 PARENT SIDE (OPE-1467): the same turn writes OE's own DISPATCH PIN into the same bag — the two ride together, which is what lets the child compare the stamp against a turn OE named rather than against eve's `session.parent.turn`",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const clean = fwdCtx({ id: "sess-fwd-clean", turn: { id: "turn_1", sequence: 1 } });
-    await turnStarted(clean);
-    eq(untrustedIngestedThisTurn(), false, "the clean parent's own turn signal reads `=== false`");
-    eq(bagOf(clean)[ATTR], undefined, "🔴 D9 NEGATIVE CONTROL: a CLEAN turn writes NO stamp — asserted `=== undefined`, not merely falsy");
-    eq(
-      bagOf(clean)[PIN],
-      "sess-fwd-clean|turn_1",
-      "🔴 D9 (OPE-1467): …but it DOES write the dispatch pin. The pin is an identity fact about which turn started a child, never a taint signal — a pin that appeared only on tainted turns would leak the taint by its presence, and would leave a clean parent's children unable to discriminate at all",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const mid = fwdCtx({ id: "sess-fwd-midturn", turn: { id: "turn_2", sequence: 2 } });
-    await turnStarted(mid);
-    eq(bagOf(mid)[ATTR], undefined, "precondition: the turn started clean and stamped nothing");
-    markUntrustedIngestedThisTurn("web");
-    eq(
-      bagOf(mid)[ATTR],
-      "sess-fwd-midturn|turn_2|web",
-      "🔴 D9 PARENT SIDE, MID-TURN: a taint arriving after the turn began stamps the bag too, through the taint-signal flip observer — SYNCHRONOUSLY, so it is in place before the next model call can emit a delegation",
-    );
-    markUntrustedIngestedThisTurn("github");
-    eq(
-      bagOf(mid)[ATTR],
-      "sess-fwd-midturn|turn_2|web,github",
-      "🔴 D9 PARENT SIDE, A SECOND SOURCE: the stamp WIDENS as the turn's kind list grows — one stamp, every source the child must be able to name",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const again = fwdCtx({ id: "sess-fwd-again", turn: { id: "turn_5", sequence: 5 } });
-    await turnStarted(again);
-    markUntrustedIngestedThisTurn("web");
-    eq(spawnTaint.recordTurnTaintForChildren(), true, "🔴 D9: a second writer for the same turn reports the stamp in place rather than skipping — the `action.result` belt is never a lie");
-    eq(bagOf(again)[ATTR], "sess-fwd-again|turn_5|web", "…and the bag still carries exactly one stamp, of identical bytes");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const cleanWriter = fwdCtx({ id: "sess-fwd-clean-writer", turn: { id: "turn_6", sequence: 6 } });
-    await turnStarted(cleanWriter);
-    eq(spawnTaint.recordTurnTaintForChildren(), false, "🔴 D9: the writer refuses on a CLEAN turn even when called directly — asserted `=== false`");
-    eq(bagOf(cleanWriter)[ATTR], undefined, "…and stamps nothing");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const child = fwdCtx({
-      id: "sess-fwd-child",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f1", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
-    });
-    await turnStarted(child);
-    eq(
-      untrustedIngestedThisTurn(),
-      true,
-      "🔴 D9 CHILD SIDE: a child whose opening auth names the parent turn that dispatched it ADOPTS that turn's taint at `turn.started` — the launder path (untrusted content → parent brief → child acts on a clean signal) closed on the native route",
-    );
-  });
-
-  {
-    let stamped: Record<string, unknown> = {};
-    await contextStorage.run(new ContextContainer(), async () => {
-      const parent = fwdCtx({ id: "sess-fwd-journey", turn: { id: "turn_3", sequence: 3 } });
-      await turnStarted(parent);
-      markUntrustedIngestedThisTurn("web");
-      stamped = { ...bagOf(parent) };
-    });
-    ok(stamped[ATTR] !== undefined, "precondition: the parent turn stamped its bag");
-    await contextStorage.run(new ContextContainer(), async () => {
-      const child = fwdCtx({
-        id: "sess-fwd-journey-child",
-        turn: { id: "turn_0", sequence: 0 },
-        parent: { sessionId: "sess-fwd-journey", callId: "call_j1", turn: { id: "turn_3", sequence: 3 } },
-        attributes: stamped as Record<string, string>,
-      });
-      await turnStarted(child);
-      eq(untrustedIngestedThisTurn(), true, "🔴 D9 JOURNEY: the bag a tainted parent turn stamped, copied verbatim as eve copies it, taints the child that receives it");
-    });
-  }
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const child = fwdCtx({
-      id: "sess-fwd-child-2",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-clean", callId: "call_f2", turn: { id: "turn_1", sequence: 1 } },
-    });
-    await turnStarted(child);
-    eq(untrustedIngestedThisTurn(), false, "🔴 D9 NEGATIVE CONTROL: a child of a CLEAN parent turn carries no stamp and does NOT adopt — asserted `=== false`, not merely falsy");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const wrongTurn = fwdCtx({
-      id: "sess-fwd-wrong-turn",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f6", turn: { id: "turn_9", sequence: 9 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_8" },
-    });
-    await turnStarted(wrongTurn);
-    eq(
-      untrustedIngestedThisTurn(),
-      false,
-      "🔴 D9 DISCRIMINATOR, TURN HALF: on a child's FIRST turn, where OE's own dispatch pin names the turn that really dispatched it, a stamp naming turn_7 does NOT taint a child dispatched from turn_8 of the same session (OPE-1215: the turn half is consulted on the first turn only — a later turn's pin belongs to an earlier delivery, and the adopted-stamp memo discriminates there instead)",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const evePinAhead = fwdCtx({
-      id: "sess-fwd-eve-pin-ahead",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f6b", turn: { id: "turn_8", sequence: 8 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7|web", [PIN]: "sess-fwd-parent|turn_7" },
-    });
-    await turnStarted(evePinAhead);
-    eq(
-      untrustedIngestedThisTurn(),
-      true,
-      "🔴 D9 DISCRIMINATOR (OPE-1467): eve 0.51.0 pins `session.parent.turn` ONE TURN AHEAD of the dispatch, and the child still adopts — the turn half reads OE's own dispatch pin, so an upstream change to that field cannot switch this leg off",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const noPin = fwdCtx({
-      id: "sess-fwd-no-pin",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f6c", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7" },
-    });
-    await turnStarted(noPin);
-    eq(
-      untrustedIngestedThisTurn(),
-      false,
-      "🔴 D9 DISCRIMINATOR, ABSENT PIN (OPE-1467): a stamp that arrives with NO dispatch pin beside it does NOT taint a first-turn child — the pin and the stamp are written by one turn boundary into one bag, so a stamp without a pin cannot be shown to belong to this dispatch",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const wrongSession = fwdCtx({
-      id: "sess-fwd-wrong-session",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-other", callId: "call_f7", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-other|turn_7" },
-    });
-    await turnStarted(wrongSession);
-    eq(
-      untrustedIngestedThisTurn(),
-      false,
-      "🔴 D9 DISCRIMINATOR, SESSION HALF: a stamp naming another session's turn_7 does not taint. Both halves are load-bearing — eve mints `turn.id` as `turn_<sequence>`, so EVERY session's first turn is `turn_0`",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const wrongSessionLater = fwdCtx({
-      id: "sess-fwd-wrong-session-later",
-      turn: { id: "turn_3", sequence: 3 },
-      parent: { sessionId: "sess-fwd-other", callId: "call_f8", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web" },
-    });
-    await turnStarted(wrongSessionLater);
-    eq(
-      untrustedIngestedThisTurn(),
-      false,
-      "🔴 D9 DISCRIMINATOR, SESSION HALF ON A LATER TURN: a stamp naming ANOTHER parent session does not taint a child at `sequence > 0` — the half that carries the whole discrimination once the pin goes stale",
-    );
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const root = fwdCtx({ id: "sess-fwd-root", turn: { id: "turn_9", sequence: 9 }, attributes: { [ATTR]: "sess-fwd-root|turn_8" } });
-    await turnStarted(root);
-    eq(untrustedIngestedThisTurn(), false, "🔴 D9: a session with NO `session.parent` never adopts, whatever its bag carries — the seat's own next turn and a roll-own worker are both this case");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const later = fwdCtx({
-      id: "sess-fwd-persistent",
-      turn: { id: "turn_3", sequence: 3 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web", [PIN]: "sess-fwd-parent|turn_9" },
-    });
-    await turnStarted(later);
-    eq(
-      untrustedIngestedThisTurn(),
-      true,
-      "🔴 D9 CONTINUATION: a persistent child's LATER turn ADOPTS a stamp it has not seen — the stamp and the dispatch pin the continuation carries both name the parent's turn_9; eve's own `session.parent.turn` (turn_7) is not what decides",
-    );
-
-    const again = fwdCtx({
-      id: "sess-fwd-persistent",
-      turn: { id: "turn_4", sequence: 4 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_9|web", [PIN]: "sess-fwd-parent|turn_9" },
-    });
-    await turnStarted(again);
-    eq(spawnTaint.adoptedParentTurnTaintThisTurn(again as never), false, "🔴 D9 THE MEMO: the SAME stamp arriving on the next turn of the SAME child is NOT adopted again — a value that outlived its delivery cannot re-adopt forever");
-    eq(untrustedIngestedThisTurn(), true, "🔴 D9 OPE-2251 STICKY: …while the child stays tainted, because it adopted a taint on its previous turn");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const first = fwdCtx({
-      id: "sess-fwd-persistent",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f3", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
-    });
-    await turnStarted(first);
-    eq(untrustedIngestedThisTurn(), true, "…the SAME child on its FIRST turn adopts — the discriminator is the sequence, nothing else");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const arrayForm = fwdCtx({
-      id: "sess-fwd-array",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f8", turn: { id: "turn_7", sequence: 7 } },
-    });
-    bagOf(arrayForm)[ATTR] = ["sess-fwd-parent|turn_7"];
-    bagOf(arrayForm)[PIN] = ["sess-fwd-parent|turn_7"];
-    await turnStarted(arrayForm);
-    eq(untrustedIngestedThisTurn(), true, "🔴 D9: the ARRAY spelling of the stamp adopts too — eve can hand any attribute back as `string[]`");
-  });
-
-  await contextStorage.run(new ContextContainer(), async () => {
-    const child = fwdCtx({
-      id: "sess-fwd-child-3",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f4", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
-    });
-    await turnStarted(child);
-    ok(untrustedIngestedThisTurn(), "precondition: the child adopted");
-    eq(
-      bagOf(child)[ATTR],
-      "sess-fwd-child-3|turn_0",
-      "🔴 D9 HOP: the adopting child OVERWRITES the inherited stamp with its OWN (session, turn) pair, in the same handler — so a grandchild inherits, and cannot instead match the GRANDPARENT's pair",
-    );
-    eq(
-      bagOf(child)[PIN],
-      "sess-fwd-child-3|turn_0",
-      "🔴 D9 HOP (OPE-1467): …and it overwrites the inherited DISPATCH PIN with its own pair too, AFTER its own adoption read that pin. A pin written before the adoption would name this child rather than its parent, the comparison would never match, and no child anywhere would adopt",
-    );
-  });
-
-  const twoKeys = [subagentTaintKey("A"), subagentCallTaintKey("A", "B")];
-  ok(
-    twoKeys.every((a, i) => twoKeys.every((b, j) => i === j || (!a.startsWith(b) && !b.startsWith(a)))),
-    "🔴 D9: the two return-leg marker keys are mutually non-prefixing, so one delegation's rows can never be mistaken for each other",
-  );
-
-  registerSettings({ taint: { mode: "off" } });
-  await contextStorage.run(new ContextContainer(), async () => {
-    const child = fwdCtx({
-      id: "sess-fwd-child-off",
-      turn: { id: "turn_0", sequence: 0 },
-      parent: { sessionId: "sess-fwd-parent", callId: "call_f5", turn: { id: "turn_7", sequence: 7 } },
-      attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
-    });
-    await turnStarted(child);
-    eq(untrustedIngestedThisTurn(), false, "🔴 D9 OPE-399: `taint.mode: \"off\"` makes the forward adoption inert — the child of a tainted parent turn is not marked, which is the deployer's reviewed choice");
-    eq(spawnTaint.adoptParentTurnTaint(child as never), false, "…asserted on the exported consumer too, `=== false`");
-  });
-  resetSettingsForTest();
-
   {
     const { captureEligible } = await import("../agent/hooks/requester-messages.js");
 
     await contextStorage.run(new ContextContainer(), async () => {
-      const child = fwdCtx({
-        id: "sess-fence-child",
-        turn: { id: "turn_0", sequence: 0 },
-        parent: { sessionId: "sess-fwd-parent", callId: "call_g1", turn: { id: "turn_7", sequence: 7 } },
-        attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
-      });
-      await turnStarted(child);
-      ok(untrustedIngestedThisTurn(), "precondition: the child adopted its parent turn's taint");
-      eq(
-        bagOf(child)[ATTR],
-        "sess-fence-child|turn_0",
-        "precondition: …and the flip observer has ALREADY re-stamped the bag with the CHILD's own pair, which is what a bag-reading fence would compare against",
-      );
-      eq(
-        captureEligible(child as never),
-        false,
-        "🔴 D9 FENCE: a native child dispatched from a TAINTED parent turn is NOT capture-eligible — its brief is model-authored by the parent, and the approval judge must never read it as a requester's own words",
-      );
-    });
-
-    await contextStorage.run(new ContextContainer(), async () => {
       const seat = fwdCtx({ id: "sess-fence-seat", turn: { id: "turn_0", sequence: 0 } });
       await turnStarted(seat);
-      eq(untrustedIngestedThisTurn(), false, "precondition: an ordinary human wake is a clean turn");
-      eq(captureEligible(seat as never), true, "🔴 D9 FENCE NEGATIVE CONTROL: an ordinary seat wake IS capture-eligible — asserted `=== true`, so the fence above reads 'refused this case', not 'refuses everything'");
+      eq(captureEligible(seat as never), true, "🔴 D9 FENCE NEGATIVE CONTROL: an ordinary seat wake IS capture-eligible — asserted `=== true`, so the fence below reads 'refused this case', not 'refuses everything'");
     });
 
     await contextStorage.run(new ContextContainer(), async () => {
@@ -997,8 +523,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
         parent: { sessionId: "sess-fwd-clean", callId: "call_g2", turn: { id: "turn_1", sequence: 1 } },
       });
       await turnStarted(child);
-      eq(untrustedIngestedThisTurn(), false, "precondition: nothing tainted this child — so the refusal below cannot be the taint arm's");
-      eq(captureEligible(child as never), false, "🔴 D9 FENCE (OPE-473): a child of a CLEAN parent turn is NOT capture-eligible — the brief is the parent MODEL's words, so the approval judge must never read it as a requester's");
+      eq(captureEligible(child as never), false, "🔴 D9 FENCE (OPE-473): a native child is NOT capture-eligible — the brief is the parent MODEL's words, so the approval judge must never read it as a requester's");
     });
 
     await contextStorage.run(new ContextContainer(), async () => {
@@ -1014,38 +539,9 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
       eq(captureEligible(brief as never), false, "🔴 D9 FENCE: an `oe_non_requester` delivery is refused AFTER the turn preamble has run, not only before it");
     });
     await contextStorage.run(new ContextContainer(), async () => {
-      const spawned = fwdCtx({ id: "sess-fence-spawn", turn: { id: "turn_0", sequence: 0 }, attributes: { [OE_SPAWN_TAINTED_ATTR]: "true" } });
+      const spawned = fwdCtx({ id: "sess-fence-spawn", turn: { id: "turn_0", sequence: 0 }, attributes: { oe_spawn_tainted: "true" } });
       await turnStarted(spawned);
-      eq(captureEligible(spawned as never), true, "D9 FENCE (OPE-2713): a bare `oe_spawn_tainted` stamp no longer decides capture — every host builder that sets it also sets `oe_non_requester`, or delivers to the work session, which the fence refuses by its shape");
-    });
-
-    await contextStorage.run(new ContextContainer(), async () => {
-      const first = fwdCtx({
-        id: "sess-fence-persistent",
-        turn: { id: "turn_0", sequence: 0 },
-        parent: { sessionId: "sess-fwd-parent", callId: "call_g3", turn: { id: "turn_7", sequence: 7 } },
-        attributes: { [ATTR]: "sess-fwd-parent|turn_7", [PIN]: "sess-fwd-parent|turn_7" },
-      });
-      await turnStarted(first);
-      eq(spawnTaint.adoptedParentTurnTaintThisTurn(first as never), true, "precondition: the persistent child's FIRST turn adopted");
-      eq(captureEligible(first as never), false, "…so it is refused");
-
-      const later = fwdCtx({
-        id: "sess-fence-persistent",
-        turn: { id: "turn_1", sequence: 1 },
-        parent: { sessionId: "sess-fwd-parent", callId: "call_g3", turn: { id: "turn_7", sequence: 7 } },
-      });
-      await turnStarted(later);
-      eq(
-        spawnTaint.adoptedParentTurnTaintThisTurn(later as never),
-        false,
-        "🔴 D9 PER TURN: the SAME session's next turn reads as NOT-adopted — the adoption is recorded against a turn id, so it can never become a session-durable mark",
-      );
-      eq(
-        captureEligible(later as never),
-        false,
-        "🔴 D9 FENCE (OPE-473): …and that turn is still refused, on the DELEGATION arm rather than the adoption arm — a resumed child's brief is model-authored too",
-      );
+      eq(captureEligible(spawned as never), true, "D9 FENCE (OPE-2713, OPE-2720): a bare, retired `oe_spawn_tainted` stamp decides nothing — no producer writes it and no reader reads it, so the seat turn runs normally");
     });
   }
 }

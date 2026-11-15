@@ -495,19 +495,19 @@ function captureReceive(): { calls: Captured[]; to: never } {
   ok(call.auth.attributes?.["is_ext_shared"] === "false" && call.auth.attributes?.["trust_checked"] === "true", "a CONFIRMED-internal fire stamps trust (arms shared memory / domain skills)");
   ok(call.auth.attributes?.["open_everywhere_webhook_id"] === "deploy-status", "the fired auth carries the hook id marker");
   ok(normalizeFenceNonce(call.message) === normalizeFenceNonce(renderWebhookMessage(goodHook, payload, {}, fireNow)), "the fired message is the rendered, untrusted-wrapped webhook message");
-  ok(call.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === "true", "a content-bearing config fire is TAINTED — its prompt carries an outside party's bytes");
+  ok(call.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === undefined, "🔴 OPE-2720: a content-bearing config fire carries NO taint stamp — the payload rides inside the untrusted fence, and no producer stamps a fire");
 }
 
 {
   const { calls, to } = captureReceive();
   await fireWebhook({ ...goodHook, posture: "trigger-only" }, payload, { to, confirmInternal: async () => true });
-  ok(calls[0]!.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === undefined, "🔴 a trigger-only config fire is NOT tainted — nothing an outside party authored is in its prompt");
-  ok(!calls[0]!.message.includes(payload), "…and the delivered message really does carry none of the body (the fact the untainted stamp rests on)");
+  ok(calls[0]!.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === undefined, "a trigger-only config fire carries no taint stamp");
+  ok(!calls[0]!.message.includes(payload), "…and the delivered message really does carry none of the body");
 }
 {
   const { calls, to } = captureReceive();
   await fireWebhook({ ...goodHook, posture: "projection", project: ["note"] }, payload, { to, confirmInternal: async () => true });
-  ok(calls[0]!.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === "true", "🔴 a PROJECTION fire IS tainted — a projection bounds the VOLUME of an outside party's bytes, never their trust");
+  ok(calls[0]!.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === undefined, "🔴 OPE-2720: a PROJECTION fire carries no taint stamp either");
 }
 
 {

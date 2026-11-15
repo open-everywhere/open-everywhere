@@ -27,7 +27,7 @@ import {
 } from "../agent/access/taint-signal.js";
 import { ingestUntrusted, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
-import { announceTaintOff, openTaintTurn, taintVerdictIdentityDetail, OE_PARENT_TURN_TAINTED_ATTR } from "../agent/hooks/spawn-taint.js";
+import { announceTaintOff, openTaintTurn, taintVerdictIdentityDetail } from "../agent/hooks/taint-turn.js";
 import {
   chainAuditDetail,
   renderChainResolution,
@@ -307,49 +307,6 @@ console.log("5 — the chain reads no taint, on or off (OPE-2716):");
   }
 }
 
-console.log("6 — off: the forward taint stamp is never written:");
-{
-  const forwardBag = (id: string, turn: string) => ({ session: { id, turn: { id: turn, sequence: 0 }, auth: { current: { attributes: {} as Record<string, unknown> } } } });
-
-  await withMode("on", async () => {
-    await inSession(() => {
-      const ctx = forwardBag("tm-on", "turn_0");
-      openTaintTurn(ctx as never);
-      setNativeDelegationSeat("allow");
-      ok(nativeAgentAllowedNow(), "[6/on] a classified `allow` seat holds the built-in on a clean turn");
-      eq(ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR], undefined, "[6/on] …and a clean turn stamps nothing");
-      hostileRead();
-      eq(
-        ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR],
-        "tm-on|turn_0",
-        "[6/on] 🔴 …and the moment the turn ingests untrusted content it STAMPS its own auth bag — the fact eve copies into every native child it then dispatches",
-      );
-      ok(nativeAgentAllowedNow(), "[6/on] …while the verb itself survives: the launder path is closed by propagation, not by withdrawal (OPE-471)");
-    });
-  });
-
-  await withMode("off", async () => {
-    await inSession(() => {
-      const ctx = forwardBag("tm-off", "turn_0");
-      openTaintTurn(ctx as never);
-      setNativeDelegationSeat("allow");
-      hostileRead();
-      eq(
-        ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR],
-        undefined,
-        "[6/off] 🔴 the same read stamps NOTHING — asserted `=== undefined`. No code changed at the stamp site; the mark that drives it is simply never written",
-      );
-      ok(nativeAgentAllowedNow(), "[6/off] …and the verb survives here too, for the same reason it does when the model is on");
-    });
-    await inSession(() => {
-      setNativeDelegationSeat("leaf");
-      ok(!nativeAgentAllowedNow(), "[6/off] …but a `leaf` (a child session) is still denied — recursion closure is not part of the taint model and does not travel with it");
-      setNativeDelegationSeat("unclassified");
-      ok(!nativeAgentAllowedNow(), "[6/off] …and an unclassified wake still fails closed");
-    });
-  });
-}
-
 console.log("7 — off: no taint stamp rides any delivery:");
 {
   await withMode("on", async () => {
@@ -418,9 +375,9 @@ console.log("9 — the SHIPPED default (nothing registered) is the unchanged, fu
     ok(decideIngestion({ kind: "web" }, true), "[9] the table decides, and says untrusted for the open web");
     ok(!decideIngestion({ kind: "chat-message" }, true), "[9] …and trusted for member-authored chat (the OPE-324 relaxation, intact)");
     eq(taintedFireAttrs(untrustedIngestedThisTurn()), { [OE_TAINTED_FIRE_ATTR]: "true" }, "[9] the cross-process stamps ride");
-    eq(ctx.session.auth.current.attributes[OE_PARENT_TURN_TAINTED_ATTR], "tm-default|turn_0", "[9] …and so does the native forward stamp, on the shipped default");
+    eq(ctx.session.auth.current.attributes["oe_parent_turn_tainted"], undefined, "[9] 🔴 OPE-2720: …but the native forward stamp is GONE — a tainted turn writes nothing into its own auth bag");
     setNativeDelegationSeat("allow");
-    ok(nativeAgentAllowedNow(), "[9] native delegation SURVIVES the tainted turn — the child it dispatches inherits the stamp above (OPE-471)");
+    ok(nativeAgentAllowedNow(), "[9] native delegation SURVIVES the tainted turn (OPE-471)");
     const req: ApprovalChainRequest = { tool: "declare_webhook", unattended: false, principalId: "U1" };
     const res = await resolveApproverChain(req);
     eq(res.verdict, "ask", "[9] a gated sink resolves at the registry's ask — a human decides");

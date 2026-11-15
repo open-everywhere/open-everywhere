@@ -34,7 +34,7 @@ const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-wi
 const { registerSlackFixtureCodec } = await import("./_slack-test-stubs.js");
 registerSlackFixtureCodec();
 const { noteTurnBoundary } = await import("../agent/access/task-wake-signal.js");
-const { applyTaskSettlement, noteTaskStarted, DELEGATED_PROVENANCE_ACTION } = await import("../agent/hooks/spawn-taint.js");
+const { applyTaskSettlement, noteTaskStarted, DELEGATED_PROVENANCE_ACTION } = await import("../agent/hooks/delegation-settlement.js");
 const connectorAudit = await import("../agent/hooks/connector-audit.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;

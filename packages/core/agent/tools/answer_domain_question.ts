@@ -4,7 +4,7 @@ import { windowGated } from "../access/window-gated.js";
 import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
-import { taintKindsThisTurn, untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -29,7 +29,6 @@ import {
   renderDomainAnswerForDmSeat,
   renderDomainAnswerPost,
   standingWindowOfSeat,
-  taintStampFor,
 } from "../channels/domain-question.js";
 
 const TOOL = DOMAIN_QUESTION_ANSWER_TOOL;
@@ -99,7 +98,7 @@ export default windowGated(
           wakeId,
           domain: dmSeat.domain,
           message: renderDomainAnswerForDmSeat({ id: q.id, domain: domain!, question: q.question, answer, declined, wakeId }),
-          authAttributes: taintStampFor(tainted, taintKindsThisTurn()),
+          authAttributes: {},
         });
         if (woke) route = "dm-seat";
       }

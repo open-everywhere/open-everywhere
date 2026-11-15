@@ -23,6 +23,7 @@ agent/hooks/approval-raised.ts	mounted @open-everywhere/core
 agent/hooks/approval-settlement.ts	mounted @open-everywhere/core
 agent/hooks/binding-bridge.ts	mounted @open-everywhere/core
 agent/hooks/connector-audit.ts	mounted @open-everywhere/core
+agent/hooks/delegation-settlement.ts	mounted @open-everywhere/core
 agent/hooks/egress.ts	mounted @open-everywhere/core
 agent/hooks/eve-patch-gate.ts	mounted @open-everywhere/core
 agent/hooks/fire-carriage.ts	mounted @open-everywhere/core
@@ -47,9 +48,9 @@ agent/hooks/routine-silence.ts	mounted @open-everywhere/core
 agent/hooks/routine-test-run.ts	mounted @open-everywhere/core
 agent/hooks/sandbox-lifecycle.ts	mounted @open-everywhere/adapters
 agent/hooks/session-park.ts	mounted @open-everywhere/core
-agent/hooks/spawn-taint.ts	mounted @open-everywhere/core
 agent/hooks/spend.ts	mounted @open-everywhere/core
 agent/hooks/stall-guard.ts	mounted @open-everywhere/core
+agent/hooks/taint-turn.ts	mounted @open-everywhere/core
 agent/hooks/telemetry.ts	mounted @open-everywhere/core
 agent/hooks/tool-usage.ts	mounted @open-everywhere/core
 agent/hooks/turn-anchor.ts	mounted @open-everywhere/core

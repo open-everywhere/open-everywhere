@@ -121,8 +121,8 @@ test("DELEGATED TASK + APPROVAL: a forwarded worker's task writes its task.start
   expect(handle.requests.filter((r) => r.fault !== undefined), "the scripted model faulted on the seat's handle").toEqual([]);
   expect(settlement.requests.filter((r) => r.fault !== undefined), "the scripted model faulted on the result turn").toEqual([]);
 
-  await consumerRow(cursor, "delegation.task_started", "hooks/spawn-taint.ts at task.started", (r) => r.detail?.task === taskId);
-  const settled = await consumerRow(cursor, "delegation.task_settled", "hooks/spawn-taint.ts at task.settled", (r) => r.detail?.task === taskId);
+  await consumerRow(cursor, "delegation.task_started", "hooks/delegation-settlement.ts at task.started", (r) => r.detail?.task === taskId);
+  const settled = await consumerRow(cursor, "delegation.task_settled", "hooks/delegation-settlement.ts at task.settled", (r) => r.detail?.task === taskId);
   expect(settled.detail?.status).toBe("completed");
 
   await waitFor(
