@@ -1,3 +1,5 @@
+// proves: SEAT-86
+
 import assert from "node:assert/strict";
 import { authorTrustAdmitsUnfencedBody, isWakeEnvelopeShaped, renderWakeEnvelope, triggerAuthors, triggerMessageBody, wakeIdsFromEnvelope, type WakeEnvelopeInput, type WakeMessageInput } from "../agent/channels/wake-envelope.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
