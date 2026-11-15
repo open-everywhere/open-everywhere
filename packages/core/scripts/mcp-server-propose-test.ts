@@ -10,7 +10,7 @@ import { declaredMcpServers, defineMcpServers, type McpServerDeclaration } from 
 import { executeMcpServerPropose, mcpServerReachLine, mcpServerSetupSteps, requireMcpServerProposeConfig, validateMcpServerProposal, type McpServerProposeArgs } from "../agent/approvals/mcp-server-propose.js";
 import proposeTool, { isSecretRef, mcpServerProposeAudienceRefusal, nonMemberWake } from "../agent/tools/propose_mcp_server.js";
 import { actionKind } from "../agent/approvals/actions.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../agent/access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../agent/identity/non-member.js";
 import { WORKER_CAPABILITY_GROUPS } from "../agent/access/worker-capabilities.js";
 import { NEW_CONNECTOR_ROUTE } from "../agent/access/delta.js";
 

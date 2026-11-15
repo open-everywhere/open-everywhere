@@ -38,7 +38,7 @@ import { recordLandedPost, type ReplyAudit } from "@open-everywhere/core/agent/c
 import { unifiedEditLocus } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { refuseIfShouldFold, REPLY_FOLD_REFUSAL_REASON } from "@open-everywhere/core/agent/channels/reply-fold.js";
 import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "@open-everywhere/core/agent/access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "@open-everywhere/core/agent/identity/non-member.js";
 import { registerConfig, defineDomain } from "@open-everywhere/core/agent/adapter-api.js";
 import type { UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -465,7 +465,7 @@ function newTurn(turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
   const human = await driveWake({
     id: "act-2c-2",
     text: "just a note for the humans in this thread",
-    from: { id: "29:someone-else", name: "someone else", aadObjectId: "00000000-0000-4000-8000-000000000016" },
+    from: { id: "29:someone-else", name: "someone else", aadObjectId: "0f1d4b6a-2c3e-4a5b-8c7d-9e0f1a2b3c4d" },
   });
   ok(human.partition.surfaceKey === partition.surfaceKey, "2c: the second activity is the SAME conversation — one chain, one room");
   const ring = await store.readSessionTail(partition.org, window!.registryKey, window!.token);

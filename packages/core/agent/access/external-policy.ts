@@ -1,6 +1,6 @@
 import { getSettings, type ExternalAuthorGrain, type ExternalRoomGrain } from "../settings/settings.js";
 import { declaredSurfaceTrust } from "../identity/trust.js";
-import { nonMemberChatTrust, type ChatWakeRoom, type IngestedChatMessage } from "./taint-signal.js";
+import { nonMemberChatTrust, type ChatWakeRoom, type IngestedChatMessage } from "../identity/non-member.js";
 import type { NormalizedWake } from "../channels/normalized-wake.js";
 import type { ContextLine } from "../channels/context-render.js";
 import type { WakeMessageInput } from "../channels/wake-envelope.js";

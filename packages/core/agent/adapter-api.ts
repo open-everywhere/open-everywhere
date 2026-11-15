@@ -384,9 +384,9 @@ export {
   nonMemberChatAttrs,
   stampNonMemberChatAuth,
   OE_CHAT_NONMEMBER_ATTR,
-  taintedFireAttrs,
-} from "./access/taint-signal.js";
-export type { IngestedChatMessage, ChatWakeRoom } from "./access/taint-signal.js";
+} from "./identity/non-member.js";
+export type { IngestedChatMessage, ChatWakeRoom } from "./identity/non-member.js";
+export { taintedFireAttrs } from "./access/taint-signal.js";
 
 export { sourceScopedMount, workerChatArmMount } from "./access/source-scoped-mount.js";
 

@@ -31,6 +31,7 @@ import {
   taintStampFor,
   type DomainQuestionRow,
   type DomainQuestionStore,
+  nonMemberWakeOf,
 } from "../agent/channels/domain-question.js";
 import { domainAnswerNote } from "../agent/tools/answer_domain_question.js";
 import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR } from "../agent/channels/unified.js";
@@ -64,6 +65,15 @@ console.log("§1 the room gate");
   ok(group?.reason === "not-dm" && group.message.includes("group DM"), "🔴 a group DM cannot ask a domain, and the reason names the group DM");
   ok(domainQuestionRoomRefusal({ ...pass, trust: "external" })?.reason === "room-not-internal", "🔴 an external or guest DM cannot ask a domain (the strictest default)");
   ok(domainQuestionRoomRefusal({ ...pass, nonMemberWake: true })?.reason === "non-member-in-wake", "🔴 a wake with a non-member in it cannot ask a domain");
+  const stampedCtx = { session: { auth: { current: { attributes: { oe_chat_nonmember: "true" } } } } } as never;
+  const memberCtx = { session: { auth: { current: { attributes: { team_id: "T1" } } } } } as never;
+  ok(nonMemberWakeOf(stampedCtx) === true, "🔴 a guest-authored wake (stamped `oe_chat_nonmember`) reads as a non-member wake");
+  ok(nonMemberWakeOf(memberCtx) === false, "negative control: a member wake (no stamp) does not");
+  ok(
+    domainQuestionRoomRefusal({ ...pass, nonMemberWake: nonMemberWakeOf(stampedCtx) })?.reason === "non-member-in-wake",
+    "🔴 …so the stamped wake is refused by the room gate",
+  );
+  ok(domainQuestionRoomRefusal({ ...pass, nonMemberWake: nonMemberWakeOf(memberCtx) }) === undefined, "…and the member wake passes it");
   ok(domainQuestionRoomRefusal({ ...pass, asker: undefined })?.reason === "no-asker", "🔴 a turn with no verified person (a fire) cannot ask a domain");
   ok(domainQuestionRoomRefusal({ ...pass, mode: "channel", trust: "external" })?.reason === "not-dm", "the gate's order holds: the room shape is checked first");
 }

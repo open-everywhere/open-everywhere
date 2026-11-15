@@ -53,7 +53,8 @@ import {
   type MemberPlaneAuthLike,
 } from "../access/member-plane.js";
 import { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } from "../access/requester-identity.js";
-import { OE_CHAT_NONMEMBER_ATTR, untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { getSecretVia } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, auditSurfaceModeStamp, bindFrom, deploymentOrg, proposingGrantScope, unattendedFrom, type BindableContext } from "../identity/binding.js";

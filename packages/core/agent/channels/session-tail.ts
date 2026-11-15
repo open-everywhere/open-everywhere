@@ -1,6 +1,6 @@
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { getSettings } from "../settings/settings.js";
-import type { IngestedChatMessage } from "../access/taint-signal.js";
+import type { IngestedChatMessage } from "../identity/non-member.js";
 import type { AuthorTrustQuery } from "../identity/author-trust.js";
 import { redactMachineLinkCodes } from "../identity/link-challenge.js";
 

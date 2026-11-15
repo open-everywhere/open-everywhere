@@ -9,7 +9,7 @@ import { bindFrom, currentTurnId, type BindableContext, type SurfaceBinding } fr
 import { delegatedNonMemberWakeThisTurn } from "../identity/delegated-binding.js";
 import { parseDbCredentialRef } from "../credentials/ref.js";
 import { getConfig } from "../access/config.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";

@@ -442,7 +442,7 @@ a stranger's bytes can arrive through:
 a chat WAKE marks  ⟸  the room is DECLARED PUBLIC in the trust registry
                    ∨  an ingested message's author was POSITIVELY REFUTED by their platform
                    ∨  an ingested message's author was POSITIVELY REFUTED by the author-trust register
-                   ∨  the room is UNDECLARED and taint.undeclaredSurface = "mark"   (off by default)
+                   ∨  the room is UNDECLARED and identity.undeclaredSurface = "mark"   (off by default)
 
 a chat READ marks  ⟸  any DISTINCT author of the fetched page was POSITIVELY REFUTED,
                       by their platform or by the author-trust register
@@ -550,7 +550,8 @@ bound it. The ACL plane already fences an undeclared room to the read-only `publ
 The approval plane is the defence against a consequential act. And `preflight` reports an
 undeclared surface **with traffic** as a red, naming the surface and the line to add — the complaint
 moved from every turn, where it was unreadable, to config time, where it is actionable. A deployment
-that prefers per-turn pressure sets `taint.undeclaredSurface: "mark"`, which is far narrower than the
+that prefers per-turn pressure sets `identity.undeclaredSurface: "mark"` (the deprecated alias
+`taint.undeclaredSurface` still works, OPE-2711), which is far narrower than the
 old behaviour because a *declared* room never reaches it.
 
 🔴 **"We could not ask" must never read as "we asked and it was fine."** Silence in the trust

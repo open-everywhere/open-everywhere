@@ -1,6 +1,6 @@
 import { getConfig } from "../access/config.js";
 import { nonMemberWakeFromAuth, type MemberPlaneAuthLike } from "../access/member-plane.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { delegatedNonMemberWakeThisTurn } from "../identity/delegated-binding.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";

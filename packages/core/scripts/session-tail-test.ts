@@ -19,7 +19,7 @@ import {
   type SessionTailEntry,
 } from "../agent/channels/session-tail.js";
 import { withholdsBody, type ExternalPolicy } from "../agent/access/external-policy.js";
-import { nonMemberChatTrust, type IngestedChatMessage } from "../agent/access/taint-signal.js";
+import { nonMemberChatTrust, type IngestedChatMessage } from "../agent/identity/non-member.js";
 import { registerAuthorTrust, _resetAuthorTrustForTest, type AuthorTrustQuery } from "../agent/identity/author-trust.js";
 import { carryConversationForward, carryTailForward, editPostTail, recordPostTail, seedTailWindow, tailWindowFor, type TailWindow } from "../agent/channels/session-tail-record.js";
 import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";

@@ -1,3 +1,5 @@
+// proves: TOOL-delegate_to_agent, TOOL-check_agent_task
+
 import assert from "node:assert/strict";
 import { defineA2aAgents, findA2aAgent, registerA2aAgents, undeclaredA2aAgentRefusal, type A2aAgentDeclaration } from "../agent/a2a/agents.js";
 import {
@@ -11,7 +13,7 @@ import {
 import { a2aGuardedFetch, type A2aFetchDeps } from "../agent/a2a/egress.js";
 import { a2aToolModelOutput } from "../agent/a2a/output.js";
 import { a2aRoomRefusal, assertA2aRoomAllowed } from "../agent/a2a/room-gate.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../agent/access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../agent/identity/non-member.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

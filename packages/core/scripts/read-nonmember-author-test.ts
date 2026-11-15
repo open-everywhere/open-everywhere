@@ -483,4 +483,4 @@ console.log("8. a read line carries its files:");
   ok(held.messages[0]!.files?.length === 2, "…while the member's files on the same page stay");
   overrideSettingsForTest({ externalPolicy: { authorGrain: "taint" } });
 }
-console.log(`✓ ${n} read-nonmember-taint assertions passed`);
+console.log(`✓ ${n} read-nonmember-author assertions passed`);

@@ -198,7 +198,7 @@ await new Promise((r) => setTimeout(r, 60));
   const spawnTaint = await import("../agent/hooks/spawn-taint.js");
   const { addressedWakeThisTurn, claimTasksForAddressedWake, exactDispatchWakeThisTurn, noteTaskDispatchedThisTurn, recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
   const { recordRequesterIdentity, requesterThisTurn } = await import("../agent/access/requester-identity.js");
-  const { OE_CHAT_NONMEMBER_ATTR } = await import("../agent/access/taint-signal.js");
+  const { OE_CHAT_NONMEMBER_ATTR } = await import("../agent/identity/non-member.js");
   const { retargetTaskWakes, TASK_WAKE_RETARGET_ACTION, delegatedTaskDispatchAuthority } = await import("../agent/channels/task-wake.js");
   const { readTaskSettled } = await import("../agent/access/background-tasks.js");
   const handlers = (spawnTaint.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;

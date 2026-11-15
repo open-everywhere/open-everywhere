@@ -10,7 +10,7 @@ import {
 import type { Domain } from "@open-everywhere/core/agent/memory/domain.js";
 import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 
-const dir = join(tmpdir(), `open-everywhere-github-chat-nonmember-taint-${process.pid}`);
+const dir = join(tmpdir(), `open-everywhere-github-chat-nonmember-stamp-${process.pid}`);
 await removeTempDir(dir);
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
@@ -117,4 +117,4 @@ ok(
 
 _resetSurfacesForTest();
 await removeTempDir(dir);
-console.log(`\n✓ github-chat-nonmember-taint: ${n} assertions passed (author leg + room leg on the REAL ingress handler, with member/collaborator/absent/unrecognised/internal-room negative controls)`);
+console.log(`\n✓ github-chat-nonmember-stamp: ${n} assertions passed (author leg + room leg on the REAL ingress handler, with member/collaborator/absent/unrecognised/internal-room negative controls)`);

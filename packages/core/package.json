@@ -2262,6 +2262,10 @@
       "types": "./dist/agent/identity/link-tenant.d.ts",
       "default": "./dist/agent/identity/link-tenant.js"
     },
+    "./agent/identity/non-member.js": {
+      "types": "./dist/agent/identity/non-member.d.ts",
+      "default": "./dist/agent/identity/non-member.js"
+    },
     "./agent/identity/oauth-vault-share.js": {
       "types": "./dist/agent/identity/oauth-vault-share.d.ts",
       "default": "./dist/agent/identity/oauth-vault-share.js"
@@ -4199,8 +4203,9 @@
     "test:core-route-taint": "NODE_NO_WARNINGS=1 tsx scripts/core-route-taint-test.ts",
     "test:taint-mode": "NODE_NO_WARNINGS=1 tsx scripts/taint-mode-test.ts",
     "test:external-policy": "NODE_NO_WARNINGS=1 tsx scripts/external-policy-test.ts",
+    "test:chat-nonmember-stamp": "NODE_NO_WARNINGS=1 tsx scripts/chat-nonmember-stamp-test.ts",
     "test:chat-nonmember-taint": "NODE_NO_WARNINGS=1 tsx scripts/chat-nonmember-taint-test.ts",
-    "test:read-nonmember-taint": "NODE_NO_WARNINGS=1 tsx scripts/read-nonmember-taint-test.ts",
+    "test:read-nonmember-author": "NODE_NO_WARNINGS=1 tsx scripts/read-nonmember-author-test.ts",
     "test:dated-read": "NODE_NO_WARNINGS=1 tsx scripts/dated-read-test.ts",
     "test:taint-worker-plane": "NODE_NO_WARNINGS=1 tsx scripts/taint-worker-plane-test.ts",
     "test:skill-taint-envelope": "NODE_NO_WARNINGS=1 tsx scripts/skill-taint-envelope-test.ts",

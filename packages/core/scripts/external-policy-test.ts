@@ -20,7 +20,7 @@ import {
 } from "../agent/access/external-policy.js";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
-import { stampNonMemberChatAuth, nonMemberChatTrust, OE_CHAT_NONMEMBER_ATTR } from "../agent/access/taint-signal.js";
+import { stampNonMemberChatAuth, nonMemberChatTrust, OE_CHAT_NONMEMBER_ATTR } from "../agent/identity/non-member.js";
 import { defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
 import { defineAuthorTrust, registerAuthorTrust, _resetAuthorTrustForTest } from "../agent/identity/author-trust.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -417,14 +417,19 @@ try {
   _resetSurfacesForTest();
 }
 
-try {
-  overrideSettingsForTest({ taint: { undeclaredSurface: "mark" } });
-  ok(
-    roomIsExternalClass({ room: { surfaceKey: `${GUILD}/C_ANY` } }) === false,
-    "🔴 `taint.undeclaredSurface: \"mark\"` does NOT put an undeclared room in the external class (=== false) — the two planes do not share that dial",
-  );
-} finally {
-  resetSettingsForTest();
+for (const [spelling, patch] of [
+  ["identity.undeclaredSurface", { identity: { undeclaredSurface: "mark" } }],
+  ["taint.undeclaredSurface", { taint: { undeclaredSurface: "mark" } }],
+] as const) {
+  try {
+    overrideSettingsForTest(patch);
+    ok(
+      roomIsExternalClass({ room: { surfaceKey: `${GUILD}/C_ANY` } }) === false,
+      `🔴 \`${spelling}: "mark"\` does NOT put an undeclared room in the external class (=== false) — the two planes do not share that dial`,
+    );
+  } finally {
+    resetSettingsForTest();
+  }
 }
 
 console.log("6. the announcement pair:");

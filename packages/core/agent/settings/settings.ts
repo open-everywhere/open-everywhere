@@ -8,7 +8,9 @@ export type TaintTierMode = "enforced" | "dryrun";
 
 export type TaintMode = "on" | "off";
 
-export type TaintUndeclaredSurface = "clean" | "mark";
+export type UndeclaredSurfacePosture = "clean" | "mark";
+
+export type TaintUndeclaredSurface = UndeclaredSurfacePosture;
 
 export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
@@ -173,6 +175,7 @@ export interface AgentSettings {
     readonly commandName: string;
     readonly allowMultiTenantPrincipals: boolean;
     readonly blanketTrust: BlanketTrust;
+    readonly undeclaredSurface: UndeclaredSurfacePosture;
   };
   readonly language: {
     readonly output: string;
@@ -267,7 +270,7 @@ export interface AgentSettings {
   readonly taint: {
     readonly mode: TaintMode;
     readonly tierMode: TaintTierMode;
-    readonly undeclaredSurface: TaintUndeclaredSurface;
+    readonly undeclaredSurface: UndeclaredSurfacePosture;
   };
   readonly teams: {
     readonly serviceHosts: readonly string[];
@@ -1105,6 +1108,13 @@ export const SETTINGS = {
       summary:
         "A deployment-wide trust declaration for the bindings no platform mapper verifies (was `OE_TRUST`). `none` (shipped) declares nothing: a real platform that cannot verify a surface fails closed to `external`, and the local stand-in binding is `internal`. `internal` is the single-tenant opt-in: it raises an unverified surface to internal, lets an unvouched DM partner read the shared DM layer, and satisfies the multi-source window vouch and the governance vouch at config load. It never overrides a platform mapper's own verdict or a surface the operator declared `public`. `external` forces the local stand-in binding to external, which a test uses to drive the fail-closed path. Prefer a per-surface declaration in `agent/identity/surfaces.ts`: it names WHICH rooms are internal.",
     } satisfies SettingSpec<BlanketTrust>,
+    undeclaredSurface: {
+      path: "identity.undeclaredSurface",
+      shipped: "clean",
+      validate: (v) => (v === "clean" || v === "mark" ? undefined : 'must be "clean" or "mark"'),
+      summary:
+        "What a chat wake does on a surface the operator has NEVER declared in the trust registry (`agent/identity/surfaces.ts`) — the room leg of the non-member stamp `oe_chat_nonmember` (`agent/identity/non-member.ts`). `clean` (shipped) stamps nothing for the room and relocates the complaint to preflight, where it names the surface once and is actionable — a declared room is judged by its declaration and a refuted author still stamps. `mark` stamps every wake on an undeclared surface as non-member at ROOM grain, and a DM is never stamped by this leg. The stamp feeds the guest controls (the connector member plane, the A2A room gate, `propose_mcp_server`, domain questions and the Notion channel), and the tainted-turn model seeds its mark from the same stamp. A DECLARED surface never reaches this setting. The residual under `clean` is real and bounded: between install and the first declaration a genuinely public chat room reads clean, the ACL plane still fences it to the read-only `public` pseudo-domain, and the approval plane is the defence against a consequential act. Moved from `taint.undeclaredSurface` (OPE-2711), which stays accepted as a deprecated alias.",
+    } satisfies SettingSpec<UndeclaredSurfacePosture>,
   },
   language: {
     output: {
@@ -1560,8 +1570,8 @@ export const SETTINGS = {
       shipped: "clean",
       validate: (v) => (v === "clean" || v === "mark" ? undefined : 'must be "clean" or "mark"'),
       summary:
-        "What a chat wake does on a surface the operator has NEVER declared in the trust registry (`agent/identity/surfaces.ts`). `clean` (shipped) marks nothing and relocates the complaint to preflight, where it names the surface once and is actionable — a declared room is judged by its declaration and a refuted author still marks, so the bit keeps discriminating. `mark` restores per-turn pressure at ROOM grain: every human-authored turn on an undeclared surface marks. That is much narrower than the pre-OPE-489 behaviour, because a DECLARED surface never reaches it. The residual under `clean` is real and bounded: between install and the first declaration a genuinely public chat room reads clean, the ACL plane still fences it to the read-only `public` pseudo-domain, and the approval plane is the defence against a consequential act.",
-    } satisfies SettingSpec<TaintUndeclaredSurface>,
+        "DEPRECATED ALIAS of `identity.undeclaredSurface` (OPE-2711), with the same values and the same shipped value. A deployment that still declares this key gets the same posture as if it declared `identity.undeclaredSurface`. Config load refuses a deployment that declares both keys with different values. OPE-2724 removes the alias.",
+    } satisfies SettingSpec<UndeclaredSurfacePosture>,
   },
   teams: {
     serviceHosts: {
@@ -1737,6 +1747,16 @@ function connectorPlaneCouplingProblem(overrides: AgentSettingsOverrides): strin
   );
 }
 
+function undeclaredSurfaceAliasProblem(overrides: AgentSettingsOverrides): string | undefined {
+  const next = overrides.identity?.undeclaredSurface;
+  const old = overrides.taint?.undeclaredSurface;
+  if (next === undefined || old === undefined || next === old) return undefined;
+  return (
+    `identity.undeclaredSurface is ${JSON.stringify(next)} but its deprecated alias taint.undeclaredSurface is ${JSON.stringify(old)}. ` +
+    "Declare identity.undeclaredSurface only (OPE-2711)"
+  );
+}
+
 export function defineSettings(overrides: AgentSettingsOverrides): AgentSettingsOverrides {
   const problems: string[] = [];
   for (const [group, values] of Object.entries(overrides) as Array<[string, Record<string, unknown> | undefined]>) {
@@ -1771,6 +1791,8 @@ export function defineSettings(overrides: AgentSettingsOverrides): AgentSettings
   }
   const coupling = connectorPlaneCouplingProblem(overrides);
   if (coupling !== undefined) problems.push(coupling);
+  const alias = undeclaredSurfaceAliasProblem(overrides);
+  if (alias !== undefined) problems.push(alias);
   if (problems.length > 0) {
     throw new Error(
       `open-everywhere: invalid agent settings (agent/settings/settings.ts) —\n  • ${problems.join("\n  • ")}\n` +
@@ -1808,6 +1830,10 @@ export function overrideSettingsForTest(patch: AgentSettingsOverrides): void {
     next[group] = { ...(next[group] ?? {}), ...values };
   }
   registeredSlot.set(next as AgentSettingsOverrides);
+}
+
+function resolveUndeclaredSurface(o: AgentSettingsOverrides): UndeclaredSurfacePosture {
+  return resolve(SETTINGS.identity.undeclaredSurface, o.identity?.undeclaredSurface ?? o.taint?.undeclaredSurface);
 }
 
 function resolve<T>(spec: SettingSpec<T>, override: T | undefined): T {
@@ -1923,6 +1949,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       commandName: resolve(SETTINGS.identity.commandName, o.identity?.commandName),
       allowMultiTenantPrincipals: resolve(SETTINGS.identity.allowMultiTenantPrincipals, o.identity?.allowMultiTenantPrincipals),
       blanketTrust: resolve(SETTINGS.identity.blanketTrust, o.identity?.blanketTrust),
+      undeclaredSurface: resolveUndeclaredSurface(o),
     },
     language: {
       output: resolve(SETTINGS.language.output, o.language?.output),
@@ -2017,7 +2044,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     taint: {
       mode: resolve(SETTINGS.taint.mode, o.taint?.mode),
       tierMode: resolve(SETTINGS.taint.tierMode, o.taint?.tierMode),
-      undeclaredSurface: resolve(SETTINGS.taint.undeclaredSurface, o.taint?.undeclaredSurface),
+      undeclaredSurface: resolveUndeclaredSurface(o),
     },
     teams: {
       serviceHosts: resolve(SETTINGS.teams.serviceHosts, o.teams?.serviceHosts),

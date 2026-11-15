@@ -3,7 +3,7 @@ import { domainForChannel, type Domain } from "../memory/domain.js";
 import type { DomainMembershipRoom } from "../access/domain-membership.js";
 import { INGESTION_KINDS } from "../access/taint-tiers.js";
 import { nonMemberWakeFromAuth, type MemberPlaneAuthLike } from "../access/member-plane.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { delegatedNonMemberWakeThisTurn } from "../identity/delegated-binding.js";
 import type { BindableContext } from "../identity/binding.js";
 import { OE_SPAWN_TAINTED_ATTR, OE_SPAWN_TAINT_KINDS_ATTR } from "./unified.js";

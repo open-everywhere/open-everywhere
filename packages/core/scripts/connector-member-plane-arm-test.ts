@@ -70,7 +70,7 @@ registerConfig({
 const { userAwareProviderToken } = await import("../agent/connections/connector-auth.js");
 const { registerSettings, resetSettingsForTest, defineSettings } = await import("../agent/settings/settings.js");
 const { OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED } = await import("../agent/access/requester-identity.js");
-const { OE_CHAT_NONMEMBER_ATTR } = await import("../agent/access/taint-signal.js");
+const { OE_CHAT_NONMEMBER_ATTR } = await import("../agent/identity/non-member.js");
 const { registerSurfaces, defineSurface, _resetSurfacesForTest } = await import("../agent/identity/trust.js");
 const { bindFrom, deploymentOrg } = await import("../agent/identity/binding.js");
 const { rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");

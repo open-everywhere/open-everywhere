@@ -47,7 +47,7 @@ import {
   requesterVerdictFor,
   type RequesterVerdict,
 } from "../access/requester-identity.js";
-import { OE_CHAT_NONMEMBER_ATTR } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { carryRunRefusalsToRedrive, dropCarriedRunRefusals } from "../approvals/card-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";

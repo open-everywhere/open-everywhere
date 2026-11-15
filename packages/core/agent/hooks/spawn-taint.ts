@@ -24,8 +24,8 @@ import {
   taintKindsThisTurn,
   untrustedIngestedThisTurn,
   OE_TAINTED_FIRE_ATTR,
-  OE_CHAT_NONMEMBER_ATTR,
 } from "../access/taint-signal.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { INGESTION_KINDS, type IngestionKind } from "../access/taint-tiers.js";
 import {
   markSubagentTainted,

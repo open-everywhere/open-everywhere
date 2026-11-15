@@ -103,11 +103,11 @@ test:notion-integration
 test:github-spend-gate
 test:github-external-policy-room
 test:github-external-policy-author
-test:github-chat-nonmember-taint
+test:github-chat-nonmember-stamp
 test:linear-integration
 test:linear-external-policy-room
 test:linear-external-policy-author
-test:linear-chat-nonmember-taint
+test:linear-chat-nonmember-stamp
 test:teams-integration
 test:teams-icons
 test:teams-roster-probe

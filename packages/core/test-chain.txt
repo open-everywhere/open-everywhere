@@ -251,8 +251,9 @@ test:taint-tiers
 test:core-route-taint
 test:taint-mode
 test:author-trust
+test:chat-nonmember-stamp
 test:chat-nonmember-taint
-test:read-nonmember-taint
+test:read-nonmember-author
 test:dated-read
 test:external-policy
 test:taint-worker-plane

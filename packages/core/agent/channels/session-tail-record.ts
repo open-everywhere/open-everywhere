@@ -2,7 +2,7 @@ import { defineState } from "eve/context";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { noteGenerationForRetirement } from "./generation-retirement.js";
-import { nonMemberChatTrust } from "../access/taint-signal.js";
+import { nonMemberChatTrust } from "../identity/non-member.js";
 import { admitToSummary, buildTail, condenseTailEntry, planConversationCarry, tailEntryToWakeMessage, type SessionTailEntry, type SessionTailWakeRow } from "./session-tail.js";
 import { standingSeatRegistryKey } from "./unified-supervisor.js";
 import { bareTokenFromEveContext, classifySessionId } from "./window-key.js";
