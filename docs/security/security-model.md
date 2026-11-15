@@ -694,8 +694,14 @@ rendered wake envelope, which also carries other people's backscroll. A worker r
 seat forwarded to it. The ask counts when the member wrote the value itself, or named the data
 ("send our bank details", "the medical summary", "the health records"). A phrase ordinary
 engineering text uses ("health check", "diagnosis of the outage", "AWS account number", "condition")
-does not count. Neither slot holds a tainted, delegated-child or unattended
-delivery, so text planted in a document cannot stand in for a member's ask. A bare "yes" names nothing, so the hold tells the agent to ask the member to name the
+does not count. Neither slot holds these delivery kinds, which no person wrote: a delegated child, a
+work session, an unattended fire, a job fire, a non-member's wake, a foreign bot's relay, or a
+delivery the host stamps `oe_non_requester` (an ambient seat wake, a thread session's brief, a work
+result, an email remainder, the auto-redrive's corrective wake). It also refuses the inherited delivery
+of a turn that brought no delivery of its own, such as a task-settlement wake. That detector fails
+toward "a delivery arrived" on a session's first turn, on every session off the unified window, and
+on an absent or unreadable stamp, so it narrows that case but does not close it. The capture fence reads those host-set signals and no taint symbol, so text planted in a
+document cannot stand in for a member's ask through any listed kind, with or without the taint plane. A bare "yes" names nothing, so the hold tells the agent to ask the member to name the
 data when they confirm. An ask never lifts the `strictest` tier.
 
 **Why deterministic detectors, measured.** Each shipped detector tests the format's own check: a

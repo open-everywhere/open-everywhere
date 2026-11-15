@@ -387,6 +387,7 @@ export {
 } from "./identity/non-member.js";
 export type { IngestedChatMessage, ChatWakeRoom } from "./identity/non-member.js";
 export { taintedFireAttrs } from "./access/taint-signal.js";
+export { nonRequesterAttrsIf, OE_NON_REQUESTER_ATTR } from "./identity/non-requester.js";
 
 export { sourceScopedMount, workerChatArmMount } from "./access/source-scoped-mount.js";
 

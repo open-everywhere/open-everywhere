@@ -2270,6 +2270,10 @@
       "types": "./dist/agent/identity/non-member.d.ts",
       "default": "./dist/agent/identity/non-member.js"
     },
+    "./agent/identity/non-requester.js": {
+      "types": "./dist/agent/identity/non-requester.d.ts",
+      "default": "./dist/agent/identity/non-requester.js"
+    },
     "./agent/identity/oauth-vault-share.js": {
       "types": "./dist/agent/identity/oauth-vault-share.d.ts",
       "default": "./dist/agent/identity/oauth-vault-share.js"
@@ -4325,6 +4329,7 @@
     "test:work-forward": "NODE_NO_WARNINGS=1 tsx scripts/work-forward-test.ts",
     "test:work-report-owed": "NODE_NO_WARNINGS=1 tsx scripts/work-report-owed-test.ts",
     "test:forwarded-asks": "NODE_NO_WARNINGS=1 tsx scripts/forwarded-asks-test.ts",
+    "test:requester-capture-fence": "NODE_NO_WARNINGS=1 tsx scripts/requester-capture-fence-test.ts",
     "test:fire-work": "NODE_NO_WARNINGS=1 tsx scripts/fire-work-test.ts",
     "test:work-generation": "NODE_NO_WARNINGS=1 tsx scripts/work-generation-test.ts",
     "test:work-status": "NODE_NO_WARNINGS=1 tsx scripts/work-status-test.ts",

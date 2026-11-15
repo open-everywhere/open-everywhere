@@ -562,3 +562,4 @@ test:secret-adopt-route
 test:outbound-filter
 test:cross-room-send
 test:result-controls
+test:requester-capture-fence

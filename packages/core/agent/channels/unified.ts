@@ -48,6 +48,7 @@ import {
   type RequesterVerdict,
 } from "../access/requester-identity.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
+import { nonRequesterAttrs, OE_NON_REQUESTER_ATTR } from "../identity/non-requester.js";
 import { carryRunRefusalsToRedrive, dropCarriedRunRefusals } from "../approvals/card-signal.js";
 import { DELEGATION_PENDING_REFUSAL_REASON, pendingDelegationOwing } from "../access/pending-delegation-signal.js";
 import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
@@ -835,7 +836,7 @@ export function buildRedriveReinject(domain: string | undefined, rawToken: strin
       token: rawToken,
       window: { wakeId: originalWakeId, origin },
       surfaceKey,
-      auth: { attributes: baseAttrs },
+      auth: { attributes: { ...baseAttrs, ...nonRequesterAttrs("redrive") } },
     });
   };
 }
@@ -881,6 +882,7 @@ export async function dispatchTaskWindow(input: {
   if (requesterCandidates !== undefined) attributes[OE_REQUESTER_CANDIDATES_ATTR] = requesterCandidates;
   else delete attributes[OE_REQUESTER_CANDIDATES_ATTR];
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
+  attributes[OE_NON_REQUESTER_ATTR] = "task-brief";
   await deliverUnifiedDispatch({
     message: input.message,
     token: input.token,
@@ -936,7 +938,7 @@ async function dispatchAmbientSeatWake(input: {
       token: input.token,
       window: { wakeId: input.wakeId, origin: input.origin },
       surfaceKey,
-      auth: { attributes: input.authAttributes ?? {} },
+      auth: { attributes: { ...(input.authAttributes ?? {}), ...nonRequesterAttrs("seat-wake") } },
       ...(input.binding ? { binding: input.binding } : {}),
     });
     return true;
@@ -1028,6 +1030,7 @@ export function workResultAttributes(input: {
 }): Record<string, unknown> {
   const attributes: Record<string, unknown> = {
     [OE_WORK_RESULT_ATTR]: input.requestId,
+    ...nonRequesterAttrs("work-result"),
     [OE_REQUESTER_ATTR]: input.requester.kind === "requester" ? input.requester.principalId : REQUESTER_UNVERIFIED,
     ...(input.invokerPosture !== undefined ? { [INVOKER_POSTURE_ATTR]: input.invokerPosture } : {}),
     ...(input.fireCreator !== undefined ? { [WORK_FIRE_CREATOR_ATTR]: input.fireCreator } : {}),

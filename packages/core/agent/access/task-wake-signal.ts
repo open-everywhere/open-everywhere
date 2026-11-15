@@ -70,6 +70,17 @@ export function deliveryChangedThisTurn(turnId: string | undefined): boolean {
   }
 }
 
+export function inheritedDeliveryThisTurn(turnId: string | undefined, deliveryStamp: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  if (deliveryStamp === undefined || deliveryStamp.length === 0) return false;
+  try {
+    const state = readState(slot.get());
+    return state.seenTurn === turnId && state.uningressed === true && (state.lastDelivery ?? state.seenDelivery) === deliveryStamp;
+  } catch {
+    return false;
+  }
+}
+
 export function uningressedTurn(turnId: string | undefined): boolean {
   if (turnId === undefined || turnId.length === 0) return false;
   try {

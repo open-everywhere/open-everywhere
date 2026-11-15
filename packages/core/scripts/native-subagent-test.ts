@@ -27,6 +27,7 @@ import {
   type BindableContext,
 } from "../agent/identity/binding.js";
 import { OE_SPAWN_TAINTED_ATTR } from "../agent/channels/unified.js";
+import { OE_NON_REQUESTER_ATTR } from "../agent/identity/non-requester.js";
 import { canDelegateFromSeat, resolveOwnWindowToken } from "../agent/access/delegation-mount.js";
 import { resolveLeanSeatPosture } from "../agent/access/lean-seat.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -1008,9 +1009,14 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     });
 
     await contextStorage.run(new ContextContainer(), async () => {
+      const brief = fwdCtx({ id: "sess-fence-brief", turn: { id: "turn_0", sequence: 0 }, attributes: { [OE_NON_REQUESTER_ATTR]: "task-brief" } });
+      await turnStarted(brief);
+      eq(captureEligible(brief as never), false, "🔴 D9 FENCE: an `oe_non_requester` delivery is refused AFTER the turn preamble has run, not only before it");
+    });
+    await contextStorage.run(new ContextContainer(), async () => {
       const spawned = fwdCtx({ id: "sess-fence-spawn", turn: { id: "turn_0", sequence: 0 }, attributes: { [OE_SPAWN_TAINTED_ATTR]: "true" } });
       await turnStarted(spawned);
-      eq(captureEligible(spawned as never), false, "🔴 D9 FENCE: an `oe_spawn_tainted` delivery is refused AFTER the turn preamble has run, not only before it");
+      eq(captureEligible(spawned as never), true, "D9 FENCE (OPE-2713): a bare `oe_spawn_tainted` stamp no longer decides capture — every host builder that sets it also sets `oe_non_requester`, or delivers to the work session, which the fence refuses by its shape");
     });
 
     await contextStorage.run(new ContextContainer(), async () => {

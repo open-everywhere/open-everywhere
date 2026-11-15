@@ -85,7 +85,7 @@
     "tests/integration/spend/spend-and-model.test.ts": 10323,
     "tests/integration/step-boundary.test.ts": 12897,
     "tests/integration/taint/chat-read-perimeter.test.ts": 21004,
-    "tests/integration/taint/requester-message-capture.test.ts": 17138,
+    "tests/integration/approvals/requester-message-capture.test.ts": 17138,
     "tests/integration/taint/routine-rule-floor-clamp.test.ts": 18623,
     "tests/integration/taint/routine-rule-sinks.test.ts": 21393,
     "tests/integration/taint/taint-delegation.test.ts": 20346,

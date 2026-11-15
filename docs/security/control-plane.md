@@ -1631,11 +1631,35 @@ the registry verdict, collecting every mismatch as a failure line. Running judge
 
 **The turn's requester-visible messages reach the judge as quoted data.**
 `requesterMessagesThisTurn` (`packages/core/agent/access/requester-messages.ts`) holds the current
-turn's received message text, rendered quoted and under review. Four deliveries are **deliberately
-never captured**: one inside a native delegation child, one inside the work session (its every
-delivery wraps the seat model's brief), one whose auth carries a taint-seed stamp, and one of
-unattended origin. A turn that captures nothing leaves the previous turn's messages standing as
-backscroll, and the reader answers empty outside a session context.
+turn's received message text, rendered quoted and under review. The capture fence
+(`captureEligible`, `packages/core/agent/hooks/requester-messages.ts`) **deliberately never
+captures** the delivery kinds below, because no person wrote them. It refuses two session shapes,
+five host-set stamps and one turn shape (the last paragraph below):
+
+- a delivery inside a native delegation child. Only a native child adopts the parent's forward stamp
+  (`oe_parent_turn_tainted`), so this arm refuses every delivery that adopts it. A tainted parent seat
+  turn's own bag also carries the stamp, and the fence does not read it;
+- a delivery inside the work session, because its every delivery wraps the seat model's brief;
+- `oe_fire_unattended`: a routine, webhook, schedule, job or inbound A2A fire;
+- `oe_job_fire`: a durable-job fire;
+- `oe_chat_nonmember`: a chat wake that ingested a non-member's message;
+- `oe_bot_ask_relay`: a foreign bot's relayed reply;
+- `oe_non_requester` (`packages/core/agent/identity/non-requester.ts`): every ambient seat wake (an
+  approval decision notice, a seat-to-seat message, a domain question and its answer, a hand-back
+  report), a thread session's opening brief, a work result wake, an email wake that carries a
+  quoted or forwarded remainder, and the auto-redrive's corrective wake.
+
+The host sets each stamp where it builds the delivery, on every turn. A delivery eve builds with no
+auth of its own, such as a task-settlement wake, keeps the previous delivery's bag, and no host
+builder can stamp it. So the fence also refuses the inherited delivery of a turn that brought no
+delivery of its own (`inheritedDeliveryThisTurn`, `packages/core/agent/access/task-wake-signal.ts`).
+A person's message that eve hands to that same turn later carries a fresh delivery nonce, so the
+fence captures it. **A known gap:** the detector fails toward "a delivery arrived" on a session's
+first turn, on every session off the unified window (it carries no delivery stamp), and on an absent
+or unreadable stamp. On those turns the fence can still capture a settlement wake's text. The fence reads no taint
+symbol, so it decides the same way with `taint.mode: "off"`. A turn that captures nothing leaves the
+previous turn's messages standing as backscroll, and the reader answers empty outside a session
+context.
 
 **A person's ask reaches the judge of the work-session child that proposes the act.** Under the three
 tiers the person asks on the seat, and the act is proposed in a child of the work session, which

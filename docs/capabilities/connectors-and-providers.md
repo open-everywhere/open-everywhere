@@ -1452,8 +1452,10 @@ exists to replace.
 The ask is recognised from the **requester's own visible words** — the one `trigger="true"`
 message of the wake, never the whole envelope, whose backscroll carries other authors'
 bodies — through the same capture fence the approval judge reads. A delegation child's brief,
-a triggered fire's payload and every tainted spawn are refused there, so a page's own text
-can never ask for a person's credential. The recognised fact then rides a host-set auth
+a triggered fire's payload, a thread session's brief, every ambient seat wake and a turn that
+brought no delivery of its own are refused there, so a page's own text cannot ask for a person's
+credential through any of those kinds. The fence's known limit is in
+[the control plane](../security/control-plane.md) (a task-settlement wake the host cannot detect). The recognised fact then rides a host-set auth
 attribute into the workers the seat delegates to, because a worker has no requester words of
 its own and a worker is where the substitution happens. A worker adopts the stamp only from
 its own seat, and only for the vendor it asked about. The producer writes a stamp for every

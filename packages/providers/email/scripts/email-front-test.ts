@@ -9,7 +9,7 @@ import {
 } from "../agent/channels/email-front.js";
 import { bindEmail } from "../agent/channels/email-identity.js";
 import { emailWakeOriginCodec } from "../agent/channels/email-origin-codec.js";
-import { EVENT_DEDUPE_MAX_RETENTION_MS, OE_CHAT_NONMEMBER_ATTR, type EmailPolicy, type EmailTransport, type InboundEmail, type Principal } from "@open-everywhere/core/agent/adapter-api.js";
+import { EVENT_DEDUPE_MAX_RETENTION_MS, OE_CHAT_NONMEMBER_ATTR, OE_NON_REQUESTER_ATTR, type EmailPolicy, type EmailTransport, type InboundEmail, type Principal } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -136,6 +136,7 @@ function harness(opts: { verified?: boolean; parsed?: InboundEmail | null; seen?
   ok(emailWakeOriginCodec.validate(p.origin as unknown as Record<string, unknown>), "the frozen origin is a valid stored row");
   ok(p.auth.attributes.email_trust === "internal" && p.auth.attributes.email_mode === "channel", "the auth stamps the gate's verdict for the mapper");
   ok(p.auth.attributes[OE_CHAT_NONMEMBER_ATTR] === undefined && p.auth.attributes.oe_tainted_fire === undefined, "an internal sender with no quoted text stamps no taint carriage");
+  ok(p.auth.attributes[OE_NON_REQUESTER_ATTR] === undefined, "…and no non-requester stamp: the sender wrote every word (OPE-2713)");
   const admitted = h.audits.find((a) => a.action === "email.admitted");
   ok(admitted !== undefined && admitted.detail.dropped === 1 && admitted.detail.route === "room", "the admission is audited with the dropped-recipient count");
   const bound = bindEmail({ channel: { kind: "email" }, session: { auth: { current: p.auth as never } } });
@@ -191,6 +192,7 @@ function harness(opts: { verified?: boolean; parsed?: InboundEmail | null; seen?
   const p = h.dms[0]!;
   ok(p.surfaceKey.startsWith("email/agent.acme.com/dm-rowan-"), "the DM dispatch carries the per-person DM key");
   ok(p.auth.attributes.oe_tainted_fire === "true", "the forward stamps the opening-prompt taint carriage");
+  ok(p.auth.attributes[OE_NON_REQUESTER_ATTR] === "email-remainder", "🔴 the forward stamps the non-requester carriage, which does not depend on taint (OPE-2713)");
   ok(p.trigger.author === "Rowan Hale", "the trigger names the declared person");
   ok(!p.trigger.body.includes("IGNORE PREVIOUS"), "the forwarded text is not in the trigger body");
   const rendered = renderEmailWake(p, "wake-2");

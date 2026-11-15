@@ -3,8 +3,12 @@ import { recordRequesterAsk, recordRequesterMessage, type RequesterAsk } from ".
 import { adoptForwardedRequesterAsks } from "../access/forwarded-asks.js";
 import { isWorkSessionContext } from "../access/work-session.js";
 import { triggerAuthors, triggerMessageBody, wakeIdsFromEnvelope } from "../channels/wake-envelope.js";
-import { FIRE_UNATTENDED_ATTR, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
-import { adoptedParentTurnTaintThisTurn, TAINT_SEED_ATTRS } from "./spawn-taint.js";
+import { botAskRelayTurn } from "../channels/bot-ask.js";
+import { jobFireStamped } from "../access/job-posture.js";
+import { inheritedDeliveryThisTurn } from "../access/task-wake-signal.js";
+import { currentTurnId, deliveryStampOf, FIRE_UNATTENDED_ATTR, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
+import { carriesNonRequesterStamp } from "../identity/non-requester.js";
 
 function currentAttrs(ctx: HookContext): Record<string, unknown> | undefined {
   return (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;
@@ -20,10 +24,12 @@ export function captureEligible(ctx: HookContext): boolean {
   if (isWorkSessionContext(ctx as unknown as BindableContext)) return false;
   const attrs = currentAttrs(ctx);
   if (stampedTrue(attrs?.[FIRE_UNATTENDED_ATTR])) return false;
-  for (const name of TAINT_SEED_ATTRS) {
-    if (stampedTrue(attrs?.[name])) return false;
-  }
-  if (adoptedParentTurnTaintThisTurn(ctx)) return false;
+  if (jobFireStamped(attrs as Parameters<typeof jobFireStamped>[0])) return false;
+  if (stampedTrue(attrs?.[OE_CHAT_NONMEMBER_ATTR])) return false;
+  if (botAskRelayTurn(attrs)) return false;
+  if (carriesNonRequesterStamp(attrs)) return false;
+  const bind = ctx as unknown as BindableContext;
+  if (inheritedDeliveryThisTurn(currentTurnId(bind), deliveryStampOf(bind))) return false;
   return true;
 }
 

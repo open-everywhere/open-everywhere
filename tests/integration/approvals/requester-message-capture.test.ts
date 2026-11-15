@@ -227,3 +227,6 @@ test("negative control: a proposal on the seat the human woke DOES carry the req
     expect(p).toContain(humanNonce);
   }
 });
+
+// proves: AP-MOD-core-access-requester-messages
+// proves: AP-MOD-core-access-forwarded-asks

@@ -8,6 +8,7 @@ import {
   mkMessageTrigger,
   renderWake,
   taintedFireAttrs,
+  nonRequesterAttrsIf,
   stampNonMemberChatAuth,
   type EmailAdmission,
   type EmailPolicy,
@@ -129,7 +130,7 @@ export function planEmailWake(input: {
     threadId: mail.threadId,
     messageId: mail.messageId,
   });
-  const withTaint: OpenEverywhereEmailAuth = { ...base, attributes: { ...base.attributes, ...taintedFireAttrs(tainted) } };
+  const withTaint: OpenEverywhereEmailAuth = { ...base, attributes: { ...base.attributes, ...taintedFireAttrs(tainted), ...nonRequesterAttrsIf(tainted, "email-remainder") } };
   const trust = input.wakeTrust(withTaint, sender);
   const ingested: IngestedChatMessage[] = [{ trust, refuted: admission.trust === "external" }];
   const auth = stampNonMemberChatAuth(withTaint as OpenEverywhereEmailAuth & { attributes: Record<string, unknown> }, ingested, route.kind === "dm" ? { dm: true } : { surfaceKey: route.surfaceKey }) as OpenEverywhereEmailAuth;
