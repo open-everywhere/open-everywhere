@@ -85,7 +85,7 @@ export function parseGrantsFile(value: unknown): GrantsFile {
         const extra = Object.keys(g).filter((k) => k !== "name" && k !== "credential");
         if (extra.length > 0) {
           throw new GrantsCodemodError(
-            `grants bundle "${b.name}" connector grant "${g.name}" carries field(s) ${extra.join(", ")} — the overlay writes only { name, credential } (a \`contentOrigin\` declaration is an operator assertion; put it in a code bundle)`,
+            `grants bundle "${b.name}" connector grant "${g.name}" carries field(s) ${extra.join(", ")} — the overlay writes only { name, credential } (\`contentOrigin\` is deprecated and ignored since OPE-2723; delete it)`,
           );
         }
       }
@@ -137,7 +137,7 @@ export function parseGrantsFile(value: unknown): GrantsFile {
 
 const BUNDLE_KEYS = ["name", "connections", "connectors"];
 const CONNECTION_KEYS = ["id", "credentialType", "secretRef", "allowedWebsites", "pathPrefixes", "customHeaders", "methods", "authorizationDetails"];
-const CONNECTOR_GRANT_KEYS = ["name", "credential", "contentOrigin"];
+const CONNECTOR_GRANT_KEYS = ["name", "credential"];
 const BINDING_KEYS = ["bundle", "scope", "allowBroad"];
 const SCOPE_KEYS = ["level", "tenant", "domain", "surface", "group", "principal"];
 

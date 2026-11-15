@@ -1,3 +1,5 @@
+// proves: AP-MOD-core-access-delta, AP-MOD-core-access-grants-codemod
+
 import { assertBindingsValid, assertBundlesValid, connectorGrantName, type Binding, type Bundle, type Connection } from "../agent/access/bundle.js";
 import { resolveAccess } from "../agent/access/resolver.js";
 import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
@@ -57,8 +59,8 @@ const notionRest: Connection = {
 
 const codeBundles: Bundle[] = [
   { name: "org-default", domains: ["raw.githubusercontent.com"] },
-  { name: "notion", connections: [notionRest], connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }] },
-  { name: "linear-basket", connectors: [{ name: "linear", credential: "k", contentOrigin: "external" }] },
+  { name: "notion", connections: [notionRest], connectors: [{ name: "notion", credential: "k" }] },
+  { name: "linear-basket", connectors: [{ name: "linear", credential: "k" }] },
 ];
 const codeBindings: Binding[] = [
   { bundle: "org-default", scope: { level: "org" } },
@@ -561,7 +563,7 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
     "apply(group): merged re-validation refuses a binding onto an undeclared group (the 3-arg call site)",
   );
 
-  const credentialed: Bundle[] = [{ name: "keys", connectors: [{ name: "linear", credential: "k", contentOrigin: "external" }], connections: [notionRest] }];
+  const credentialed: Bundle[] = [{ name: "keys", connectors: [{ name: "linear", credential: "k" }], connections: [notionRest] }];
   const wideDelta: AccessDelta = { kind: "grant-connector", scope: { level: "group", group: "eng" }, connector: "linear", credential: "k", allowBroad: "eng shares the read-only Linear key" };
   const wide = applyDelta(emptyGrantsFile(), wideDelta);
   ok(wide.grants.bindings[0].allowBroad === "eng shares the read-only Linear key", "apply(group): the acknowledgement lands on the binding the codemod writes");
@@ -701,7 +703,7 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
   throwsWith(
     () => parseGrantsModule(mod.replace('"credential": "k"', '"credential": "k", "contentOrigin": "internal"')),
     "carries field(s) contentOrigin",
-    "overlays-lint: a hand-edit that smuggles an OPERATOR ASSERTION into a machine-written bundle is refused, not rewritten",
+    "overlays-lint: a hand-edit that adds the deprecated contentOrigin (OPE-2723) to a machine-written bundle is refused, not rewritten — the codemod writes { name, credential } only",
   );
 }
 

@@ -167,7 +167,7 @@ const auditBefore = (await readAudit({ org: "default" })).length;
 
   const ungranted = res.proposals.find((p) => p.id === "widen:connector:ungranted:github");
   ok(ungranted !== undefined && ungranted.direction === "widen", "⭐ OPE-1291: a repeated `connector.refused`/`ungranted` row surfaces as a widening candidate — the action is in the evidence set AND the reader has a family for it");
-  ok(ungranted!.remedy !== undefined && ungranted!.remedy.includes('{ name: "github", credential: "<id>", contentOrigin: "internal" | "external" }'), "OPE-1291: …naming the connector declaration to add, by slug");
+  ok(ungranted!.remedy !== undefined && ungranted!.remedy.includes('{ name: "github", credential: "<id>" }') && !ungranted!.remedy.includes("contentOrigin"), "OPE-1291: …naming the connector declaration to add, by slug (OPE-2723: with no contentOrigin)");
   ok(ungranted!.remedy!.includes("agent/access/bundles.ts"), "OPE-1291: …in the config file a reviewer edits");
   ok(ungranted!.diff === undefined, "OPE-1291: …with no fabricated diff — an ungranted connector is in no bundle to render a `before` from, and no row carries a credential id");
 

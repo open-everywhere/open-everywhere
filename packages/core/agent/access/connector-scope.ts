@@ -41,7 +41,9 @@ export async function resolveEveInternalsFrom(root: string): Promise<EveInternal
   try {
     const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
     const [container, runtimeKeys] = await Promise.all([
+      // hosted-inline-exempt: best-effort reach into eve's installed internals by absolute path;
       import(abs(EVE_INTERNAL_CONTAINER_REL)),
+      // hosted-inline-exempt: same best-effort reach as the line above.
       import(abs(EVE_INTERNAL_RUNTIME_KEYS_REL)),
     ]);
     if (!container?.contextStorage || !runtimeKeys?.ChannelKey) {
@@ -231,7 +233,7 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
     await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "ungranted" });
     throw new ConnectorScopeError(
       `connection "${connectionName}" is not granted to this surface. ` +
-        `Grant it with \`connectors: [{ name: "${connectionName}", credential: "<id>", contentOrigin: "internal" | "external" }]\` ` +
+        `Grant it with \`connectors: [{ name: "${connectionName}", credential: "<id>" }]\` ` +
         `on a bundle bound to this scope — the credential ids come from that connector's catalogue in ` +
         `agent/access/connector-credentials.ts (see agent/access/bundles.ts).`,
     );

@@ -42,8 +42,8 @@ export default defineRoster({
         "USE — no teeth were ever at risk, this is purely a UX/inventory-hygiene rule enforced by " +
         "scripts/connections-lint.ts: \"mount only when a bundle grants it\"). Restored 2026-07-05 " +
         "(backlog item 19, \"link real connectors\") because agent/access/bundles.ts now grants " +
-        "\"notion\" for real (a `connectors: [{ name: \"notion\", credential: \"workspace-oauth\", " +
-        "contentOrigin: \"external\" }]` grant — it named `team-key` until OPE-1914 re-credentialled " +
+        "\"notion\" for real (a `connectors: [{ name: \"notion\", credential: \"workspace-oauth\" " +
+        "}]` grant — it named `team-key` until OPE-1914 re-credentialled " +
         "it to the org-subject MCP credential) — so the mount/grant pair is back in sync and " +
         "connections-lint passes.",
     },

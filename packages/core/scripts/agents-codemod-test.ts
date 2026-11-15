@@ -252,4 +252,14 @@ ok(new AgentsCodemodError("x") instanceof Error, "AgentsCodemodError is an Error
   ok(stringifyAgents(parseAgentsFile(JSON.parse(text))) === text, "stringify: parse ∘ stringify is a fixpoint (round-trip stable)");
 }
 
+{
+  const file: AgentsFile = {
+    ...emptyAgentsFile(),
+    bundles: [{ name: "agent:x", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] }],
+  };
+  const text = stringifyAgents(file);
+  ok(!text.includes("contentOrigin"), "OPE-2723: stringify drops the deprecated contentOrigin — the codemod never writes it");
+  ok(text.includes('"credential": "k"'), "OPE-2723: …and keeps the grant's name and credential");
+}
+
 console.log(`agents-codemod-test: ${passed} assertions passed`);

@@ -1,5 +1,5 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
-import { connectorGrantName, connectorGrantContentOrigin, connectorGrantCredential, egressHostsOverlap, normaliseEgressHost, repoGrantName, repoGrantCapabilities } from "./bundle.js";
+import { connectorGrantName, connectorGrantCredential, egressHostsOverlap, normaliseEgressHost, repoGrantName, repoGrantCapabilities } from "./bundle.js";
 import { GIT_BROKER_HOSTS } from "./reserved-hosts.js";
 import { unionRepoCapabilities, type RepoCapability } from "./repo-capabilities.js";
 import { unionResourceCapabilities, type ResourceCapability } from "./resource-capabilities.js";
@@ -62,6 +62,7 @@ export interface EffectiveAccess {
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
   readonly connectors: readonly string[];
+  /** @deprecated ALWAYS EMPTY since OPE-2723: the resolver reads no grant's `contentOrigin`. The field stays for one release so code that reads or builds an EffectiveAccess still compiles; OPE-2724 removes it. */
   readonly connectorContentOrigin: Readonly<Record<string, ConnectorContentOriginSpec>>;
   readonly connectorCredentials: Readonly<Record<string, ResolvedConnectorCredential>>;
   readonly instructionStack: readonly InstructionLayer[];
@@ -171,15 +172,6 @@ function withheldForOwnAccountAsk(
     hostMap.delete(host);
   }
   return withheld.sort((a, b) => a.host.localeCompare(b.host));
-}
-
-function contentOriginKey(spec: ConnectorContentOriginSpec): string {
-  if (typeof spec === "string") return spec;
-  const except = Object.keys(spec.except)
-    .sort()
-    .map((tool) => `${tool}=${spec.except[tool]}`)
-    .join(",");
-  return `${spec.default}{${except}}`;
 }
 
 export function resolveAccess(
@@ -375,29 +367,7 @@ export function resolveAccess(
 
   const connectors = [...new Set([...grantedConnectors, ...pluginConnectors])].sort();
 
-  const declaredByName = new Map<string, Map<string, ConnectorContentOriginSpec>>();
-  for (const { bundle } of ordered) {
-    for (const grant of bundle.connectors ?? []) {
-      const declared = connectorGrantContentOrigin(grant);
-      if (declared === undefined) continue;
-      const name = connectorGrantName(grant);
-      if (!grantedConnectors.has(name)) continue;
-      const byShape = declaredByName.get(name) ?? new Map<string, ConnectorContentOriginSpec>();
-      byShape.set(contentOriginKey(declared), declared);
-      declaredByName.set(name, byShape);
-    }
-  }
   const connectorContentOrigin: Record<string, ConnectorContentOriginSpec> = {};
-  for (const [name, declared] of [...declaredByName.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    if (declared.size > 1) {
-      warnings.push(
-        `connector "${name}" is declared with DIFFERENT \`contentOrigin\` values (${[...declared.keys()].sort().join(" vs ")}) by bundles bound to this scope — an Eve connection is one global instance, so these are contradictory claims about the same thing; resolving to "external" (fail-closed). Make the declarations agree.`,
-      );
-      connectorContentOrigin[name] = "external";
-      continue;
-    }
-    connectorContentOrigin[name] = [...declared.values()][0]!;
-  }
 
   const preApprovalRules = assemblePreApprovalRules(
     ordered

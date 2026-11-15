@@ -112,6 +112,31 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
 }
 
 {
+  const { resolveAccess } = await import("../agent/access/resolver.js");
+  const bundles = [
+    {
+      name: "vendor",
+      connections: [{ id: "vendor", credentialType: "api-key", secretRef: "VENDOR_KEY", allowedWebsites: ["api.declared.test"], methods: ["GET"] }],
+      connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }],
+    },
+  ] as unknown as Parameters<typeof resolveAccess>[1];
+  const bindings = [{ bundle: "vendor", scope: { level: "org" } }] as unknown as Parameters<typeof resolveAccess>[2];
+  const req = { mode: "channel", platform: "slack", workspace: "T1", channel: "C1" } as unknown as Parameters<typeof resolveAccess>[0];
+  const headers = async () => ({ authorization: "Bearer x" });
+  const res = await computeEgressPolicy(
+    () => resolveAccess(req, bundles, bindings, {}, []),
+    (a) => compileNetworkPolicy(a, headers, noOverride),
+  );
+  ok(res.compileError === undefined && typeof res.policy === "object", "OPE-2723: a bundle that still sets contentOrigin compiles an allow policy");
+  const allow = allowOfPolicy(res.policy);
+  ok(Object.hasOwn(allow, "api.declared.test"), "🔴 OPE-2723 must-survive: the DECLARED host is allowed");
+  ok(!Object.hasOwn(allow, "api.undeclared.test") && Object.keys(allow).every((h) => h === "api.declared.test"), "🔴 OPE-2723 must-survive: an UNDECLARED host is denied (absent from the allow map)");
+  const rules = rulesFor(res.policy, "api.declared.test");
+  ok(rules.length > 0 && rules.every((r) => JSON.stringify(r.match?.method) === JSON.stringify(["GET"])), "🔴 OPE-2723 must-survive: every rule matches the declared method only, so an undeclared method is denied");
+  ok(Object.keys(res.connectorContentOrigin).length === 0, "OPE-2723: the deprecated content-origin map on the egress result is always empty, even for a grant that sets contentOrigin");
+}
+
+{
   const applied = await applyEgressPolicy(async () => {}, false);
   ok(applied.enforced && applied.enforceError === undefined, "successful apply reports enforced");
 

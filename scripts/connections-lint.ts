@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { bundleConnectorNames } from "@open-everywhere/core/agent/access/bundle.js";
+import { bundleConnectorNames, noteDeprecatedContentOrigin } from "@open-everywhere/core/agent/access/bundle.js";
 import { connectorGrantCredentialProblems, ownAccountWithholdingProblems } from "@open-everywhere/core/agent/access/lint.js";
 import { credentialGrantConnectors } from "@open-everywhere/core/agent/access/credential-grant.js";
 import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
@@ -29,6 +29,8 @@ const credentialProblems = connectorGrantCredentialProblems(loadBundles(), loadC
 
 const withholdingProblems = ownAccountWithholdingProblems(credentialGrantConnectors(), loadConnectorCredentials(), loadBundles());
 
+noteDeprecatedContentOrigin(loadBundles());
+
 const ungrantedMounts = mounted.filter((name) => !granted.has(name));
 const unmountedGrants = [...granted].filter((name) => !mounted.includes(name)).sort();
 
@@ -47,7 +49,7 @@ if (ungrantedMounts.length > 0) {
   console.error(
     `✗ connections-lint: mounted with NO bundle grant: ${ungrantedMounts.join(", ")}\n` +
       `  Eve advertises these to every session. Either grant each one on a bundle\n` +
-      `  (connectors: [{ name: "<name>", credential: "<id>", contentOrigin: "internal" | "external" }])\n` +
+      `  (connectors: [{ name: "<name>", credential: "<id>" }])\n` +
       `  in agent/access/bundles.ts, or delete agent/connections/<name>.ts until a bundle needs it.`,
   );
 }

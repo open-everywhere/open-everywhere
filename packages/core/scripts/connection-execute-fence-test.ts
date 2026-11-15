@@ -183,24 +183,8 @@ const internal = await driveExecute(
   "call-9",
   { declare: { notion: "internal" } },
 );
-ok(internal.text.includes(UNTRUSTED_OPEN), "9. a connector that DECLARED contentOrigin internal is still FENCED — the fence is structural");
-ok(!internal.tainted, "9. 🔴 …but does NOT taint the turn: that is the declaration the target lookup has to find");
-
-const excepted = await driveExecute(
-  { connection: "notion", tool: "search_pages", input: {} },
-  { structuredContent: { rows: [] } },
-  "call-10",
-  { declare: { notion: { default: "internal", except: { search_pages: "external" } } } },
-);
-ok(excepted.tainted, "9. a PER-TOOL `except` is honoured on the target's own op — the excepted op still taints");
-
-const otherConn = await driveExecute(
-  { connection: "linear", tool: "search_pages", input: {} },
-  { structuredContent: { rows: [] } },
-  "call-11",
-  { declare: { notion: "internal" } },
-);
-ok(otherConn.tainted, "9. one connector's declaration can never clear ANOTHER connector's result");
+ok(internal.text.includes(UNTRUSTED_OPEN), "9. a connector a caller still stamps as contentOrigin internal is FENCED — the fence is structural");
+ok(internal.tainted, "9. 🔴 OPE-2723: …and it TAINTS the turn: the retired declaration clears nothing");
 
 const forgedOrigin = await driveExecute(
   { connection: "notion", tool: FORGED_TOOL },
@@ -208,6 +192,15 @@ const forgedOrigin = await driveExecute(
   "call-12",
   { declare: { notion: "internal" } },
 );
-ok(forgedOrigin.tainted, "9. 🔴 and a target the guard REFUSED cannot inherit its connection's `internal` declaration — the refusal is fail-closed on the origin too");
+ok(forgedOrigin.tainted, "9. a target the guard REFUSED still fails closed: fenced and tainting");
+
+{
+  const write = await driveExecute({ connection: "notion", tool: "create_page", input: {} }, { structuredContent: { id: "p1" } }, "call-13");
+  const fact = connectorExecutedFact("notion__create_page", { structuredContent: { id: "p1" } }) ?? "";
+  ok(fact !== "" && write.text.includes(fact), "10. 🔴 an approved connector WRITE still renders the executed-fact line, named by the target op");
+  ok(write.text.indexOf(fact) < write.text.indexOf(UNTRUSTED_OPEN), "10. …and the fact sits BEFORE the fence, as host text");
+  const read = await driveExecute({ connection: "notion", tool: "search_pages", input: {} }, { structuredContent: { rows: [] } }, "call-14");
+  ok(!read.text.includes("[Host fact, not connector data]"), "10. negative control: a READ renders no executed fact");
+}
 
 console.log(`connection-execute-fence: ${n} assertion(s) passed`);

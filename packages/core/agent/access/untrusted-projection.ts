@@ -1,5 +1,4 @@
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput, UNTRUSTED_OPEN } from "./untrusted.js";
-import { connectionSearchRows, declaredContentOriginForConnectionSearch, declaredContentOriginForExecuteTarget, declaredContentOriginForToolName } from "./connector-content-origin-state.js";
 import {
   CONNECTION_EXECUTE_TOOL_NAME,
   CONNECTION_SEARCH_TOOL_NAME,
@@ -80,6 +79,18 @@ export function variantProjectedNameList(): readonly string[] {
 function isConnectorExternalName(name: string): boolean {
   const reserved = name === CONNECTION_SEARCH_TOOL_NAME || name === CONNECTION_EXECUTE_TOOL_NAME;
   return (name.includes("__") || reserved) && !authoredProjectionNames.has(name);
+}
+
+const CONNECTION_SEARCH_RESULT_KEYS: ReadonlySet<string> = new Set(["tools", "total", "unavailable"]);
+
+export function connectionSearchRows(output: unknown): readonly unknown[] | undefined {
+  if (Array.isArray(output)) return output;
+  if (output === null || typeof output !== "object") return undefined;
+  const result = output as Record<string, unknown>;
+  if (Object.keys(result).some((key) => !CONNECTION_SEARCH_RESULT_KEYS.has(key))) return undefined;
+  if (!Array.isArray(result.tools)) return undefined;
+  if (result.unavailable !== undefined && !Array.isArray(result.unavailable)) return undefined;
+  return [...((result.unavailable as readonly unknown[] | undefined) ?? []), ...result.tools];
 }
 
 function isStatusOnlyConnectionSearch(output: unknown): boolean {
@@ -260,17 +271,9 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
         }
         const target = name === CONNECTION_EXECUTE_TOOL_NAME ? executeTargetFor(args) : undefined;
         const ingestionLabel = target === undefined ? name : qualifiedConnectorToolName(target);
-        const grantContentOrigin =
-          name === CONNECTION_SEARCH_TOOL_NAME
-            ? declaredContentOriginForConnectionSearch(output)
-            : target !== undefined
-              ? declaredContentOriginForExecuteTarget(target)
-              : name === CONNECTION_EXECUTE_TOOL_NAME
-                ? undefined
-                : declaredContentOriginForToolName(name);
         return ingestUntrustedModelOutput(text, {
           source: `connector ${ingestionLabel}`,
-          ingestion: { kind: "connector", label: ingestionLabel, ...(grantContentOrigin !== undefined ? { grantContentOrigin } : {}) },
+          ingestion: { kind: "connector", label: ingestionLabel },
         });
       };
       tool.toModelOutput = async (args) => {

@@ -16,7 +16,6 @@ import type { ApprovalPolicy, ApprovalStatus } from "eve/tools/approval";
 import {
   ASK_UNATTENDED_SENTENCE,
   TAINTED_ASK_UNATTENDED_SENTENCE,
-  TAINTED_CONNECTOR_ORIGIN_ADVICE,
   connectorApprovalPolicy,
   connectorOpApproval,
   unattendedConnectorRefusalMessage,
@@ -365,16 +364,16 @@ console.log("§11 a poisoned turn is never lifted:");
   ok(settled === "resolved", "…and the throw is ANSWERED, never propagated to eve — the policy settles fulfilled");
 }
 
-console.log("§11b a poisoned fire is told the one remedy a fire can act on:");
+console.log("§11b a poisoned fire is not told to declare the retired contentOrigin:");
 {
   const poisoned = withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => true });
   const decision = await ask(poisoned, fireAuth(), WRITE_OP);
-  ok(isDenied(decision) && (decision.reason ?? "").includes(TAINTED_CONNECTOR_ORIGIN_ADVICE), "a tainted fire's refusal NAMES `contentOrigin` — the one remedy that is actionable on a fire");
-  ok(isDenied(decision) && (decision.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "…and the plane's own sentence still stands beside it, unedited");
+  ok(isDenied(decision), "🔴 a tainted unattended write is still REFUSED — the fence decides as before");
+  ok(isDenied(decision) && !(decision.reason ?? "").includes("contentOrigin"), "OPE-2723: …and the refusal no longer tells the operator to declare `contentOrigin`");
+  ok(isDenied(decision) && (decision.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "…and the plane's own sentence still stands, unedited");
   ok(isDenied(decision) && !(decision.reason ?? "").includes(`Declare "${WRITE_DECLARATION}"`), "…and still no advice to arm a card that would not lift it");
   const cleanRefusal = await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => false }), webhookAuth(), WRITE_OP);
-  ok(isDenied(cleanRefusal) && !(cleanRefusal.reason ?? "").includes(TAINTED_CONNECTOR_ORIGIN_ADVICE), "control: an UNtainted unattended refusal does not mention contentOrigin — it names the declaration that would lift it");
-  ok(TAINTED_CONNECTOR_ORIGIN_ADVICE.includes("contentOrigin"), "…and the advice names the field an operator actually writes, not a paraphrase of it");
+  ok(isDenied(cleanRefusal) && (cleanRefusal.reason ?? "").includes(`Declare "${WRITE_DECLARATION}"`), "control: an UNtainted unattended refusal still names the declaration that would lift it");
 }
 
 console.log("§12 a <plugin>__<server> connection keys on its whole tool name:");

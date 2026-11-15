@@ -79,8 +79,6 @@ export interface ConnectorGrant {
 
 export type ConnectorGrantSpec = string | ConnectorGrant;
 
-const KNOWN_CONTENT_ORIGINS: ReadonlySet<string> = new Set<ConnectorContentOrigin>(["internal", "external"]);
-
 export function connectorGrantName(grant: ConnectorGrantSpec): string {
   return typeof grant === "string" ? grant : grant.name;
 }
@@ -210,53 +208,33 @@ function broadHostProblems(bundleName: string, field: string, hosts: readonly st
   return problems;
 }
 
-function isMachineWrittenBundleName(name: string): boolean {
-  return name.startsWith("grants:") || name.startsWith("agent:");
+export function contentOriginDeprecationNotice(grants: readonly string[]): string {
+  return (
+    `[access] DEPRECATED: ${grants.length} connector grant(s) set \`contentOrigin\` (${grants.join(", ")}). ` +
+    `The field is ignored since OPE-2723 and changes no verdict; the next breaking core release removes it (OPE-2724). ` +
+    `Delete it from each grant.`
+  );
 }
 
-function contentOriginProblems(bundleName: string, connector: string, spec: unknown): string[] {
-  const known = [...KNOWN_CONTENT_ORIGINS].map((t) => JSON.stringify(t)).join(", ");
-  const where = `bundle "${bundleName}" connector "${connector}"`;
-  if (spec === undefined) {
-    return [
-      `  ${where} has no \`contentOrigin\` — say who authors the bytes it returns: ` +
-        `contentOrigin: "internal" (only org members can write what it returns) or "external" (anyone can), ` +
-        `or contentOrigin: { default: "internal", except: { "<bare-tool-name>": "external" } } when only some of its tools reach outside content`,
-    ];
-  }
-  if (typeof spec === "string" || spec === null || typeof spec !== "object") {
-    if (KNOWN_CONTENT_ORIGINS.has(spec as string)) return [];
-    return [
-      `  ${where} declares unknown contentOrigin ${JSON.stringify(spec)} — known: ${known}, or { default, except } for per-tool grain (omit the field entirely to declare nothing)`,
-    ];
-  }
-  const obj = spec as { default?: unknown; except?: unknown };
-  const bad: string[] = [];
-  if (!KNOWN_CONTENT_ORIGINS.has(obj.default as string)) {
-    bad.push(`  ${where} declares contentOrigin.default ${JSON.stringify(obj.default)} — known: ${known}`);
-  }
-  if (obj.except === null || typeof obj.except !== "object" || Array.isArray(obj.except)) {
-    bad.push(`  ${where} declares a contentOrigin object whose \`except\` is not a { toolName: origin } map — got ${JSON.stringify(obj.except)}`);
-    return bad;
-  }
-  const except = obj.except as Record<string, unknown>;
-  const toolNames = Object.keys(except);
-  if (toolNames.length === 0) {
-    bad.push(`  ${where} declares contentOrigin \`except: {}\` — an empty exception map is just ${JSON.stringify(obj.default)}; write the scalar, or name the tools that differ`);
-  }
-  for (const tool of toolNames) {
-    if (tool.trim() === "") {
-      bad.push(`  ${where} declares a contentOrigin exception for an empty tool name — name the BARE tool the override applies to`);
-      continue;
-    }
-    if (tool.startsWith(`${connector}__`)) {
-      bad.push(`  ${where} declares a contentOrigin exception for "${tool}" — \`except\` keys are BARE tool names; drop the "${connector}__" prefix (write "${tool.slice(connector.length + 2)}")`);
-    }
-    if (!KNOWN_CONTENT_ORIGINS.has(except[tool] as string)) {
-      bad.push(`  ${where} declares contentOrigin exception "${tool}" as ${JSON.stringify(except[tool])} — known: ${known}`);
+let contentOriginNoticeEmitted = false;
+
+export function noteDeprecatedContentOrigin(bundles: readonly Bundle[], warn: (line: string) => void = console.warn): void {
+  if (contentOriginNoticeEmitted) return;
+  const grants: string[] = [];
+  for (const b of bundles) {
+    for (const grant of b.connectors ?? []) {
+      if (grant !== null && typeof grant === "object" && Object.hasOwn(grant, "contentOrigin")) {
+        grants.push(`${b.name}/${String((grant as ConnectorGrant).name)}`);
+      }
     }
   }
-  return bad;
+  if (grants.length === 0) return;
+  contentOriginNoticeEmitted = true;
+  warn(contentOriginDeprecationNotice(grants));
+}
+
+export function _resetContentOriginNoticeForTest(): void {
+  contentOriginNoticeEmitted = false;
 }
 
 export function assertBundlesValid(bundles: readonly Bundle[]): void {
@@ -279,23 +257,19 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
       if (typeof grant === "string") {
         bad.push(
           `  bundle "${b.name}" grants connector "${grant}" as a bare slug — a grant names the identity it reaches the connector as: ` +
-            `{ name: "${grant}", credential: "<a credential id from the connector's catalogue>", contentOrigin: "internal" | "external" }. ` +
-            `The machine-written overlays write { name, credential } and omit contentOrigin; every other bundle declares all three.`,
+            `{ name: "${grant}", credential: "<a credential id from the connector's catalogue>" }.`,
         );
       } else if (grant === null || typeof grant !== "object" || typeof (grant as ConnectorGrant).name !== "string" || (grant as ConnectorGrant).name.trim() === "") {
-        bad.push(`  bundle "${b.name}" has a connector grant that is not a { name, credential, contentOrigin } object — got ${JSON.stringify(grant)}`);
+        bad.push(`  bundle "${b.name}" has a connector grant that is not a { name, credential } object — got ${JSON.stringify(grant)}`);
         continue;
       } else {
         const g = grant as ConnectorGrant;
         if (typeof g.credential !== "string" || g.credential.trim() === "") {
           bad.push(
             `  bundle "${b.name}" grants connector "${g.name}" with no \`credential\` — name which configured identity this scope reaches it as, ` +
-              `e.g. { name: "${g.name}", credential: "team-key", contentOrigin: "external" }. The ids come from that connector's credential catalogue ` +
+              `e.g. { name: "${g.name}", credential: "team-key" }. The ids come from that connector's credential catalogue ` +
               `(agent/access/connector-credentials.ts); \`npm run lint:connections\` fails a grant naming one that is not configured.`,
           );
-        }
-        if (g.contentOrigin !== undefined || !isMachineWrittenBundleName(b.name)) {
-          bad.push(...contentOriginProblems(b.name, g.name, g.contentOrigin));
         }
       }
       const name = connectorGrantName(grant);
@@ -403,6 +377,7 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
       }
     }
   }
+  noteDeprecatedContentOrigin(bundles);
   if (bad.length > 0) {
     throw new Error(
       "open-everywhere: invalid access bundle(s):\n" + bad.join("\n") + "\n(access/bundle.ts / docs/how-it-works/access-and-scoping.md)",

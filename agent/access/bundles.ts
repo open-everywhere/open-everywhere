@@ -55,7 +55,7 @@ const bundles: Bundle[] = [
 
   defineBundle({
     name: "notion-personal",
-    connectors: [{ name: "notion", credential: "user-oauth", contentOrigin: "external" }],
+    connectors: [{ name: "notion", credential: "user-oauth" }],
     instructions:
       "Your Notion connector in this DM acts as this user's own account — reads and writes " +
       "carry their identity and access, not the shared team integration.",
@@ -77,7 +77,7 @@ const bundles: Bundle[] = [
 
   defineBundle({
     name: "e2e-connector-fixture",
-    connectors: [{ name: "notion", credential: "workspace-oauth", contentOrigin: "internal" }],
+    connectors: [{ name: "notion", credential: "workspace-oauth" }],
   }),
 
   defineBundle({

@@ -122,7 +122,7 @@ function assertAgentConnectorGrants(what: string, value: unknown): void {
     const extra = Object.keys(g).filter((k) => k !== "name" && k !== "credential");
     if (extra.length > 0) {
       throw new AgentsCodemodError(
-        `${what} connector grant "${g.name}" carries field(s) ${extra.join(", ")} — the overlay writes only { name, credential } (a \`contentOrigin\` declaration is an operator assertion; put it in a code bundle)`,
+        `${what} connector grant "${g.name}" carries field(s) ${extra.join(", ")} — the overlay writes only { name, credential } (\`contentOrigin\` is deprecated and ignored since OPE-2723; delete it)`,
       );
     }
   }

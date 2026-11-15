@@ -59,7 +59,7 @@ const notionRest: Connection = {
 
 const codeBundles: Bundle[] = [
   { name: "notion", connections: [notionRest] },
-  { name: "linear-basket", connectors: [{ name: "linear", credential: "k", contentOrigin: "external" }] },
+  { name: "linear-basket", connectors: [{ name: "linear", credential: "k" }] },
 ];
 const codeBindings: Binding[] = [
   { bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } },
@@ -406,7 +406,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
 }
 
 {
-  const personalBundles: Bundle[] = [...codeBundles, { name: "mine", connectors: [{ name: "asana", credential: "k", contentOrigin: "external" }] }];
+  const personalBundles: Bundle[] = [...codeBundles, { name: "mine", connectors: [{ name: "asana", credential: "k" }] }];
   const personalBindings: Binding[] = [...codeBindings, { bundle: "mine", scope: { level: "principal", principal: "slack/T1/U_ADMIN" } }];
   const access = groupEffectiveAccess("payments-team", "slack", "T1", personalBundles, personalBindings);
   ok(!access.connectors.includes("asana"), "group access: the asker's OWN personal grant does not read as the group's");

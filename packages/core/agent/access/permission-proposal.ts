@@ -124,7 +124,7 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
           remedy:
             `Not a mechanical diff, so none is offered — an ungranted connector is in none of the bundles effective in this scope, and the ` +
             `declaration needs a credential id that no refusal row carries. Add ` +
-            `\`{ name: "${r.connection}", credential: "<id>", contentOrigin: "internal" | "external" }\` to the \`connectors\` array of a ` +
+            `\`{ name: "${r.connection}", credential: "<id>" }\` to the \`connectors\` array of a ` +
             `bundle bound to this scope in \`${PERMISSION_CONFIG_FILE}\`; the credential ids come from that connector's catalogue in ` +
             `\`agent/access/connector-credentials.ts\`. ⚠ A break-glass \`revoke_connector\` produces this same reason code from the ` +
             `override store, and no config edit defeats it — check the overrides before merging a widening.`,

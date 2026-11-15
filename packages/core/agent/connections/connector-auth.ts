@@ -124,7 +124,7 @@ export async function resolveAppTokenFromCred(
     if (opts.fallbackSecretRef) return { token: await getSecretVia(opts.fallbackBroker, opts.fallbackSecretRef) };
     throw new Error(
       `connection "${opts.connector}": no credential bound for this surface and no fallback secret — ` +
-        `grant it with connectors: [{ name: "${opts.connector}", credential: "<id>", contentOrigin: … }], ` +
+        `grant it with connectors: [{ name: "${opts.connector}", credential: "<id>" }], ` +
         `or give the connection its own fallback secretRef.`,
     );
   }
@@ -746,10 +746,9 @@ export function unattendedConnectorRefusalMessage(
   tainted: boolean,
 ): string {
   const declaration = !tainted && tier === "write" ? `Declare "tool:${toolName}" on the routine's creation card to lift it. ` : "";
-  const origin = tainted ? `${TAINTED_CONNECTOR_ORIGIN_ADVICE} ` : "";
   return (
     `connection "${connection}": the ${tier}-tier op "${toolName}" needs approval and nobody is attending this run. ` +
-    `${tainted ? TAINTED_ASK_UNATTENDED_SENTENCE : ASK_UNATTENDED_SENTENCE} ${declaration}${origin}` +
+    `${tainted ? TAINTED_ASK_UNATTENDED_SENTENCE : ASK_UNATTENDED_SENTENCE} ${declaration}` +
     `The op did not run.`
   );
 }

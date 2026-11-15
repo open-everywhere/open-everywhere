@@ -162,7 +162,7 @@ export function mcpServerConnectorCredentials(servers: readonly McpServerDeclara
 export function mcpServerBundles(servers: readonly McpServerDeclaration[]): Bundle[] {
   return servers.map((s): Bundle => ({
     name: mcpServerBundleName(s.name),
-    connectors: [{ name: s.name, credential: MCP_SERVER_PERSONAL_CREDENTIAL, contentOrigin: "external" }],
+    connectors: [{ name: s.name, credential: MCP_SERVER_PERSONAL_CREDENTIAL }],
     instructions:
       s.personalSurface !== undefined
         ? personalSurfaceInstructions(s.name, s.personalSurface)

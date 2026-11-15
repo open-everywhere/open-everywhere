@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { EgressHostCollisionError, ownAccountEgressRefusalText, resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
-import { assertBindingsValid, assertBundlesValid, type Binding, type Bundle } from "../agent/access/bundle.js";
+import {
+  _resetContentOriginNoticeForTest,
+  assertBindingsValid,
+  assertBundlesValid,
+  contentOriginDeprecationNotice,
+  noteDeprecatedContentOrigin,
+  type Binding,
+  type Bundle,
+} from "../agent/access/bundle.js";
 import type { ConnectorCredentials } from "../agent/access/connector-credentials.js";
 import type { PluginRegistry } from "../agent/plugins/types.js";
 
@@ -444,126 +452,39 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     "…and warns, naming the connector that has no catalogue",
   );
 
-  ok(
-    ghostCred.connectorContentOrigin["notion"] === undefined,
-    "🔴 a grant that resolved NO credential contributes NO content-origin declaration either",
-  );
-  ok(good.connectorContentOrigin["notion"] === "external", "…NEGATIVE CONTROL: a grant that DID resolve still declares, so the rule is about failure and not about silence");
-  {
-    const withPlugin = resolveAccessT(
-      chan("T1", "C1"),
-      [{ name: "ghost-cred", connectors: [{ name: "notion", credential: "not-configured", contentOrigin: "internal" }] }, { name: "p", plugins: ["acme"] }],
-      [
-        { bundle: "ghost-cred", scope: { level: "surface", surface: "slack/T1/C1" } },
-        { bundle: "p", scope: { level: "surface", surface: "slack/T1/C1" } },
-      ],
-      { acme: { connectors: ["notion"], skills: [], subagents: [] } } as PluginRegistry,
-    );
-    ok(withPlugin.connectors.includes("notion"), "…the plugin still mounts the connector (that vocabulary needs no credential)");
-    ok(
-      withPlugin.connectorContentOrigin["notion"] === undefined,
-      "🔴 …and it stays UNDECLARED: a failed grant cannot vouch for a connector a plugin made reachable",
-    );
-  }
-
   const noCred = resolveAccessT(chan("T1", "C1"), bundles, at("no-cred"));
   ok(noCred.connectors.length === 0, "🔴 a BARE SLUG grant resolves to nothing — the resolver is pure and does not validate, so it must answer for config assertBundlesValid refuses");
   ok(noCred.warnings.some((w) => w.includes("names no credential")), "…and says why, rather than failing silently");
 }
 
 {
-  const bundles: Bundle[] = [
-    { name: "declared", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] },
-    { name: "bare", connectors: [{ name: "linear-mcp", credential: "k" }] },
-  ];
-  const bindings: Binding[] = [
-    { bundle: "declared", scope: { level: "domain", domain: "d" } },
-    { bundle: "bare", scope: { level: "domain", domain: "d" } },
-  ];
-  const a = resolveAccessT(chan("T1", "C1", ["d"]), bundles, bindings);
-  ok(a.connectors.includes("notion") && a.connectors.includes("linear-mcp"), "a grant that declares a contentOrigin mounts the same connector one that stays silent does — the declaration changes the taint verdict, never the capability");
-  ok(a.connectorContentOrigin["notion"] === "internal", "the declared origin resolves onto EffectiveAccess.connectorContentOrigin, keyed by connection name");
-  ok(!("linear-mcp" in a.connectorContentOrigin), "🔴 a BARE grant contributes NO key — silence is not a declaration, and an absent key is what keeps the table's verdict marked `assumed`");
-  ok(a.connectorContentOrigin["nothing-like-this"] === undefined, "an ungranted connector is absent too (the map is sparse, never a default-filled table)");
-
-  ok(Object.keys(a.connectorContentOrigin).length === 1, "one declaration produces exactly one key — a bundle's vouch cannot leak onto a sibling bundle's connector");
-
-  const other = resolveAccessT(chan("T1", "C9"), bundles, [{ bundle: "bare", scope: { level: "org" } }]);
-  ok(other.connectors.includes("linear-mcp") && Object.keys(other.connectorContentOrigin).length === 0, "a scope that resolves only the undeclaring bundle carries an EMPTY declaration map — declarations travel with the binding, not with the deployment");
-
-  const viaPlugin = resolveAccessT(
-    chan("T1", "C1", ["d"]),
-    [{ name: "p", plugins: ["acme"] }],
-    [{ bundle: "p", scope: { level: "domain", domain: "d" } }],
-    { acme: { connectors: ["notion"], skills: [], subagents: [] } } as PluginRegistry,
-  );
-  ok(viaPlugin.connectors.includes("notion") && viaPlugin.connectorContentOrigin["notion"] === undefined, "a plugin-granted connector declares nothing — the plugin vocabulary has no contentOrigin field, and the resolver must not borrow a same-named raw grant's declaration");
-
-  const perTool = resolveAccessT(
-    chan("T1", "C1", ["d"]),
-    [{ name: "desk", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { search_tickets: "external" } } }] }],
-    [{ bundle: "desk", scope: { level: "domain", domain: "d" } }],
-  );
-  ok(
-    JSON.stringify(perTool.connectorContentOrigin["helpdesk"]) === JSON.stringify({ default: "internal", except: { search_tickets: "external" } }),
-    "a `{ default, except }` declaration resolves onto EffectiveAccess VERBATIM — the per-tool answer is computed at the seam that knows the tool name, never guessed here",
-  );
-}
-
-{
-  const bundles: Bundle[] = [
+  const declared: Bundle[] = [
     { name: "wide", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] },
     { name: "narrow", connectors: [{ name: "notion", credential: "k", contentOrigin: "external" }] },
+    { name: "desk", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { search_tickets: "external" } } }] },
   ];
-  const a = resolveAccessT(chan("T1", "C1"), bundles, [
-    { bundle: "wide", scope: { level: "org" } },
-    { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
-  ]);
-  ok(a.connectorContentOrigin["notion"] === "external", "🔴 internal + external for the SAME connection resolves to external — NOT narrowest-wins, because the two grants describe one global instance rather than choosing between interchangeable credentials");
-  ok(a.warnings.some((w) => w.includes('connector "notion"') && w.includes("contradictory")), "…and it warns: a config that contradicts itself about who authors a connector's bytes is something an operator has to answer, not something to resolve silently");
-
-  const flipped = resolveAccessT(chan("T1", "C1"), bundles, [
-    { bundle: "narrow", scope: { level: "org" } },
-    { bundle: "wide", scope: { level: "surface", surface: "slack/T1/C1" } },
-  ]);
-  ok(flipped.connectorContentOrigin["notion"] === "external", "the contradiction resolves the same way with the bindings swapped — specificity does not get a vote on content origin");
-
-  const withBare: Bundle[] = [
+  const plain: Bundle[] = [
     { name: "wide", connectors: [{ name: "notion", credential: "k" }] },
-    { name: "narrow", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] },
+    { name: "narrow", connectors: [{ name: "notion", credential: "k" }] },
+    { name: "desk", connectors: [{ name: "helpdesk", credential: "k" }] },
   ];
-  const mixed = resolveAccessT(chan("T1", "C1"), withBare, [
+  const bindings: Binding[] = [
     { bundle: "wide", scope: { level: "org" } },
     { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
-  ]);
-  ok(mixed.connectorContentOrigin["notion"] === "internal", "a grant that declares NO origin beside a declared one keeps the declaration — silence is the absence of a claim, so it cannot outrank one");
-  ok(!mixed.warnings.some((w) => w.includes("contradictory")), "…and that is not warned about: nothing disagrees");
-
-  const perToolClash: Bundle[] = [
-    { name: "wide", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { search_tickets: "external" } } }] },
-    { name: "narrow", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { search_tickets: "internal" } } }] },
+    { bundle: "desk", scope: { level: "surface", surface: "slack/T1/C1" } },
   ];
-  const clash = resolveAccessT(chan("T1", "C1"), perToolClash, [
-    { bundle: "wide", scope: { level: "org" } },
-    { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
-  ]);
-  ok(clash.connectorContentOrigin["helpdesk"] === "external", "two per-tool declarations that disagree about ONE tool collapse to a flat `external` — a merge would be a third declaration nobody reviewed");
-  ok(clash.warnings.some((w) => w.includes('connector "helpdesk"') && w.includes("contradictory")), "…and it warns, naming the connector");
-
-  const sameClaim: Bundle[] = [
-    { name: "wide", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { b: "external", a: "external" } } }] },
-    { name: "narrow", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { a: "external", b: "external" } } }] },
-  ];
-  const agreed = resolveAccessT(chan("T1", "C1"), sameClaim, [
-    { bundle: "wide", scope: { level: "org" } },
-    { bundle: "narrow", scope: { level: "surface", surface: "slack/T1/C1" } },
-  ]);
-  ok(!agreed.warnings.some((w) => w.includes("contradictory")), "two specs that answer identically for every tool are ONE claim — key order in `except` is not a disagreement");
-  ok(typeof agreed.connectorContentOrigin["helpdesk"] === "object", "…and the surviving declaration keeps its per-tool grain rather than being flattened");
+  const a = resolveAccessT(chan("T1", "C1"), declared, bindings);
+  const b = resolveAccessT(chan("T1", "C1"), plain, bindings);
+  ok(a.connectors.includes("notion") && a.connectors.includes("helpdesk"), "OPE-2723: a consumer bundle that sets contentOrigin on every grant still grants its connectors");
+  ok(JSON.stringify(a.connectors) === JSON.stringify(b.connectors), "🔴 OPE-2723: …the SAME connectors as the identical bundle without the field");
+  ok(JSON.stringify(a.connectorCredentials) === JSON.stringify(b.connectorCredentials), "OPE-2723: …and the SAME credential bindings");
+  ok(Object.keys(a.connectorContentOrigin).length === 0, "🔴 OPE-2723: the resolver reads no declaration — connectorContentOrigin is always empty");
+  ok(!a.warnings.some((w) => w.includes("contentOrigin")), "OPE-2723: two bundles that disagree about contentOrigin raise no warning — the conflict warning is gone with the field");
+  ok(JSON.stringify(a.warnings) === JSON.stringify(b.warnings), "OPE-2723: …the warnings match the field-free bundle exactly");
 }
 
 {
-  type AnyGrant = { name: string; credential: string; contentOrigin: "internal" };
+  type AnyGrant = { name: string; credential: string; contentOrigin?: unknown };
 
   throwsWith(
     () => assertBundlesValid([{ name: "b", connectors: ["notion"] }]),
@@ -571,110 +492,66 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     "🔴 a BARE SLUG is rejected — a grant names the identity it reaches the connector as",
   );
   throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", contentOrigin: "internal" } as unknown as AnyGrant] }]),
+    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion" } as unknown as AnyGrant] as never }]),
     "with no `credential`",
     "🔴 an object grant with NO credential is rejected — mandatory means mandatory, not defaulted",
   );
   throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "  ", contentOrigin: "internal" }] }]),
+    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "  " }] }]),
     "with no `credential`",
     "…a blank credential is the same refusal — whitespace is not an identity",
   );
   throwsWith(
-    () => assertBundlesValid([{ name: "grants:slack/T1/C1", connectors: [{ name: "notion" } as unknown as AnyGrant] }]),
+    () => assertBundlesValid([{ name: "grants:slack/T1/C1", connectors: [{ name: "notion" } as unknown as AnyGrant] as never }]),
     "with no `credential`",
-    "🔴 the MACHINE-WRITTEN carve-out covers contentOrigin ONLY — an overlay grant still names its credential (the requester chose it at propose time)",
+    "🔴 a machine-written overlay grant still names its credential (the requester chose it at propose time)",
   );
-
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k" }] }]),
-    "has no `contentOrigin`",
-    "🔴 an object grant with a credential but NO contentOrigin is rejected — an undeclared connector marks every turn, and nothing told the operator why",
-  );
-  for (const fragment of ['contentOrigin: "internal"', '"external"', "except:"] as const) {
-    throwsWith(
-      () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k" }] }]),
-      fragment,
-      `…and the error spells out an accepted shape (${fragment}) rather than pointing at a doc`,
-    );
-  }
   throwsWith(
     () => assertBundlesValid([{ name: "b", connectors: ["notion", "notion"] }]),
     'grants connector "notion" more than once',
     "…a grant that already failed the shape check is still duplicate-checked — all problems in one pass, not one per rerun",
   );
-
-  assertBundlesValid([{ name: "grants:slack/T1/C1", connectors: [{ name: "notion", credential: "k" }] }]);
-  assertBundlesValid([{ name: "agent:reporter", connectors: [{ name: "notion", credential: "k" }] }]);
-  ok(true, "a `grants:`/`agent:` overlay bundle may omit contentOrigin — the codemods cannot write an operator assertion, so requiring one would make an approved request unloadable");
   throwsWith(
-    () => assertBundlesValid([{ name: "grants:slack/T1/C1", connectors: [{ name: "notion", credential: "k", contentOrigin: "sideways" } as unknown as AnyGrant] }]),
-    "declares unknown contentOrigin",
-    "…but the exemption is ONLY the mandatory check — a hand-edited overlay that smuggles in a BAD declaration still fails loud",
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "grantsy", connectors: [{ name: "notion", credential: "k" }] }]),
-    "has no `contentOrigin`",
-    "…and the exemption is the NAMESPACE, not a substring: `grantsy` is an ordinary bundle",
-  );
-
-  assertBundlesValid([{ name: "b", connectors: [{ name: "a", credential: "k", contentOrigin: "internal" }] }]);
-  assertBundlesValid([{ name: "b", connectors: [{ name: "a", credential: "k", contentOrigin: "external" }] }]);
-  assertBundlesValid([{ name: "b", connectors: [{ name: "a", credential: "k", contentOrigin: { default: "internal", except: { search: "external" } } }] }]);
-  assertBundlesValid([{ name: "b", connectors: [{ name: "a", credential: "k", contentOrigin: { default: "external", except: { runbook: "internal" } } }] }]);
-  ok(true, "every accepted shape — scalar internal/external and per-tool grain in both directions — passes validation");
-
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "trusted" } as unknown as AnyGrant] }]),
-    "declares unknown contentOrigin",
-    "an unknown `contentOrigin` value is a boot error, not a silently-undeclared grant",
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "public" } as unknown as AnyGrant] }]),
-    "declares unknown contentOrigin",
-    '🔴 the OLD vocabulary is rejected too — a config still saying `contentOrigin: "public"` must fail loud, not resolve to "declares nothing"',
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ credential: "k", contentOrigin: "internal" } as unknown as AnyGrant] }]),
-    "is not a { name, credential, contentOrigin } object",
+    () => assertBundlesValid([{ name: "b", connectors: [{ credential: "k" } as unknown as AnyGrant] as never }]),
+    "is not a { name, credential } object",
     "a grant object with no name is rejected by shape",
   );
   throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }, { name: "notion", credential: "k", contentOrigin: "external" }] }]),
+    () => assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }, { name: "notion", credential: "k" }] }]),
     'grants connector "notion" more than once',
-    "🔴 the duplicate check is by NAME — one bundle declaring a connector twice is ambiguous however each entry is spelled",
+    "🔴 the duplicate check is by NAME — the deprecated field does not change it",
   );
 
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "d", credential: "k", contentOrigin: { default: "sideways", except: { x: "external" } } } as unknown as AnyGrant] }]),
-    "declares contentOrigin.default",
-    "an unknown `default` is a boot error",
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "d", credential: "k", contentOrigin: { default: "internal", except: { x: "publicish" } } } as unknown as AnyGrant] }]),
-    'declares contentOrigin exception "x"',
-    "an unknown per-tool override is a boot error — a typo must never silently fall back to `default`",
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "d", credential: "k", contentOrigin: { default: "internal", except: {} } } as unknown as AnyGrant] }]),
-    "an empty exception map",
-    "`except: {}` is a scalar written the long way — rejected so a reader never hunts for an override that isn't there",
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "d", credential: "k", contentOrigin: { default: "internal", except: ["x"] } } as unknown as AnyGrant] }]),
-    "is not a { toolName: origin } map",
-    "an array `except` is rejected by shape",
-  );
-  throwsWith(
-    () => assertBundlesValid([{ name: "b", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { helpdesk__search: "external" } } }] }]),
-    "are BARE tool names",
-    "🔴 the QUALIFIED spelling is rejected: it would never match at the seam, so the tool would silently stay on `default` — a silent wrong answer about taint is the one thing this field exists to prevent",
-  );
+  assertBundlesValid([{ name: "b", connectors: [{ name: "notion", credential: "k" }] }]);
+  assertBundlesValid([{ name: "grantsy", connectors: [{ name: "notion", credential: "k" }] }]);
+  assertBundlesValid([{ name: "grants:slack/T1/C1", connectors: [{ name: "notion", credential: "k" }] }]);
+  ok(true, "🔴 OPE-2723: a hand-written grant with NO contentOrigin validates — the field is no longer mandatory");
 
-  assertBundlesValid([
-    { name: "b", connectors: [{ name: "b", credential: "k", contentOrigin: "internal" }, { name: "c", credential: "k", contentOrigin: "external" }, { name: "d", credential: "k", contentOrigin: { default: "internal", except: { search: "external" } } }] },
-  ]);
-  ok(true, "a mixed scalar/per-tool list with distinct names is valid");
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (line: unknown) => void warned.push(String(line));
+  try {
+    _resetContentOriginNoticeForTest();
+    for (const origin of ["internal", "external", { default: "internal", except: { search: "external" } }, "trusted", { default: "internal", except: {} }, { default: "internal", except: { helpdesk__search: "external" } }]) {
+      assertBundlesValid([{ name: "b", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: origin } as unknown as AnyGrant] as never }]);
+    }
+    assertBundlesValid([{ name: "grants:slack/T1/C1", connectors: [{ name: "notion", credential: "k", contentOrigin: "sideways" } as unknown as AnyGrant] as never }]);
+  } finally {
+    console.warn = realWarn;
+  }
+  ok(true, "🔴 OPE-2723: a grant WITH contentOrigin validates in every spelling, malformed values included — the validator never refuses the field");
+  const notices = warned.filter((w) => w.includes("contentOrigin"));
+  ok(notices.length === 1, `🔴 OPE-2723: seven loads that set contentOrigin print the deprecation notice ONCE per load (process), got ${notices.length}`);
+  ok(notices[0]?.includes("DEPRECATED") === true && notices[0].includes("b/helpdesk") && notices[0].includes("OPE-2724"), "OPE-2723: …the notice says DEPRECATED, names the grant, and names the removal ticket");
+
+  const lines: string[] = [];
+  _resetContentOriginNoticeForTest();
+  noteDeprecatedContentOrigin([{ name: "b", connectors: [{ name: "notion", credential: "k" }] }], (l) => lines.push(l));
+  ok(lines.length === 0, "OPE-2723: a config with no contentOrigin prints no deprecation notice");
+  noteDeprecatedContentOrigin([{ name: "b", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }, { name: "linear", credential: "k", contentOrigin: "external" }] }], (l) => lines.push(l));
+  noteDeprecatedContentOrigin([{ name: "c", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] }], (l) => lines.push(l));
+  ok(lines.length === 1 && lines[0] === contentOriginDeprecationNotice(["b/notion", "b/linear"]), "OPE-2723: one notice per load, naming every grant that sets the field; a later load prints nothing");
+  _resetContentOriginNoticeForTest();
 }
 
 {

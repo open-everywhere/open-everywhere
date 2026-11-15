@@ -4475,6 +4475,7 @@
     "test:credential-grant-conversation-scope": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-conversation-scope-test.ts",
     "test:credential-grant-worker-ask": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-worker-ask-test.ts",
     "test:grant-content-origin": "NODE_NO_WARNINGS=1 tsx scripts/grant-content-origin-test.ts",
+    "test:content-origin-deprecation": "tsx scripts/content-origin-deprecation-test.ts",
     "test:credential-grant-notice": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-notice-test.ts",
     "test:credential-grant-owner": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-owner-test.ts",
     "test:credential-grant-wake": "NODE_NO_WARNINGS=1 tsx scripts/credential-grant-wake-test.ts",

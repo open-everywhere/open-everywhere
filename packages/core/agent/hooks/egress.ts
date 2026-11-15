@@ -1,3 +1,4 @@
+import type { ConnectorContentOriginSpec } from "../access/bundle.js";
 import { auditErrorDetail } from "../audit/tool-action.js";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { defineHook, type HookContext } from "eve/hooks";
@@ -18,7 +19,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { auditSurfaceModeStamp, bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
-import { setConnectorContentOrigin, type ConnectorContentOriginMap } from "../access/connector-content-origin-state.js";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { stampEnforcement } from "../access/enforcement.js";
 import { stampHalted } from "../access/halt-state.js";
@@ -117,7 +117,8 @@ export interface ResolvedEgressPolicy {
   readonly policy: SandboxNetworkPolicy;
   readonly scopeKey: string;
   readonly connectors: readonly string[];
-  readonly connectorContentOrigin: ConnectorContentOriginMap;
+  /** @deprecated ALWAYS EMPTY since OPE-2723: the egress pass carries no connector content origin. The field stays for one release so code that reads or builds this type still compiles; OPE-2724 removes it. */
+  readonly connectorContentOrigin: Readonly<Record<string, ConnectorContentOriginSpec>>;
   readonly reachableHosts: readonly ReachableHost[];
   readonly compileError?: string;
   readonly halted?: true;
@@ -139,7 +140,7 @@ export async function computeEgressPolicy(
       policy,
       scopeKey: access.scopeKey,
       connectors: access.connectors,
-      connectorContentOrigin: access.connectorContentOrigin,
+      connectorContentOrigin: {},
       reachableHosts: access.reachableHosts,
       ownAccountEgressRefusals: access.ownAccountEgressRefusals ?? [],
     };
@@ -170,6 +171,7 @@ export async function applyEgressPolicy(
     return { enforced: true };
   } catch (err) {
     if (allowUnenforced) return { enforced: false, enforceError: String(err) };
+    // hook-throw: INTERNAL(enforceEgress) — this throw never leaves the module. `enforceEgress`
     throw new Error(
       `egress enforcement failed — aborting the session rather than running on Eve's allow-all default ` +
         `(set egress.allowUnenforced: true to warn-and-continue in dev): ${String(err)}`,
@@ -260,7 +262,8 @@ export interface EgressEnforcementDeps {
   readonly publish?: (input: EgressStatusInput) => Promise<void>;
   readonly rememberScope?: (input: EgressAttribution) => void;
   readonly parentPublishedFingerprint?: () => Promise<string | undefined>;
-  readonly stampConnectorContentOrigin?: (declared: ConnectorContentOriginMap) => void;
+  /** @deprecated IGNORED since OPE-2723: the egress pass stamps no connector content origin, because `contentOrigin` is retired. The member stays for one release so an existing caller still compiles; OPE-2724 removes it. */
+  readonly stampConnectorContentOrigin?: (declared: Readonly<Record<string, ConnectorContentOriginSpec>>) => void;
 }
 
 export interface EgressEnforcementResult {
@@ -297,15 +300,13 @@ function narrowingRefusal(
 export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementDeps): Promise<EgressEnforcementResult> {
   const audit = deps.audit ?? appendAudit;
 
-  const { policy, scopeKey, connectors, connectorContentOrigin, reachableHosts, compileError, halted, ownAccountEgressRefusals } = await computeEgressPolicy(
+  const { policy, scopeKey, connectors, reachableHosts, compileError, halted, ownAccountEgressRefusals } = await computeEgressPolicy(
     deps.resolve,
     deps.compile,
     deps.halted,
   );
 
   if (deps.halted !== undefined) (deps.stampHalted ?? stampHalted)(halted === true || compileError !== undefined);
-
-  (deps.stampConnectorContentOrigin ?? setConnectorContentOrigin)(connectorContentOrigin);
 
   if (compileError) {
     log(`compile FAILED — applying deny-all (fail-closed): ${compileError}`);
@@ -496,7 +497,6 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
     const connectorKey = connectors.join(",");
     if (phase === "session.started" || deps.lastConnectors() !== connectorKey) {
       deps.rememberConnectors(connectorKey);
-      const undeclared = connectors.filter((c) => connectorContentOrigin[c] === undefined);
       await audit({
         org: scope.org,
         platform: scope.platform,
@@ -505,7 +505,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         ...(scope.surfaceMode === undefined ? {} : { surfaceMode: scope.surfaceMode }),
         principalId: scope.principalId,
         action: "connector.grant",
-        detail: { connectors, scopeKey, phase, ...(undeclared.length > 0 ? { undeclaredContentOrigin: undeclared } : {}) },
+        detail: { connectors, scopeKey, phase },
       });
     }
   } catch (err) {

@@ -475,6 +475,7 @@ test:credential-grant-mount
 test:credential-grant-conversation-scope
 test:credential-grant-worker-ask
 test:grant-content-origin
+test:content-origin-deprecation
 test:credential-grant-notice
 test:credential-grant-revoke
 test:credential-grant-owner

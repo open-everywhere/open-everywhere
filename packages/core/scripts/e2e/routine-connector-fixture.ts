@@ -77,7 +77,7 @@ export function routineConnectorFixture(input: {
       reason:
         `RED-until-fixture: no bundle bound to ${where} grants the "${input.connector}" connector at all, so ${input.op} is never mounted and an ` +
         "unattended fire has no tool to call. Add a `connectors: [{ name: \"" +
-        `${input.connector}\", credential: <id>, contentOrigin: … }]` +
+        `${input.connector}\", credential: <id> }]` +
         '` grant to a bundle in agent/access/bundles.ts and bind it to that domain. A `principal`-scoped binding does not count: personal bindings resolve only in the DM universe.',
     };
   }

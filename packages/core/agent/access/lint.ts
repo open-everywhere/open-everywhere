@@ -410,7 +410,6 @@ function staticCapabilityFingerprint(
     skills: access.skills,
     subagents: access.subagents,
     connectors: access.connectors,
-    connectorContentOrigin: access.connectorContentOrigin,
     connectorCredentials: connectorCredentialFacts(access),
     instructionStack: access.instructionStack.map((layer) => ({ scope: scopeRung(layer.source), text: layer.text })),
     preApprovalRules: access.preApprovalRules.map((rule) => ({ scope: scopeRung(rule.scope), id: rule.id, rule: rule.rule })),

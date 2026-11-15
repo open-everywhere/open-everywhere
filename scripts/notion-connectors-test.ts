@@ -1,3 +1,5 @@
+// proves: AP-MOD-app-access-bundles
+
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -180,8 +182,8 @@ ok(
   ok(live.ok && live.bundle === "e2e-connector-fixture" && live.credential === "workspace-oauth", "…through the e2e-connector-fixture bundle, as the 'workspace-oauth' credential");
   const fixtureGrant = bundles.find((b) => b.name === "e2e-connector-fixture")?.connectors?.find((c) => typeof c !== "string" && c.name === "notion");
   ok(
-    fixtureGrant !== undefined && typeof fixtureGrant !== "string" && fixtureGrant.contentOrigin === "internal",
-    `🔴 the e2e org Notion connection declares contentOrigin "internal" (found ${JSON.stringify(fixtureGrant)})`,
+    fixtureGrant !== undefined && typeof fixtureGrant !== "string" && !Object.hasOwn(fixtureGrant, "contentOrigin"),
+    `OPE-2723: the e2e org Notion grant writes no contentOrigin (found ${JSON.stringify(fixtureGrant)})`,
   );
 
   const elsewhere = routineConnectorFixture({

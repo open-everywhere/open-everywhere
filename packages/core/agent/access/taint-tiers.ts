@@ -65,9 +65,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
       return unknownInstance("the repository's `private` flag");
 
     case "connector":
-      if (src.grantContentOrigin === "internal") return trusted("the connection's grant declares `contentOrigin: internal` for this tool in reviewed bundle config — org members author what it returns");
-      if (src.grantContentOrigin === "external") return untrusted("the connection's grant declares `contentOrigin: external` for this tool — the bytes it returns are authored outside the org");
-      return untrusted("the connection's grant declares no content origin — the ruled DEFAULT is external/untrusted, because silence in config must never read as an assurance", true);
+      if (src.grantContentOrigin === "internal") return trusted("a host-labelled connector read declared internal — org members author what it returns");
+      if (src.grantContentOrigin === "external") return untrusted("a host-labelled connector read declared external — the bytes it returns are authored outside the org");
+      return untrusted("this connector read carries no host-labelled origin (a grant's `contentOrigin` is ignored since OPE-2723) — the ruled DEFAULT is external/untrusted, because silence must never read as an assurance", true);
 
     case "web":
       return untrusted("the open web — no bound instance, no membership, no configuration that could make it internal");

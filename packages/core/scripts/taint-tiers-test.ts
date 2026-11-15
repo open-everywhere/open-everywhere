@@ -74,11 +74,11 @@ eq(tier({ kind: "github", repoPrivate: true }), "trusted", "github: a PRIVATE or
 eq(tier({ kind: "github", repoPrivate: false }), "untrusted", "github: a PUBLIC repo takes PR bodies/reviews/diffs from anyone with a fork");
 ok(classifyIngestion({ kind: "github" }).assumed, "github: an unreadable `private` flag is fail-closed AND marked assumed");
 
-eq(tier({ kind: "connector", grantContentOrigin: "internal" }), "trusted", "connector: the GRANT declares `contentOrigin: internal` in reviewed bundle config");
-eq(tier({ kind: "connector", grantContentOrigin: "external" }), "untrusted", "connector: the grant declares `contentOrigin: external`");
+eq(tier({ kind: "connector", grantContentOrigin: "internal" }), "trusted", "connector: a host-labelled read declared internal (no bundle grant feeds this since OPE-2723)");
+eq(tier({ kind: "connector", grantContentOrigin: "external" }), "untrusted", "connector: a host-labelled read declared external (the A2A reply)");
 {
   const silent = classifyIngestion({ kind: "connector" });
-  eq(silent.tier, "untrusted", "connector: a grant that declares NOTHING defaults public/untrusted (the ruled default)");
+  eq(silent.tier, "untrusted", "connector: a read with no host-labelled origin defaults public/untrusted (the ruled default)");
   ok(silent.assumed, "connector: …and the default is MARKED assumed — silence in config must never read as an assurance");
 }
 
@@ -225,7 +225,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
 });
 await eveContextStorage().run(new FakeSession(), async () => {
   ingestUntrusted("a connector result", { ingestion: { kind: "connector", grantContentOrigin: "internal" } });
-  ok(untrustedIngestedThisTurn() === false, "a connector whose GRANT declares `contentOrigin: internal` does not taint — the reviewed-config branch, now with teeth");
+  ok(untrustedIngestedThisTurn() === false, "a connector read host-labelled internal does not taint — the table row still decides (no bundle grant reaches it since OPE-2723)");
 });
 for (const [label, src] of [
   ["a PUBLIC repo", { kind: "github", repoPrivate: false }],
@@ -538,17 +538,15 @@ console.log("5. the plumbed metadata:");
   );
 }
 
-console.log("6. connector grantContentOrigin, end to end:");
+console.log("6. the retired contentOrigin reaches nothing:");
 {
   const bundles: Bundle[] = [
     { name: "vouched", connectors: [{ name: "notion", credential: "k", contentOrigin: "internal" }] },
-    { name: "silent", connectors: [{ name: "linear-mcp", credential: "k" }] },
-    { name: "declared-external", connectors: [{ name: "acme-forms", credential: "k", contentOrigin: "external" }] },
+    { name: "per-tool", connectors: [{ name: "helpdesk", credential: "k", contentOrigin: { default: "internal", except: { search_tickets: "external" } } }] },
   ];
   const bindings: Binding[] = [
     { bundle: "vouched", scope: { level: "domain", domain: "d" } },
-    { bundle: "silent", scope: { level: "domain", domain: "d" } },
-    { bundle: "declared-external", scope: { level: "domain", domain: "d" } },
+    { bundle: "per-tool", scope: { level: "domain", domain: "d" } },
   ];
   const access = resolveAccess(
     { mode: "channel", platform: "slack", workspace: "T1", channel: "C1", domains: ["d"] },
@@ -557,118 +555,17 @@ console.log("6. connector grantContentOrigin, end to end:");
     {},
     CATALOGUES,
   );
-
-  eq(declaredContentOriginForConnection("notion"), undefined, "with NOTHING stamped (no eve context) the declaration is undefined — fail-closed, and setConnectorContentOrigin below is what changes that");
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin(access.connectorContentOrigin);
-
-    eq(declaredContentOriginForConnection("notion"), "internal", "the resolved declaration reaches the seam through the session stamp");
-    eq(declaredContentOriginForToolName("notion__search"), "internal", "…and resolves from the eve-mounted `<connection>__<tool>` name the projection seam actually holds");
-    const declared = classifyIngestion({ kind: "connector", label: "notion__search", grantContentOrigin: declaredContentOriginForToolName("notion__search") });
-    eq(declared.tier, "trusted", "🔴 a connector whose grant declares `contentOrigin: internal` classifies TRUSTED — the row's config branch is reachable for the first time");
-    eq(declared.assumed, false, "…and NOT `assumed`: the verdict came from a declaration, not from the fail-closed default");
-
-    eq(declaredContentOriginForToolName("linear-mcp__issues"), undefined, "a BARE grant declares nothing — the stamp has no key for it");
-    const silent = classifyIngestion({ kind: "connector", label: "linear-mcp__issues", grantContentOrigin: declaredContentOriginForToolName("linear-mcp__issues") });
-    eq(silent.tier, "untrusted", "…so it still falls to the ruled default (external/untrusted), unchanged");
-    ok(silent.assumed, "…and is still MARKED assumed — which is what lets the log say 'this deployment never declared' rather than 'this deployment declared external'");
-
-    const externalDecl = classifyIngestion({ kind: "connector", label: "acme-forms__submit", grantContentOrigin: declaredContentOriginForToolName("acme-forms__submit") });
-    eq(externalDecl.tier, "untrusted", "a declared `contentOrigin: external` connector is untrusted");
-    eq(externalDecl.assumed, false, "🔴 …but NOT assumed — same tier as silence, different claim, and only the log can tell them apart");
-
-    eq(declaredContentOriginForToolName("acme-forms__submit"), "external", "each connector answers with its OWN bundle's declaration");
-    eq(declaredContentOriginForConnection("something-ungranted"), undefined, "an unknown connection name is undefined, never the map's first/any value");
-    eq(declaredContentOriginForToolName("connection_search"), undefined, "🔴 `connection_search` matches NO declaration — its result aggregates several connections, so no single grant may speak for it");
-  });
+  ok(access.connectors.includes("notion"), "a grant that still sets contentOrigin grants its connector");
+  eq(Object.keys(access.connectorContentOrigin).length, 0, "🔴 OPE-2723: …and the resolver carries NO declaration out of it");
 
   await eveContextStorage().run(new FakeSession(), async () => {
-    eq(declaredContentOriginForConnection("notion"), undefined, "a SECOND session carries no declaration from the first — the carriage is a per-session slot, not a module global");
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({ acme: "internal", "acme__search": "external" });
-    eq(declaredContentOriginForToolName("acme__search__query"), "external", "🔴 LONGEST declared prefix wins — a plugin connector named `acme__search` keeps its own declaration instead of inheriting `acme`'s");
-    eq(declaredContentOriginForToolName("acme__list"), "internal", "…and a tool that really does belong to `acme` still resolves `acme`'s declaration");
-    eq(declaredContentOriginForToolName("acmelike__x"), undefined, "the match requires the `__` separator — a name that merely starts with the same letters is not the same connection");
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({ notion: "internal", forms: "external", helpdesk: { default: "internal", except: { search_tickets: "external" } } });
-    const row = (connection: string, tool: string) => ({ connection, description: "d", tool, qualifiedName: `${connection}__${tool}` });
-    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), row("helpdesk", "list_queues")]), "internal", "every discovered tool on a declared-internal connection ⇒ internal");
-    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), { connection: "linear", description: "d", needsAuthorization: true }]), "internal", "an eve-authored status row adds nothing");
-    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), row("forms", "submit")]), "external", "one declared-external row ⇒ external");
-    eq(declaredContentOriginForConnectionSearch([row("helpdesk", "search_tickets")]), "external", "the per-tool grain applies to the row's own tool");
-    eq(declaredContentOriginForConnectionSearch([row("notion", "search"), row("linear-mcp", "issues")]), undefined, "one UNDECLARED connection ⇒ undefined (the ruled default), never internal");
-    eq(declaredContentOriginForConnectionSearch([{ connection: "linear", description: "d", needsAuthorization: true }]), undefined, "status rows alone ⇒ undefined (no discovered tool to vouch for)");
-    eq(declaredContentOriginForConnectionSearch([]), undefined, "an empty result ⇒ undefined");
-    eq(declaredContentOriginForConnectionSearch("notion"), undefined, "a shape it cannot decompose ⇒ undefined");
-    eq(declaredContentOriginForConnectionSearch([{ connection: "notion", description: "d" }]), undefined, "a row with neither a tool nor a status marker ⇒ undefined");
-
-    const row71 = (connection: string, tool: string) => ({ connection, description: "d", signature: `${tool}(input)`, tool });
-    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "notion-create-pages")], total: 1 }), "internal", "🔴 OPE-2177: an eve 0.71 result whose every tool is on a declared-internal connection ⇒ internal");
-    eq(
-      declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search")], total: 1, unavailable: [{ connection: "linear", error: "Sign-in required", requiresSignIn: true }] }),
-      "internal",
-      "an eve 0.71 `unavailable` status row adds nothing",
-    );
-    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search"), row71("forms", "submit")], total: 2 }), "external", "eve 0.71: one declared-external tool ⇒ external");
-    eq(declaredContentOriginForConnectionSearch({ tools: [row71("helpdesk", "search_tickets")], total: 1 }), "external", "eve 0.71: the per-tool grain applies to the row's own tool");
-    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search"), row71("linear-mcp", "issues")], total: 2 }), undefined, "eve 0.71: one UNDECLARED connection ⇒ undefined, never internal");
-    eq(declaredContentOriginForConnectionSearch({ tools: [], total: 0 }), undefined, "eve 0.71: no discovered tool ⇒ undefined");
-    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search")], total: 1, next: "x" }), undefined, "eve 0.71: an UNKNOWN key fails closed ⇒ undefined");
-    eq(declaredContentOriginForConnectionSearch({ tools: "notion__search", total: 1 }), undefined, "eve 0.71: a `tools` that is not an array ⇒ undefined");
-    eq(declaredContentOriginForConnectionSearch({ tools: [row71("notion", "search")], unavailable: "linear" }), undefined, "eve 0.71: an `unavailable` that is not an array ⇒ undefined");
-  });
-}
-
-console.log("6b. per-tool content-origin overrides:");
-{
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({ helpdesk: "internal" });
-    eq(declaredContentOriginForToolName("helpdesk__anything"), "internal", "(a) a SCALAR `internal` answers for every tool on the connection, unchanged");
-    eq(classifyIngestion({ kind: "connector", grantContentOrigin: declaredContentOriginForToolName("helpdesk__anything") }).tier, "trusted", "…and still classifies trusted through the table");
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({ helpdesk: { default: "internal", except: { search_tickets: "external" } } });
-    eq(declaredContentOriginForToolName("helpdesk__search_tickets"), "external", "(b) the EXCEPTED tool takes the override — a support-desk search returns bytes strangers typed");
-    const tainting = classifyIngestion({ kind: "connector", label: "helpdesk__search_tickets", grantContentOrigin: declaredContentOriginForToolName("helpdesk__search_tickets") });
-    eq(tainting.tier, "untrusted", "…so it MARKS the turn");
-    eq(tainting.assumed, false, "…and exactly, not by assumption — the operator declared this");
-    eq(declaredContentOriginForToolName("helpdesk__list_queues"), "internal", "…while every SIBLING tool keeps `default` — the ninety-nine are not taxed for the one");
-    eq(classifyIngestion({ kind: "connector", grantContentOrigin: declaredContentOriginForToolName("helpdesk__list_queues") }).tier, "trusted", "…and classifies trusted");
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({ forum: { default: "external", except: { our_runbook: "internal" } } });
-    eq(declaredContentOriginForToolName("forum__threads"), "external", "(c) `default: external` answers for the unlisted tools");
-    eq(declaredContentOriginForToolName("forum__our_runbook"), "internal", "…and the exception relaxes exactly the one tool named");
-    eq(classifyIngestion({ kind: "connector", grantContentOrigin: declaredContentOriginForToolName("forum__our_runbook") }).tier, "trusted", "…which reaches the table as a trusted verdict");
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({
-      helpdesk: { default: "internal", except: { search: "external" } },
-      wiki: "internal",
-      "wiki__mirror": { default: "internal", except: { fetch: "external" } },
-    });
-    eq(declaredContentOriginForToolName("helpdesk__search"), "external", "(d) the excepting connection's own tool takes the override");
-    eq(declaredContentOriginForToolName("wiki__search"), "internal", "🔴 …and a SAME-NAMED tool on another connection does NOT — an `except` entry can only ever speak for its own connection");
-    eq(declaredContentOriginForToolName("wiki__mirror__fetch"), "external", "…longest-prefix and per-tool compose: the `wiki__mirror` connection's own exception wins over `wiki`'s scalar");
-    eq(declaredContentOriginForToolName("wiki__fetch"), "internal", "…and `wiki`'s own `fetch` is untouched by the exception that lives on `wiki__mirror`");
-  });
-
-  await eveContextStorage().run(new FakeSession(), async () => {
-    setConnectorContentOrigin({ helpdesk: { default: "internal", except: { search: "external" } } });
-    eq(declaredContentOriginForToolName("other__search"), undefined, "(e) an UNDECLARED connection is undefined however richly its neighbours are declared");
-    const assumed = classifyIngestion({ kind: "connector", label: "other__search", grantContentOrigin: declaredContentOriginForToolName("other__search") });
-    eq(assumed.tier, "untrusted", "…so the table falls closed");
-    ok(assumed.assumed, "…and marks the verdict `assumed` — silence never reads as an assurance, at any grain");
-    eq(declaredContentOriginForToolName("connection_search"), undefined, "…and `connection_search` still matches nothing — the aggregate has no single grant to speak for it");
-    eq(declaredContentOriginForToolName("helpdesk__constructor"), "internal", "…and a tool named `constructor` resolves the DECLARED default, never a prototype member");
+    setConnectorContentOrigin({ notion: "internal", helpdesk: { default: "internal", except: { search_tickets: "external" } } });
+    eq(declaredContentOriginForConnection("notion"), undefined, "🔴 OPE-2723: the deprecated stamp is a no-op — the connection lookup answers undefined");
+    eq(declaredContentOriginForToolName("notion__search"), undefined, "…the by-name lookup answers undefined");
+    eq(declaredContentOriginForConnectionSearch({ tools: [{ connection: "notion", tool: "search", description: "d", signature: "s" }], total: 1 }), undefined, "…and the search lookup answers undefined");
+    const read = classifyIngestion({ kind: "connector", label: "notion__search" });
+    eq(read.tier, "untrusted", "🔴 OPE-2723: a connector read the operator once declared internal now takes the ruled default — untrusted");
+    ok(read.assumed, "…marked `assumed`: silence never reads as an assurance");
   });
 }
 
