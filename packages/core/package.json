@@ -994,6 +994,10 @@
       "types": "./dist/agent/audit/chain.d.ts",
       "default": "./dist/agent/audit/chain.js"
     },
+    "./agent/audit/cross-room-send.js": {
+      "types": "./dist/agent/audit/cross-room-send.d.ts",
+      "default": "./dist/agent/audit/cross-room-send.js"
+    },
     "./agent/audit/scrubbed-text.js": {
       "types": "./dist/agent/audit/scrubbed-text.d.ts",
       "default": "./dist/agent/audit/scrubbed-text.js"
@@ -4054,6 +4058,7 @@
     "test:person-opt-out": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-test.ts",
     "test:person-opt-out-hooks": "NODE_NO_WARNINGS=1 tsx scripts/person-opt-out-hooks-test.ts",
     "test:cover": "NODE_NO_WARNINGS=1 tsx scripts/cover-test.ts",
+    "test:cross-room-send": "NODE_NO_WARNINGS=1 tsx scripts/cross-room-send-test.ts",
     "test:personal-watch": "NODE_NO_WARNINGS=1 tsx scripts/personal-watch-test.ts",
     "test:personal-triage": "NODE_NO_WARNINGS=1 tsx scripts/personal-triage-test.ts",
     "test:workflow-discovery": "NODE_NO_WARNINGS=1 tsx scripts/workflow-discovery-test.ts",

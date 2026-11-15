@@ -561,6 +561,12 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   { action: "reply.refused", fields: ["reason"], proves: "the post choke point refused to speak, and why" },
   { action: "reply.forced", fields: ["reason"], proves: "a reply was posted past a guard that would have withheld it", notExercised: "a reply posted PAST a guard that would have withheld it; no e2e fixture arms that path." },
   {
+    action: "channel.cross_room_send",
+    fields: ["sourcePlatform", "sourceWorkspace", "targetChannel", "target"],
+    proves: "a tool sent into another room through eve's ctx.to, from which room and to which target (audit/cross-room-send.ts, OPE-2686)",
+    notExercised: "no OE tool calls ctx.to: eve adds it in 0.85.0 and the pin is 0.71.0. `lint:eve-auth-paths` refuses a bare call, and `test:cross-room-send` drives the door.",
+  },
+  {
     action: "engagement.stood_down",
     fields: ["surfaceKey", "anchor", "marked", "refused", "reason", "roomAnchor", "roomStop"],
     proves:

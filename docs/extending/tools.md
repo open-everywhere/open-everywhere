@@ -144,6 +144,17 @@ Two things follow from that being a **security** control rather than a convenien
 A kind that never routes through the chain — a `NON_TOOL_ACTION_KIND` — opts out by saying so:
 `// approval-chain: exempt — <why the chain never sees this kind>`. The reason is mandatory.
 
+### A tool that sends into another room
+
+eve 0.85.0 gives a tool `ctx.to(channel, target).send()`, which starts or reaches a session on
+another channel. OE pins eve 0.71.0, where the tool context has no `to`. After the bump, a tool calls
+`auditedCrossRoomSend` (`packages/core/agent/audit/cross-room-send.ts`) and never `ctx.to(`
+directly. The door writes a `channel.cross_room_send` audit row before the send. The row names the
+source room and the target, ids only. `npm run lint:eve-auth-paths` refuses `ctx.to` in tool code
+under any `agent/` tree: a `.to` on a context-named value, `const { to } = ctx`, and a `{ to }`
+parameter of an `execute`. It is a syntax rule, so a context under another name is not seen
+(OPE-2686).
+
 **Prefer a skill to a tool.** A tool is a permanent widening of the model's surface, paid for on
 every turn in prompt weight and in review burden. A [skill](../capabilities/skills-and-plugins.md)
 teaches a procedure over capabilities the agent already has and costs nothing when unused. Add a

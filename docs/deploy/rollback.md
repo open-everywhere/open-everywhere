@@ -495,5 +495,12 @@ Rollback is the last resort. These catch the same class **before** a deploy exis
   logic over scratch build trees.
 - `npm run lint:eve-patch` — the committed dependency patches are really in the installed bytes,
   and every workspace pins the patched version. In `npm test`.
+- `npm run lint:eve-event-names` — every eve event name OE switches or filters on is one the
+  installed eve emits. An eve bump that renames an event turns it red at each consumer, grouped by
+  the rename slice that owns the file. `-- --eve-root <dir>` checks the tree against another eve
+  package. In `npm test` (OPE-2685).
+- `npm run lint:eve-auth-paths` — the eve files that write the session auth are the known ones,
+  each OE schedule that sends names the spec that pins its auth, no connection subscribes to events,
+  and no tool calls `ctx.to(` outside the audited door. In `npm test` (OPE-2686).
 - `npm run lint:env-docs` — a new env var the runtime reads that no operator could know to set.
   In `npm test`.

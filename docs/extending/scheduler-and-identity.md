@@ -35,6 +35,24 @@ What's swappable is therefore just the cron source that wakes the dispatcher:
 Swapping the scheduler means pointing a different cron source at the dispatcher's entry point; the
 routine definitions and run-status are unchanged.
 
+### A new schedule pins its principal first
+
+A scheduled run starts under eve's schedule app principal, not under a person. So every OE schedule
+module (a file anywhere under an `agent/schedules/` tree that calls `defineSchedule`) has a row in
+`OE_SCHEDULES` in `scripts/eve-auth-paths-lint.ts`. The row says whether the schedule sends into a
+session with `to(…).send`. A sending row names the spec that pins the auth it sends with. Three
+schedules send today: `dispatch`, `cover-recap` and `personal-watch`. Only the dispatcher has an
+integration-tier pin of the principal (`tests/integration/routine-fire-attendedness.test.ts`). The
+other two pin their fire stamps at the unit tier.
+
+`npm run lint:eve-auth-paths` refuses a new schedule module with no row. Its message says to pin the
+auth principal of that path with a spec first. It also refuses a `markdown:` schedule and a
+`<name>.md` schedule, which run the agent under eve's principal with no OE fire stamp. And it refuses
+a code-only row whose module starts to send, and a module there that default-exports anything but a
+`defineSchedule({ … })` call (eve runs any default export under that tree as a schedule). The same lint keeps a census of the eve files that
+write the session auth (eve's `AuthKey`), so an eve bump that adds a writer goes red and names it
+(OPE-2686).
+
 ## Control-plane identity
 
 The [control plane](../security/control-plane.md) is an MCP server (no web dashboard). Its admin

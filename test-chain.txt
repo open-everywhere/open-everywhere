@@ -235,5 +235,7 @@ test:seat-vocabulary-lint
 test:event-reach-live
 test:surface-operator-secrets
 lint:eve-telemetry
+lint:eve-event-names
+lint:eve-auth-paths
 test:fork-host-keepalive
 measure:sensitive-data

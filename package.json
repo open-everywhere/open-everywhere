@@ -121,6 +121,8 @@
     "lint:manual-compaction-guard": "tsx scripts/manual-compaction-guard-lint.ts",
     "lint:env-docs": "tsx scripts/env-docs-lint.ts",
     "lint:eve-telemetry": "tsx scripts/eve-telemetry-lint.ts",
+    "lint:eve-event-names": "tsx scripts/eve-event-names-lint.ts",
+    "lint:eve-auth-paths": "tsx scripts/eve-auth-paths-lint.ts",
     "lint:deploy-contract": "tsx scripts/deploy-contract-generate.ts --check",
     "docs:contract": "tsx scripts/deploy-contract-generate.ts",
     "test:env-read-allowlist": "NODE_NO_WARNINGS=1 tsx scripts/env-read-allowlist-test.ts",
