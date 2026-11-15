@@ -80,6 +80,7 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
       "packages/core/agent/channels/channel-read.ts",
       "packages/core/agent/access/skill-taint-envelope.ts",
       "packages/core/agent/access/subagent-taint.ts",
+      "packages/core/agent/access/task-call-link.ts",
       "packages/core/agent/approvals/taint-disclosure.ts",
       "packages/core/agent/hooks/spawn-taint.ts",
       "agent/access/bundles.ts",

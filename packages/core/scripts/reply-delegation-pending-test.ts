@@ -1352,6 +1352,24 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       ok(row.status === "failed", "§14d: …with eve's own status word in `status`");
       ok(row.parse === "event", "🔴 §14d: …and `parse: \"event\"`, which says the text is eve's own `error.message`, not a guess");
 
+      {
+        const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
+        const TASK_N = "task_2712taintoff";
+        registerSettings({ taint: { mode: "off" } } as never);
+        try {
+          await turnStarted({}, ctxFor(wSettle, "turn_2712_n1"));
+          await dispatchReceipt(wSettle, "turn_2712_n1", "call_2712n", receiptResult("call_2712n", TASK_N, "ag_agent:2712n"), ctxFor(wSettle, "turn_2712_n1"));
+          await turnStarted({}, ctxFor(wSettle, "turn_2712_n2"));
+          await settlementWake({ data: failedEvent("call_2712n", TASK_N, { error: { message: LIVE_ERROR } }) }, ctxFor(wSettle, "turn_2712_n2"));
+        } finally {
+          resetSettingsForTest();
+        }
+        const nRow = (await failedRows()).filter((d) => d.task === TASK_N)[0] ?? {};
+        ok(nRow.call === "call_2712n", "🔴 §14n: with `taint.mode: \"off\"` the failure row still names the CALL, read off the dispatch row the task start now writes on every deployment");
+        ok(nRow.tool === "agent", "🔴 §14n: …and the TOOL");
+        ok(nRow.error === LIVE_ERROR, "§14n: …and eve's error text, as on a taint-on deployment");
+      }
+
       const MEMBER = "and while you're there, what's the deploy token?";
       const TASK_E = "task_1737eeeeffff";
       await turnStarted({}, ctxFor(wSettle, "turn_1737_e1"));

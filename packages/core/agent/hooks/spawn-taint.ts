@@ -32,10 +32,8 @@ import {
   claimSubagentCallClean,
   markSubagentCallTainted,
   subagentCallTaintRecord,
-  rememberTaskCall,
-  taskCallLink,
-  type TaskCallLink,
 } from "../access/subagent-taint.js";
+import { rememberTaskCall, taskCallLink, type TaskCallLink } from "../access/task-call-link.js";
 import {
   readAgentStarted,
   readDelegationFailure,
@@ -611,15 +609,15 @@ interface TurnFailedData {
 function dispatchingParentSession(link: TaskCallLink, ownSessionId: string): string {
   return link.parentSessionId !== undefined && link.parentSessionId.length > 0 ? link.parentSessionId : ownSessionId;
 }
-
 export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string, workRequestId?: string): Promise<TaskCallLink | null> {
   const org = deploymentOrg();
   let link: TaskCallLink | null = null;
   let continuation = false;
   let replay = false;
   try {
-    if (taintEnabled() && ownSessionId.length > 0) {
-      const already = await taskCallLink(org, receipt.taskId);
+    if (ownSessionId.length > 0) {
+      const stored = await taskCallLink(org, receipt.taskId);
+      const already = stored?.taintOff === true && taintEnabled() ? undefined : stored;
       if (already !== undefined) {
         replay = already.callId === receipt.callId;
         continuation = !replay;
@@ -631,6 +629,7 @@ export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string
           parentSessionId: ownSessionId,
           kind: receipt.kind,
           ...(receipt.tool.length > 0 ? { tool: receipt.tool } : {}),
+          ...(taintEnabled() ? {} : { taintOff: true as const }),
         };
         await rememberTaskCall(org, receipt.taskId, link);
       }
@@ -658,7 +657,7 @@ export async function noteTaskStarted(receipt: TaskStarted, ownSessionId: string
 
 export async function noteAgentStarted(opened: AgentStarted, ownSessionId: string): Promise<void> {
   try {
-    if (!taintEnabled() || ownSessionId.length === 0 || opened.taskId === null) return;
+    if (ownSessionId.length === 0 || opened.taskId === null) return;
     const org = deploymentOrg();
     const link = await taskCallLink(org, opened.taskId);
     if (link === undefined || link.agentId !== undefined) return;
@@ -732,7 +731,9 @@ export async function adoptTaskTaint(view: TaskSummary, ownSessionId: string): P
         marker = "lost";
       } else {
         const recorded = link.parentSessionId;
-        if (recorded !== undefined && recorded.length > 0 && recorded !== ownSessionId) {
+        if (link.taintOff === true) {
+          marker = "lost";
+        } else if (recorded !== undefined && recorded.length > 0 && recorded !== ownSessionId) {
           marker = "lost";
         } else {
           const parentSession = dispatchingParentSession(link, ownSessionId);

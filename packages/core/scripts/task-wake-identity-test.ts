@@ -83,7 +83,7 @@ eq(
   ASK_THREAD,
   "🔴 P1: the minted wake resolves to the DISPATCHING wake's origin — the conversation that asked for the work is where its answer is owed",
 );
-ok(taskWakeKey("agent-1").startsWith("oe-task-wake:"), "P1: the row is namespaced apart from the taint plane's `oe-task-call:` row in the same slice");
+ok(taskWakeKey("agent-1").startsWith("oe-task-wake:"), "P1: the row is namespaced apart from the task-to-call join row (`oe-task-call:`) in the same slice");
 
 eq(await openTaskWake({ org: ORG, taskId: "agent-none", parentWakeId: undefined, windowToken: WINDOW }), null, "🔴 P2: NO dispatching wake ⇒ no identity is minted. An eval or unattributed internal wake has no conversation for the settlement to answer into either");
 eq(await taskWakeId(ORG, "agent-none"), undefined, "…and nothing is written, so the settlement reads `no-row` rather than a pointer to an address that resolves to nothing");

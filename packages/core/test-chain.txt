@@ -319,6 +319,7 @@ test:session-id-codec
 test:subagent-session
 test:native-subagent
 test:background-task-taint
+test:task-call-link
 test:parked-child-lifecycle
 test:task-wake-identity
 test:in-turn-auth-swap

@@ -739,5 +739,27 @@ async function provenanceRowsFor(messageId: string): Promise<readonly { detail?:
   ok(!String(spentRaw).includes(URL_) && !String(spentRaw).includes(TITLE), `🔴 §12: …and neither the title nor the url (saw ${String(spentRaw).slice(0, 240)})`);
 }
 
+{
+  const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
+  const row = SURFACES[0]!;
+  const turnId = "seat_turn_taint_off";
+  registerSettings({ taint: { mode: "off" } } as never);
+  try {
+    const inSeat = newSession(SEAT_SESSION);
+    await inSeat(async () => {
+      await runDelegation({ row, taskId: "agent-taint-off", callId: "call_taint_off", seatTurnId: turnId, tools: ["notion__get_page"] });
+      await postReply(row.target, ANSWER, replyAuditFor(seatCtx(row, turnId), "tool", "wake-taint-off"));
+    });
+    ok(
+      (await lastShown()) === `${ANSWER}\n\n${PROVENANCE_FOOTER_PREFIX} notion`,
+      `🔴 §TAINT-OFF: with \`taint.mode: "off"\` the room still receives the footer for the WORKER's read — the settle found the join row and its childToken (saw: ${JSON.stringify((await lastShown()).slice(0, 200))})`,
+    );
+    const carried = (await readAudit({ org: ORG, action: DELEGATED_PROVENANCE_ACTION })).filter((r) => (r.detail as { task?: unknown } | undefined)?.task === "agent-taint-off");
+    ok(carried.length === 1 && (carried[0]!.detail as { reads?: unknown }).reads === 1, `§TAINT-OFF: …and the settle records the one read it carried (saw ${carried.length} row(s))`);
+  } finally {
+    resetSettingsForTest();
+  }
+}
+
 await removeTempDir(dir);
 console.log(`delegated-provenance: ${passed} assertions passed`);

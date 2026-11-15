@@ -339,9 +339,9 @@ seat's own turn, and the seat's reply names them exactly as it names a read it m
 settlement records what moved in a `delegation.provenance_carried` row, whose `outcome` says
 `carried`, `not-completed` (the worker died before it answered) or `wake-unprovable` (the settling
 turn's address names another conversation, so the sources are withheld rather than named in the
-wrong room). Two things are needed for the move: the taint plane must be ON, because the carriage
-joins worker to seat through the dispatch row that plane writes, and the seat must answer on the turn
-the settlement woke it. The worker's **taint** verdict never travels that way — it rides its own
+wrong room). The carriage joins worker to seat through the task-to-call join row, which every
+deployment writes whatever `taint.mode` says (OPE-2712). So the move needs one thing: the seat must
+answer on the turn the settlement woke it. The worker's **taint** verdict never travels that way — it rides its own
 marker, and the two planes share nothing.
 
 **A borrowed read is named too.** A credential-grant call arrives under the reserved
@@ -360,9 +360,11 @@ unchanged, and still name both principals.
 and three routes reach a source without filling the ledger. Do not read a bare reply as
 "consulted nothing":
 
-- a **delegated** read on a deployment that has turned the taint plane off (`taint.mode: "off"`),
-  or one whose settlement the seat could not place in a room — the carriage joins worker to seat
-  through the dispatch row the taint plane writes, and a taint-off deployment writes none;
+- a **delegated** read whose settlement the seat could not place in a room, or whose dispatch has
+  no join row — the carriage joins worker to seat through that row. Every deployment writes it,
+  whatever `taint.mode` says (OPE-2712). The row is missing when the best-effort write at dispatch
+  failed, when its six-hour TTL lapsed before the settle (a continuation does not refresh it), or
+  when a taint-off deployment dispatched the task before that change;
 - a **cross-turn edit**, since the ledger is turn-stamped;
 
 The direction is deliberate and it runs one way: the footer can fail to name a source the turn

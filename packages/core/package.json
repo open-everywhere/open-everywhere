@@ -630,6 +630,10 @@
       "types": "./dist/agent/access/taint-tiers.d.ts",
       "default": "./dist/agent/access/taint-tiers.js"
     },
+    "./agent/access/task-call-link.js": {
+      "types": "./dist/agent/access/task-call-link.d.ts",
+      "default": "./dist/agent/access/task-call-link.js"
+    },
     "./agent/access/task-wake-signal.js": {
       "types": "./dist/agent/access/task-wake-signal.d.ts",
       "default": "./dist/agent/access/task-wake-signal.js"
@@ -4387,6 +4391,7 @@
     "test:permission-fit-report": "NODE_NO_WARNINGS=1 tsx scripts/permission-fit-report-test.ts",
     "test:native-subagent": "NODE_NO_WARNINGS=1 tsx scripts/native-subagent-test.ts",
     "test:background-task-taint": "NODE_NO_WARNINGS=1 tsx scripts/background-task-taint-test.ts",
+    "test:task-call-link": "NODE_NO_WARNINGS=1 tsx scripts/task-call-link-test.ts",
     "test:parked-child-lifecycle": "NODE_NO_WARNINGS=1 tsx scripts/parked-child-lifecycle-test.ts",
     "test:task-wake-identity": "NODE_NO_WARNINGS=1 tsx scripts/task-wake-identity-test.ts",
     "test:in-turn-auth-swap": "NODE_NO_WARNINGS=1 tsx scripts/in-turn-auth-swap-test.ts",

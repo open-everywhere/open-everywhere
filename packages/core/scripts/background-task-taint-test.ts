@@ -33,6 +33,7 @@ const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(ev
 const spawnTaint = await import("../agent/hooks/spawn-taint.js");
 const tasks = await import("../agent/access/background-tasks.js");
 const store = await import("../agent/access/subagent-taint.js");
+const taskCall = await import("../agent/access/task-call-link.js");
 const { untrustedIngestedThisTurn, markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { isUnifiedWindowContext } = await import("../agent/identity/binding.js");
@@ -233,7 +234,7 @@ async function runChild(callId: string, sessionId: string, taint: boolean, kinds
     eq(tasks.readAgentStarted(agentStartedData("call_mint", minted, "sess-mint"))?.taskId, minted, "🔴 PART 0B: …and `readAgentStarted` joins it rather than dropping it to `null`");
     ok(
       /function createTaskId\(e,t\)\{for\(;;\)\{let n=crypto\.getRandomValues\(new Uint8Array\(6\)\)/.test(readEveDist("execution/tasks/table.js")),
-      "🔴 PART 0B: and the minter is six random bytes over a 32-symbol alphabet, checked for a clash against THIS SESSION's table only — which is why `access/subagent-taint.ts` `taskCallKey` cannot claim org uniqueness and `adoptTaskTaint` checks the recorded parent session",
+      "🔴 PART 0B: and the minter is six random bytes over a 32-symbol alphabet, checked for a clash against THIS SESSION's table only — which is why `access/task-call-link.ts` `taskCallKey` cannot claim org uniqueness and `adoptTaskTaint` checks the recorded parent session",
     );
   }
 
@@ -355,17 +356,17 @@ await onParentTurn(async () => {
     { callId: "call_1", childToken: `subagent:${PARENT}:call_1`, parentSessionId: PARENT, kind: "agent", tool: "agent" },
     "…and it REMEMBERS the join instead: the callId the child writes its marker under, OE's own row key, and — new at 0.70 — the dispatching session RECORDED rather than parsed back out of a token",
   );
-  eq(await store.taskCallLink(ORG, "agent-bb0001"), link, "…persisted under the task id, which is the only id present on EVERY event of a 0.70 task");
+  eq(await taskCall.taskCallLink(ORG, "agent-bb0001"), link, "…persisted under the task id, which is the only id present on EVERY event of a 0.70 task");
 });
 
-ok(store.taskCallKey("t").startsWith("oe-task-call:"), "🔴 T1: the join-row prefix is namespaced away from the taint markers, so no two consumers of the shared slice can collide");
+ok(taskCall.taskCallKey("t").startsWith("oe-task-call:"), "🔴 T1: the join-row prefix is namespaced away from the taint markers, so no two consumers of the shared slice can collide");
 ok(!Object.keys(store).includes("taskAgentKey"), "🔴 T1 (OPE-2250 step 1): the `oe-task-agent:` row is RETIRED — keyed on `taskId`, not on `agentId`. A resumable 0.70 task IS its taskId, so a continuation needs no handle pinned to find the first dispatch's join");
 
 await onParentTurn(async () => {
   await spawnTaint.noteTaskStarted(tasks.readTaskStarted(startedData("call_1b", "agent-bb0002"))!, PARENT);
   await spawnTaint.noteAgentStarted(tasks.readAgentStarted(agentStartedData("call_1b", "agent-bb0002", "sess-child-1b"))!, PARENT);
   eq(
-    (await store.taskCallLink(ORG, "agent-bb0002"))?.agentId,
+    (await taskCall.taskCallLink(ORG, "agent-bb0002"))?.agentId,
     "sess-child-1b",
     "🔴 PART 1B: the child's REAL session id lands on the dispatch row. eve 0.54 handed OE an opaque handle and the old comments said the session id reached no hook at all; `agent.started` carries it, and the census row joins on it",
   );
@@ -393,7 +394,7 @@ await onParentTurn(async () => {
 });
 
 await onParentTurn(async () => {
-  eq(await store.taskCallLink(ORG, "agent-cc0001"), undefined, "precondition: no join row exists for this task at all");
+  eq(await taskCall.taskCallLink(ORG, "agent-cc0001"), undefined, "precondition: no join row exists for this task at all");
   const adopted = await spawnTaint.adoptTaskTaint({ taskId: "agent-cc0001", status: "completed", agentId: null }, PARENT);
   eq(adopted, true, "🔴 T3 FAIL CLOSED, LOST JOIN: a settlement whose join row is gone marks the parent — it cannot establish the child's taint, and it may not answer 'clean' for a fact it could not read");
   eq(untrustedIngestedThisTurn(), true, "…and the turn signal is set");
@@ -480,7 +481,7 @@ await new Promise((r) => setTimeout(r, 50));
   await runChild("call_collide", "sess-child-collide", false, []);
   await store.claimSubagentCallClean(ORG, OTHER, "call_collide");
   eq(await store.subagentCallTaintStatus(ORG, OTHER, "call_collide"), false, "precondition: the OTHER seat's call is recorded KNOWN-CLEAN, so a read that followed the row would answer `clean`");
-  await store.rememberTaskCall(ORG, "agent-gg0001", { callId: "call_collide", childToken: `subagent:${OTHER}:call_collide`, parentSessionId: OTHER, kind: "agent", tool: "agent" });
+  await taskCall.rememberTaskCall(ORG, "agent-gg0001", { callId: "call_collide", childToken: `subagent:${OTHER}:call_collide`, parentSessionId: OTHER, kind: "agent", tool: "agent" });
   await onParentTurn(async () => {
     const adopted = await spawnTaint.adoptTaskTaint({ taskId: "agent-gg0001", status: "completed", agentId: null }, PARENT);
     eq(adopted, true, "🔴 PART 4C: a row whose recorded `parentSessionId` is ANOTHER session reads as a LOST record and MARKS this turn — a colliding id cannot hand this seat another seat's clean answer");
@@ -539,7 +540,7 @@ await new Promise((r) => setTimeout(r, 50));
     "🔴 …and the settlement edge answers `no-row`, which is what leaves the turn with no reply address and makes the reply fence refuse under `task-wake-unread`",
   );
   eq(
-    (await store.taskCallLink(ORG, "agent-4d0001"))?.callId,
+    (await taskCall.taskCallLink(ORG, "agent-4d0001"))?.callId,
     "call_noauth",
     "🔴 PART 4D THE CORRECTED CLAIM: `oe-task-call:<taskId>` IS present for a refused dispatch, so taint carries on the call-keyed marker and the refusal neither helps nor harms it",
   );
@@ -593,7 +594,7 @@ ok(
 await runChild("call_5", "sess-child-cont", false);
 await onParentTurn(async () => {
   await spawnTaint.noteTaskStarted(tasks.readTaskStarted(startedData("call_5", "agent-bb0005"))!, PARENT);
-  const first = await store.taskCallLink(ORG, "agent-bb0005");
+  const first = await taskCall.taskCallLink(ORG, "agent-bb0005");
   const again = await spawnTaint.noteTaskStarted(tasks.readTaskStarted(startedData("call_5_again", "agent-bb0005"))!, PARENT);
   eq(again?.callId, "call_5", "🔴 T5: a continuation on the same taskId resolves the ORIGINAL call, so the marker read still names the child that ran — no handle row needed to get there");
   eq(again, first, "…and the row is returned unchanged rather than rewritten, which is what makes a redelivered event idempotent");
@@ -642,7 +643,7 @@ await new Promise((r) => setTimeout(r, 50));
 await onParentTurn(async () => {
   await spawnTaint.noteTaskStarted(tasks.readTaskStarted(startedData("call_census", "agent-bb0007"))!, PARENT);
   await spawnTaint.noteAgentStarted(tasks.readAgentStarted(agentStartedData("call_census", "agent-bb0007", "sess-child-census"))!, PARENT);
-  const link = await store.taskCallLink(ORG, "agent-bb0007");
+  const link = await taskCall.taskCallLink(ORG, "agent-bb0007");
   await spawnTaint.adoptTaskTaint({ taskId: "agent-bb0007", status: "completed", agentId: link?.agentId ?? null }, PARENT);
 });
 await new Promise((r) => setTimeout(r, 50));
