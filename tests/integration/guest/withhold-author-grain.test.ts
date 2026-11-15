@@ -38,7 +38,7 @@ async function armSeams(): Promise<void> {
   expect(authorTrust.armedAuthorTrustTenants()).toContain(`discord/${DISCORD_GUILD_ID}`);
 }
 
-async function setAuthorGrain(grain: "taint" | "withhold"): Promise<void> {
+async function setAuthorGrain(grain: "envelope" | "withhold"): Promise<void> {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ externalPolicy: { authorGrain: grain, roomGrain: "engage" } });
   expect(settings.getSettings().externalPolicy.authorGrain).toBe(grain);
@@ -59,7 +59,7 @@ async function waitForSuppressionRows(cursor: AuditCursor, label: string) {
 
 test("🔴 negative control: authorGrain \"taint\" (the opt-out) — a REGISTER-REFUTED author's mention still wakes the model", async () => {
   await armSeams();
-  await setAuthorGrain("taint");
+  await setAuthorGrain("envelope");
   const nonce = randomBytes(4).toString("hex");
   const handle = disposeLater(registerScript({ parent: [{ say: `oe-control-ok ${nonce}` }] }));
 

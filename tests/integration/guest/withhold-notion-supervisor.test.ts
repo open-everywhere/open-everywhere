@@ -104,7 +104,7 @@ async function armSeams(): Promise<void> {
   cleanups.push(() => installed.uninstall());
 }
 
-async function setAuthorGrain(grain: "taint" | "withhold"): Promise<void> {
+async function setAuthorGrain(grain: "envelope" | "withhold"): Promise<void> {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({
     externalPolicy: { authorGrain: grain },
@@ -217,7 +217,7 @@ test("authorGrain \"withhold\": a REFUTED author's Notion backscroll comment rea
 test("🔴 negative control: authorGrain \"taint\" (the opt-out) — the SAME refuted author's Notion comment reaches the model verbatim, and it MARKS the turn", async () => {
   await armSeams();
   await armAuthorTrust();
-  await setAuthorGrain("taint");
+  await setAuthorGrain("envelope");
   const nonce = `oe-taint-${randomBytes(4).toString("hex")}`;
 
   const { handle, cursor } = await driveNotionWake({ ids: "t1", pageId: NOTION_PAGE_ID_2, prompt: `stand-up summary evening (${nonce})` });

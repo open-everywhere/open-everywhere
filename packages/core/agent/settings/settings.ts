@@ -16,7 +16,26 @@ export type ApprovalJudgeMode = "off" | "shadow" | "enforce";
 
 export type GithubAuthMode = "app" | "token";
 
-export type ExternalAuthorGrain = "taint" | "withhold";
+export type ExternalAuthorGrain = "withhold" | "envelope" | "taint";
+
+export const AUTHOR_GRAIN_TAINT_ALIAS_NOTICE =
+  '[open-everywhere:settings] externalPolicy.authorGrain "taint" is a deprecated alias of "envelope" (OPE-2722). ' +
+  'It behaves as "envelope". Declare "envelope" instead; a later release removes the alias (OPE-2724).';
+
+const authorGrainAliasReported = processRegistrySlot<boolean>("settings.authorGrainTaintAlias.reported.v1");
+
+export function canonicalAuthorGrain(v: ExternalAuthorGrain): Exclude<ExternalAuthorGrain, "taint"> {
+  if (v !== "taint") return v;
+  if (authorGrainAliasReported.get() !== true) {
+    authorGrainAliasReported.set(true);
+    console.warn(AUTHOR_GRAIN_TAINT_ALIAS_NOTICE);
+  }
+  return "envelope";
+}
+
+export function _resetAuthorGrainAliasReportForTest(): void {
+  authorGrainAliasReported.set(null);
+}
 
 export type ExternalRoomGrain = "engage" | "silent";
 
@@ -963,9 +982,12 @@ export const SETTINGS = {
     authorGrain: {
       path: "externalPolicy.authorGrain",
       shipped: "withhold",
-      validate: (v) => (v === "taint" || v === "withhold" ? undefined : 'must be "taint" or "withhold"'),
+      validate: (v) =>
+        v === "withhold" || v === "envelope" || v === "taint"
+          ? undefined
+          : 'must be "withhold" or "envelope" ("taint" is the deprecated alias of "envelope")',
       summary:
-        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `taint` is the deliberate OPT-OUT: it lets the text enter the context inside the untrusted-content envelope and leaves the consequence to the tainted-turn model and the approval plane. Choose it only where an excluded author\'s text must reach the model. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the author-taint mark and the `withhold` read half are declared once and no reader can declare them differently.',
+        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests, so it never keys taint. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `envelope` is the deliberate OPT-OUT: it lets the text enter the context and leaves the consequence to the approval plane. In a rendered wake envelope and in a read result the text is fenced with a do-not-follow notice the body cannot close; a raw `direct` DM or @mention body (Discord, Notion, GitHub, Linear) passes verbatim: OE does not escape, cap or fence it (W4, channels/normalized-wake.ts). The grain decides only whether the body is withheld. Under `envelope` the turn is still marked as before: the non-member stamp `oe_chat_nonmember` and the `authoredByNonMember` flag on a read both fire. The taint-removal slices (OPE-2716, OPE-2721) own those marks. Choose it only where an excluded author\'s text must reach the model. `taint` is the DEPRECATED ALIAS of `envelope` (OPE-2722): it loads, it behaves as `envelope`, the process reports it once at the first resolution, and OPE-2724 removes it. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the author-taint mark and the `withhold` read half are declared once and no reader can declare them differently.',
     } satisfies SettingSpec<ExternalAuthorGrain>,
     roomGrain: {
       path: "externalPolicy.roomGrain",
@@ -1926,7 +1948,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
       denialLog: resolve(SETTINGS.egress.denialLog, o.egress?.denialLog),
     },
     externalPolicy: {
-      authorGrain: resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain),
+      authorGrain: canonicalAuthorGrain(resolve(SETTINGS.externalPolicy.authorGrain, o.externalPolicy?.authorGrain)),
       roomGrain: resolve(SETTINGS.externalPolicy.roomGrain, o.externalPolicy?.roomGrain),
     },
     github: {

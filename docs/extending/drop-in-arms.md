@@ -553,7 +553,7 @@ overturn a policy drop; and no arm is offered a message on a surface that declin
 arm is handed the message text before two gates the route runs later: the spend gate, and the
 **external-participant policy** (`applySlackExternalPolicy` — OPE-507/OPE-504), which decides an
 excluded author is owed nothing. Neither can be overturned by an arm, so no wake gets past them; but
-on a deployment that has opted out to the `taint` grain, an excluded author's message text does
+on a deployment that has opted out to the `envelope` grain (or its deprecated alias `taint`), an excluded author's message text does
 reach the arm — and, for a model arm, a model vendor — before that policy refuses it. The tenant
 fence is the one moved ahead of the consult, because an unadmitted workspace is the posture that
 says no turn may run at any price. A deployment arming this seam should decide whether the external

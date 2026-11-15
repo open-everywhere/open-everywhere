@@ -1,4 +1,4 @@
-import { getSettings, type ExternalAuthorGrain, type ExternalRoomGrain } from "../settings/settings.js";
+import { canonicalAuthorGrain, getSettings, type ExternalAuthorGrain, type ExternalRoomGrain } from "../settings/settings.js";
 import { declaredSurfaceTrust } from "../identity/trust.js";
 import { nonMemberChatTrust, type ChatWakeRoom, type IngestedChatMessage } from "../identity/non-member.js";
 import type { NormalizedWake } from "../channels/normalized-wake.js";
@@ -25,13 +25,13 @@ export function shippedExternalPolicy(): ExternalPolicy {
 export function resolveExternalPolicy(override?: ExternalPolicyOverride): ExternalPolicy {
   const org = shippedExternalPolicy();
   return {
-    authorGrain: override?.authorGrain ?? org.authorGrain,
+    authorGrain: override?.authorGrain !== undefined ? canonicalAuthorGrain(override.authorGrain) : org.authorGrain,
     roomGrain: override?.roomGrain ?? org.roomGrain,
   };
 }
 
 export function externalPolicyIsInert(policy: ExternalPolicy): boolean {
-  return policy.authorGrain === "taint" && policy.roomGrain === "engage";
+  return policy.authorGrain !== "withhold" && policy.roomGrain === "engage";
 }
 
 export interface ExternalAuthorFacts extends IngestedChatMessage {

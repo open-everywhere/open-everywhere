@@ -485,7 +485,8 @@ agent from engaging in an external room at all — `externalPolicy.roomGrain: "s
 wakes on Slack, Discord, Teams, GitHub and Linear (see
 [Identity § where each grain is wired](../how-it-works/identity.md)).
 Both ship ON. The marking this section describes is what a deployment
-gets when it opts out to `taint` / `engage`, and what still runs for every author the policy does not
+gets when it opts out to `envelope` / `engage` (`taint` is the deprecated alias of `envelope`,
+OPE-2722), and what still runs for every author the policy does not
 exclude.
 `withhold` binds the READ verbs as well as the wakes: `read_channel` and `read_thread` replace an
 excluded author's text with the arrived-marker, so a body a wake suppressed cannot be fetched back by
