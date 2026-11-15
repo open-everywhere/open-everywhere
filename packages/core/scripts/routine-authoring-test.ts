@@ -218,7 +218,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   const card = editKind.summarize(args as never).join("\n");
   ok(card.includes("Old instruction.") && card.includes("New instruction."), "edit: the card renders BEFORE and AFTER — the one thing cancel+create could never show");
   ok(/REVOKED/.test(card), "edit: the card says the routine's standing approvals are revoked — the clicker is told what else the click does");
-  ok(/⚠/.test(card), "edit: a tainted proposal carries the same ⚠ line create_routine uses");
+  ok(!/⚠/.test(card) && !/external content/.test(card), "OPE-2718: a legacy tainted:true edit card carries NO ⚠ line");
 
   const msg = await editKind.execute(args as never, "U9");
   const after = (await store.getRoutine(ORG, SURFACE, "r-edit"))!;
@@ -232,11 +232,12 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   ok(after.lastRunAt === "2026-07-20T09:00:00.000Z" && after.lastOutcome === "ok", "edit: the last-run record is preserved");
   ok(after.consecutiveFailures === 2, "edit: the failure counter is preserved — an edit is not a way to launder a routine past the three-strike guard");
   ok(after.createdBy === "U7", "edit: the original creator is preserved (routines are surface-owned; an edit is not a change of ownership)");
-  ok(after.taintedAtCreation === true, "edit: taintedAtCreation still describes CREATION — an edit does not rewrite the routine's origin story");
+  ok(after.taintedAtCreation === true, "OPE-2718: a LEGACY row with taintedAtCreation edits cleanly, and the edit leaves that legacy field alone");
   ok(after.trigger.kind === "watch", "edit: the TRIGGER is untouched — the shape a human approved on the original card is not editable here");
 
   const editRows = await rowsFor("routine.edit");
   ok(editRows.length === 1, "edit: writes one routine.edit audit row");
+  ok(detailOf(editRows[0], "tainted") === undefined, "OPE-2718: the routine.edit audit row carries no taint field");
   ok(detailOf(editRows[0], "editedBy") === "U9" && detailOf(editRows[0], "requestedBy") === "U1", "edit: the row separates who ASKED from who CLICKED");
   ok(detailOf(editRows[0], "grantsInvalidated") === true, "edit: the row records that standing authority was revoked");
   ok(editRows[0]!.detail!["prompt"] === undefined && editRows[0]!.detail!["previousPrompt"] === undefined, "edit: the audit row carries LENGTHS, not a second copy of the prompt text");

@@ -20,6 +20,7 @@ export function resolveAnalyticsScope(ctx: BindableContext, requested: "org" | "
   const role = resolveRole(ctx);
   const platform = bindFrom(ctx).platform;
 
+  // principal-gate: presence — `Role.principalId` is ALREADY the acting principal (roles.ts
   if (!role.principalId) {
     throw new Error("Analytics needs a verified sender on this turn — none was resolved, so no analytics scope is available.");
   }

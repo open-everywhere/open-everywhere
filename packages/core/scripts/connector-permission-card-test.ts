@@ -1,3 +1,5 @@
+// proves: connector.unattended_lift
+
 import { __setTestValveForTest } from "../agent/testing/test-valves.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -280,23 +282,22 @@ console.log("§report the run's outcome summary lists a connector-plane refusal:
   ok(rendered.includes("open pull requests") && rendered.includes(OTHER_WRITE_OP), "§report: with both permissions named in it");
 }
 
-console.log("§never a tainted turn and a non-routine fire card nothing:");
+console.log("§never a non-routine fire cards nothing; a fire that read outside content cards like any other:");
 {
   const { withUnattendedConnectorFence, connectorOpApproval, unattendedConnectorRefusalMessage } = await import("../agent/connections/connector-auth.js");
   const before = (await cards()).length;
-  const poisoned = withUnattendedConnectorFence(connectorOpApproval(), { tainted: () => true });
-  const decision = await poisoned(approvalCtx(fireAuth(), "notion__update_page"));
+  const readPage = withUnattendedConnectorFence(connectorOpApproval(), { tainted: () => true });
+  const decision = await readPage(approvalCtx(fireAuth(), "notion__update_page"));
   const reason = typeof decision === "object" && decision !== null && "reason" in decision ? String((decision as { reason?: string }).reason ?? "") : "";
-  ok(isDenied(decision), "§never: a tainted turn is refused");
-  ok(reason.includes(TAINTED_ASK_UNATTENDED_SENTENCE), "§never: with the plane's TAINTED sentence");
-  ok((await cards()).length === before, "🔴 §never: and NO card — TAINTED-NEVER holds on the card side too, or fetched content would choose what a human is asked to arm");
-  ok(!reason.includes("waiting in the routine's own room"), "§never: the refusal claims no card either");
-  const clean = await ask(fireAuth(), "notion__update_page");
-  ok(isDenied(clean.decision) && clean.reason.includes("is now waiting in the routine's own room"), "§never: control — the same op on a clean turn posts its card");
-  ok((await cards()).length === before + 1, "§never: control — exactly one more card row");
+  ok(isDenied(decision), "OPE-2718: an undeclared write on a fire that read outside content is still refused");
+  ok(reason.includes(ASK_UNATTENDED_SENTENCE) && !reason.includes(TAINTED_ASK_UNATTENDED_SENTENCE), "OPE-2718: …with the PLAIN sentence, never the tainted one");
+  ok(reason.includes("is now waiting in the routine's own room"), "🔴 OPE-2718: …and the refusal points at the permission card it posted");
+  ok((await cards()).length === before + 1, "OPE-2718: …exactly one card row");
+  const again = await ask(fireAuth(), "notion__update_page");
+  ok(isDenied(again.decision) && (await cards()).length === before + 1, "control: the same op again is refused and posts no second card");
   ok(
-    unattendedConnectorRefusalMessage("notion", "notion__update_page", "write", true).includes(TAINTED_ASK_UNATTENDED_SENTENCE),
-    "§never: and the tainted sentence is the message builder's, not this test's",
+    !unattendedConnectorRefusalMessage("notion", "notion__update_page", "write", true).includes(TAINTED_ASK_UNATTENDED_SENTENCE),
+    "OPE-2718: the message builder ignores its deprecated tainted argument",
   );
 
   const hookBefore = (await cards()).length;
@@ -412,3 +413,5 @@ console.log("§timeout a stalled card post is dropped, not awaited:");
 
 await removeTempDir(tmp);
 console.log(`\n✓ connector permission card: ${passed} assertions passed`);
+
+// proves: AP-MOD-core-approvals-routine-permission-offer

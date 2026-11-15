@@ -7,7 +7,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routinePermissionGeneration } from "../routines/routine.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
@@ -60,6 +59,7 @@ export default defineTool({
     const description = describeTrigger(routine.trigger, routine.report);
 
     const binding = bindFrom(ctx);
+    // principal-gate: presence — an edit rewrites the trusted text future fires are handed, so a fire that
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("edit_routine needs a verified sender to gate the change — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose rewriting the instruction it or another routine runs under. Ask a person in this conversation to change it.");
@@ -71,7 +71,6 @@ export default defineTool({
     }
     const venue = venueResult.venue;
 
-    const tainted = untrustedIngestedThisTurn();
     const posted = await requestApproval(
       {
         org: p.org,
@@ -88,7 +87,6 @@ export default defineTool({
           trigger: routine.trigger,
           ...(routine.report ? { report: routine.report } : {}),
           ...(routine.sessionMode ? { sessionMode: routine.sessionMode } : {}),
-          tainted,
           generation: routinePermissionGeneration(routine),
         },
         scopeKey: proposeScopeKey,
@@ -102,7 +100,7 @@ export default defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `rewrite of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `rewrite of routine ${id} (${description})`;
     if (posted.autoApproved) {
       return {
         pending: false,

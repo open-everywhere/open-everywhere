@@ -127,10 +127,10 @@ export async function armDeclaredRoutinePermissions(input: {
   readonly routine: PermissionedRoutine;
   readonly declared: readonly string[];
   readonly grantedBy: string;
-  readonly tainted: boolean;
+  readonly tainted?: boolean;
   readonly nowIso: string;
 }): Promise<string[]> {
-  if (input.tainted || input.declared.length === 0) return [];
+  if (input.declared.length === 0) return [];
   const store = getOperationalStore();
   const sessionId = routinePermissionKey(input.routine);
   const written: string[] = [];

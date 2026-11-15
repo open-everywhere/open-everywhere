@@ -7,7 +7,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
@@ -41,6 +40,7 @@ export default defineTool({
     const description = describeTrigger(routine.trigger, routine.report);
 
     const binding = bindFrom(ctx);
+    // principal-gate: presence — a card's persuasive weight IS the human name on it, so a fire proposing a
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("cancel_routine needs a verified sender to gate the removal — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a standing behaviour. Ask a person in this conversation to cancel it.");
@@ -52,12 +52,11 @@ export default defineTool({
     }
     const venue = venueResult.venue;
 
-    const tainted = untrustedIngestedThisTurn();
     const posted = await requestApproval(
       {
         org: p.org,
         kind: "routine.cancel",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, id, description, requestedBy, tainted },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, id, description, requestedBy },
         scopeKey: proposeScopeKey,
         domain: null,
         requestedBy,
@@ -69,7 +68,7 @@ export default defineTool({
       approvalPostDeps(venue.platform, ctx),
     );
 
-    const subject = `cancel of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;
+    const subject = `cancel of routine ${id} (${description})`;
     if (posted.autoApproved) {
       return {
         pending: false,

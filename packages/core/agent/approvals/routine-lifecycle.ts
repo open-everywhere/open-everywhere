@@ -58,7 +58,6 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
     return [
       `Rewrite routine ${args.id} — ${args.description} — keeps its schedule, history and run state`,
       "🔑 the standing permissions declared on this routine's creation card are REVOKED by this edit — it starts again from the default gates",
-      ...(args.tainted ? ["⚠ proposed in a turn that read external content — read the new text carefully before arming"] : []),
       `Was:\n> ${clip(args.previousPrompt)}`,
       `Now:\n> ${clip(args.prompt)}`,
       `Target: ${placeWords({ key: args.surfaceKey })}`,
@@ -99,7 +98,6 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
         promptGeneration: generation,
         previousPromptChars: args.previousPrompt.length,
         promptChars: args.prompt.length,
-        tainted: Boolean(args.tainted),
         grantsInvalidated: true,
         ...(isJobRoutine(updated) ? { jobSeatRotated: true } : {}),
       },

@@ -182,9 +182,7 @@ function checkVisible(label: string, lines: readonly string[], buttons: readonly
   for (const kind of KINDS) ok(fixtureKinds.has(kind), `kind "${kind}" has a card fixture in approval-kind-fixtures.ts`);
 }
 
-const ROUTINE_KINDS_OPE_2718: ReadonlySet<string> = new Set(["routine.create", "routine.cancel", "routine.edit"]);
 for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
-  const legacyTaintStillRead = ROUTINE_KINDS_OPE_2718.has(kind);
   const cleanDetail = actionKind(kind)!.summarize(args as never);
   const cleanLines = pendingCardLines(pendingCardLayout(row(kind, args), cleanDetail));
   for (const tainted of [undefined, false, true]) {
@@ -196,7 +194,7 @@ for (const { kind, args } of APPROVAL_KIND_FIXTURES) {
     ok(layout.headline.length <= PLAIN_SUMMARY_MAX, `${tag}: the headline fits ${PLAIN_SUMMARY_MAX} characters`);
     const cap = actionKind(kind)!.consequenceQuotes === true ? QUOTE_MAX : CONSEQUENCE_MAX;
     ok(layout.consequence === undefined || (layout.consequence.length <= cap && !layout.consequence.includes("\n")), `${tag}: the consequence is one line of at most ${cap} characters`);
-    if (!legacyTaintStillRead || tainted !== true) {
+    {
       ok(JSON.stringify(detail) === JSON.stringify(cleanDetail), `${tag}: the detail is the clean card's detail`);
       ok(!detail.some((l) => /read external content|outside content/u.test(l)), `${tag}: no line of the detail warns about taint`);
       ok(JSON.stringify(pendingCardLines(layout)) === JSON.stringify(cleanLines), `${tag}: the visible lines are the clean card's lines`);

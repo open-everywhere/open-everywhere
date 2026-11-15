@@ -156,9 +156,9 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
           ],
           remedy:
             `This one is NOT a config-file diff, so none is offered. The standing permission is a per-tool declared permission on the routine — a human tap on ` +
-            `the routine's own card — not bundle config. Re-arm it with \`edit_routine\`/the creation card. ` +
-            `⚠ Only the \`write\` tier is liftable: a \`destructive\` op and a TAINTED turn are never lifted by any grant ` +
-            `(\`ask-unattended-tainted\` is its own reason code), so any of those rows in the counts above are a control working, not a gap.`,
+            `the routine's own card — not bundle config. Re-arm it on a creation card: re-create the routine with it declared (an \`edit_routine\` revokes standing permissions and cannot declare one). ` +
+            `⚠ Only the \`write\` tier is liftable: a \`destructive\` op is never lifted by any grant, so any such row in the counts above is a control working, not a gap. ` +
+            `An \`ask-unattended-tainted\` row is from before OPE-2718: the fence no longer writes it, and a fire that read outside content now lifts its declared write.`,
         });
       }
       continue;
@@ -182,7 +182,7 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
       remedy:
         `This one is NOT a config-file diff, so none is offered. An unattended deny means the fire lacked a STANDING permission for ` +
         `\`${r.tool}\`, and standing permissions are armed by a human tap on the routine's own creation card (they are per-routine ` +
-        `store rows, not bundle config). Re-arm it with \`edit_routine\`/the creation card, or — if this scope should never card ` +
+        `store rows, not bundle config). Re-arm it on a creation card: re-create the routine with it declared (an \`edit_routine\` revokes standing permissions and cannot declare one), or — if this scope should never card ` +
         `\`${r.tool}\` at all — add an operator approver to the bundle's \`approvers\` in a reviewed PR, which IS a config diff but one ` +
         `only a human should author, because it changes policy for every caller in the scope rather than for one routine.`,
     });

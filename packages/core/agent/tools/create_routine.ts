@@ -23,7 +23,6 @@ import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/declared-permissions.js";
 import { validateRoutineCollectors } from "../routines/collector.js";
 import { validateRoutineGate } from "../routines/gate.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { endFirstRoutineOffer } from "../onboarding/first-routine.js";
 import { cleanWatchFor } from "../routines/ask-watch.js";
@@ -352,6 +351,7 @@ export default defineTool({
         throw new Error("A durable job fires on a schedule (cron / everyMinutes / a one-shot), not on an external event — drop `job`, or use a scheduled trigger.");
       }
     }
+    // principal-gate: presence — a fire minting standing autonomy of its own is the persist leg of the
     const createdBy = actingPrincipalIdOf(ctx);
     if (!createdBy) {
       throw new Error("create_routine needs a verified sender to gate the write — no principal id resolved, so there's no requester to show on the approval card.");
@@ -359,7 +359,6 @@ export default defineTool({
     const channelId = venue.channelId;
 
     const target = binding.target;
-    const tainted = untrustedIngestedThisTurn();
     const permissions = (input.permissions ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
     declaredPermissionKinds(permissions);
     const collectors = validateRoutineCollectors(input.collectors ?? [], permissions);
@@ -368,7 +367,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(watchFor ? { watchFor } : {}), ...(input.quietWhenEmpty === true ? { quietWhenEmpty: true as const } : {}), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(watchFor ? { watchFor } : {}), ...(input.quietWhenEmpty === true ? { quietWhenEmpty: true as const } : {}), ...(createdBy ? { createdBy } : {}), ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}), ...(collectors.length ? { collectors } : {}), ...(gate ? { gate } : {}), ...(input.modelRole === undefined ? {} : { modelRole: input.modelRole }), ...(binding.mode === "channel" ? { firstRoutineRoom: true as const } : {}) },
         scopeKey: proposeScopeKey,
         domain: null,
         requestedBy: createdBy,
@@ -403,7 +402,7 @@ export default defineTool({
         nextRunAt: next ? next.toISOString() : null,
         preview,
         message: autoApprovedNote(
-          `${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""}`,
+          `${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}`,
           posted.autoApproved,
         ),
       };
@@ -417,7 +416,7 @@ export default defineTool({
       nextRunAt: next ? next.toISOString() : null,
       preview,
       message:
-        `${cardPostedPrefix(venue)} — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).` +
+        `${cardPostedPrefix(venue)} — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)} awaiting a human to arm it (pending ${posted.id}).` +
         cardPostedTail(venue, "arm it", posted),
     };
   },

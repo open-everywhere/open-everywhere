@@ -182,7 +182,11 @@ const baseOffer = {
   ok((args.prompt ?? "").includes("bumps the changelog"), "§plan: the card shows the instruction the permission would serve");
   ok((plan.card?.summaryLines ?? []).join(" ").includes("declining is remembered"), "§plan: the card says out loud that a decline is durable");
 
-  ok((await planRoutinePermissionCard({ ...baseOffer, tainted: true })).state === "n/a", "§plan: a TAINTED turn plans nothing — no standing grant is ever asked for off fetched content");
+  {
+    const legacyTainted = await planRoutinePermissionCard({ ...baseOffer, tainted: true });
+    ok(legacyTainted.state === plan.state && legacyTainted.card !== undefined, "§plan: OPE-2718: an offer from a fire that read outside content plans the same card");
+    ok(legacyTainted.grantKind === plan.grantKind, "§plan: …for the same permission");
+  }
   ok((await planRoutinePermissionCard({ ...baseOffer, declaration: "skill.create" })).state === "n/a", "§plan: a non-declarable kind plans nothing");
   ok((await planRoutinePermissionCard({ ...baseOffer, grantKey: "slack:T1:C1:9" })).state === "n/a", "§plan: a non-routine grant key plans nothing");
   ok((await planRoutinePermissionCard({ ...baseOffer, grantKey: "oe-routine:r-missing:g1" })).state === "n/a", "§plan: a key naming no stored routine plans nothing rather than guessing a room");
@@ -398,7 +402,7 @@ const cardsFor = async (kind: string): Promise<{ id: string; expiresAt: string; 
   const threw = await refuse({ ...proposal, args: { ...proposal.args, sessionId: silentKey, title: "silent fire" } });
   ok(threw.includes("ask-unattended"), "§silent: the silent routine's fire is still refused");
   ok(!threw.includes("routine's own room"), "§silent: and the refusal claims no card");
-  ok((await cardsFor(ROUTINE_PERMISSION_KIND)).length === before, "§silent: no card row is minted, so an edit_routine declaration is still the way in");
+  ok((await cardsFor(ROUTINE_PERMISSION_KIND)).length === before, "§silent: no card row is minted, so re-creating the routine with the permission declared on its creation card is the way in");
   ok(
     (await readRoutinePermissionCardState(ORG, silentKey, "pr.open", new Date().toISOString())).state === "absent",
     "§silent: and no ask-memo is written",

@@ -10,7 +10,8 @@ export interface RoutinePermissionCardOffer {
   readonly scopeKey: string;
   readonly domain?: string | null;
   readonly requestedBy: string;
-  readonly tainted: boolean;
+  /** @deprecated OPE-2718: ignored. What the turn read plans or blocks nothing. */
+  readonly tainted?: boolean;
   readonly waitBudgetMs: number;
   readonly grantKind: string;
 }

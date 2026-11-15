@@ -242,7 +242,7 @@ test("a signed Discord click approves a real proposal and the routine really arm
   const created = rows.find((r) => r.action === "routine.create" && r.detail?.id === armed[0]!.id);
   expect(created).toBeDefined();
   expect(created!.detail?.armedBy).toBe(CLICKER_ID);
-  expect(created!.detail?.tainted).toBe(false);
+  expect(created!.detail).not.toHaveProperty("tainted");
 });
 
 test("a reject click writes approval.rejected, strips the card, and arms NOTHING", async () => {

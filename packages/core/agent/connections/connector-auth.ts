@@ -743,12 +743,12 @@ export function unattendedConnectorRefusalMessage(
   connection: string,
   toolName: string,
   tier: ReturnType<typeof effectiveConnectorOpTier>,
-  tainted: boolean,
+  _tainted?: boolean,
 ): string {
-  const declaration = !tainted && tier === "write" ? `Declare "tool:${toolName}" on the routine's creation card to lift it. ` : "";
+  const declaration = tier === "write" ? `Declare "tool:${toolName}" on the routine's creation card to lift it. ` : "";
   return (
     `connection "${connection}": the ${tier}-tier op "${toolName}" needs approval and nobody is attending this run. ` +
-    `${tainted ? TAINTED_ASK_UNATTENDED_SENTENCE : ASK_UNATTENDED_SENTENCE} ${declaration}` +
+    `${ASK_UNATTENDED_SENTENCE} ${declaration}` +
     `The op did not run.`
   );
 }
@@ -832,7 +832,6 @@ export function withUnattendedConnectorFence(
   const surfaceContext = deps.surfaceContext ?? surfaceContextFromAuth;
   const permissionExists = deps.grantExists ?? routinePermissionExists;
   const audit = deps.audit ?? appendAudit;
-  const tainted = deps.tainted ?? untrustedIngestedThisTurn;
   return async (ctx): Promise<ApprovalStatus> => {
     const decision = await policy(ctx);
     if (!isConnectorOpTool(ctx.toolName)) return decision;
@@ -850,10 +849,9 @@ export function withUnattendedConnectorFence(
     }
     const seamBelowBuiltIn = tier !== seamTier;
     if (!decisionWouldPrompt(decision) && !seamBelowBuiltIn) return decision;
-    const poisoned = taintedOrPoisoned(tainted);
     const loweredRefusal = (): ApprovalStatus => ({
       type: "denied",
-      reason: unattendedConnectorRefusalMessage(connection ?? "", ctx.toolName, tier, poisoned),
+      reason: unattendedConnectorRefusalMessage(connection ?? "", ctx.toolName, tier),
     });
     if (connection === undefined || connection.length === 0) return seamBelowBuiltIn ? loweredRefusal() : decision;
     const auth = ctx.session?.auth;
@@ -864,7 +862,6 @@ export function withUnattendedConnectorFence(
     const kind = connectorToolPermissionKind(ctx.toolName);
     const nowIso = new Date().toISOString();
     const lifted =
-      !poisoned &&
       tier === "write" &&
       facts.grantKey !== undefined &&
       (await callAsync(() => permissionExists(facts.org, facts.grantKey as string, kind, nowIso), false));
@@ -897,9 +894,8 @@ export function withUnattendedConnectorFence(
             connection,
             op: ctx.toolName,
             tier,
-            reason: poisoned ? "ask-unattended-tainted" : "ask-unattended",
+            reason: "ask-unattended",
             grant: kind,
-            ...(poisoned ? { tainted: true } : {}),
             ...(facts.grantKey === undefined ? { routine: null } : { routine: facts.grantKey }),
           },
         }),
@@ -916,11 +912,10 @@ export function withUnattendedConnectorFence(
             grantKey: routineKey,
             scopeKey: facts.surfaceKey,
             requestedBy,
-            tainted: poisoned,
             waitBudgetMs: 0,
           })
         : { clause: "" };
-    return { type: "denied", reason: unattendedConnectorRefusalMessage(connection, ctx.toolName, tier, poisoned) + card.clause };
+    return { type: "denied", reason: unattendedConnectorRefusalMessage(connection, ctx.toolName, tier) + card.clause };
   };
 }
 

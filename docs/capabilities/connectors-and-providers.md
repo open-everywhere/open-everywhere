@@ -634,10 +634,9 @@ still typed by strangers — that connector is `"external"`. The name deliberate
 say "trusted": nothing here is about how the connection is reached.
 
 That table is **enforced** for the connector-discovery list, so the word has an effect there: an
-`"internal"` connector's rows are still fenced as data but no longer mark the turn, which changes
-whether a later `taint: "gate"` sink floors the proposal at a person's decision, whether a
-connector write in that turn can reach the approval judge, whether a routine's standing `tool:`
-grant lifts a connector write in an unattended run, and what the `approval.chain` row records. A declared `"external"` connector, and an undeclared one, both
+`"internal"` connector's rows are still fenced as data but no longer mark the turn. The mark moves
+no approval verdict since OPE-2716, and since OPE-2718 it does not change whether a routine's
+standing `tool:` grant lifts a connector write in an unattended run. A declared `"external"` connector, and an undeclared one, both
 still mark it.
 
 **The word also applies to an operation's own result.** Since eve 0.69.0 the model reaches every

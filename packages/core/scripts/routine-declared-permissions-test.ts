@@ -175,11 +175,9 @@ const NOW = "2026-03-30T11:30:00.000Z";
 
   ok(armedCard[0].includes("may, without asking") && armedCard[0].includes("connector:notion"), "ARMED frame: the card names the frozen declaration");
   ok(armedCard[0].includes("grants nothing"), "…and says it buys nothing, so 'may, without asking' cannot be read as authority");
-  const taintedCard = permissionLines({ permissions: ["connector:notion"], tainted: true });
-  ok(taintedCard.length === 1, "TAINTED frame: an unmappable declaration on a poisoned card is rendered, not hidden");
-  ok(taintedCard[0].includes("connector:notion"), "…and it names what the model ASKED for, rather than reporting the ask as empty");
-  ok(!taintedCard[0].includes("permission to nothing"), "…and the composed sentence never says the model asked for NOTHING, which is the false reading a bare-'nothing' lead produced");
-  ok(taintedCard[0].includes("NOT granted"), "…while still saying nothing was granted");
+  const legacyTaintedCard = permissionLines({ permissions: ["connector:notion"], tainted: true });
+  ok(JSON.stringify(legacyTaintedCard) === JSON.stringify(armedCard), "OPE-2718: a legacy tainted:true card renders exactly the armed frame");
+  ok(!legacyTaintedCard[0].includes("NOT granted"), "…and never says the declaration is refused");
 
   const unliftable = describeDeclaredPermissions(["tool:notion__delete_page"]);
   ok(unliftable[0] !== 'use the "notion__delete_page" tool', "…but NOT the live-authority wording, which no row backs");
@@ -196,8 +194,9 @@ const NOW = "2026-03-30T11:30:00.000Z";
   const line = permissionLines({ permissions: ["pr.open", "tool:notion__share_page"], tainted: false })[0];
   ok(line.includes("open pull requests") && line.includes("notion__share_page"), "the card names each permission in plain language, and names the TOOL");
   ok(line.includes("anything else will ask you first"), "the card states the fallback: everything else still gates");
-  const taintedLine = permissionLines({ permissions: ["pr.open"], tainted: true })[0];
-  ok(taintedLine.includes("NOT granted"), "a TAINTED proposal's card says the declaration is refused, rather than hiding it");
+  const legacyTaintedLine = permissionLines({ permissions: ["pr.open"], tainted: true })[0];
+  ok(legacyTaintedLine.includes("may, without asking") && legacyTaintedLine.includes("open pull requests"), "OPE-2718: a legacy tainted:true card says the routine MAY use the permission, because the click arms it");
+  ok(!legacyTaintedLine.includes("NOT granted"), "…and carries no refusal frame");
 }
 
 {
@@ -218,17 +217,17 @@ const NOW = "2026-03-30T11:30:00.000Z";
   await getOperationalStore().setSessionApproval({ org: ORG, sessionId: "some-other-session", kind: "pr.open", grantedBy: "U", createdAt: NOW, expiresAt: NOW });
   ok((await listRoutinePermissions(ORG, ROUTINE, NOW)).length === 2, "the standing set survives another write's prune-on-write GC");
 
-  const taintedRoutine = { ...ROUTINE, id: "r-tainted1" };
-  const none = await armDeclaredRoutinePermissions({
+  const readRoutine = { ...ROUTINE, id: "r-tainted1" };
+  const armed = await armDeclaredRoutinePermissions({
     org: ORG,
-    routine: taintedRoutine,
+    routine: readRoutine,
     declared: ["pr.open", "tool:notion__share_page"],
     grantedBy: "U_CLICKER",
     tainted: true,
     nowIso: NOW,
   });
-  ok(none.length === 0, "a routine proposed in a TAINTED turn is armed with NOTHING, even when a human arms it");
-  ok((await listRoutinePermissions(ORG, taintedRoutine, NOW)).length === 0, "…and holds no standing set at all");
+  ok(JSON.stringify(armed) === JSON.stringify(["pr.open", connectorToolPermissionKind("notion__share_page")]), "OPE-2718: a routine proposed in a turn that read outside content ARMS every declared row on the click");
+  ok((await listRoutinePermissions(ORG, readRoutine, NOW)).length === 2, "…and holds the full standing set");
 }
 
 {
@@ -315,7 +314,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ok(JSON.stringify(unarmedDeclarations(["tool:notion__delete_page"], [])) === JSON.stringify(["tool:notion__delete_page"]), "a delete-tier tool is unarmed as well as undeclarable");
   ok(
     JSON.stringify(unarmedDeclarations(["pr.open", "connector:notion"], [])) === JSON.stringify(["pr.open", "connector:notion"]),
-    "a TAINTED card arms NOTHING, so every declaration is named — not just the one the vocabulary rejects",
+    "a card that wrote NOTHING names every declaration — not just the one the vocabulary rejects",
   );
   ok(
     JSON.stringify(unarmedDeclarations(["pr.open", "tool:notion__share_page"], ["pr.open"])) === JSON.stringify(["tool:notion__share_page"]),
@@ -352,10 +351,10 @@ const NOW = "2026-03-30T11:30:00.000Z";
   ok(!/ask before[^;]*pr open/.test(mixed), "…without dragging the armed declaration into the refusal");
   ok(mixed.includes("it will ask before"), "…and says what happens instead when the routine reaches that step");
 
-  const tainted = await click(["pr.open", "connector:notion"], true);
-  ok(!tainted.includes("may use"), "a TAINTED proposal reports no standing permission at all");
-  ok(tainted.includes("it will ask before pr open, notion"), "…and names EVERY declaration, not only the one the vocabulary rejects");
-  ok(tainted.includes("read external content"), "…and gives the reason, so the human is not left inferring a vocabulary problem");
+  const legacyTainted = await click(["pr.open", "connector:notion"], true);
+  ok(legacyTainted.includes("may use pr open without asking"), "OPE-2718: a legacy tainted:true card reports its armed permission as standing");
+  ok(legacyTainted.includes("it will ask before notion") && !/ask before[^;]*pr open/.test(legacyTainted), "…and names only the declaration this build cannot arm");
+  ok(!legacyTainted.includes("read external content"), "…and gives no taint reason, because taint no longer decides anything");
 
   const clean = await click(["pr.open", "tool:notion__share_page"], false);
   ok(clean.includes("may use pr open, share page on notion without asking"), "a fully armable card reports its standing set");
@@ -531,9 +530,9 @@ const NOW = "2026-03-30T11:30:00.000Z";
     ok(raisedOutcome.includes(`it will ask before ${toolWords(RAISED)}`), "🔴 …and the sentence the human reads names it as NOT armed, driven end to end rather than derived");
     ok(raisedOutcome.includes(`may use ${toolWords(PLAIN)} without asking`) && !raisedOutcome.split("ask before")[1]?.includes(toolWords(PLAIN)), "…while the armable declaration beside it still arms and is not dragged into the clause");
 
-    const taintedOutcome = await armCard([`tool:${RAISED}`], true);
-    ok((await neverLifts()).length === 1, "🔴 a TAINTED arm writes no `never lifts` row — the reason is taint, and the row must not claim otherwise");
-    ok(!taintedOutcome.includes("may use") && taintedOutcome.includes(`it will ask before ${toolWords(RAISED)}`) && taintedOutcome.includes("read external content"), "…and the outcome sentence reports nothing as standing, says the routine will ask, and gives the real reason");
+    const legacyTaintedOutcome = await armCard([`tool:${RAISED}`], true);
+    ok((await neverLifts()).length === 2, "🔴 OPE-2718: a legacy tainted:true arm writes the `never lifts` row like any other arm");
+    ok(legacyTaintedOutcome.includes(`it will ask before ${toolWords(RAISED)}`) && !legacyTaintedOutcome.includes("read external content"), "…and the outcome sentence names the raised declaration with no taint reason");
   }
 
   const { declarableRoutinePermission } = await import("../agent/routines/permission-card.js");

@@ -16,7 +16,6 @@ import { appendAudit } from "../audit/audit.js";
 import { OE_REQUESTER_CANDIDATES_ATTR, OE_REQUESTER_ATTR, REQUESTER_UNVERIFIED, type RequesterVerdict } from "../access/requester-identity.js";
 import { INVOKER_POSTURE_ATTR, resolveInvokerPosture, type InvokerPosture } from "../access/invoker-posture.js";
 import { OE_TAINTED_FIRE_ATTR } from "../access/taint-signal.js";
-import { JOB_TAINT_ATTR } from "../access/job-posture.js";
 import { FIRE_PRINCIPAL_ATTR, type SurfaceBinding } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import { oneAttrValue, routineManualStamped, routineMarker, routineSilentStamped } from "./routine.js";
@@ -74,7 +73,7 @@ export function fireRowOf(attributes: Readonly<Record<string, unknown>>): WorkFi
 
 export function fireTainted(attributes: Readonly<Record<string, unknown>>): boolean {
   const attrs = attributes as Record<string, string | readonly string[]>;
-  return oneAttrValue(attrs[OE_TAINTED_FIRE_ATTR]) === "true" || oneAttrValue(attrs[JOB_TAINT_ATTR]) === "true";
+  return oneAttrValue(attrs[OE_TAINTED_FIRE_ATTR]) === "true";
 }
 
 export function firePosture(auth: { readonly authenticator?: string; readonly principalId?: string; readonly attributes?: Readonly<Record<string, unknown>> }): InvokerPosture {

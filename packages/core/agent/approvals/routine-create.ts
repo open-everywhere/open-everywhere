@@ -51,9 +51,6 @@ export interface RoutineCreateArgs {
 export function permissionLines(args: Pick<RoutineCreateArgs, "permissions" | "tainted">): string[] {
   const described = describeDeclaredPermissions(args.permissions ?? []);
   if (described.length === 0) return [];
-  if (args.tainted) {
-    return [`🔑 asked for standing permission to ${described.join(" · ")} — NOT granted, because it was authored in a turn that read external content; it will ask a human every time`];
-  }
   return [`🔑 may, without asking: ${described.join(" · ")} — anything else will ask you first`];
 }
 
@@ -113,7 +110,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
   consequence(args) {
     const declared = args.permissions ?? [];
     const raised = new Set(bundleRaisedDeclarations(declared));
-    const armable = args.tainted ? [] : declared.filter((d) => routinePermissionKind(d.trim()) !== null && !raised.has(d.trim()) && !namesUnliftableTool(d.trim()));
+    const armable = declared.filter((d) => routinePermissionKind(d.trim()) !== null && !raised.has(d.trim()) && !namesUnliftableTool(d.trim()));
     const asks = declared.filter((d) => !armable.includes(d));
     const tail = [
       ...(armable.length > 0 ? [`may use ${armable.map(toolWords).join(", ")} without asking`] : []),
@@ -136,7 +133,6 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
         ? ["↻ keeps going until it decides the work is DONE, building on what each earlier run learned — where an ordinary routine starts fresh each time and repeats forever. Arm a job only for work that can actually finish."]
         : []),
       ...(args.sessionMode === "job" && args.boundPolicy ? [`⏹️ ${args.boundPolicy} — it will say so here, and you can start it again`] : []),
-      ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
       ...permissionLines(args),
       ...collectorLines(args),
       ...gateLines(args),
@@ -163,7 +159,6 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       status: "active",
       nextRunAt: next ? next.toISOString() : null,
       consecutiveFailures: 0,
-      ...(args.tainted ? { taintedAtCreation: true } : {}),
       ...(args.sessionMode === "job" ? { sessionMode: "job" as const } : {}),
       ...(args.sessionMode === "job" ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
       ...(args.collectors && args.collectors.length > 0 ? { collectors: [...args.collectors] } : {}),
@@ -176,7 +171,6 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       routine,
       declared: args.permissions ?? [],
       grantedBy: decidedBy,
-      tainted: Boolean(args.tainted),
       nowIso: now.toISOString(),
     });
     if (armed.length > 0) {
@@ -190,7 +184,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
         detail: { id: routine.id, grantedBy: decidedBy, kinds: armed, generation: routinePermissionGeneration(routine), declared: true },
       });
     }
-    for (const declaration of args.tainted ? [] : bundleRaisedDeclarations(args.permissions ?? [])) {
+    for (const declaration of bundleRaisedDeclarations(args.permissions ?? [])) {
       await appendAudit({
         org: args.partition.org,
         platform: args.partition.platform,
@@ -208,14 +202,14 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       surface: args.partition.surface,
       principalId: decidedBy,
       action: "routine.create",
-      detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}), ...(args.watchFor ? { watch: true } : {}) },
+      detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}), ...(args.watchFor ? { watch: true } : {}) },
     });
     await endFirstRoutineOffer({ partition: args.partition, decidedBy, outcome: "set-up", room: args.firstRoutineRoom === true, atIso: now.toISOString() });
     const unarmed = unarmedDeclarations(args.permissions ?? [], armed);
     return (
       `${watchWords(args.trigger, args.watchFor) !== undefined ? `watch started, it ${watchWords(args.trigger, args.watchFor)}` : `routine started, runs ${triggerWords(args.trigger)}`}${routine.nextRunAt ? `, first on ${shortUtc(routine.nextRunAt)}` : ""}` +
       `${armed.length > 0 ? `; may use ${armed.map(toolWords).join(", ")} without asking` : ""}` +
-      `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}${args.tainted ? " (nothing was made standing: it was written in a turn that read external content)" : ""}` : ""}` +
+      `${unarmed.length > 0 ? `; it will ask before ${unarmed.map(toolWords).join(", ")}` : ""}` +
       testRunOffer(routine)
     );
   },

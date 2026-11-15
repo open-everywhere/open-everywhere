@@ -462,8 +462,8 @@ member typed it. An unresolved author's message is wrapped; that is the fail dir
 `direct` DM/@mention body carries no envelope and no fence at any grade, as it always did.
 Source: `packages/core/agent/access/untrusted.ts#wrapUntrusted`; delimiters at `packages/core/agent/access/untrusted.ts#UNTRUSTED_OPEN`; the chat exception
 at `packages/core/agent/channels/wake-envelope.ts` (`authorTrustAdmitsUnfencedBody`).
-Not to be confused with: **gates**. Wrapping never refuses anything. The verdict floor that a
-tainted turn triggers at the `gate` sinks is the contested half.
+Not to be confused with: **gates**. Wrapping never refuses anything, and since OPE-2716 no verdict
+reads the taint mark either.
 
 **ingestion** — the one funnel that does both jobs: it wraps, and it marks the turn if the source
 tier says untrusted.
@@ -576,7 +576,7 @@ built-in `agent`.** The projection seam removes the tool only when the SEAT was 
 classified as a delegating conversational seat.
 The withdrawal rested on one condition: no taint mark reached a native child, so a tainted seat would
 dispatch a child that ran CLEAN. The **forward leg** now marks that child before its first model call,
-measured end to end on the real host. The launder path is closed by propagation, not by absence.
+measured end to end on the real host. The mark propagates for audit and provenance; since OPE-2716 and OPE-2718 it gates nothing.
 🔴 **The tool plane was never the reason, and stating it as one was false.** A worker's gated tools
 take the same approval chain as a seat's: the registry's `ask` cards them, and an unattended run
 denies. Since OPE-2716 no approval verdict reads taint. `bash`, `write_file` and `read_file` are `open`
@@ -845,8 +845,8 @@ connections.
 
 **taint disclosure** — retired by OPE-2717 (the maintainer's ruling, OPE-2715 row 10). No approval
 card shows a taint line on its visible lines. A card frozen before the deploy with `tainted` in its
-arguments renders as a clean card, except for the routine kinds (`routine.create`, `routine.cancel`,
-`routine.edit`), which still read the flag until OPE-2718. `withTaintDisclosure` (`packages/core/agent/approvals/taint-disclosure.ts`) stays one
+arguments renders as a clean card. Since OPE-2718 that includes the routine kinds (`routine.create`,
+`routine.cancel`, `routine.edit`). `withTaintDisclosure` (`packages/core/agent/approvals/taint-disclosure.ts`) stays one
 release as a deprecated no-op shim, because the module is a public subpath export (OPE-2721).
 
 **result reduction** — the deployment-registered arm that shortens an oversized tool result.
@@ -961,7 +961,7 @@ flipped `ask → defer`, only in `enforce` mode (the shipped `approvals.judgeMod
 failure resolves to `ask`. An enforced allow must cite one of the scope's authored pre-approval
 rules; an uncited allow resolves to `ask`. Admin acts and memory erasure never reach it. A cached allow
 answers only for the same arguments, requester and attendance. Of the connector ops, only a
-write on the domain's credential in an attended, clean turn reaches it, and an allow covers that one call.
+write on the domain's credential in an attended turn reaches it (no taint condition since OPE-2716), and an allow covers that one call.
 A personal-browser step reaches it only when the personal-browser policy's `judge` switch is `enforce`
 (shipped `off`), and the judge does not read taint for that step.
 Source: `packages/core/agent/access/approval-judge.ts#approvalJudgeMode`;

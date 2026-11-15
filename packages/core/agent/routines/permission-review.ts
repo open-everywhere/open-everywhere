@@ -152,11 +152,11 @@ function nextStepFor(state: RoutinePermissionAskState, room: string): string {
     case "waiting":
       return `Approve or decline the permission card waiting in ${room} — approving it arms every future run of this instruction.`;
     case "declined":
-      return "Nothing is waiting: the routine stops asking until its instruction is edited. Editing it with `edit_routine` re-opens the question, and declaring the permission on that edit arms it outright.";
+      return "Nothing is waiting: the routine stops asking until its instruction is edited. Editing it with `edit_routine` re-opens the question. To arm it outright, re-create the routine with the permission declared on its creation card: an edit cannot declare one.";
     case "superseded":
       return `The card in ${room} was posted under an earlier instruction, so answering it records nothing. The next run that needs the permission posts a fresh card.`;
     case "lapsed":
-      return `No card is waiting and nothing was recorded. The next run that needs the permission posts a fresh card in ${room}. Declare the permission with \`edit_routine\` to arm it outright, which also resets the ask.`;
+      return `No card is waiting and nothing was recorded. The next run that needs the permission posts a fresh card in ${room}. To arm it outright, re-create the routine with the permission declared on its creation card; an \`edit_routine\` cannot declare one, and it revokes the routine's standing permissions.`;
     case "unreadable":
       return `This routine asked for it, and the card store could not be read — so whether a card is still waiting in ${room} is unknown. Look there before deciding anything, and ask again once the store answers.`;
   }

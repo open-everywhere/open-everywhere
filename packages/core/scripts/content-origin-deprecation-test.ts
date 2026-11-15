@@ -33,9 +33,10 @@ ok(connectionSearchRows({ tools: [{ connection: "notion", tool: "x" }], total: 1
 ok(connectionSearchRows({ tools: [], total: 0, extra: 1 }) === undefined, "2. …and still fails closed on an unknown key");
 
 ok(typeof TAINTED_CONNECTOR_ORIGIN_ADVICE === "string" && TAINTED_CONNECTOR_ORIGIN_ADVICE.length > 0, "3. TAINTED_CONNECTOR_ORIGIN_ADVICE still resolves for a consumer import");
-const tainted = unattendedConnectorRefusalMessage("notion", "notion__create_page", "write", true);
-ok(!tainted.includes(TAINTED_CONNECTOR_ORIGIN_ADVICE) && !tainted.includes("contentOrigin"), "3. 🔴 a tainted unattended refusal no longer advises declaring contentOrigin");
-ok(tainted.includes("The op did not run."), "3. …and the refusal itself is unchanged in shape");
+for (const refusal of [unattendedConnectorRefusalMessage("notion", "notion__create_page", "write"), unattendedConnectorRefusalMessage("notion", "notion__create_page", "write", true)]) {
+  ok(!refusal.includes(TAINTED_CONNECTOR_ORIGIN_ADVICE) && !refusal.includes("contentOrigin"), "3. 🔴 no unattended refusal advises declaring contentOrigin (the taint argument is ignored since OPE-2718)");
+  ok(refusal.includes("The op did not run."), "3. …and the refusal itself is unchanged in shape");
+}
 
 const spellings: ConnectorContentOriginSpec[] = ["internal", "external", { default: "internal", except: { search_tickets: "external" } }];
 const consumer: Bundle[] = spellings.map((contentOrigin, i) => ({ name: `consumer-${i}`, connectors: [{ name: `c${i}`, credential: "k", contentOrigin }] }));

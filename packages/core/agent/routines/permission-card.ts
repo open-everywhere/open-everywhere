@@ -58,7 +58,8 @@ export interface RoutinePermissionOffer {
   readonly scopeKey: string;
   readonly domain?: string | null;
   readonly requestedBy: string;
-  readonly tainted: boolean;
+  /** @deprecated OPE-2718: ignored. What the turn read plans or blocks nothing. */
+  readonly tainted?: boolean;
   readonly nowIso: string;
 }
 
@@ -80,7 +81,6 @@ async function routineForPermissionKey(org: string, scopeKey: string, routineId:
 
 export async function planRoutinePermissionCard(offer: RoutinePermissionOffer): Promise<RoutinePermissionPlan> {
   try {
-    if (offer.tainted) return { state: "n/a" };
     const declarable = declarableRoutinePermission(offer.declaration);
     if (!declarable) return { state: "n/a" };
     const parts = routinePermissionKeyParts(offer.grantKey);

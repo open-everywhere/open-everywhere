@@ -106,9 +106,9 @@ const cardRows = async (): Promise<{ id: string; argsJson: string; createdAt: st
   ok(routinePermissionMemoParts("routine.permission.asked:") === undefined, "§parse: a bare prefix names no permission, so it yields nothing to render");
 
   ok(declarationForPermissionKind("pr.open") === "pr.open", "§parse: pr.open is spelled as itself");
-  ok(declarationForPermissionKind("connector.tool:notion__share_page") === "tool:notion__share_page", "§parse: a connector-tool permission spells back as the `tool:` declaration edit_routine takes");
+  ok(declarationForPermissionKind("connector.tool:notion__share_page") === "tool:notion__share_page", "§parse: a connector-tool permission spells back as the `tool:` declaration create_routine takes");
   ok(declarationForPermissionKind("connector.op:notion") === undefined, "§parse: a legacy connector.op row lifts no tool, so no declaration is offered for it");
-  ok(declarationForPermissionKind("connector.tool:notion") === undefined, "§parse: a stored kind naming no connection segment spells back to nothing — advice edit_routine would refuse is never offered");
+  ok(declarationForPermissionKind("connector.tool:notion") === undefined, "§parse: a stored kind naming no connection segment spells back to nothing — advice create_routine would refuse is never offered");
   ok(declarationForPermissionKind("skill.create") === undefined, "§parse: a non-declarable kind offers no declaration");
 }
 
@@ -126,7 +126,7 @@ const nightly = await makeRoutine("r-nightly", SURFACE, "C1");
   const ask = view.asks[0]!;
   ok(ask.state === "waiting", "§waiting: a pending card row reads as waiting");
   ok(ask.permission === "open pull requests", "§waiting: the permission is named in the same words a live grant is");
-  ok(ask.declaration === "pr.open", "§waiting: …and the declaration is the string edit_routine would take");
+  ok(ask.declaration === "pr.open", "§waiting: …and the declaration is the string a creation card would take");
   ok(ask.room === SURFACE, "§waiting: the record names the room the card is actually in, read off the row");
   ok(ask.askedAt === card!.createdAt, "§waiting: …and when it was asked, off the same row");
   ok(ask.nextStep.includes(ROOM_WORDS) && ask.nextStep.includes("card"), "§waiting: the next step points at the card that is already there");
@@ -172,6 +172,7 @@ const refused = await makeRoutine("r-refused", SURFACE, "C1");
   ok(view.asks.length === 1 && view.asks[0]!.state === "declined", "§declined: the real decline hook's row reads back as declined");
   ok(view.asks[0]!.askedAt === null && view.asks[0]!.room === null, "§declined: no card row survives, so the record claims neither an instant nor a room");
   ok(view.asks[0]!.nextStep.includes("edit_routine"), "§declined: the next step is the one thing that re-opens it — editing the instruction");
+  ok(view.asks[0]!.nextStep.includes("re-create the routine with the permission declared on its creation card"), "§declined: …and arming it outright means a creation card, never an edit");
   ok(view.permissions.length === 0, "§declined: a decline grants nothing");
 }
 
@@ -184,6 +185,8 @@ const lapsed = await makeRoutine("r-lapsed", SURFACE, "C1");
   const view = await viewOf(lapsed);
   ok(view.asks.length === 1 && view.asks[0]!.state === "lapsed", "§lapsed: an ask marker with no card, no grant and no decline reads as lapsed");
   ok(view.asks[0]!.nextStep.includes(ROOM_WORDS), "§lapsed: the next step names the room later runs still point at, which is why this state is worth reporting");
+  ok(view.asks[0]!.nextStep.includes("re-create the routine with the permission declared on its creation card"), "§lapsed: …and arming it outright means a creation card");
+  ok(!/Declare the permission with `edit_routine`/.test(view.asks[0]!.nextStep), "§lapsed: …never the old edit_routine remedy, which cannot declare a permission");
   ok(view.permissions.length === 0, "§lapsed: nothing was armed");
 }
 

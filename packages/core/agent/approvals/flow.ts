@@ -49,7 +49,6 @@ import {
   noteRoutineRunPermissionRefusal,
   peekCardPostedThisTurn,
 } from "./card-signal.js";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { withArmingApproval } from "./arming-context.js";
 import { getSettings } from "../settings/settings.js";
 import type { ActionKind, PendingActionRow, PendingStatus } from "./types.js";
@@ -572,11 +571,9 @@ export async function requestApproval(
             `The judge's reasoning is recorded in the audit log (approval.judge.verdict); if this looks wrong, a person can propose the action themselves, and the operator can review this verb's defer flip.`,
         );
       }
-      const proposalTainted = input.chain?.tainted ?? untrustedIngestedThisTurn();
-      const taintedDeny = proposalTainted && reason === "ask-unattended";
       const card: RoutinePermissionCardOutcome =
         reason === "ask-unattended"
-          ? await offerRoutinePermissionCardForProposal(input, { tainted: proposalTainted, deps })
+          ? await offerRoutinePermissionCardForProposal(input, { deps })
           : { clause: "" };
       if (card.armedBy !== undefined) {
         const store = getOperationalStore();
@@ -631,14 +628,12 @@ export async function requestApproval(
       throw new Error(
         `"${input.kind}" was DENIED by the approver chain (${resolution.resolvedBy}${reason !== undefined ? `, ${reason}` : ""}) — ` +
           `nothing was proposed and no card was posted. ${
-            taintedDeny
-              ? "This turn read external content, so this action needs a person to confirm it — and this run is unattended, so there is nobody to ask. No standing grant lifts that; ask a person to do this, or raise it again in a turn that has not read anything external."
-              : reason === "ask-unattended"
-                ? card.waited === true
-                  ?
-                    "Arm the permission on the routine's creation card, or ask a person to do this."
-                  : "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
-                : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
+            reason === "ask-unattended"
+              ? card.waited === true
+                ?
+                  "Arm the permission on the routine's creation card, or ask a person to do this."
+                : "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
+              : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
           }${card.clause}`,
       );
     }
@@ -884,7 +879,7 @@ async function findPriorRejection(
 
 async function offerRoutinePermissionCardForProposal(
   input: RequestApprovalInput,
-  ctx: { readonly tainted: boolean; readonly deps: RequestApprovalDeps },
+  ctx: { readonly deps: RequestApprovalDeps },
 ): Promise<RoutinePermissionCardOutcome> {
   const grantKey = sessionIdFromFrozenArgs(JSON.stringify(input.args ?? null));
   if (grantKey === undefined) return { clause: "" };
@@ -897,7 +892,6 @@ async function offerRoutinePermissionCardForProposal(
       scopeKey: input.scopeKey,
       domain: input.domain ?? null,
       requestedBy: input.requestedBy,
-      tainted: ctx.tainted,
       waitBudgetMs: routineCardWaitBudgetMs(),
     },
     ctx.deps,
@@ -918,7 +912,6 @@ async function offerRoutinePermissionCard(
       scopeKey: offer.scopeKey,
       domain: offer.domain ?? null,
       requestedBy: offer.requestedBy,
-      tainted: offer.tainted,
       nowIso: new Date().toISOString(),
     });
     if (!plan.card || plan.askedMemoKind === undefined) {

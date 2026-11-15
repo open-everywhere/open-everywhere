@@ -801,13 +801,13 @@ What it means to be on the native route:
   Open Everywhere marks a turn that has ingested outside content — a fetched page, a connector
   result, an inbound webhook body. The parent stamps that mark onto its own auth attributes, the
   framework copies the attribute bag into the child's opening auth, and the child adopts the mark
-  before its first model call. So a child of a marked turn meets the same gates its parent would
-  have: the launder chain is closed by *propagation*, not by taking the verb away. One narrow gap
+  before its first model call. The mark travels with the work for audit and provenance; since OPE-2716
+  and OPE-2718 no approval verdict reads it, so it closes no gate. One narrow gap
   is stated rather than engineered around — a model step that issues an untrusted read and an
   `agent` call in the *same* response has already been handed its toolset, so that one child can
   race ahead of the stamp. Every later step of the turn is covered. A deployment can set
   `taint.mode: "off"`, which turns the marking off wholesale and takes the forward leg with it;
-  that gives up the launder-chain fence everywhere, not only here.
+  that gives up the forward mark everywhere, not only here.
 
 ### Background delegation
 
@@ -1556,19 +1556,14 @@ internal Notion/Linear workspace, a connector granted `contentOrigin: "internal"
 on a member-authored surface are read without marking; the open web, webhooks, uploads, image
 descriptions, a **public** repo, and anything whose deciding fact can't be read all mark. That
 marking
-is disclosure, not a gate: it puts a field on the `approval.chain` audit row (until OPE-2716).
-Since OPE-2717 no approval card shows it, except the routine kinds until OPE-2718. It does **not** reach a memory bullet — memory writes
+is disclosure, not a gate, and since OPE-2716 the `approval.chain` row no longer carries it (older rows still parse).
+Since OPE-2717 no approval card shows it, and since OPE-2718 the routine kinds show it neither. It does **not** reach a memory bullet — memory writes
 are freehand file edits captured at session end, so nothing attributes a diff back to the turn
 that made it; the durable record there is the `memory.write` audit row, and saying where a fact
 came from is prose the agent writes on the bullet
-([Memory](../capabilities/memory.md#the-shape-memory-keeps)). It changes a *verdict* in three
-places. The first is the sinks that **arm, rewrite or remove instruction and execution surface a later run
-obeys**: routines, skills, resident agents, routine rules and webhook ingress. There it FLOORS the
-verdict at `ask` rather than refusing, so a human still decides and an unattended run denies. The
-second is a connector write: a tainted turn keeps the card from the approval judge. The third is the
-unattended connector fence: no standing grant lifts a connector write on a tainted fire. Each
-of those tools declares that property on its registry row, and a build lint fails on any tool that
-writes such surface without declaring it — the set follows the code, never a hand-kept list. See
+([Memory](../capabilities/memory.md#the-shape-memory-keeps)). It changes no approval verdict
+(OPE-2716). Each sink follows its consequence tier, the judge reads no taint, and since OPE-2718 the
+unattended connector fence lifts a fire's declared write whatever the fire read. See
 [the security model](../security/security-model.md).
 
 **Names are content too, and they can't be fenced.** A display name, handle, attachment

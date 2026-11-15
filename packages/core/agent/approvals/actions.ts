@@ -105,6 +105,7 @@ export interface SpendSetArgs {
   readonly monthlyUsd?: number;
   readonly reason?: string;
   readonly scopeLabel?: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
@@ -244,6 +245,7 @@ export interface SpendClearArgs {
   readonly afterCap?: number | null;
   readonly afterUsd?: number | null;
   readonly scopeLabel?: string;
+  /** @deprecated Since OPE-2717 nothing writes or reads it. A card frozen before the deploy can still carry it; it is ignored. OPE-2721 removes it. */
   readonly tainted?: boolean;
 }
 

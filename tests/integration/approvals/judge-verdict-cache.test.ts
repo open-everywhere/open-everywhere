@@ -247,7 +247,7 @@ test("the enforce cache does NOT cross sessions: a second delegation's worker co
   expect(results[0]!.output["created"]).toBe(true);
 });
 
-test("an untrusted read mid-turn: the second proposal is a fresh consult on its own frozen args, and both auto-approve — no taint floor, no card", async () => {
+test("an untrusted read mid-turn: the second proposal is the same act, the cached allow answers it, and both auto-approve — no taint floor, no card", async () => {
   await armSeams();
   await armEnforce();
   verdictWord = "allow";
@@ -264,12 +264,11 @@ test("an untrusted read mid-turn: the second proposal is a fresh consult on its 
   const rows = await approvalRows(cursor, 2);
   const judged = judgeRows(rows);
   const first = `consult ${before + 1}`;
-  const second = `consult ${before + 2}`;
 
-  expect(judged.filter((j) => j.reason === first)).toEqual([{ reason: first, source: "pass2", cacheHit: false, passes: 2 }]);
-  expect(judged.filter((j) => j.reason === second)).toEqual([{ reason: second, source: "pass2", cacheHit: false, passes: 2 }]);
-  expect(reasons.length).toBe(before + 2);
-  expect(judged.filter((j) => j.source === "cache")).toEqual([]);
+  expect(judged.length).toBe(2);
+  expect(judged.filter((j) => j.source !== "cache")).toEqual([{ reason: first, source: "pass2", cacheHit: false, passes: 2 }]);
+  expect(judged.filter((j) => j.source === "cache")).toEqual([{ reason: first, source: "cache", cacheHit: true, passes: 0 }]);
+  expect(reasons.length).toBe(before + 1);
 
   const chains = rows.filter((r) => r.action === "approval.chain" && r.detail?.tool === "create_routine");
   expect(chains.length).toBe(2);

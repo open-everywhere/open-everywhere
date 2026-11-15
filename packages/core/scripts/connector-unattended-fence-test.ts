@@ -158,18 +158,17 @@ console.log("§1 the ask-unattended sentence is flow.ts's, verbatim:");
     "the plain constant appears VERBATIM in approvals/flow.ts (RED the moment either copy is edited)",
   );
   ok(
-    flowSrc.includes(TAINTED_ASK_UNATTENDED_SENTENCE),
-    "the TAINTED constant appears VERBATIM there too — flow.ts carries two unattended sentences, not one",
+    !flowSrc.includes(TAINTED_ASK_UNATTENDED_SENTENCE),
+    "OPE-2718: the deprecated TAINTED sentence is gone from approvals/flow.ts — neither plane emits it now",
   );
   ok(ASK_UNATTENDED_SENTENCE.includes("arm the permission on the routine's creation card"), "the plain sentence tells the reader to arm the permission");
   ok(TAINTED_ASK_UNATTENDED_SENTENCE.includes("No standing grant lifts that"), "…and the tainted one says a standing grant does NOT lift it");
   const plain = unattendedConnectorRefusalMessage("notion", WRITE_OP, "write", false);
-  const poisoned = unattendedConnectorRefusalMessage("notion", WRITE_OP, "write", true);
-  ok(plain.includes(ASK_UNATTENDED_SENTENCE) && !plain.includes(TAINTED_ASK_UNATTENDED_SENTENCE), "an untainted refusal carries the PLAIN sentence and only that one");
-  ok(poisoned.includes(TAINTED_ASK_UNATTENDED_SENTENCE) && !poisoned.includes(ASK_UNATTENDED_SENTENCE), "a tainted refusal carries the TAINTED sentence and only that one");
+  const legacyTainted = unattendedConnectorRefusalMessage("notion", WRITE_OP, "write", true);
+  ok(plain.includes(ASK_UNATTENDED_SENTENCE) && !plain.includes(TAINTED_ASK_UNATTENDED_SENTENCE), "a refusal carries the PLAIN sentence and only that one");
+  ok(legacyTainted === plain, "OPE-2718: the deprecated tainted argument is ignored — the fence has one refusal sentence");
   ok(plain.includes(`Declare "${WRITE_DECLARATION}"`), "the plain refusal names the exact declaration string a human would arm (write tier)");
   ok(!plain.includes('Declare "tool:notion"'), "…and never a connection-shaped declaration, which names no tool");
-  ok(!poisoned.includes(`Declare "${WRITE_DECLARATION}"`), "…and the tainted refusal offers no such advice, because arming the card would not lift it");
   ok(
     !unattendedConnectorRefusalMessage("notion", DESTRUCTIVE_OP, "destructive", false).includes("Declare "),
     "…nor does a destructive refusal, which no declared permission can lift",
@@ -332,48 +331,42 @@ console.log("§10 an unattended run with no routine permission key:");
   ok(rowFor(await refusedRows(), WRITE_OP) !== undefined, "…and the refusal is still audited");
 }
 
-console.log("§11 a poisoned turn is never lifted:");
+console.log("§11 a fire that read outside content lifts its declared write:");
 {
-  const clean = withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => false });
-  const poisoned = withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => true });
-  ok((await ask(clean, fireAuth(), WRITE_OP)) === "not-applicable", "control: the same fire, same row, UNtainted → lifted");
-  const decision = await ask(poisoned, fireAuth(), WRITE_OP);
-  ok(isDenied(decision), "a TAINTED fire is REFUSED, however live the row (TAINTED-NEVER, as tools/open_pull_request.ts reads it)");
-  ok(isDenied(decision) && (decision.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "…with the approvals plane's TAINTED sentence, not the plain one");
-  ok(isDenied(decision) && !(decision.reason ?? "").includes(`Declare "${WRITE_DECLARATION}"`), "…and no advice to arm a card that would not lift it");
-  const row = rowFor(await refusedRows(), WRITE_OP);
-  ok(row?.detail?.["reason"] === "ask-unattended-tainted" && row.detail["tainted"] === true, "…and the audit row says WHY it was refused");
-  ok(isDenied(await ask(poisoned, fireAuth(), DESTRUCTIVE_OP)), "a tainted destructive op is refused as well");
-  const thrownRows: Record<string, unknown>[] = [];
-  const throwingTaint = withUnattendedConnectorFence(fixedPolicy("user-approval"), {
-    tainted: () => {
-      throw new Error("no session slot");
-    },
+  const sink: Record<string, unknown>[] = [];
+  const readPage = withUnattendedConnectorFence(fixedPolicy("user-approval"), {
+    tainted: () => true,
     audit: (async (row: unknown) => {
-      thrownRows.push(row as Record<string, unknown>);
+      sink.push(row as Record<string, unknown>);
     }) as never,
   });
-  const thrownDecision = await ask(throwingTaint, fireAuth(), WRITE_OP);
-  ok(isDenied(thrownDecision), "🔴 a THROWING taint read REFUSES — the row that lifted the control call above lifts nothing when the signal could not be read");
-  ok(isDenied(thrownDecision) && (thrownDecision.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "…with the TAINTED sentence, because an unreadable signal is treated as poisoned rather than as clean");
-  ok(thrownRows.length === 1, "…and it writes EXACTLY ONE audit row — a lift would have written a `connector.unattended_lift` instead, and no row at all would mean the refusal ran off a stand-down path");
-  const thrownDetail = (thrownRows[0]?.["detail"] ?? {}) as Record<string, unknown>;
-  ok(thrownDetail["tainted"] === true && thrownDetail["reason"] === "ask-unattended-tainted", "…and THAT row says why a live row did not lift — read off the injected sink, so no earlier leg's row can answer for it");
-  ok((await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => false }), fireAuth(), WRITE_OP)) === "not-applicable", "control: a read that ANSWERS false still lifts — the refusal above is the throw, not the fence");
-  const settled = await ask(throwingTaint, fireAuth(), WRITE_OP).then(() => "resolved", () => "rejected");
-  ok(settled === "resolved", "…and the throw is ANSWERED, never propagated to eve — the policy settles fulfilled");
-}
-
-console.log("§11b a poisoned fire is not told to declare the retired contentOrigin:");
-{
-  const poisoned = withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => true });
-  const decision = await ask(poisoned, fireAuth(), WRITE_OP);
-  ok(isDenied(decision), "🔴 a tainted unattended write is still REFUSED — the fence decides as before");
-  ok(isDenied(decision) && !(decision.reason ?? "").includes("contentOrigin"), "OPE-2723: …and the refusal no longer tells the operator to declare `contentOrigin`");
-  ok(isDenied(decision) && (decision.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "…and the plane's own sentence still stands, unedited");
-  ok(isDenied(decision) && !(decision.reason ?? "").includes(`Declare "${WRITE_DECLARATION}"`), "…and still no advice to arm a card that would not lift it");
-  const cleanRefusal = await ask(withUnattendedConnectorFence(fixedPolicy("user-approval"), { tainted: () => false }), webhookAuth(), WRITE_OP);
-  ok(isDenied(cleanRefusal) && (cleanRefusal.reason ?? "").includes(`Declare "${WRITE_DECLARATION}"`), "control: an UNtainted unattended refusal still names the declaration that would lift it");
+  ok((await ask(readPage, fireAuth(), WRITE_OP)) === "not-applicable", "🔴 OPE-2718: a fire that read outside content LIFTS its declared write (row 8: no taint condition)");
+  ok(sink.length === 1 && sink[0]?.["action"] === "connector.unattended_lift", "…and writes the ordinary lift audit row");
+  ok(!("tainted" in ((sink[0]?.["detail"] ?? {}) as Record<string, unknown>)), "…which carries no taint field");
+  let consulted = false;
+  const throwingRead = withUnattendedConnectorFence(fixedPolicy("user-approval"), {
+    tainted: () => {
+      consulted = true;
+      throw new Error("no session slot");
+    },
+  });
+  ok((await ask(throwingRead, fireAuth(), WRITE_OP)) === "not-applicable", "OPE-2718: a throwing taint read changes nothing — the declared write still lifts");
+  ok(!consulted, "…because the fence never consults the read");
+  sink.length = 0;
+  const destructive = await ask(readPage, fireAuth(), DESTRUCTIVE_OP);
+  ok(isDenied(destructive), "🔴 DESTRUCTIVE-NEVER still holds: a destructive op on a fire that read outside content is refused");
+  ok(isDenied(destructive) && !(destructive.reason ?? "").includes("Declare "), "…and no declaration is advised, because none can lift it");
+  ok(sink.length === 1 && (sink[0]?.["detail"] as Record<string, unknown>)?.["reason"] === "ask-unattended", "…and the refusal row's reason is the plain `ask-unattended`");
+  sink.length = 0;
+  const undeclared = await ask(readPage, fireAuth(), INVITE_OP);
+  ok(isDenied(undeclared), "🔴 an UNDECLARED write on a fire that read outside content is still refused");
+  ok(isDenied(undeclared) && (undeclared.reason ?? "").includes(ASK_UNATTENDED_SENTENCE) && !(undeclared.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "…with the PLAIN sentence and never the tainted one");
+  ok(isDenied(undeclared) && (undeclared.reason ?? "").includes(`Declare "tool:${INVITE_OP}"`), "…which names the declaration that WOULD lift it");
+  ok(isDenied(undeclared) && !(undeclared.reason ?? "").includes("contentOrigin"), "…and never the retired contentOrigin advice");
+  const detail = (sink[0]?.["detail"] ?? {}) as Record<string, unknown>;
+  ok(detail["reason"] === "ask-unattended" && !("tainted" in detail), "…and its audit row has the plain reason and no taint field");
+  const settled = await ask(throwingRead, fireAuth(), INVITE_OP).then(() => "resolved", () => "rejected");
+  ok(settled === "resolved", "the fence settles fulfilled on every path, never propagated to eve");
 }
 
 console.log("§12 a <plugin>__<server> connection keys on its whole tool name:");
@@ -547,9 +540,8 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
   ok(isDenied(noAuth), "🔴 an unattended fire with NO `session.auth` is REFUSED on the arm-lowered path, not executed");
   ok(isDenied(noAuth) && (noAuth.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the approvals plane's own ask-unattended sentence");
   ok(isDenied(await ask(openedPolicy(), null, NOUN_COLLISION_OP)), "a NULL auth bag refuses on the same path");
-  const poisoned = await ask(openedPolicy({ tainted: () => true }), undefined, NOUN_COLLISION_OP);
-  ok(isDenied(poisoned) && (poisoned.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "a TAINTED arm-lowered stand-down refuses with the plane's TAINTED sentence");
-  ok(isDenied(poisoned) && !(poisoned.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…and not the plain one, whose advice a poisoned turn cannot act on");
+  const readPage = await ask(openedPolicy({ tainted: () => true }), undefined, NOUN_COLLISION_OP);
+  ok(isDenied(readPage) && (readPage.reason ?? "").includes(ASK_UNATTENDED_SENTENCE) && !(readPage.reason ?? "").includes(TAINTED_ASK_UNATTENDED_SENTENCE), "OPE-2718: an arm-lowered stand-down on a fire that read outside content still refuses, with the plain sentence");
   const unbindable = await ask(openedPolicy({ surfaceContext: async () => null }), fireAuth(), NOUN_COLLISION_OP);
   ok(isDenied(unbindable), "🔴 a surface that will not bind is REFUSED under the same arm — an unprovable turn is not a proven attended one");
   ok(rowFor(await refusedRows(), "grant__U0OWNER__frobnicate") === undefined, "…and no `connector.refused` row is written for a stand-down there is no readable bag to attribute");
@@ -591,4 +583,4 @@ console.log("§hints the server's annotations join the fence's built-in tier (20
 }
 
 await removeTempDir(tmp);
-console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + TAINTED-never + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor)`);
+console.log(`✓ connector-unattended-fence: ${passed} assertions passed (refuse + lift + attended/read untouched + destructive-never + no taint condition + per-tool keying + legacy refused + ordering + fail-soft + bag selection + the OPE-1321 arm floor)`);

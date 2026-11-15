@@ -59,9 +59,8 @@ carries, the human-only class never reaches the judge, and the clamps run after 
   code: the judge is not consulted, and no rule can lift it;
 - every verb that is not defer-flipped (§4);
 - every connector op except a write or a delete that runs with the domain's credential. An op on a
-  person's own account, an op in an unattended run, an op in a turn that read external content, an
-  op in a room that does not belong to exactly one domain, and an op whose input is too long for the
-  card to show in full all keep the connector card. So does an op whose name carries no
+  person's own account, an op in an unattended run, an op in a room that does not belong to exactly one domain, and an op whose input is too long for the
+  card to show in full all keep the connector card. A turn that read external content is no condition (OPE-2716). So does an op whose name carries no
   verb the classifier recognises (`execute_sql`, `run_workflow`), unless the tool annotations of its
   registered server bring its final tier down to `read`: the judge reads an op mostly by its name,
   so it is not a known write or delete. Code decides this before the judge, so no rule can change
@@ -240,7 +239,7 @@ untouched:
 | **Deny** | A deny from any element, or from the judge itself, is absolute and skips everything. |
 | **The clamps** | Modes, the beneficiary-clicker floor and the unattended clamp run *after* the judge. They still tighten a rule-driven allow exactly as they tighten any other. |
 | **The human-only class** | Every admin act (a `gate:admin` row, such as `set_spend_limit`) needs a person's click, and so does erasing remembered facts (`purge_memory`). So does a routine whose creation card declares a standing write — `pr.open`, or a connector tool that is not a read ([declared permissions](../capabilities/proactivity-and-routines.md)). The judge is not consulted for either, so no rule can lift them, and the verdict row records `source: "human-only"`. |
-| **The connector fence** | A connector card reaches the chain only for an op whose name tiers it `write` or `destructive` (a delete reaches it since 2026-10-10), on the domain's credential, in an attended turn that read no external content, in a room with exactly one domain, with an input the card shows in full (`access/approver-chain.ts` `judgedConnectorOpTool`). An op whose name carries no recognised verb keeps its card. The card freezes the op's effective tier as `opTier`, and the judge reads it. A write-named op that an operator's `connectorOps` raise or a server's `destructiveHint` made destructive keeps its card, because the judge reads an op mostly by its name. Every other connector card keeps its old road and never meets the judge. A judge allow runs that one call, and only the judge can lift the card. |
+| **The connector fence** | A connector card reaches the chain only for an op whose name tiers it `write` or `destructive` (a delete reaches it since 2026-10-10), on the domain's credential, in an attended turn (no taint condition since OPE-2716), in a room with exactly one domain, with an input the card shows in full (`access/approver-chain.ts` `judgedConnectorOpTool`). An op whose name carries no recognised verb keeps its card. The card freezes the op's effective tier as `opTier`, and the judge reads it. A write-named op that an operator's `connectorOps` raise or a server's `destructiveHint` made destructive keeps its card, because the judge reads an op mostly by its name. Every other connector card keeps its old road and never meets the judge. A judge allow runs that one call, and only the judge can lift the card. |
 | **The cache** | An enforced cached allow is keyed on the act's whole arguments, the requester and `unattended` (`approval-judge.ts` `enforcedVerdictCacheKey`), so it never answers for a different act. |
 
 There is deliberately **no deny tier and no hard-deny tier** in this store. Denial already lives

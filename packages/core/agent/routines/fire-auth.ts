@@ -22,7 +22,7 @@ export function routineFireAttributes(
     ...rootDmGrainAttrs(
       mode === "dm" || mode === "mpim",
     ),
-    ...jobFireAttrs(isJobRoutine(r), r.jobTainted === true),
+    ...jobFireAttrs(isJobRoutine(r)),
     [ROUTINE_MARKER.id]: r.id,
     [ROUTINE_MARKER.surface]: r.surfaceKey,
     [ROUTINE_MARKER.org]: r.org,

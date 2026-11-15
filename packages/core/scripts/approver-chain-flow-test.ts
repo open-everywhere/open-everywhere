@@ -350,8 +350,8 @@ const rotateArgs = {
       threw = String(e);
     }
     ok(threw.includes("DENIED") && threw.includes("ask-unattended"), "taint/unattended: an unlowered gated act with nobody watching DENIES");
-    ok(threw.includes("read external content"), "taint/unattended: …and the refusal tells the model to ask a person (the planner's taint refusal, OPE-2718)");
-    ok(!threw.includes("arm the permission on the routine's creation card"), "taint/unattended: …without advice to arm a card the planner would refuse");
+    ok(!threw.includes("read external content"), "taint/unattended: OPE-2718: …and the refusal names no taint");
+    ok(threw.includes("arm the permission on the routine's creation card"), "taint/unattended: OPE-2718: …it gives the ordinary advice to arm the permission");
     const d = (await chainRowFor({ action: "routine.policy.add", unattended: true })) as { verdict?: string; transforms?: { name: string }[] };
     ok(d.verdict === "deny" && (d.transforms ?? []).map((t) => t.name).join(",") === "unattended", "taint/unattended: the row shows the deny by the unattended arrow alone");
   }

@@ -1,7 +1,6 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { routineMarker } from "../routines/routine.js";
 import {
   applyFollowUp,
@@ -65,7 +64,6 @@ export default defineTool({
       name: input.name,
       note: input.note,
       at: new Date().toISOString(),
-      ...(untrustedIngestedThisTurn() ? { tainted: true } : {}),
     });
     await updateRoutine(marker.org, marker.surfaceKey, marker.id, write.patch);
     return { followUps: write.followUps.map((f) => f.name), ...(write.evicted ? { evicted: write.evicted } : {}) };

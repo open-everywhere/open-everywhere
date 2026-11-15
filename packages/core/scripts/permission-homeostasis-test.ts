@@ -345,8 +345,10 @@ const GRANTS: DeclaredGrants[] = [
   ok(unattendedCluster.kind === "connector-refused" && unattendedCluster.unroutedUnattended === 1, "connector: …and the un-routed row is kept on its own field rather than dropped");
   const unattendedProposal = proposePermissionChanges(unattendedEv, "widen").find((p) => p.id === "widen:connector:unattended:notion");
   ok(unattendedProposal !== undefined && /2 unattended/.test(unattendedProposal.summary), "🔴 connector: the empty-room refusal proposes on the credential plane too, counting the two liftable rows ONLY");
-  ok(unattendedProposal!.diff === undefined && /edit_routine/.test(unattendedProposal!.remedy ?? ""), "connector: …with no bundle diff — a standing routine permission is a store row, not config");
-  ok(/destructive/.test(unattendedProposal!.remedy ?? ""), "🔴 connector: …and the remedy states that a destructive op and a tainted turn are lifted by NOTHING, so those rows read as a control working");
+  ok(unattendedProposal!.diff === undefined && /re-create the routine with it declared/.test(unattendedProposal!.remedy ?? ""), "connector: …with no bundle diff — a standing routine permission is a store row, armed on a creation card");
+  ok(!/Re-arm it with `edit_routine`/.test(unattendedProposal!.remedy ?? ""), "OPE-2718: …and the remedy never sends the reader to edit_routine, which cannot declare a permission");
+  ok(/destructive/.test(unattendedProposal!.remedy ?? ""), "🔴 connector: …and the remedy states that a destructive op is lifted by NOTHING, so those rows read as a control working");
+  ok(/before OPE-2718/.test(unattendedProposal!.remedy ?? ""), "OPE-2718: …and it names an `ask-unattended-tainted` row as legacy, from before the fence lost its taint condition");
 
   const walls = [
     refused(1, { connection: "notion", reason: "dm_only", mode: "channel" }),

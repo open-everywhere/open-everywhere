@@ -711,14 +711,20 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const id = (await store.listAllRoutines()).find((r) => r.surfaceKey === SURFACE && r.prompt === "Summarise the page I just read.")?.id;
   ok(id !== undefined, "taint: the armed routine is on the store");
   const stored = await store.getRoutine(ORG, SURFACE, id!);
-  ok(stored?.taintedAtCreation === true, "taint: the propose-time verdict is FROZEN ONTO THE ROW (it used to live only on the card and the routine.create audit row)");
+  ok(stored !== null && !("taintedAtCreation" in stored!), "🔴 OPE-2718: a legacy tainted:true card arms a row with NO taint field");
 
   const ctx = {
     channel: { kind: "slack" },
     session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" }, principalId: "U1", principalType: "slack-user" } } },
   } as never;
-  const listed = (await listRoutinesTool.execute({ includeDisabled: true, id } as never, ctx)) as { routines: { taintedAtCreation: boolean }[] };
-  ok(listed.routines[0]!.taintedAtCreation === true, "taint: list_routines can finally say WHICH standing autonomy was authored in a turn that had read external content");
+  const listed = (await listRoutinesTool.execute({ includeDisabled: true, id } as never, ctx)) as { routines: { taintedAtCreation?: true }[] };
+  ok(!("taintedAtCreation" in listed.routines[0]!), "OPE-2718: …and list_routines states NO taint verdict for it (absent, never a false 'clean')");
+
+  await store.addRoutine(partition as never, { ...stored!, id: "r-legacytaint", prompt: "Legacy row.", taintedAtCreation: true });
+  const legacyRow = await store.getRoutine(ORG, SURFACE, "r-legacytaint");
+  ok(legacyRow?.taintedAtCreation === true && legacyRow.status === "active", "OPE-2718: a legacy row with taintedAtCreation loads, active");
+  const legacyListed = (await listRoutinesTool.execute({ includeDisabled: true, id: "r-legacytaint" } as never, ctx)) as { routines: { taintedAtCreation?: true }[] };
+  ok(legacyListed.routines[0]!.taintedAtCreation === true, "…and list_routines still reports its legacy creation fact");
 
   const cleanArmed = await kind.execute(
     {
@@ -735,8 +741,8 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const cleanId = (await store.listAllRoutines()).find((r) => r.surfaceKey === SURFACE && r.prompt === "Post the standup reminder.")?.id;
   const cleanStored = await store.getRoutine(ORG, SURFACE, cleanId!);
   ok(cleanStored !== null && !("taintedAtCreation" in cleanStored), "taint: a clean arm stores NO taint key (absent, never `false`)");
-  const cleanListed = (await listRoutinesTool.execute({ includeDisabled: true, id: cleanId } as never, ctx)) as { routines: { taintedAtCreation: boolean }[] };
-  ok(cleanListed.routines[0]!.taintedAtCreation === false, "taint: the tool reports a clean routine as untainted");
+  const cleanListed = (await listRoutinesTool.execute({ includeDisabled: true, id: cleanId } as never, ctx)) as { routines: { taintedAtCreation?: true }[] };
+  ok(!("taintedAtCreation" in cleanListed.routines[0]!), "OPE-2718: the tool states no taint verdict for a row armed now");
 }
 
 await removeTempDir(dir);
