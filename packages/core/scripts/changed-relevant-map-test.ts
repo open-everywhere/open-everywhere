@@ -187,16 +187,16 @@ ok(
   beyondAlways(settlementFlushOnly).length > 0,
 );
 ok(
-  "S-TAINT-ROUTE-LIVE (the ticket-named already-live delegated-worker leg) covers all three delegation-identity paths",
-  taskWakeOnly.includes("S-TAINT-ROUTE-LIVE") &&
-    dispatchOriginOnly.includes("S-TAINT-ROUTE-LIVE") &&
-    settlementFlushOnly.includes("S-TAINT-ROUTE-LIVE"),
+  "S-DELEGATED-slack (a live delegated-worker leg; S-TAINT-ROUTE-LIVE held this pin until OPE-2726 removed it) covers all three delegation-identity paths",
+  taskWakeOnly.includes("S-DELEGATED-slack") &&
+    dispatchOriginOnly.includes("S-DELEGATED-slack") &&
+    settlementFlushOnly.includes("S-DELEGATED-slack"),
 );
 
 const siblingHook = relevantScenarios(["packages/core/agent/hooks/memory.ts"]);
 ok(
-  "a sibling hook file (memory.ts, not settlement-flush.ts) does NOT pick up S-TAINT-ROUTE-LIVE via delegation-identity",
-  !siblingHook.includes("S-TAINT-ROUTE-LIVE"),
+  "a sibling hook file (memory.ts, not settlement-flush.ts) does NOT pick up S-DELEGATED-slack via delegation-identity",
+  !siblingHook.includes("S-DELEGATED-slack"),
 );
 
 console.log(`\n✓ changed-relevant map: ${n} assertions passed (${CHANGED_RELEVANT_MAP.length} areas, ${rosterIds.size} roster scenarios, ${UNMAPPED_BY_DESIGN.length} unmapped-by-design)\n`);

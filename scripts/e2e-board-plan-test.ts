@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -298,9 +298,25 @@ const serialRow = (id: string): LaneDeclaration => ({ id, parallel: "serial", wh
   const flagAsValue = run(["--changed", "--plan"]);
   ok(flagAsValue.code === 1 && flagAsValue.out.includes("--changed needs a value"), "a value flag never takes the next flag as its value");
 
+  const planIds = (out: string): string[] =>
+    out.split("\n").filter((l) => /^\| \d+ \|/.test(l)).map((l) => l.split("|")[2]!.trim());
   const deferred = run(["--plan"]);
-  ok(deferred.code === 0 && !deferred.out.includes("| S-TAINT-ROUTE-LIVE |"), "the default plan leaves out the expensive leg a default run defers");
-  ok(run(["--plan", "--include-expensive"]).out.includes("| S-TAINT-ROUTE-LIVE |"), "…and lists it when the run would include it");
+  const planned = planIds(deferred.out);
+  const rosterIds = SCENARIOS.map((s) => s.id);
+  ok(deferred.code === 0 && planned.length === rosterIds.length && rosterIds.every((id) => planned.includes(id)), `the default plan lists every roster leg — ${planned.length} of ${rosterIds.length}`);
+  ok(!planned.some((id) => id.startsWith("S-TAINT-")), "🔴 OPE-2726: the plan lists no taint leg");
+  ok(planned.includes("S-UNATTENDED-DENY"), "🔴 OPE-2726: the presence-fence leg keeps its place in the plan under its non-taint name");
+  ok(SCENARIOS.every((s) => s.expensive !== true), "the roster carries no expensive leg since OPE-2726");
+  ok(planIds(run(["--plan", "--include-expensive"]).out).join(",") === planned.join(","), "…so --include-expensive plans the same legs in the same order");
+  const runnerSrc = readFileSync(RUNNER, "utf8").replace(/\s+/g, " ");
+  ok(
+    runnerSrc.includes("return !(scenario.expensive === true && !includeExpensive && !explicitlyNamed);"),
+    "🔴 WIRING: the plan's keep() still defers an expensive leg unless --include-expensive is set or the leg is named",
+  );
+  ok(
+    runnerSrc.includes('const includeExpensive = process.argv.includes("--include-expensive") || (process.env.E2E_INCLUDE_EXPENSIVE ?? "").trim() === "1";'),
+    "🔴 WIRING: the runner still reads the opt-in from --include-expensive or E2E_INCLUDE_EXPENSIVE=1",
+  );
   const smoke = run(["--plan"], { E2E_SUITE: "smoke" });
   const smokeRows = smoke.out.split("\n").filter((l) => /^\| \d+ \|/.test(l));
   ok(smokeRows.length === SCENARIOS.filter((s) => s.smoke === true).length, `a smoke plan lists only the smoke legs — ${smokeRows.length} rows`);

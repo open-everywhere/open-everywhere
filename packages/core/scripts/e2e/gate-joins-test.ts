@@ -1869,10 +1869,10 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(approvalPlaneRowsOn([on(row(APPROVAL_JUDGE_VERDICT_ACTION, deny.ts, { tool: "create_routine" }), "C0ROOM")], boundary).length === 0, "a verdict for ANOTHER tool never counts");
 
   const scenarioSource = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
-  const legStart = scenarioSource.indexOf('id: "S-TAINT-UNATTENDED-DENY"');
+  const legStart = scenarioSource.indexOf('id: "S-UNATTENDED-DENY"');
   const pathB = scenarioSource.indexOf("judgeDeniedRoutineCreation(", legStart);
   const fireWait = scenarioSource.indexOf("const FIRE_WAIT =", legStart);
-  ok(legStart > 0 && pathB > legStart && fireWait > pathB, "🔴 OPE-2060: S-TAINT-UNATTENDED-DENY reads the judge's deny row BEFORE its fire wait");
+  ok(legStart > 0 && pathB > legStart && fireWait > pathB, "🔴 OPE-2060: S-UNATTENDED-DENY reads the judge's deny row BEFORE its fire wait");
 }
 
 {
@@ -1905,8 +1905,6 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(j3 > 0 && j3Body.includes("dollarOnlySpendCardFault(card1.text)"), "🔴 OPE-2069: J3 reads card1 through the reader");
   ok(j3Body.includes("ctx.gate(card1Fault === undefined"), "🔴 OPE-2069: J3 gates card1's verdict");
   ok(/leg: "S5-approve"[\s\S]{0,400}precheck: \(card\) => dollarOnlySpendCardFault\(card\.text\)/.test(j3Body), "🔴 OPE-2069: J3 checks card2 BEFORE the approve click");
-  const taint = src.indexOf('id: "S-TAINT-ROUTE-LIVE"');
-  ok(taint > 0 && src.indexOf("dollarOnlySpendCardFault(cardN.text)", taint) > taint, "🔴 OPE-2069: S-TAINT-ROUTE-LIVE gates its clean-control card");
   const jDisc = src.indexOf('id: "J-DISC"');
   const jDiscFault = src.indexOf("dollarOnlySpendCardFault(cardReply.content)", jDisc);
   ok(jDisc > 0 && jDiscFault > jDisc && jDiscFault < src.indexOf("\n  {\n    id: ", jDisc + 10), "🔴 OPE-2069: J-DISC gates its card body");
@@ -2047,7 +2045,7 @@ console.log("25. the rewritten e2e asks carry no test scaffolding:");
   const { supervisorAsk } = await import("./journey.js");
   ok(legAsk("J-SUP", "supervisorAsk(marker)", ")").length > 0, "J-SUP builds its ask with supervisorAsk (OPE-2361)");
   asks.push(["J-SUP", supervisorAsk("sup-12345").text]);
-  asks.push(["S-TAINT-UNATTENDED-DENY", legAsk("S-TAINT-UNATTENDED-DENY", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
+  asks.push(["S-UNATTENDED-DENY", legAsk("S-UNATTENDED-DENY", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
   asks.push(["S-ROUTINE-CONNECTOR-WRITE", legAsk("S-ROUTINE-CONNECTOR-WRITE", "Please schedule a one-shot check-in", "Confirm you've scheduled it.")]);
   const { routineConnectorFirePrompt, ROUTINE_CONNECTOR_WRITE_OP } = await import("./routine-connector-fixture.js");
   asks.push(["S-ROUTINE-CONNECTOR-WRITE arm A fire prompt", routineConnectorFirePrompt(ROUTINE_CONNECTOR_WRITE_OP, "rcwa-1", "rcwfxa-2")]);
@@ -2068,26 +2066,6 @@ console.log("25. the rewritten e2e asks carry no test scaffolding:");
   const discordAsk = asks[0]![1];
   ok(discordAsk.includes("ref dgrant-x") && discordAsk.includes("page-1") && discordAsk.includes("discord/1") && discordAsk.includes("<@1>"), "the grant ask keeps the mention, ref, page and owner key");
   ok(asks[2]![1].includes("sup-12345") && asks[4]![1].includes("routineConnectorReportLine(fireWord)") && asks[3]![1].includes("${fireWord}"), "the inline asks keep their ref and confirmation-word tokens");
-}
-
-console.log("26. the REST-road witness reads a quoted notion-rest script path:");
-{
-  const { isNotionReadCall, isNotionRestWrappedRead, transcriptHasNotionPageRead } = await import("./notion-taint-replay.js");
-  const SCRIPT = "$HOME/.agents/skills/notion-rest/scripts/notion.mjs";
-  const bash = (command: string) => ({ toolName: "bash", input: { command } });
-  const quoted = bash(`node "${SCRIPT}" page markdown current`);
-  ok(isNotionReadCall(quoted, "notion"), "🔴 OPE-2394: a `bash` call with a double-quoted script path and `page markdown` is a Notion read");
-  ok(isNotionReadCall(bash(`node '${SCRIPT}' blocks list current`), "notion"), "…and a single-quoted path with `blocks list`");
-  ok(isNotionReadCall(bash(`node ${SCRIPT} comments list current`), "notion"), "…and a bare path with `comments list` (the old form still reads)");
-  ok(isNotionRestWrappedRead({ script: `node "${SCRIPT}" page markdown current` }), "…and an input with no `command` string, read from its serialised form");
-  const events: TranscriptWireEvent[] = [{ index: 0, at: null, type: "actions.requested", data: { turnId: "turn_1", actions: [{ callId: "c1", ...quoted }] } }];
-  ok(transcriptHasNotionPageRead(events, { road: "rest", connector: "notion" }), "🔴 OPE-2394: the arm-B transcript witness on the REST road sees the quoted-path read");
-  ok(isNotionReadCall(bash(`node "${SCRIPT}" page current`), "notion") === false, "NEGATIVE CONTROL: `page current` (a handle, no content) is not a read");
-  ok(isNotionReadCall(bash(`node "${SCRIPT}" search "roadmap"`), "notion") === false, "NEGATIVE CONTROL: `search` is not a read");
-  ok(isNotionReadCall(bash(`cat "${SCRIPT}" | grep "page markdown"`), "notion") === false, "NEGATIVE CONTROL: a command that only names the verb elsewhere is not a read");
-  ok(isNotionReadCall({ toolName: "write_file", input: { command: `node "${SCRIPT}" page markdown current` } }, "notion") === false, "NEGATIVE CONTROL: a non-bash tool with the same text is not a REST read");
-  const other: TranscriptWireEvent[] = [{ index: 0, at: null, type: "actions.requested", data: { actions: [{ callId: "c2", ...bash(`node "${SCRIPT}" page current`) }] } }];
-  ok(transcriptHasNotionPageRead(other, { road: "rest", connector: "notion" }) === false, "NEGATIVE CONTROL: the transcript witness refuses a handle-only call");
 }
 
 console.log("27. the fire report join ignores the creation turn's posts:");

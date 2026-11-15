@@ -68,9 +68,7 @@ const leg = (id: string, status: BoardLeg["status"], over: Partial<BoardLeg> = {
     "S-PR-BOUNDARY",
     "J-WORKFLOW",
     "F-SEC",
-    "S-TAINT-DRYRUN",
-    "S-TAINT-ROUTE-LIVE",
-    "S-TAINT-UNATTENDED-DENY",
+    "S-UNATTENDED-DENY",
   ];
   ok(
     stillRequired.every((id) => index.get(id)?.requirement === "REQUIRED"),

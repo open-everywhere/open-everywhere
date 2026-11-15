@@ -4410,7 +4410,6 @@
     "test:approver-chain-flow": "NODE_NO_WARNINGS=1 tsx scripts/approver-chain-flow-test.ts",
     "test:auto-approved-reply": "NODE_NO_WARNINGS=1 tsx scripts/auto-approved-reply-test.ts",
     "test:explain-permission": "NODE_NO_WARNINGS=1 tsx scripts/explain-permission-test.ts",
-    "test:taint-context-line": "NODE_NO_WARNINGS=1 tsx scripts/taint-context-line-test.ts",
     "explain:permission": "tsx scripts/explain-permission.ts",
     "test:permission-homeostasis": "NODE_NO_WARNINGS=1 tsx scripts/permission-homeostasis-test.ts",
     "test:permission-fit-report": "NODE_NO_WARNINGS=1 tsx scripts/permission-fit-report-test.ts",

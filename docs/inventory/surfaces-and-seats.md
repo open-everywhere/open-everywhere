@@ -630,9 +630,7 @@ them. `scripts/env-docs-lint.ts` excludes
 | `E2E-S-EVE-BRIDGE` | `S-EVE-BRIDGE` | notion | core | — | — | — | a bridged eve approval settled over TEXT (OPE-1721): a DM connector WRITE parks on eve's `tool-approval`, the unified qu |
 | `E2E-S-CONNECT-CARD` | `S-CONNECT-CARD` | notion | core | — | — | — | Channel connector card: (A) a 'connect notion here' ask posts a card that is now API-KEY ONLY — the 'Set API key' button |
 | `E2E-S-APIKEY-INTAKE` | `S-APIKEY-INTAKE` | notion | core | — | — | yes | API-key intake, live: under the db broker a 'connect notion with an API key' ask offers 'Set API key' → a forged admin o |
-| `E2E-S-TAINT-DRYRUN` | `S-TAINT-DRYRUN` | slack | core | — | — | — | Taint source-tier table, ENFORCED (OPE-324): drive the divergent read shapes and assert `taint.verdict` rows land, appli |
-| `E2E-S-TAINT-ROUTE-LIVE` | `S-TAINT-ROUTE-LIVE` | slack | core | — | yes | — | OPE-439/OPE-470/OPE-844: a REAL ingestion route (web_fetch, Notion, Linear, GitHub PR feedback) reaches the live approve |
-| `E2E-S-TAINT-UNATTENDED-DENY` | `S-TAINT-UNATTENDED-DENY` | slack | core | — | — | — | OPE-452: a REAL unattended routine fire tries a gated action ⇒ the OPE-273 presence fence refuses it before the approval |
+| `E2E-S-UNATTENDED-DENY` | `S-UNATTENDED-DENY` | slack | core | — | — | — | OPE-452: a REAL unattended routine fire tries a gated action ⇒ the OPE-273 presence fence refuses it before the approval |
 | `E2E-S-ROUTINE-CONNECTOR-WRITE` | `S-ROUTINE-CONNECTOR-WRITE` | notion | core | — | — | — | OPE-1328: an unattended routine fire attempts a CONNECTOR WRITE ⇒ the unattended connector fence refuses it (connector.r |
 | `E2E-S-DISCORD-GRANT` | `S-DISCORD-GRANT` | discord | core | — | — | — | OPE-1310: a credential-grant ask raised to a DISCORD-owned account — the fixture the Discord grant-tap surface needs, plus |
 | `E2E-J-ENGAGED-slack` | `J-ENGAGED-slack` | slack | core | — | — | — | Slack ADDRESSED-ONLY journey: mention → plain follow-up wakes → stand_down marks the row → audited silence (+ name-drop) |

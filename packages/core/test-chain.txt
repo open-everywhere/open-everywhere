@@ -429,7 +429,6 @@ test:halt
 test:approver-chain-flow
 test:auto-approved-reply
 test:explain-permission
-test:taint-context-line
 test:permission-homeostasis
 test:permission-fit-report
 test:propose-venue

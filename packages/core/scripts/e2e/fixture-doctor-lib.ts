@@ -368,7 +368,7 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
     required: [v(ENV.notionDriverKey), v(ENV.notionAmbientPageId), v(ENV.notionBotUserId), v(ENV.notionWorkspaceId), v(ENV.notionOwnAccountPageId)],
     optional: [ENV.notionAmbientWebhookSecret, ENV.notionAnchorOnTopic, ENV.notionAnchorOnTopic2, ENV.notionAnchorOffTopic, ENV.notionAnchorHuman],
     scenarios:
-      "J-NOT (Notion ambient comment surface) + S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE's human anchor (OPE-576) + S-OWN-ACCOUNT-NOTION's own page (OPE-1984, a SECOND page in the same domain)",
+      "J-NOT (Notion ambient comment surface) + S-OWN-ACCOUNT-NOTION's own page (OPE-1984, a SECOND page in the same domain)",
     probe: "notion-ambient",
   },
   {
@@ -399,4 +399,5 @@ export const FIXTURE_FAMILIES: readonly FixtureFamily[] = [
 
 type FamilyId = (typeof FIXTURE_FAMILIES)[number]["id"];
 type AssertExhaustive = Capability extends FamilyId ? true : ["FIXTURE_FAMILIES is missing a Capability", Exclude<Capability, FamilyId>];
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertExhaustive: AssertExhaustive = true;

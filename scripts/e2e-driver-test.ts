@@ -34,19 +34,6 @@ import type { SlackMessage } from "../packages/core/scripts/e2e/slack-driver.js"
 import type { TranscriptWireEvent } from "../packages/core/scripts/e2e/transcript-read.js";
 import type { NotionComment } from "../packages/core/scripts/e2e/notion-driver.js";
 import {
-  chooseNotionTaintAnchor,
-  NOTION_TAINT_ANCHOR_MAX_AGE_MS,
-  notionTaintAnchorProblem,
-  notionTaintFixtureRemedy,
-  notionTaintGrantRoad,
-  notionTaintNoRowReason,
-  notionTaintReplayEvidence,
-  NOTION_TAINT_REPLAY_ACTIONS,
-  notionTaintRestMarkSettled,
-  notionTaintRestRoad,
-  transcriptHasNotionPageRead,
-} from "../packages/core/scripts/e2e/notion-taint-replay.js";
-import {
   GITHUB_NOTION_REST_ACTIONS,
   githubNotionForward,
   githubNotionOriginLifecycle,
@@ -866,7 +853,7 @@ const { parseAppMentionEvent } = await import(
   ok(readsAsSpendRefusalReport("I raised this channel's monthly spend cap to $2,558 USD.") === false, "NEGATIVE CONTROL: a post that claims it raised the cap is NOT the refusal report");
   ok(readsAsSpendRefusalReport("The request was refused.") === false, "NEGATIVE CONTROL: a refusal that does not name the spend cap is NOT the report");
 
-  const body = SCENARIOS.find((s) => s.id === "S-TAINT-UNATTENDED-DENY")!.run.toString();
+  const body = SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run.toString();
   const flat = body.replace(/\s+/g, "");
   ok(flat.includes("join=fireReportJoin([...sent,...joinRows])"), "🔴 WIRING: the fire wait reads the fire's report through fireReportJoin");
   ok(flat.includes("readsAsSpendRefusalReport(reportText)"), "🔴 WIRING: the content gate reads the joined report");
@@ -934,8 +921,8 @@ const { parseAppMentionEvent } = await import(
   ok(fireReportJoin([sent, forward, foreignRequest, seatTurn, report]).workSessionIds.length === 0, "NEGATIVE CONTROL: a dispatch row for another request does not join");
 
   ok(FIRE_REPORT_JOIN_ACTIONS.includes("work.forwarded") && FIRE_REPORT_JOIN_ACTIONS.includes("delegation.task_started"), "🔴 WIRING: the fire-report read asks for work.forwarded and delegation.task_started");
-  const flat = SCENARIOS.find((s) => s.id === "S-TAINT-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
-  ok(flat.includes("actions:FIRE_REPORT_JOIN_ACTIONS"), "🔴 WIRING: S-TAINT-UNATTENDED-DENY reads FIRE_REPORT_JOIN_ACTIONS");
+  const flat = SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
+  ok(flat.includes("actions:FIRE_REPORT_JOIN_ACTIONS"), "🔴 WIRING: S-UNATTENDED-DENY reads FIRE_REPORT_JOIN_ACTIONS");
   ok(flat.includes("fireSessions=fireSettleSessionIds(fireReport.join)"), "🔴 WIRING: the settle gate follows the forward");
 }
 
@@ -981,7 +968,7 @@ const { parseAppMentionEvent } = await import(
   const stray = fireReportJoin([sent, turn, handoff, row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-06-03T02:42:30.000Z", { task: "task_other", wake: "other-wake" }, 8)]);
   ok(stray.reportRoad === "last-post" && stray.report?.detail?.id === "1780453341.000100", `NEGATIVE CONTROL: a stray settlement row names no fire post (got ${String(stray.reportRoad)})`);
 
-  const flat = (await import("../packages/core/scripts/e2e/scenarios.js")).SCENARIOS.find((s) => s.id === "S-TAINT-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
+  const flat = (await import("../packages/core/scripts/e2e/scenarios.js")).SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
   const { FIRE_REPORT_JOIN_ACTIONS: joinActions } = await import("../packages/core/scripts/e2e/gate-joins.js");
   ok(
     flat.includes("actions:FIRE_REPORT_JOIN_ACTIONS") && joinActions.includes("reply.post") && joinActions.includes(SETTLEMENT_REPORT_POSTED_ACTION),
@@ -1702,7 +1689,7 @@ const { parseAppMentionEvent } = await import(
     "S-LINK-discord",
     "S-LINK-teams",
     "S-HALT",
-    "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE", "S-TAINT-UNATTENDED-DENY",
+    "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-UNATTENDED-DENY",
     "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
     "S-EVE-CARD-discord",
     "S-DM-STOP-GRANT",
@@ -1739,7 +1726,7 @@ const { parseAppMentionEvent } = await import(
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-QA-REPO adds the repo-backed browser QA loop (checkout → dev server → screenshot → describe_image → post_file, OPE-2404); F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-EVE-CARD is the pack's only leg on the EVE-MINTED approval card (OPE-1056), the card eve owns for a connector op — every other approval leg drives OE's own card, which is a different card with a different lifecycle owner; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-TAINT-DRYRUN is the OPE-331 double-opt-in volume leg that drives the source-tier table (ENFORCED since OPE-324) and gates on \`taint.verdict\` audit rows — including \`mode:\"enforced\"\`+\`applied:true\`, the live proof the table DECIDED rather than observed — never reply text; S-TAINT-ROUTE-LIVE (OPE-439/OPE-844) drives a REAL web_fetch (Arm A, hard) + a REAL get_pr_feedback GitHub PR-feedback read (Arm B, hard, direction fixed by the fixture PR's repoPrivate), then a real propose or explain_permission simulation in the SAME turn, and gates on the \`approval.chain\` row's \`tainted\`/\`taintKinds\` disclosure pair with a clean negative control — proving the route→mark join live where S-TAINT-DRYRUN's \`taint.verdict\` rows are structurally silent (they fire on DIVERGENCE only, and web_fetch agrees with the table); S-TAINT-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on; S-JUDGE-LIFT-NOTICE (OPE-1902) is the first live leg on the judge-lift notice — the act an armed judge lowered runs with NO card, and the room's only trace is a notice carrying the contradict affordance — a road that shipped with \`post-deploy proof: none\`; since OPE-2495 it asks in the base Slack room, its own venue, because a GitHub-origin routine reports to the domain's Slack report channel and so the starter rule never covers it; it self-skips, naming each ask's reason, when the judge ASKS rather than lifts, because which of those two correct answers the judge gives is a model judgement no knob here drives;)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-QA-REPO adds the repo-backed browser QA loop (checkout → dev server → screenshot → describe_image → post_file, OPE-2404); F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-EVE-CARD is the pack's only leg on the EVE-MINTED approval card (OPE-1056), the card eve owns for a connector op — every other approval leg drives OE's own card, which is a different card with a different lifecycle owner; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch; S-UNATTENDED-DENY (OPE-452) fires a REAL one-shot routine unattended and gates on the \`approval.chain\` row naming the \`unattended\` ask→deny arrow, plus a hard negative that no card was minted; S-DM-DISCORD, which drove this same DM-delegation mechanism on Discord, was RETIRED at OPE-725 — it needed the roll-own delegation regime, which stopped shipping by default at OPE-396 and was DELETED at OPE-1145 item 2, so it could never pass live; the delegation claim has tier-2 coverage instead, in the integration tier own delegation tests; J-TEAMS-DM (OPE-972) is the Teams 1:1 DM plane's first live leg, riding the same "teams" capability as J-TEAMS with no new fixture var — it self-skips at RUNTIME (never via the capability gate) on either the OPE-887 personal-install precondition or the still-unconsented Chat.ReadWrite/ChatMessage.Send Graph scope; J-ENGAGED-teams (OPE-1500) is the Teams ambient engagement seam end to end — @mention engages the reply chain, a PLAIN follow-up wakes, stand_down marks the row, and the next plain follow-up wakes nothing — and it self-skips naming the ChannelMessage.Read.Group RSC grant, without which Microsoft never delivers the follow-up it asserts on; S-JUDGE-LIFT-NOTICE (OPE-1902) is the first live leg on the judge-lift notice — the act an armed judge lowered runs with NO card, and the room's only trace is a notice carrying the contradict affordance — a road that shipped with \`post-deploy proof: none\`; since OPE-2495 it asks in the base Slack room, its own venue, because a GitHub-origin routine reports to the domain's Slack report channel and so the starter rule never covers it; it self-skips, naming each ask's reason, when the judge ASKS rather than lifts, because which of those two correct answers the judge gives is a model judgement no knob here drives;)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackMpim", "slackCapFixture", "slackHalt", "controlWrite", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite", "teamsSecondary",
     "engagedSlack", "engagedDiscord", "engagedTeams", "engagedGithub", "engagedLinear", "engagedNotion", "email"]);
@@ -1754,8 +1741,8 @@ const { parseAppMentionEvent } = await import(
   }
   const FORMERLY_OPTIONAL = [
     "S-MEM-READ", "S8", "S9", "S10", "S-SPEND-DM-MASK", "S-SPEND-REFUSAL-KEYS", "S24", "J-UNI-X", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S-DM-NOTION",
-    "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE", "S-TAINT-DRYRUN", "S-TAINT-ROUTE-LIVE",
-    "S-TAINT-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
+    "S-EVE-CARD", "S-CONNECT-CARD", "S-APIKEY-INTAKE",
+    "S-UNATTENDED-DENY", "S-ROUTINE-CONNECTOR-WRITE", "S-DISCORD-GRANT",
   ];
   for (const id of FORMERLY_OPTIONAL) {
     const sc = SCENARIOS.find((x) => x.id === id);
@@ -1787,7 +1774,7 @@ const { parseAppMentionEvent } = await import(
     "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
   );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-BUDGET-GUEST,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-VOICE-CLIP,S-DATA-POLICY,S-MODEL-TARGET,S-LINK-SLACK,S-DM-MCP-PROPOSE,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-CARD-SUMMARY,S-BLOCKED-PING,S-CARD-teams,J-NAMEDROP-teams,S-OE-CMD-teams,S-INTRO-teams,S-CARD-teams-dm,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-APP-HOME,S-SIDE-PANEL,S-SESSION-STOP,S-REPLY-FEEDBACK,J-REACT-slack,S-REPLY-FOLLOWUPS,S-MEMORY-CANVAS,S-CANVAS-LIST,S-LIST-WRITE,S-WATCH,S-ROOM-SUGGEST,S-DOING,S-ROUTINE-TEST,S-ROUTINE-TEST-discord,S-ASK-WATCH,S-FIRST-DAY-BRIEF,S-EXIT-KIT,S-COVER,S-COVER-teams,S-HALT,S-PR-SESSION,S-A2A-DELEGATE,S-A2A-INBOUND,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-CARD-discord,S-CONNECT-CARD,S-TAINT-DRYRUN,S-TAINT-ROUTE-LIVE,S-JUDGE-LIFT-NOTICE,S-TAINT-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,S-SLACK-AS-YOU,S-MEETING-RECAP,S-MEETING-DISCORD-VOICE,S-EMAIL-ROOM-REPLY,S-EMAIL-DM-FORWARD,S-EMAIL-STRANGER-REFUSED,S-PERSONAL-BROWSER,S-MEETING-NATIVE-RECAP", "(S-VOICE-CLIP deliberately: the clip either reached the agent as words or it did not, and the reply either carries the one word the clip spoke or it does not — no judge reads that better) (S-DATA-POLICY deliberately: the status line either names the policy or it does not, and the reply either carries 42 or it does not) (J-NAMEDROP-teams/S-OE-CMD-teams/S-INTRO-teams/S-CARD-teams-dm deliberately: a name-drop, a command and an intro either wrote their surface.name_drop_*, teams.oe_command or teams.intro_posted row or they did not, and a chat card either reached the chat or it did not — the command answer and the intro are host copy, not model text) (S-WATCH deliberately: a dial either moved as a personal_watch.dial.set row or it did not, and the command's own answer is host-rendered text) (S-ROOM-SUGGEST deliberately: a room's stop either landed as a room_watch.stopped or room_watch.resumed row or it did not, and the command's own answer is host-rendered text) (S-DOING deliberately: a Pause either moved the watch as a personal_watch.dial.set row or it did not, and a forged Pause must leave no routine.paused or dial row — nothing a reply says) (S-ROUTINE-TEST and S-ROUTINE-TEST-discord deliberately: a test either started as a routine.test_fired row, blocked its write as a routine.test_blocked row and left no routine.fire row, or it did not, and the summary is host text — nothing the model judged) (S-ASK-WATCH deliberately: the card's headline is host text built from the frozen trigger and condition, and a reject either left no routine.create row or it did not — nothing a reply says) (S-FIRST-DAY-BRIEF deliberately: the card is host text, the click either armed two routine.create rows or it did not, and the brief either fired as a routine.fire_attrs_sent row and posted in the DM or it did not — the brief's words come from apps the board may not connect) (S-EXIT-KIT deliberately: it drives no model at all — a seeded row either left the store and reached the export, or it did not, and the erasure either wrote its hash-named exit.person_erased row or it did not) (S-COVER deliberately: cover either reached the room as cover.wake and cover.answered rows and a reply whose first line is the host-written label, or it did not, and the recap is a cover.recap row — nothing the model judged) (S-COVER-teams deliberately: the same shape as S-COVER, and the recap row's leftOut count is the live team-roster read) (J-REACT-slack deliberately: a reaction either wrote its reaction.feedback row or it did not — nothing a reply says) (S-EMAIL-ROOM-REPLY/S-EMAIL-DM-FORWARD/S-EMAIL-STRANGER-REFUSED deliberately: a reply either landed in the fixture inbox carrying the run token or it did not, and every other gate is an email.admitted or email.refused row) (S-PERSONAL-BROWSER deliberately: a browser either opened, acted and closed as browser.personal.* rows or it did not, and a channel ask must leave no browser.personal.open row — nothing a reply says) (S-MEETING-RECAP and S-MEETING-DISCORD-VOICE deliberately: a card either reached the audit trail as one meeting.join row or it did not, and no meeting.join row may precede a click) (S-MEETING-NATIVE-RECAP deliberately: the same shape for the meeting.recap card, and no meeting.recap_requested row may precede a click) (S-CARD-SUMMARY deliberately: the plain first line is host-rendered card text, so its gates are the notification text's first two lines and a reject ack, which no judge can read better) (S-BLOCKED-PING deliberately: a ping either wrote one attention.blocked outcome row for the asking person or it did not, and only the audit trail answers that) (S-APP-HOME deliberately: Slack offers no API to read a person's Home tab back, so the page reaching them is a home.publish row, and what Export and a forged Forget did is a memory.export row and the absence of a memory.purge row — nothing a reply says) (S-SIDE-PANEL deliberately: the answer either posted in the panel thread under a reply.post row of its own wake or it did not, the seat's wake either carries the host note naming the room or it does not, and a read of the room is a tool call that names it or returns it — nothing a reply says) (S-DM-MCP-PROPOSE deliberately: the card either posted in the DM under an mcp-server.propose approval.requested row, with no propose-time approval.denied row, or it did not — nothing a reply says) (S-SESSION-STOP deliberately: a press either reached a running turn as a turn.cancel_requested row with via stop-button and the turn either wrote turn.cancelled or it did not — nothing a reply says) (S-REPLY-FEEDBACK deliberately: an answer either carries the feedback_buttons element or it does not, and a click either wrote its reply.feedback row or it did not — nothing a reply says) (S-REPLY-FOLLOWUPS deliberately: an answer either carries the promised follow-up button or it does not, and a press either came back as an answer carrying the run token or it did not — nothing a judge reads better) (S-MEMORY-CANVAS deliberately: a canvas either holds the run-unique fact or it does not, and the leg reads the canvas itself and the memory.canvas_refresh rows — never the teach reply) (S-CANVAS-LIST deliberately: the card either previews the run token or it does not, and the approved canvas either holds it or it does not — the leg reads the canvas itself, never the reply) (S-LIST-WRITE deliberately: each card either quotes the run-unique row or note or it does not, and the List either holds them or it does not — the leg reads the List itself, never the reply) (S-SLACK-AS-YOU deliberately: the answer either carries the run-unique codename only the person can read or it does not, and the channel and write legs gate on connector.use/connector.mint/approval.requested rows and a channel read-back) (S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-TAINT-DRYRUN/S-TAINT-ROUTE-LIVE/S-TAINT-UNATTENDED-DENY deliberately: the verdict trail is a LOG — every gate is on taint.verdict/approval.chain audit rows, and what the model said about a page it read is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence) (S-A2A-DELEGATE deliberately: every gate is a card button, the run token on the card, the declared agent's fixed answer in the thread, or an a2a.* audit row — a judge cannot tell a delegation that ran from a reply that claims one) (S-A2A-INBOUND deliberately: it drives no model at all — every gate is an HTTP status, the card's own fields, or the absence of an a2a.inbound_accepted row) (S-JUDGE-LIFT-NOTICE deliberately: the lift is an `approval.autoapproved` row carrying `resolvedBy: \"judge\"` and the notice is joined to it by that row's own pending id — a judge cannot grade whether a notice reached a room, and the one thing a reply could say about it is the copy the notice itself carries)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S-OE-BUDGET-GUEST,S-OE-STATUS,S10,S-SPEND-DM-MASK,S-SPEND-REFUSAL-KEYS,S-VOICE-CLIP,S-DATA-POLICY,S-MODEL-TARGET,S-LINK-SLACK,S-DM-MCP-PROPOSE,J-NOT,S-OWN-ACCOUNT-NOTION,J-SUP,S-DELEGATED-slack,S-DELEGATED-discord,S-DELEGATED-teams,S-DELEGATED-linear,S-DELEGATED-github,S-DELEGATED-notion,S-GITHUB-NOTION-REST,S-SUSPENDED-slack,S-SUSPENDED-discord,S-SUSPENDED-teams,S-CARD-SUMMARY,S-BLOCKED-PING,S-CARD-teams,J-NAMEDROP-teams,S-OE-CMD-teams,S-INTRO-teams,S-CARD-teams-dm,S-SUSPENDED-linear,S-SUSPENDED-github,S-AMBIENT-discord,S-AMBIENT-linear,S-AMBIENT-teams,S-SIBLING-discord,S-SIBLING-teams,S-SIBLING-notion,S-LINK-discord,S-LINK-teams,S-APP-HOME,S-SIDE-PANEL,S-SESSION-STOP,S-REPLY-FEEDBACK,J-REACT-slack,S-REPLY-FOLLOWUPS,S-MEMORY-CANVAS,S-CANVAS-LIST,S-LIST-WRITE,S-WATCH,S-ROOM-SUGGEST,S-DOING,S-ROUTINE-TEST,S-ROUTINE-TEST-discord,S-ASK-WATCH,S-FIRST-DAY-BRIEF,S-EXIT-KIT,S-COVER,S-COVER-teams,S-HALT,S-PR-SESSION,S-A2A-DELEGATE,S-A2A-INBOUND,S-PROVENANCE-DM,S-EVE-CARD,S-EVE-CARD-discord,S-CONNECT-CARD,S-JUDGE-LIFT-NOTICE,S-UNATTENDED-DENY,S-ROUTINE-CONNECTOR-WRITE,S-DISCORD-GRANT,S-DM-STOP-GRANT,J-ENGAGED-slack,J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,S-SLACK-AS-YOU,S-MEETING-RECAP,S-MEETING-DISCORD-VOICE,S-EMAIL-ROOM-REPLY,S-EMAIL-DM-FORWARD,S-EMAIL-STRANGER-REFUSED,S-PERSONAL-BROWSER,S-MEETING-NATIVE-RECAP", "(S-VOICE-CLIP deliberately: the clip either reached the agent as words or it did not, and the reply either carries the one word the clip spoke or it does not — no judge reads that better) (S-DATA-POLICY deliberately: the status line either names the policy or it does not, and the reply either carries 42 or it does not) (J-NAMEDROP-teams/S-OE-CMD-teams/S-INTRO-teams/S-CARD-teams-dm deliberately: a name-drop, a command and an intro either wrote their surface.name_drop_*, teams.oe_command or teams.intro_posted row or they did not, and a chat card either reached the chat or it did not — the command answer and the intro are host copy, not model text) (S-WATCH deliberately: a dial either moved as a personal_watch.dial.set row or it did not, and the command's own answer is host-rendered text) (S-ROOM-SUGGEST deliberately: a room's stop either landed as a room_watch.stopped or room_watch.resumed row or it did not, and the command's own answer is host-rendered text) (S-DOING deliberately: a Pause either moved the watch as a personal_watch.dial.set row or it did not, and a forged Pause must leave no routine.paused or dial row — nothing a reply says) (S-ROUTINE-TEST and S-ROUTINE-TEST-discord deliberately: a test either started as a routine.test_fired row, blocked its write as a routine.test_blocked row and left no routine.fire row, or it did not, and the summary is host text — nothing the model judged) (S-ASK-WATCH deliberately: the card's headline is host text built from the frozen trigger and condition, and a reject either left no routine.create row or it did not — nothing a reply says) (S-FIRST-DAY-BRIEF deliberately: the card is host text, the click either armed two routine.create rows or it did not, and the brief either fired as a routine.fire_attrs_sent row and posted in the DM or it did not — the brief's words come from apps the board may not connect) (S-EXIT-KIT deliberately: it drives no model at all — a seeded row either left the store and reached the export, or it did not, and the erasure either wrote its hash-named exit.person_erased row or it did not) (S-COVER deliberately: cover either reached the room as cover.wake and cover.answered rows and a reply whose first line is the host-written label, or it did not, and the recap is a cover.recap row — nothing the model judged) (S-COVER-teams deliberately: the same shape as S-COVER, and the recap row's leftOut count is the live team-roster read) (J-REACT-slack deliberately: a reaction either wrote its reaction.feedback row or it did not — nothing a reply says) (S-EMAIL-ROOM-REPLY/S-EMAIL-DM-FORWARD/S-EMAIL-STRANGER-REFUSED deliberately: a reply either landed in the fixture inbox carrying the run token or it did not, and every other gate is an email.admitted or email.refused row) (S-PERSONAL-BROWSER deliberately: a browser either opened, acted and closed as browser.personal.* rows or it did not, and a channel ask must leave no browser.personal.open row — nothing a reply says) (S-MEETING-RECAP and S-MEETING-DISCORD-VOICE deliberately: a card either reached the audit trail as one meeting.join row or it did not, and no meeting.join row may precede a click) (S-MEETING-NATIVE-RECAP deliberately: the same shape for the meeting.recap card, and no meeting.recap_requested row may precede a click) (S-CARD-SUMMARY deliberately: the plain first line is host-rendered card text, so its gates are the notification text's first two lines and a reject ack, which no judge can read better) (S-BLOCKED-PING deliberately: a ping either wrote one attention.blocked outcome row for the asking person or it did not, and only the audit trail answers that) (S-APP-HOME deliberately: Slack offers no API to read a person's Home tab back, so the page reaching them is a home.publish row, and what Export and a forged Forget did is a memory.export row and the absence of a memory.purge row — nothing a reply says) (S-SIDE-PANEL deliberately: the answer either posted in the panel thread under a reply.post row of its own wake or it did not, the seat's wake either carries the host note naming the room or it does not, and a read of the room is a tool call that names it or returns it — nothing a reply says) (S-DM-MCP-PROPOSE deliberately: the card either posted in the DM under an mcp-server.propose approval.requested row, with no propose-time approval.denied row, or it did not — nothing a reply says) (S-SESSION-STOP deliberately: a press either reached a running turn as a turn.cancel_requested row with via stop-button and the turn either wrote turn.cancelled or it did not — nothing a reply says) (S-REPLY-FEEDBACK deliberately: an answer either carries the feedback_buttons element or it does not, and a click either wrote its reply.feedback row or it did not — nothing a reply says) (S-REPLY-FOLLOWUPS deliberately: an answer either carries the promised follow-up button or it does not, and a press either came back as an answer carrying the run token or it did not — nothing a judge reads better) (S-MEMORY-CANVAS deliberately: a canvas either holds the run-unique fact or it does not, and the leg reads the canvas itself and the memory.canvas_refresh rows — never the teach reply) (S-CANVAS-LIST deliberately: the card either previews the run token or it does not, and the approved canvas either holds it or it does not — the leg reads the canvas itself, never the reply) (S-LIST-WRITE deliberately: each card either quotes the run-unique row or note or it does not, and the List either holds them or it does not — the leg reads the List itself, never the reply) (S-SLACK-AS-YOU deliberately: the answer either carries the run-unique codename only the person can read or it does not, and the channel and write legs gate on connector.use/connector.mint/approval.requested rows and a channel read-back) (S-OWN-ACCOUNT-NOTION deliberately: an own-account ask either produced a connector.acting_identity refusal row or it did not, and the refusal SENTENCE is model-facing copy this leg's own backscroll already carries — grading the reply would grade its own history) (five of the six J-ENGAGED journeys are deliberately unjudged — J-ENGAGED-teams is the judged one: every gate is a reply.post or engagement.stood_down row, and the stand-down acknowledgement they would otherwise judge is model-authored copy the pack does not pin — their question is whether the engagement registry held the thread, which only a row answers) S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD/S-UNATTENDED-DENY/S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT are fully deterministic — no judge (S-ROUTINE-CONNECTOR-WRITE/S-DISCORD-GRANT deliberately: a fence either wrote its row or it did not, and both legs turn on rows the model cannot see — connector.refused/connector.unattended_lift and grant.asked/grant.used/grant.notified. A fire that says it could not write the page produces the same sentence whether the fence refused it or the tool was never mounted, which is exactly the ambiguity the audit gates resolve) (J-DM-SYNC, which carried this same posture for the Slack DM twin, was RETIRED by OPE-396 with the sync delegation arm it existed to exercise; S-DM-DISCORD, its Discord twin, was RETIRED by OPE-725 for the same reason) (S-UNATTENDED-DENY deliberately: every gate is on audit rows and the fire's own report, and what the model said is not evidence about what the log recorded) (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; S-EVE-CARD deliberately: every gate is an action_id, an HTTP status or the run-unique token, and the one question it exists to answer — WHICH plane raised this card — is decided by the button's id, which no judge can read off a reply; hard gates: route status / audited silence / reply-target / in-channel presence) (S-A2A-DELEGATE deliberately: every gate is a card button, the run token on the card, the declared agent's fixed answer in the thread, or an a2a.* audit row — a judge cannot tell a delegation that ran from a reply that claims one) (S-A2A-INBOUND deliberately: it drives no model at all — every gate is an HTTP status, the card's own fields, or the absence of an a2a.inbound_accepted row) (S-JUDGE-LIFT-NOTICE deliberately: the lift is an `approval.autoapproved` row carrying `resolvedBy: \"judge\"` and the notice is joined to it by that row's own pending id — a judge cannot grade whether a notice reached a room, and the one thing a reply could say about it is the copy the notice itself carries)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -2426,12 +2413,11 @@ const { parseAppMentionEvent } = await import(
     );
   }
   {
-    const expensive = SCENARIOS.find((sc) => sc.expensive === true);
-    ok(expensive !== undefined, "precondition: the roster still carries an expensive leg to control against");
-    if (expensive) {
-      ok(skipReason(expensive, all, noneMissing)?.includes("expensive") === true, "🔴 NEGATIVE CONTROL: an expensive leg is still deferred by the same planner call");
-      ok(skipReason(expensive, all, noneMissing, true) === undefined, "…and naming it directly runs it — the cost gate takes naming as consent");
-    }
+    const base = SCENARIOS.find((sc) => sc.id === "J1")!;
+    ok(skipReason(base, all, noneMissing) === undefined, "precondition: the control's base entry runs on a plain pass unflagged");
+    const expensive = { ...base, expensive: true, costReason: "a fabricated cost for the negative control" } as typeof base;
+    ok(skipReason(expensive, all, noneMissing)?.includes("expensive") === true, "🔴 NEGATIVE CONTROL: an expensive leg is still deferred by the same planner call");
+    ok(skipReason(expensive, all, noneMissing, true) === undefined, "…and naming it directly runs it — the cost gate takes naming as consent");
   }
   const allButNotion = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook"] as const);
   const s24CapMissing = skipReason(SCENARIOS.find((s) => s.id === "S24")!, allButNotion, missing);
@@ -2680,41 +2666,14 @@ const { parseAppMentionEvent } = await import(
 
   const expensiveIds = SCENARIOS.filter((s) => s.expensive === true).map((s) => s.id);
   ok(
-    expensiveIds.join(",") === "S-TAINT-ROUTE-LIVE",
-    `the roster's expensive set is exactly S-TAINT-ROUTE-LIVE — the one leg measured green past the ~10-minute bar (1246.8 s, 2026-09-10 full pack). Got: ${expensiveIds.join(",") || "(none)"}`,
+    expensiveIds.length === 0,
+    `the roster's expensive set is empty since OPE-2726 removed S-TAINT-ROUTE-LIVE. Got: ${expensiveIds.join(",") || "(none)"}`,
   );
   for (const id of ["J-GH", "F-EDIT", "F-SEC", "J-UNI-X"]) {
     const s = SCENARIOS.find((x) => x.id === id);
     ok(s !== undefined, `${id} is still in the roster (the not-flagged assertion below needs a subject)`);
     ok(s?.expensive !== true, `${id} is NOT flagged expensive — a leg that REDS on its reply timeout is broken, not expensive`);
   }
-  const routeLive = SCENARIOS.find((s) => s.id === "S-TAINT-ROUTE-LIVE")!;
-  ok(routeLive.costReason?.includes("1246.8 s") === true, "S-TAINT-ROUTE-LIVE's costReason carries the measured duration, not an estimate");
-  ok(
-    skipCategory(routeLive, satisfied, false, false) === "expensive-not-included",
-    "on a plain pack (no expensive opt-in) S-TAINT-ROUTE-LIVE is deferred as expensive-not-included",
-  );
-  const fullPackReason = skipReason(routeLive, satisfied, missingNone, false, false);
-  ok(
-    fullPackReason?.includes(routeLive.costReason!) === true,
-    "…and the printed skip line names its costReason verbatim — the cost is visible, never a silent absence",
-  );
-  ok(
-    skipCategory(routeLive, satisfied, false, true) === undefined,
-    "includeExpensive=true runs S-TAINT-ROUTE-LIVE (negative control — the flag gates, it does not retire the leg)",
-  );
-  ok(
-    skipCategory(routeLive, satisfied, true, false) === undefined,
-    "naming the id directly runs it with no expensive opt-in (negative control)",
-  );
-  ok(
-    skipCategory(routeLive, satisfied, true, false) === undefined,
-    "naming the id alone RUNS it — the gate that used to outrank the cost gate is gone",
-  );
-  ok(
-    skipCategory(routeLive, satisfied, false, false) === "expensive-not-included",
-    "🔴 NEGATIVE CONTROL: a pass that names nothing still defers it on cost, naming the reason",
-  );
 }
 
 {
@@ -5838,7 +5797,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     row("e2e.linked_row", { sessionId: "s-work", channel: "C0VIEWED" }),
     row("reply.post", { id: "1720009902.000000", wakeId: "w-panel", sessionId: "s-seat" }),
     row("reply.post", { id: "1720009903.000000", wakeId: "w-other", sessionId: "s-other" }, "slack/T1/C0VIEWED"),
-    row("taint.verdict", { kind: "chat-message", divergence: "over-taint", tableTier: "trusted", sessionId: "s-seat", turnId: "t1" }, null),
+    row("e2e.session_row", { sessionId: "s-seat", turnId: "t1" }, null),
     row("read.refused", { target: "C0VIEWED", reason: "cross-domain", callerSurfaceKey: "slack/T1/D0DM" }, "D0DM"),
   ];
   const turn = turnRows(rows, "w-panel");
@@ -5848,7 +5807,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     !turnRows(rows.filter((r) => r.action !== "worker.toolset"), "w-panel").some((r) => r.detail?.["sessionId"] === "s-worker"),
     "turnRows: negative control — without the worker.toolset row the worker's session never joins the turn",
   );
-  ok(turn.some((r) => r.action === "taint.verdict"), "turnRows: a real-shape taint.verdict joins the turn through its sessionId");
+  ok(turn.some((r) => r.action === "e2e.session_row"), "turnRows: a row that carries only the session joins the turn through its sessionId");
   ok(!turn.some((r) => r.action === "read.refused"), "turnRows: a real-shape read.refused carries no link key, so it never joins a turn — why the audit check is the weak signal");
   const leaks = viewedRoomRows(turn, "C0VIEWED");
   ok(leaks.length === 1 && leaks[0]?.action === "e2e.linked_row", "viewedRoomRows: a linked row whose detail names the room is caught");
@@ -6156,429 +6115,6 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     ok(withReds.lines[0].includes("do NOT fail the run"), "the summary says outright that these did not fail the run");
     ok(withReds.lines[0].includes("deploy:smoke"), "the summary points at the deterministic gate that DOES decide a deploy");
     ok(withReds.lines[1].includes("S20 reply quality"), "each red verdict is re-printed under the summary");
-  }
-}
-
-{
-  const now = Date.parse("2026-09-17T12:00:00.000Z");
-  const anchorComment: NotionComment = {
-    id: "comment-1",
-    discussionId: "discussion-1",
-    authorId: "person-1",
-    text: "Open Everywhere — read this page and summarise its current contents for this e2e check.",
-    createdTime: "2026-09-18T23:00:00.000Z",
-  };
-  const anchor = {
-    comment: anchorComment as NotionComment | undefined,
-    botUserId: "bot-1" as string | undefined,
-    nowMs: now,
-  };
-  const problem = (over: Partial<NotionComment>): string | undefined =>
-    notionTaintAnchorProblem({ ...anchor, comment: { ...anchorComment, ...over } });
-
-  ok(notionTaintAnchorProblem(anchor) === undefined, "OPE-1907: a recent, person-authored, addressed page-read anchor passes the preflight");
-  ok(problem({ authorType: undefined }) === undefined, "🔴 an ABSENT authorType passes — Notion omits it on a person's comment, and the classifier reads absence as unknown, not as bot");
-  ok(problem({ authorType: "person" }) === undefined, "…and a present `person` type passes too");
-  ok(problem({ authorType: "bot" })?.includes("bot-authored") === true, "a REST-created bot comment cannot masquerade as the human replay fixture");
-  ok(problem({ authorId: "bot-1" })?.includes("OWN reply") === true, "🔴 the agent's own reply is refused — the self-authored loop guard drops it, so replaying it would spend a wake on nothing");
-  ok(problem({ authorId: "" })?.includes("created_by.id") === true, "an author the harness cannot identify is refused, the same direction the classifier fails closed in");
-  ok(NOTION_TAINT_ANCHOR_MAX_AGE_MS === 90 * 24 * 60 * 60 * 1_000, "the anchor reach-back is 90 days — a human-typed fixture's staleness bound, not the catch-up's context window");
-  ok(problem({ createdTime: "2026-06-25T01:00:00.000Z" })?.includes("out of reach") === true, "🔴 an anchor past 90 days IS refused BEFORE a webhook is forged — the floor is still a floor, only a wider one");
-  ok(problem({ createdTime: "2026-06-25T01:00:00.000Z" })?.includes("91d old") === true, "…and the refusal states the age and the reach in DAYS, the unit a 90-day bound is read in");
-  ok(problem({ createdTime: "2026-06-20T12:00:00.000Z" }) === undefined, "NEGATIVE CONTROL: an 89-day-old anchor qualifies, so the assertion above is driven by the bound and not by the date's shape");
-  ok(problem({ createdTime: "2026-08-16T01:23:00.000Z" }) === undefined, "🔴 the ship #217 31-day-old anchor now qualifies on AGE — its red was the missing name-drop, and the old 168h floor refused it for the wrong reason");
-  ok(problem({ createdTime: "2026-09-13T12:00:00.000Z" }) === undefined, "a four-day-old anchor still qualifies — widening the ceiling never narrowed the floor");
-  ok(problem({ createdTime: "2026-09-19T00:30:00.000Z" })?.includes("future") === true, "a comment stamped an hour ahead is a clock fault, not a fresh ask");
-  ok(problem({ text: "e2e anchor: please summarise this page" })?.includes("does not NAME") === true, "🔴 the old unaddressed anchor is refused before it can become a thread-follow no_reply");
-  ok(problem({ text: "Open Everywhere — how are you today?" })?.includes("read, review or summarise") === true, "an addressed comment that asks for no page read is refused — nothing in that turn need call read_notion_page");
-  ok(notionTaintAnchorProblem({ ...anchor, comment: undefined })?.includes("not visible") === true, "an anchor this credential cannot see is named as such, never treated as a product silence");
-  ok(notionTaintAnchorProblem({ ...anchor, botUserId: undefined })?.includes("own Notion user id") === true, "🔴 without the agent's own user id the preflight fails CLOSED — it cannot tell a human anchor from the agent's own reply");
-  const remedy = notionTaintFixtureRemedy("page-1");
-  ok(remedy.includes("page-1") && remedy.includes("Open Everywhere"), "the remedy names the exact page and the exact words to write — a person can act on the red without reading the scenario");
-  ok(!remedy.includes("E2E_"), "🔴 the remedy asks for ONE action and names NO env var: the leg discovers the anchor, and a second step somebody has to remember is a second step somebody skips");
-
-  {
-    const at = (iso: string, over: Partial<NotionComment>): NotionComment => ({ ...anchorComment, id: `c-${iso}`, createdTime: iso, ...over });
-    const good = "Open Everywhere — read this page and summarise it.";
-    const page = [
-      at("2026-09-17T21:45:00.000Z", { text: good }),
-      at("2026-05-26T05:32:00.000Z", { text: good }),
-      at("2026-09-18T22:30:00.000Z", { text: "thanks, looks good to me" }),
-      at("2026-09-18T23:00:00.000Z", { authorId: "bot-1", text: good }),
-    ];
-    const picked = chooseNotionTaintAnchor(page, { botUserId: "bot-1", nowMs: now });
-    ok(picked.ok && picked.comment.createdTime === "2026-05-26T05:32:00.000Z", "🔴 the NEWEST QUALIFYING comment wins — a newer comment that does not qualify is skipped, not taken and then failed");
-    ok(picked.ok && picked.considered === 4, "the choice reports how many comments it looked at, so a thin page is distinguishable from a fussy predicate");
-    ok(chooseNotionTaintAnchor([...page].reverse(), { botUserId: "bot-1", nowMs: now }).ok, "read order does not decide the pick — the sort does");
-    const withAncient = chooseNotionTaintAnchor([at("2026-07-01T09:00:00.000Z", { text: good }), ...page], { botUserId: "bot-1", nowMs: now });
-    ok(withAncient.ok && withAncient.comment.createdTime === "2026-05-26T05:32:00.000Z", "🔴 an in-window 78-day-old comment never outranks a fresher qualifying one — newest-qualifying semantics are unchanged by the wider floor");
-    const onlyAncient = chooseNotionTaintAnchor([at("2026-07-01T09:00:00.000Z", { text: good })], { botUserId: "bot-1", nowMs: now });
-    ok(onlyAncient.ok, "NEGATIVE CONTROL: …and that same 78-day-old comment IS taken when it is the only one, so the line above measures the ORDER and not a rejection");
-
-    const none = chooseNotionTaintAnchor(page.filter((c) => !c.text.startsWith("Open Everywhere")), { botUserId: "bot-1", nowMs: now });
-    ok(!none.ok && none.reason.includes("does not NAME"), "🔴 when nothing qualifies the reason is the NEWEST PERSON-authored comment's own problem — 'your newest comment does not name the agent' sends someone to the right place");
-    ok(!none.ok && !none.reason.includes("OWN reply"), "…and it blames a person's comment rather than the agent's own reply, which nobody can act on");
-    const empty = chooseNotionTaintAnchor([], { botUserId: "bot-1", nowMs: now });
-    ok(!empty.ok && empty.considered === 0 && empty.reason.includes("no comments"), "an unreadable or empty page says so rather than reporting a fussy predicate");
-  }
-
-  const row = (action: string, detail: Record<string, unknown>): AuditWireEntry => ({
-    ts: "2026-09-18T23:30:01.000Z",
-    org: "default",
-    platform: action === "taint.verdict" ? "ingest" : "notion",
-    workspace: "workspace-1",
-    surface: "page-1",
-    action,
-    detail,
-  });
-  const mine = { deliveryId: "delivery-1", commentId: "comment-1", discussionId: "discussion-1" };
-  const exactRows = [
-    row("notion.dispatched", { deliveryId: "delivery-1", commentId: "comment-1", discussionId: "discussion-1", addressing: "direct", wakeId: "wake-1" }),
-    row("wake.turn_start", { wakeId: "wake-1", sessionId: "session-1", turnId: "turn-1" }),
-    row("notion.replied", { sessionId: "session-1", discussionId: "discussion-1" }),
-    row("taint.verdict", { kind: "notion", parentSessionId: "session-1", sessionId: "worker-1", turnId: "turn-worker" }),
-  ];
-  const joined = notionTaintReplayEvidence(exactRows, mine);
-  ok(joined.ok && joined.evidence.sessionId === "session-1", "the exact delivery joins through its wake to the turn that answered");
-  ok(joined.ok && joined.evidence.verdictSessionId === "worker-1", "🔴 a DELEGATED read is attributed to the worker that wrote the verdict, not silently reported as the seat's own");
-  ok(joined.ok && joined.evidence.lifecycle?.action === "notion.replied", "the seat's terminal lifecycle row rides along, so a red can say what the turn decided");
-
-  const other = notionTaintReplayEvidence(exactRows, { ...mine, deliveryId: "another-delivery" });
-  ok(!other.ok && other.reason.includes("never reached dispatch"), "🔴 a notion verdict in the same time window cannot satisfy ANOTHER delivery's replay — the join is by id, not by clock");
-
-  const threadFollow = notionTaintReplayEvidence(
-    exactRows.map((r) => (r.action === "notion.dispatched" ? { ...r, detail: { ...r.detail, addressing: "thread-follow" } } : r)),
-    mine,
-  );
-  ok(!threadFollow.ok && threadFollow.reason.includes("thread-follow"), "🔴 the ship #217 shape is named exactly: a thread-follow dispatch cannot satisfy the direct-addressing precondition");
-
-  const noWake = notionTaintReplayEvidence(
-    exactRows.map((r) => (r.action === "notion.dispatched" ? { ...r, detail: { deliveryId: "delivery-1", commentId: "comment-1", discussionId: "discussion-1", addressing: "direct" } } : r)),
-    mine,
-  );
-  ok(!noWake.ok && noWake.reason.includes("no wakeId"), "a dispatch with no window wake names the missing join key");
-  ok(!noWake.ok && noWake.fixture === true, "🔴 …and marks it a FIXTURE fact, so the leg reds as RED-until-fixture: a delivery that minted no single-window wake has measured NOTHING about the taint plane, and calling that a hard gate failure puts a red on the taint plane for a domain-mode setting");
-  ok(!threadFollow.ok && threadFollow.fixture === undefined, "🔴 NEGATIVE CONTROL: a thread-follow dispatch is NOT a fixture fact — the preflight already accepted this anchor, so the front door disagreeing with it is a finding and stays a hard gate");
-
-  const noVerdict = notionTaintReplayEvidence(
-    exactRows.filter((r) => r.action !== "taint.verdict" && r.action !== "notion.replied").concat(row("notion.no_reply", { sessionId: "session-1", reason: "not_relevant" })),
-    mine,
-  );
-  ok(!noVerdict.ok && noVerdict.reason.includes("notion.no_reply"), "🔴 when the replay's own turn ran and wrote no verdict, the red names the turn's terminal row — the exact fact that settled ship #217's diagnosis");
-
-  const foreignVerdict = notionTaintReplayEvidence(
-    exactRows.map((r) => (r.action === "taint.verdict" ? { ...r, detail: { kind: "notion", sessionId: "someone-else", parentSessionId: "another-seat" } } : r)),
-    mine,
-  );
-  ok(!foreignVerdict.ok, "🔴 NEGATIVE CONTROL: a `notion` verdict written by an unrelated session does NOT satisfy this replay, which is precisely what the old time-window scan could not tell apart");
-
-  ok(joined.ok && joined.evidence.road === "notion", "the org road is named on the evidence — a green that does not say which road it measured is a green nobody can read");
-
-  ok(transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "read_notion_page" }] } }]), "the replay session's transcript confirms the page-read tool request");
-  ok(!transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "no_reply" }] } }]), "🔴 ship #217's no_reply-only transcript cannot pass the page-read proof");
-
-  {
-    const lentPage = "40000000-0000-4000-8000-000000000101";
-    const delivery = { deliveryId: "00000000-0000-4000-8000-000000000033", commentId: "40000000-0000-4000-8000-000000000110", discussionId: "discussion-228" };
-    const boardRow = (action: string, detail: Record<string, unknown>, tsMsBefore = 0): AuditWireEntry => ({
-      ts: new Date(now - tsMsBefore).toISOString(),
-      org: "default",
-      platform: action === "taint.verdict" ? "ingest" : "notion",
-      workspace: action === "taint.verdict" ? String(detail.kind ?? "?") : "workspace-1",
-      surface: lentPage,
-      action,
-      detail,
-    });
-    const spend = boardRow(
-      "grant.used",
-      {
-        connector: "notion",
-        grantId: "00000000-0000-4000-8000-000000000034",
-        mode: "standing",
-        resource: "notion-fetch keys:id",
-        scopeKey: "oe-grant-domain::e2e-unified",
-        verb: "notion_fetch",
-      },
-      60_000,
-    );
-    const lentVerdict = boardRow("taint.verdict", {
-      applied: true,
-      assumed: true,
-      divergence: "over-taint",
-      kind: "connector",
-      label: "grant:notion:notion_fetch",
-      mode: "enforced",
-      reason: "a connector read declares untrusted by the table's fail-closed default",
-      sessionId: "wrun_example32",
-      tableTier: "untrusted",
-      taintsToday: true,
-      turnId: "turn_2",
-    });
-    const lentRows = [
-      boardRow("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-228" }),
-      boardRow("wake.turn_start", { wakeId: "wake-228", sessionId: "wrun_example32", turnId: "turn_2" }),
-      boardRow("notion.replied", { sessionId: "wrun_example32", discussionId: "discussion-228" }),
-      lentVerdict,
-    ];
-
-    const roadInput = { connector: "notion", legPageId: lentPage, nowMs: now, pinnedPageIds: [lentPage], rowLimit: 1000 };
-    const admitted = notionTaintGrantRoad([spend], roadInput);
-    ok(admitted.admitted && admitted.labelPrefix === "grant:notion:", "a live standing notion grant, on the page this pack asks a grant to pin, admits the lent-tool road");
-    ok(admitted.reason.includes("00000000-0000-4000-8000-000000000034") && admitted.reason.includes("notion-fetch keys:id"), "…and the admission names the grant and its audit resource, so a reader can check the claim against the trail");
-    ok(admitted.reason.includes("NAMES and never their values"), "🔴 every admission states its own limit: the wire cannot say which page a grant pins, only which page THIS pack asks to be pinned");
-    ok(!notionTaintGrantRoad([spend], { ...roadInput, pinnedPageIds: ["another-page"] }).admitted, "🔴 NEGATIVE CONTROL: a live grant is NOT evidence about a page this pack never named — the lent road stays closed there");
-    ok(!notionTaintGrantRoad([], roadInput).admitted, "🔴 NEGATIVE CONTROL: the pack's own pinned page with NO live grant on it admits nothing — a `connector` row there is some other tool's read");
-    ok(
-      !notionTaintGrantRoad([{ ...spend, detail: { ...(spend.detail as Record<string, unknown>), mode: "once" } }], roadInput).admitted,
-      "NEGATIVE CONTROL: a ONCE-mode grant is burned by its first call and cannot pre-empt this leg's road",
-    );
-    ok(!notionTaintGrantRoad([spend], { ...roadInput, connector: "linear" }).admitted, "NEGATIVE CONTROL: the connector is matched — a Linear grant never admits a road for a Notion read");
-    const burnt = { ...spend, detail: { ...(spend.detail as Record<string, unknown>), mode: "once" } };
-    const atCeiling = notionTaintGrantRoad([burnt], { ...roadInput, rowLimit: 1 });
-    ok(!atCeiling.admitted && atCeiling.reason.includes("AT its 1-row ceiling"), "🔴 a refusal off a window that came back AT its ceiling says the read was truncated, rather than turning a page it could not prove complete into a clean bill");
-    ok(!notionTaintGrantRoad([burnt], roadInput).reason.includes("ceiling"), "🔴 NEGATIVE CONTROL: the same refusal under the ceiling makes NO truncation claim, so the line above is driven by the count and not by the sentence always being there");
-    ok(notionTaintGrantRoad([burnt], { ...roadInput, pinnedPageIds: ["another-page"], rowLimit: 1 }).reason.includes("AT its 1-row ceiling"), "the unpinned refusal carries the truncation sentence too — both refusals claim an absence, so both disclose it");
-
-    const lentJoin = notionTaintReplayEvidence(lentRows, { ...delivery, grantRoad: admitted });
-    ok(lentJoin.ok, "🔴 THE SHIP #228 SHAPE JOINS: the forged replay's own turn read the page through the lent tool, and the arm now accepts that road");
-    ok(lentJoin.ok && lentJoin.evidence.road === "grant", "…and the evidence names the LENT road, so the leg logs which road served rather than reporting a bare green");
-    ok(lentJoin.ok && (lentJoin.evidence.verdict.detail as { label?: unknown }).label === "grant:notion:notion_fetch", "…and the row it carries is the lent one, whose label the leg logs on either road — the KIND never names the tool");
-    ok(lentJoin.ok && lentJoin.evidence.verdictSessionId === "wrun_example32", "the lent road joins by the same session key as the org road — widening the KIND never widened the JOIN");
-
-    const orgOnly = notionTaintReplayEvidence(lentRows, delivery);
-    ok(!orgOnly.ok, "🔴 without an admitted lent road the SAME rows are refused — this is boards #226/#228's red, and the assertion above is what fixes it");
-    ok(!orgOnly.ok && orgOnly.reason.includes("grant:notion:notion_fetch"), "…and the refusal NAMES the connector row it saw, so triage reads the road rather than a bare absence");
-
-    const refused = notionTaintReplayEvidence(lentRows, { ...delivery, grantRoad: notionTaintGrantRoad([], roadInput) });
-    ok(!refused.ok, "🔴 NEGATIVE CONTROL: the lent row does NOT satisfy the replay when no live grant explains it — the arm is not a scan for any `connector` row");
-    ok(!refused.ok && refused.reason.includes("no LIVE standing notion grant"), "…and the refusal quotes the admission's own reason, so the red says what the harness could not establish");
-
-    const otherLabel = notionTaintReplayEvidence(
-      lentRows.map((r) => (r.action === "taint.verdict" ? { ...r, detail: { ...(r.detail as Record<string, unknown>), label: "web_fetch" } } : r)),
-      { ...delivery, grantRoad: admitted },
-    );
-    ok(!otherLabel.ok, "🔴 NEGATIVE CONTROL: a `connector` verdict that is NOT a grant borrow (label `web_fetch`) never stands in for the page read, admitted road or not");
-
-    const foreignLent = notionTaintReplayEvidence(
-      lentRows.map((r) => (r.action === "taint.verdict" ? { ...r, detail: { ...(r.detail as Record<string, unknown>), sessionId: "someone-else" } } : r)),
-      { ...delivery, grantRoad: admitted },
-    );
-    ok(!foreignLent.ok, "🔴 NEGATIVE CONTROL: an unrelated session's grant read does not satisfy this replay — the id join is the whole point of OPE-1907 and the new road keeps it");
-
-    const bothRoads = notionTaintReplayEvidence(
-      [...lentRows, boardRow("taint.verdict", { applied: true, assumed: false, divergence: "over-taint", kind: "notion", mode: "enforced", reason: "vouched workspace", sessionId: "wrun_example32" })],
-      { ...delivery, grantRoad: admitted },
-    );
-    ok(bothRoads.ok && bothRoads.evidence.road === "notion", "when BOTH roads wrote a row for one turn the ORG road is reported — the lent road is the fallback, never a replacement");
-
-    const grantCall: readonly TranscriptWireEvent[] = [{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "grant__rowan_notion__notion_fetch_test_page" }] } }];
-    ok(transcriptHasNotionPageRead(grantCall, { road: "grant", connector: "notion" }), "🔴 the lent road's transcript witness reads the GRANT tool the row mounted — a lent turn never calls read_notion_page, so asking for that name would red a correct turn");
-    ok(!transcriptHasNotionPageRead(grantCall), "🔴 NEGATIVE CONTROL: the same transcript fails the ORG road's witness, so the witness really is following the road and not accepting everything");
-    ok(
-      !transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "grant__rowan_linear__linear_read_issue" }] } }], { road: "grant", connector: "notion" }),
-      "NEGATIVE CONTROL: a LINEAR grant tool in the same turn does not witness a Notion page read",
-    );
-    ok(!transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "no_reply" }] } }], { road: "grant", connector: "notion" }), "a no_reply-only transcript fails the lent witness too");
-  }
-
-  {
-    const seat = "wrun_example54";
-    const worker = "wrun_example55";
-    const delivery = { deliveryId: "238-rest-delivery", commentId: "comment-238r", discussionId: "discussion-238r" };
-    const settle = row("delegation.task_settled", { task: "task-1", status: "completed", session: seat, agent: "agent-1", marker: "tainted", adopted: true, kinds: ["skill-declared"] });
-    const restRows = [
-      row("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-238r" }),
-      row("wake.turn_start", { wakeId: "wake-238r", sessionId: seat, turnId: "turn_2" }),
-      row("notion.replied", { sessionId: seat, discussionId: "discussion-238r" }),
-      row("worker.toolset", { worker, parentSession: seat, parentCallId: "call-1", tools: ["bash"] }),
-      row("delegation.task_started", { task: "task-1", call: "call-1", agent: "agent-1", session: seat, continuation: false }),
-      settle,
-    ];
-    const restWorker: readonly TranscriptWireEvent[] = [
-      { index: 1, at: null, type: "actions.requested", data: { turnId: "turn_1", actions: [{ toolName: "bash", callId: "w1", input: { command: "cd skills/notion-rest && node scripts/notion.mjs page markdown current" } }] } },
-    ];
-    const seatDelegates: readonly TranscriptWireEvent[] = [
-      { index: 0, at: null, type: "actions.requested", data: { turnId: "turn_2", actions: [{ toolName: "agent", callId: "call-1", input: {} }] } },
-    ];
-    const transcripts = { seat: seatDelegates, workers: new Map<string, readonly TranscriptWireEvent[] | undefined>([[worker, restWorker]]) };
-    const resolve = (rows: readonly AuditWireEntry[], t = transcripts) => {
-      const join = notionTaintReplayEvidence(rows, delivery);
-      if (join.ok || !join.noRow) return { join, rest: undefined };
-      return { join, rest: notionTaintRestRoad(join.reason, join.noRow, t) };
-    };
-
-    const green = resolve(restRows);
-    ok(!green.join.ok, "the join alone finds no taint.verdict row on the REST road — that row is a divergence log");
-    ok(!green.join.ok && green.join.noRow !== undefined && notionTaintRestMarkSettled(green.join.noRow), "the no-row rung carries the seat's settle row with `skill-declared`, joined by ids");
-    ok(green.rest?.ok === true, "🔴 THE BOARD #238 SHAPE IS GREEN: a worker's wrapped notion-rest read plus a settle row with `skill-declared` satisfies arm B");
-    ok(green.rest?.ok === true && green.rest.evidence.road === "rest", "…and the evidence names the REST road");
-    ok(green.rest?.ok === true && green.rest.evidence.verdictSessionId === worker && green.rest.evidence.verdict === settle, "…attributed to the worker, with the settle row as the mark");
-
-    const noSettle = resolve(restRows.filter((r) => r !== settle));
-    ok(!noSettle.join.ok && noSettle.join.noRow !== undefined && !notionTaintRestMarkSettled(noSettle.join.noRow), "NEGATIVE CONTROL: with no settle row, no REST mark is settled");
-    ok(noSettle.rest?.ok === false, "🔴 NEGATIVE CONTROL: the worker's REST read with NO settle row is a red — a read is not a mark");
-    const noSettleReason =
-      noSettle.rest && !noSettle.rest.ok && noSettle.rest.noRow ? notionTaintNoRowReason(noSettle.rest.reason, noSettle.rest.noRow, transcripts, "notion") : "";
-    ok(
-      noSettleReason.includes("divergence log") && noSettleReason.includes(`worker ${worker}`) && noSettleReason.includes("no delegation.task_settled row for task task-1"),
-      `…and the red names the missing settle row for the worker's task — got: ${noSettleReason.slice(-220)}`,
-    );
-
-    const otherKinds = resolve(restRows.map((r) => (r === settle ? { ...r, detail: { ...(r.detail as Record<string, unknown>), kinds: ["web"] } } : r)));
-    ok(otherKinds.rest?.ok === false, "🔴 NEGATIVE CONTROL: a settle row without `skill-declared` in its kinds is a red");
-    const otherKindsReason =
-      otherKinds.rest && !otherKinds.rest.ok && otherKinds.rest.noRow ? notionTaintNoRowReason(otherKinds.rest.reason, otherKinds.rest.noRow, transcripts, "notion") : "";
-    ok(otherKindsReason.includes("carries kinds [web]"), `…and the red names the kinds the settle row carries — got: ${otherKindsReason.slice(-200)}`);
-
-    const foreignSettle = resolve(restRows.map((r) => (r === settle ? { ...r, detail: { ...(r.detail as Record<string, unknown>), session: "another-seat" } } : r)));
-    ok(foreignSettle.rest?.ok === false, "🔴 NEGATIVE CONTROL: another seat's settle row for the same task id does not count — the join is on the session id");
-    const otherTask = resolve(restRows.map((r) => (r === settle ? { ...r, detail: { ...(r.detail as Record<string, unknown>), task: "task-2" } } : r)));
-    ok(otherTask.rest?.ok === false, "NEGATIVE CONTROL: a settle row for another task does not count — the join is on the task id, never on time");
-
-    const idleWorker = resolve(restRows, { seat: seatDelegates, workers: new Map([[worker, [{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "bash", callId: "w1", input: { command: "node scripts/notion.mjs page current" } }] } }]]]) });
-    ok(idleWorker.rest?.ok === false, "🔴 NEGATIVE CONTROL: a settle row with `skill-declared` but no wrapped notion-rest read is a red — another skill can declare that kind");
-    const unreadWorker = resolve(restRows, { seat: seatDelegates, workers: new Map<string, readonly TranscriptWireEvent[] | undefined>([[worker, undefined]]) });
-    ok(unreadWorker.rest?.ok === false, "NEGATIVE CONTROL: an unreadable worker transcript is never a REST green");
-
-    const orgAndRest = notionTaintReplayEvidence([...restRows, row("taint.verdict", { kind: "notion", sessionId: seat })], delivery);
-    ok(orgAndRest.ok && orgAndRest.evidence.road === "notion", "when the org road also wrote a row, the join reports the org road");
-
-    const seatOnly = notionTaintReplayEvidence(restRows.slice(0, 3), delivery);
-    const seatRest: readonly TranscriptWireEvent[] = [
-      { index: 0, at: null, type: "actions.requested", data: { turnId: "turn_2", actions: [{ toolName: "bash", callId: "s1", input: { command: "node scripts/notion.mjs page markdown current" } }] } },
-    ];
-    const seatRoad = !seatOnly.ok && seatOnly.noRow ? notionTaintRestRoad(seatOnly.reason, seatOnly.noRow, { seat: seatRest, workers: new Map() }) : undefined;
-    ok(seatRoad?.ok === false, "🔴 a seat-side REST read with no worker is a red, never a green");
-    const seatReason = !seatOnly.ok && seatOnly.noRow ? notionTaintNoRowReason(seatOnly.reason, seatOnly.noRow, { seat: seatRest, workers: new Map() }, "notion") : "";
-    ok(
-      seatReason.includes("read attempted over the REST road; the plane records no row for an agreeing unconditional kind"),
-      `…and the red states the honest answer — got: ${seatReason.slice(-200)}`,
-    );
-
-    {
-      const fwSeat = "wrun_example74";
-      const fwWork = "wrun_example75";
-      const fwWorker = "wrun_example76";
-      const sibling = "wrun_example77";
-      const fwDelivery = { deliveryId: "2361-armb-delivery", commentId: "comment-2361b", discussionId: "discussion-2361b" };
-      const fwSettle = row("delegation.task_settled", { task: "agent-2361b", status: "completed", session: fwWork, agent: fwWorker, marker: "tainted", adopted: true, kinds: ["skill-declared"] });
-      const fwRows = [
-        row("notion.dispatched", { ...fwDelivery, addressing: "direct", wakeId: "wake-2361b" }),
-        row("wake.turn_start", { wakeId: "wake-2361b", sessionId: fwSeat, turnId: "turn_2" }),
-        row("work.forwarded", { requestId: "req-2361b", wakeId: "wake-2361b", workGeneration: 2, tainted: false, seatSessionId: fwSeat }),
-        row("wake.turn_start", { wakeId: "req-2361b", sessionId: fwWork, turnId: "turn_9" }),
-        row("delegation.task_started", { task: "agent-2361b", call: "call-2361b", kind: "agent", session: fwWork, continuation: false, request: "req-2361b" }),
-        row("worker.toolset", { worker: fwWorker, parentSession: fwWork, parentCallId: "call-2361b", rootSession: fwSeat, grain: "task", tools: ["bash"] }),
-        fwSettle,
-      ];
-      const fwTranscripts = { seat: [] as readonly TranscriptWireEvent[], workers: new Map<string, readonly TranscriptWireEvent[] | undefined>([[fwWorker, restWorker]]) };
-      const fwJoin = notionTaintReplayEvidence(fwRows, fwDelivery);
-      ok(!fwJoin.ok && fwJoin.noRow !== undefined && fwJoin.noRow.workerSessionIds.includes(fwWorker), `🔴 OPE-2361: the forward joins the work session's worker (got ${JSON.stringify(!fwJoin.ok ? fwJoin.noRow?.workerSessionIds : "ok")})`);
-      ok(!fwJoin.ok && fwJoin.noRow !== undefined && notionTaintRestMarkSettled(fwJoin.noRow), "🔴 …and W's settle row for that task carries the REST mark");
-      const fwRest = !fwJoin.ok && fwJoin.noRow ? notionTaintRestRoad(fwJoin.reason, fwJoin.noRow, fwTranscripts) : undefined;
-      ok(fwRest?.ok === true && fwRest.evidence.road === "rest" && fwRest.evidence.verdictSessionId === fwWorker && fwRest.evidence.verdict === fwSettle, "🔴 THE 0.2.0 ARM B SHAPE IS GREEN: the forwarded worker's REST read plus W's settle row");
-      const fwOrg = notionTaintReplayEvidence([...fwRows, row("taint.verdict", { kind: "notion", sessionId: fwWorker, parentSessionId: fwWork })], fwDelivery);
-      ok(fwOrg.ok && fwOrg.evidence.road === "notion" && fwOrg.evidence.verdictSessionId === fwWorker, "🔴 a notion verdict from the forwarded worker is attributed to this replay");
-
-      const siblingVerdict = notionTaintReplayEvidence([...fwRows, row("taint.verdict", { kind: "notion", sessionId: sibling, parentSessionId: fwWork })], fwDelivery);
-      ok(!siblingVerdict.ok, "🔴 NEGATIVE CONTROL: a sibling job's worker under the same W is not this replay's reader");
-      const noForward = notionTaintReplayEvidence(fwRows.filter((r) => r.action !== "work.forwarded"), fwDelivery);
-      ok(!noForward.ok && noForward.noRow !== undefined && noForward.noRow.workerSessionIds.length === 0, "NEGATIVE CONTROL: with no forward row, no work-session worker joins");
-      const otherWake = notionTaintReplayEvidence(fwRows.map((r) => (r.action === "work.forwarded" ? { ...r, detail: { ...(r.detail as Record<string, unknown>), wakeId: "another-wake" } } : r)), fwDelivery);
-      ok(!otherWake.ok && otherWake.noRow !== undefined && otherWake.noRow.workerSessionIds.length === 0, "NEGATIVE CONTROL: a forward of another wake joins no worker");
-      const otherCall = notionTaintReplayEvidence(fwRows.map((r) => (r.action === "worker.toolset" ? { ...r, detail: { ...(r.detail as Record<string, unknown>), parentCallId: "call-sibling" } } : r)), fwDelivery);
-      ok(!otherCall.ok && otherCall.noRow !== undefined && otherCall.noRow.workerSessionIds.length === 0, "NEGATIVE CONTROL: a worker W started under another call is not this job's worker");
-      ok(NOTION_TAINT_REPLAY_ACTIONS.includes("work.forwarded") && NOTION_TAINT_REPLAY_ACTIONS.includes("worker.toolset"), "🔴 WIRING: arm B's read asks for work.forwarded and worker.toolset");
-      ok(SCENARIOS.find((s) => s.id === "S-TAINT-DRYRUN")!.run.toString().replace(/\s+/g, "").includes("replayActions=NOTION_TAINT_REPLAY_ACTIONS"), "🔴 WIRING: S-TAINT-DRYRUN arm B reads NOTION_TAINT_REPLAY_ACTIONS");
-    }
-
-    const restCall = (command: string): readonly TranscriptWireEvent[] => [
-      { index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "bash", callId: "c1", input: { command } }] } },
-    ];
-    ok(transcriptHasNotionPageRead(restCall("cd skills/notion-rest && node scripts/notion.mjs page markdown 40000000-0101 --depth 10"), { road: "rest", connector: "notion" }), "🔴 the REST road's witness reads the worker's bash call to page markdown");
-    ok(transcriptHasNotionPageRead(restCall("node scripts/notion.mjs comments list p1 --all"), { road: "rest", connector: "notion" }), "the REST witness accepts comments list, the other wrapped read");
-    ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs page current"), { road: "rest", connector: "notion" }), "🔴 NEGATIVE CONTROL: page current prints a handle and writes no verdict, so it does not witness the REST road");
-    ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs search runbook"), { road: "rest", connector: "notion" }), "NEGATIVE CONTROL: search does not witness a page read");
-    ok(
-      !transcriptHasNotionPageRead([{ index: 1, at: null, type: "actions.requested", data: { actions: [{ toolName: "read_file", input: { path: "scripts/notion.mjs page markdown" } }] } }], { road: "rest", connector: "notion" }),
-      "NEGATIVE CONTROL: the witness needs a `bash` call — the verb text in another tool's input is not a run",
-    );
-    ok(!transcriptHasNotionPageRead(restCall("node scripts/notion.mjs page markdown p1")), "NEGATIVE CONTROL: the same call fails the ORG road's witness, so the witness follows the road");
-  }
-
-  {
-    const seat = "wrun_example49";
-    const worker = "wrun_41M37G0000WORKER0000000001";
-    const delivery = { deliveryId: "238-delivery", commentId: "comment-238", discussionId: "discussion-238" };
-    const baseRows = [
-      row("notion.dispatched", { ...delivery, addressing: "direct", wakeId: "wake-238" }),
-      row("wake.turn_start", { wakeId: "wake-238", sessionId: seat, turnId: "turn_2" }),
-      row("notion.no_reply", { sessionId: seat, discussionId: "discussion-238" }),
-    ];
-    const call = (turnId: string, callId: string, toolName: string, input: unknown = {}): TranscriptWireEvent => ({
-      index: 0, at: null, type: "actions.requested", data: { turnId, actions: [{ callId, toolName, input }] },
-    });
-    const turn238 = [
-      { index: 0, at: null, type: "turn.started", data: { turnId: "turn_2" } },
-      call("turn_2", "c1", "reply"),
-      call("turn_2", "c1", "reply"),
-      call("turn_2", "c2", "no_reply"),
-    ] as const satisfies readonly TranscriptWireEvent[];
-    const noWorkers = new Map<string, readonly TranscriptWireEvent[] | undefined>();
-
-    const join = notionTaintReplayEvidence(baseRows, delivery);
-    ok(!join.ok, "🔴 the ship #238 shape is still a hard red at the join — no row is never a pass");
-    const noRow = !join.ok ? join.noRow : undefined;
-    ok(noRow?.sessionId === seat && noRow.turnId === "turn_2" && noRow.workerSessionIds.length === 0, "the no-row rung carries the seat, its turn and an empty worker list");
-    const joinReason = !join.ok ? join.reason : "";
-
-    const noRead = notionTaintNoRowReason(joinReason, noRow!, { seat: turn238, workers: noWorkers }, "notion");
-    ok(
-      noRead.startsWith("NO READ ATTEMPTED: the replay turn made no Notion read on any road (seat calls: reply, no_reply)"),
-      `🔴 THE SHIP #238 SHAPE: no read on any road names NO READ ATTEMPTED with the seat's calls in order — got: ${noRead.slice(0, 160)}`,
-    );
-
-    for (const [road, extra] of [
-      ["org read_notion_page", call("turn_2", "c3", "read_notion_page", { pageId: "p1" })],
-      ["org notion_search", call("turn_2", "c3", "notion_search", { query: "runbook" })],
-      ["org read_notion_comments", call("turn_2", "c3", "read_notion_comments", { pageId: "p1" })],
-      ["lent grant tool", call("turn_2", "c3", "grant__rowan_notion__notion_fetch_p1")],
-      ["REST bash", call("turn_2", "c3", "bash", { command: "node scripts/notion.mjs page markdown p1" })],
-    ] as const) {
-      const text = notionTaintNoRowReason(joinReason, noRow!, { seat: [...turn238, extra], workers: noWorkers }, "notion");
-      ok(text.startsWith(joinReason) && !text.includes("NO READ ATTEMPTED") && text.includes("WAS requested"), `🔴 a ${road} read with no row keeps the existing no-row text and names the read`);
-    }
-    const linearGrant = notionTaintNoRowReason(joinReason, noRow!, { seat: [...turn238, call("turn_2", "c3", "grant__rowan_linear__linear_read_issue")] , workers: noWorkers }, "notion");
-    ok(linearGrant.startsWith("NO READ ATTEMPTED"), "NEGATIVE CONTROL: a grant tool on ANOTHER connector is not a Notion read");
-    const restHandle = notionTaintNoRowReason(joinReason, noRow!, { seat: [...turn238, call("turn_2", "c3", "bash", { command: "node scripts/notion.mjs page current" })], workers: noWorkers }, "notion");
-    ok(restHandle.startsWith("NO READ ATTEMPTED"), "NEGATIVE CONTROL: `page current` is not a wrapped read verb");
-
-    const earlier = notionTaintNoRowReason(joinReason, noRow!, { seat: [call("turn_1", "c0", "read_notion_page"), ...turn238], workers: noWorkers }, "notion");
-    ok(earlier.startsWith("NO READ ATTEMPTED") && earlier.includes("(seat calls: reply, no_reply)"), "🔴 a read in another turn of the same session neither counts nor lists");
-
-    const unreadable = notionTaintNoRowReason(joinReason, noRow!, { seat: undefined, workers: noWorkers }, "notion");
-    ok(unreadable.startsWith(joinReason) && !unreadable.includes("NO READ ATTEMPTED") && unreadable.includes("unreadable"), "🔴 an unreadable seat transcript never claims NO READ ATTEMPTED");
-    const otherTurn = notionTaintNoRowReason(joinReason, noRow!, { seat: [call("turn_1", "c0", "reply")], workers: noWorkers }, "notion");
-    ok(otherTurn.startsWith(joinReason) && !otherTurn.includes("NO READ ATTEMPTED"), "🔴 a transcript that does not hold the replay turn never claims NO READ ATTEMPTED");
-
-    const delegated = notionTaintReplayEvidence(
-      [...baseRows, row("worker.toolset", { worker, parentSession: seat, tools: ["bash"] }), row("worker.toolset", { worker: "wrun_other", parentSession: "another-seat" })],
-      delivery,
-    );
-    const dRow = !delegated.ok ? delegated.noRow : undefined;
-    ok(dRow?.workerSessionIds.length === 1 && dRow.workerSessionIds[0] === worker, "the join lists this seat's worker and NOT another seat's");
-    const seatDelegates = [...turn238.slice(0, 2), call("turn_2", "c4", "delegate")];
-    const workerRest = notionTaintNoRowReason(joinReason, dRow!, { seat: seatDelegates, workers: new Map([[worker, [call("turn_1", "w1", "bash", { command: "node scripts/notion.mjs comments list p1" })]]]) }, "notion");
-    ok(!workerRest.includes("NO READ ATTEMPTED") && workerRest.includes(`worker ${worker}`), "🔴 a worker's REST read with no row keeps the existing text and names the worker");
-    const workerIdle = notionTaintNoRowReason(joinReason, dRow!, { seat: seatDelegates, workers: new Map([[worker, [call("turn_1", "w1", "read_file")]]]) }, "notion");
-    ok(workerIdle.startsWith("NO READ ATTEMPTED") && workerIdle.includes(worker), "a delegated turn whose worker made no Notion read is NO READ ATTEMPTED, and names the worker");
-    const workerUnread = notionTaintNoRowReason(joinReason, dRow!, { seat: seatDelegates, workers: new Map([[worker, undefined]]) }, "notion");
-    ok(!workerUnread.includes("NO READ ATTEMPTED") && workerUnread.includes("unreadable"), "🔴 an unreadable worker transcript never claims NO READ ATTEMPTED");
-
-    const withRow = notionTaintReplayEvidence([...baseRows, row("taint.verdict", { kind: "notion", sessionId: seat })], delivery);
-    ok(withRow.ok, "read-with-row still passes the join");
-    const noDispatch = notionTaintReplayEvidence(baseRows.slice(1), delivery);
-    ok(!noDispatch.ok && noDispatch.noRow === undefined, "NEGATIVE CONTROL: only the turn-ran-no-row rung carries no-row keys");
   }
 }
 
@@ -8074,100 +7610,6 @@ await removeTempDir(dir);
       );
       ok(!gatesSrc.includes("capFixture?.surfaceKey"), "🔴 OPE-2205: no tracked fixture surface key survives in S10 — that copy read the synthetic id on the test deployment");
 
-      const { liveMeasurementVerdict } = await import("../packages/core/scripts/e2e/taint-context-line.js");
-      const allMeasured = liveMeasurementVerdict(["ARM A (web, live context line)", "ARM D (linear) — the live `context:` line"], []);
-      ok(
-        allMeasured.cannotRun === undefined && allMeasured.logged.length === 0,
-        "OPE-1877: a run in which every arm that RAN measured something carries no verdict — the leg scores on its gates, exactly as before",
-      );
-      ok(
-        liveMeasurementVerdict([], []).cannotRun === undefined && liveMeasurementVerdict([], []).logged.length === 0,
-        "OPE-1877: …and a run in which NO arm ran at all carries none either — an undrivable fixture is already its own precise skip, so folding it in would claim a route went unmeasured when it was never drivable",
-      );
-      const bothSilent = liveMeasurementVerdict([], [
-        { arm: "ARM B (github)", what: "the relayed context line was not a live measurement" },
-        { arm: "ARM C (notion)", what: "no `taint.verdict` row for kind `notion` landed" },
-      ]);
-      ok(
-        bothSilent.cannotRun !== undefined && bothSilent.cannotRun.includes("ARM B (github)") && bothSilent.cannotRun.includes("ARM C (notion)"),
-        "🔴 OPE-1877: the ship #216/#217 shape — every arm silent — produces a verdict, and it NAMES both arms so a ship reader is not left to diff two logs",
-      );
-      const oneMeasured = liveMeasurementVerdict(["ARM A (web, live context line)"], [{ arm: "ARM C (notion)", what: "no row landed" }]);
-      ok(
-        oneMeasured.cannotRun === undefined,
-        "🔴 OPE-2031: ONE silent arm beside an arm that MEASURED is not cannot-run — the boards #228/#229 shape, where a leg with live web evidence reported that it proved nothing",
-      );
-      ok(
-        oneMeasured.logged.length === 1 && oneMeasured.logged[0]!.includes("ARM C (notion)"),
-        "🔴 OPE-2031: …and the silent arm is still LOGGED BY NAME — the record OPE-1877 demanded survives the correction, it just stops deciding the leg",
-      );
-      ok(
-        liveMeasurementVerdict([], [{ arm: "ARM C (notion)", what: "no row landed" }]).cannotRun !== undefined,
-        "🔴 OPE-2031 NEGATIVE CONTROL: one silent arm and NO measurement anywhere is still CANNOT RUN — the rule turns on the absence of evidence, never on a count of silent arms",
-      );
-
-      ok(
-        gatesSrc.includes("arm: \"ARM B (github)\""),
-        "🔴 OPE-1877: ARM B records its non-measurement instead of only logging it",
-      );
-      ok(
-        gatesSrc.includes("arm: \"ARM C (notion)\""),
-        "🔴 OPE-1877: ARM C records its non-measurement instead of only logging it",
-      );
-      ok(
-        gatesSrc.includes("arm: \"ARM A (web)\"") && gatesSrc.includes("measured.push(\"ARM A (web, live context line)\")"),
-        "🔴 OPE-2031: ARM A reports BOTH outcomes to the ledger — a live line is a measurement, a supplied one is a named silence",
-      );
-      ok(
-        gatesSrc.includes("arm: \"ARM D (linear)\"") && gatesSrc.includes("measured.push(\"ARM D (linear) — the live `context:` line\")"),
-        "🔴 OPE-2031: ARM D reports BOTH outcomes to the ledger, for the same reason",
-      );
-      ok(
-        gatesSrc.includes("measured.push(\"ARM C (notion) — the `taint.verdict` row\")"),
-        "🔴 OPE-2031: ARM C counts its `taint.verdict` row as the measurement it is",
-      );
-
-      ok(
-        gatesSrc.includes("d?.kind === \"github\" && typeof d.label === \"string\" && d.label.toLowerCase().startsWith(wantLabelB)"),
-        "🔴 OPE-2031: ARM B reads a `taint.verdict` row of kind `github` from the audit, attributed by the `get_pr_feedback:` label — `walk_pr` and `subscribe_pr:title` declare the same kind and always write `applied:false`, so the label is what keeps the `applied` gate below honest",
-      );
-      ok(
-        gatesSrc.includes("const wantLabelB = `get_pr_feedback:${ctx.prRepo}`.toLowerCase();"),
-        "🔴 OPE-2031: …and the label is pinned to the FIXTURE REPO, not just to the tool — the seat reading feedback on any OTHER private repo inside this arm's window writes a row that passes all four gates, so a repo-agnostic prefix would record a measurement this arm's worker never made",
-      );
-      ok(
-        gatesSrc.includes("dB.divergence === \"over-taint\" && dB.taintsToday === true && dB.tableTier === \"trusted\" && dB.assumed === false"),
-        "🔴 OPE-2031: …and the row's DIRECTION is hard-gated — the private-repo over-taint, off the real `base.repo.private` flag rather than the fail-closed default",
-      );
-      ok(
-        gatesSrc.includes("const sinceB = await presenceSince(ctx, \"sinceB\", 5_000);") &&
-          gatesSrc.indexOf("const sinceB = await presenceSince(ctx, \"sinceB\", 5_000);") < gatesSrc.indexOf("const rowB = expectTaint"),
-        "🔴 OPE-2031: ARM B's audit window opens BEFORE the ask — a window opened after the reply would miss the row the delegated worker wrote while it read",
-      );
-
-      {
-        const appendAt = gatesSrc.indexOf("const blockC = await not");
-        const forgeAt = gatesSrc.indexOf("const forgeC = await not.forgeCommentCreated(");
-        const archiveAt = gatesSrc.indexOf("await ctx.notionAmbient?.archiveBlock(blockId)");
-        const verdictPos = gatesSrc.indexOf("const verdict = liveMeasurementVerdict(measured, unmeasured);");
-        ok(
-          appendAt > 0 && forgeAt > 0 && appendAt < forgeAt,
-          "🔴 OPE-2031: ARM C appends the fresh page body BEFORE it forges the replay — appending after the wake would change a page the supervisor has already been asked about",
-        );
-        ok(
-          archiveAt > 0 && verdictPos > 0 && archiveAt > verdictPos,
-          "🔴 OPE-2031: …and the block is archived AFTER the terminal verdict, i.e. in the `finally` — a `ctx.gate` or `ctx.skip` throw must still tear the block down, or the shared scratch page grows one block a run",
-        );
-      }
-      {
-        const verdictAt = gatesSrc.indexOf("const verdict = liveMeasurementVerdict(measured, unmeasured);");
-        const armEAt = gatesSrc.indexOf("the named arrow moved the verdict allow → ask specifically");
-        const teardownAt = gatesSrc.indexOf("S-TAINT-ROUTE-LIVE teardown:");
-        ok(
-          verdictAt > 0 && armEAt > 0 && teardownAt > 0 && verdictAt > armEAt && verdictAt < teardownAt,
-          "🔴 OPE-1877: the terminal verdict is read AFTER ARM E's last gate and BEFORE the teardown — early enough to be inside the try that expires the pending cards, late enough that no arm loses its run to it",
-        );
-      }
       ok(
         gatesSrc.includes("const beforeStop = new Set((await github.comments(issue).catch(() => [])).map((c) => c.id).filter((id) => id !== 0));"),
         "🔴 OPE-1905: …and the ID SNAPSHOT rides beside it, over READABLE ids only — flooring alone widens the window back onto the acknowledgement the leg legitimately drew, and a snapshot holding the id-0 placeholder would exclude a real post-stop reply whose entry is equally unreadable",
@@ -9485,10 +8927,9 @@ await removeTempDir(dir);
   const nowAllowed = new Set(["nowIso"]);
   const nowStray = nowAssigned.filter((n) => !nowAllowed.has(n));
   ok(nowStray.length === 0, `🔴 OPE-2387/OPE-2391: no scenario presence floor or vendor wait is the bare driver "now" (found: ${nowStray.join(", ")})`);
-  ok(nowAssigned.length === 3, `the allowlisted driver "now" instants are the three pending-row decide times (S-JUDGE-LIFT-NOTICE added the third, OPE-2495), which bound no read (found ${nowAssigned.length}: ${nowAssigned.join(", ")})`);
+  ok(nowAssigned.length === 2, `the allowlisted driver "now" instants are the two pending-row decide times (S-JUDGE-LIFT-NOTICE added one, OPE-2495; OPE-2726 removed S-TAINT-ROUTE-LIVE's), which bound no read (found ${nowAssigned.length}: ${nowAssigned.join(", ")})`);
   ok(scenariosSrc.includes("const offTopicAt = (await lin.comments(issueA.id).catch(() => [])).find((c) => c.id === offTopicId)?.createdAt ?? \"\";"), "🔴 OPE-2391: the J-LIN stray filter opens at the off-topic note's own Linear createdAt");
   ok(scenariosSrc.indexOf("const offTopicId = await lin.comment(issueA.id,") >= 0 && scenariosSrc.indexOf("const offTopicId = await lin.comment(issueA.id,") < scenariosSrc.indexOf("const offTopicAt ="), "…which exists only after the note is posted, so the bound is read after it");
-  ok(scenariosSrc.includes("await not.awaitBotReplyIn(discussionId, replayFrom, { timeoutMs: REPLY_WAIT })"), "🔴 OPE-2391: the S-TAINT-DRYRUN Notion drain floors on the deployment-clock replayFrom");
   ok(!/awaitBotReplyIn\(discussionId, since,/.test(scenariosSrc), "NEGATIVE CONTROL: no Notion drain floors on a bare `since`");
   ok((scenariosSrc.match(/await presenceSince\(ctx, /g) ?? []).length >= 90, "the presence floors moved to presenceSince (95 sites when OPE-2387 landed)");
   ok(/const markLeg = async \(leg: string\) => legMarks\.push\(\{ leg, sinceIso: await presenceSince\(ctx,/.test(scenariosSrc), "🔴 J1's latency marks bound their wake reads on the deployment's clock");

@@ -20,15 +20,6 @@ interface PrApiFile {
   patch?: string;
 }
 
-export interface PrTaintShape {
-  readonly repoPrivate?: boolean;
-  readonly thirdPartyBodies: number;
-}
-
-interface PrApiBody {
-  body?: string;
-}
-
 export class PrApi {
   constructor(private readonly cfg: PrConfig) {}
 
@@ -60,27 +51,6 @@ export class PrApi {
     const pr = (await this.api("GET", `/repos/${this.cfg.repo}/pulls/${prNumber}`)) as PrApiPull;
     if (typeof pr.number !== "number") return undefined;
     return { number: pr.number, head: pr.head?.ref ?? "", base: pr.base?.ref ?? "", title: pr.title ?? "" };
-  }
-
-  async prTaintShape(prNumber: number): Promise<PrTaintShape> {
-    const pr = (await this.api("GET", `/repos/${this.cfg.repo}/pulls/${prNumber}`)) as { base?: { repo?: { private?: boolean } } };
-    const priv = pr.base?.repo?.private;
-    const nonEmpty = async (path: string): Promise<number> => {
-      const items = await walkGithubPages(path, async (page) => {
-        const json = (await this.api("GET", `${path}?per_page=${GITHUB_PAGE_SIZE}&page=${page}`)) as PrApiBody[];
-        return Array.isArray(json) ? json : [];
-      });
-      return items.filter((c) => typeof c.body === "string" && c.body.trim().length > 0).length;
-    };
-    const counts = await Promise.all([
-      nonEmpty(`/repos/${this.cfg.repo}/pulls/${prNumber}/reviews`),
-      nonEmpty(`/repos/${this.cfg.repo}/pulls/${prNumber}/comments`),
-      nonEmpty(`/repos/${this.cfg.repo}/issues/${prNumber}/comments`),
-    ]);
-    return {
-      ...(typeof priv === "boolean" ? { repoPrivate: priv } : {}),
-      thirdPartyBodies: counts.reduce((a, b) => a + b, 0),
-    };
   }
 
   async findOpenPrByHead(head: string): Promise<PrDetails | undefined> {
