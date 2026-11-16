@@ -26,7 +26,7 @@ const ok = (cond: boolean, label: string) => {
 
 const quiet = async (): Promise<void> => {};
 
-const T = Date.parse("2026-09-12T12:00:00.000Z");
+const T = Date.parse("2026-04-19T23:40:00.000Z");
 const msg = (over: Partial<NormalizedMessage> & { id: string; ms: number }): NormalizedMessage => ({
   authorId: "U1",
   sender: "human",

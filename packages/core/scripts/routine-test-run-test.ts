@@ -215,7 +215,7 @@ registerSlackTestBridge({
       const f = new URLSearchParams(body);
       slackPosts.push({ channel: f.get("channel") ?? "", text: f.get("text") ?? "", ...(f.get("thread_ts") ? { thread: f.get("thread_ts")! } : {}) });
     }
-    return { ok: true, ts: `1759836620.${String(++postSeq).padStart(6, "0")}` };
+    return { ok: true, ts: `1760000000.${String(++postSeq).padStart(6, "0")}` };
   },
 });
 

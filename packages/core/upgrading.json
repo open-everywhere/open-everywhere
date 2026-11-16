@@ -729,7 +729,7 @@
     },
     {
       "version": "0.1.3",
-      "date": "2026-10-03",
+      "date": "2026-10-02",
       "summary": "Four first-install fixes: a pretypecheck build, pinned undici overrides, allowed install scripts, and a scaffold into a fresh clone.",
       "evePeer": "0.54.3",
       "breaking": [],

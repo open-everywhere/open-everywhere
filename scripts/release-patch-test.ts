@@ -77,7 +77,7 @@ function changedLines(before: string, after: string): number {
 const withDraft = (draft: Json): Map<string, string> => withJson(RECORD_FILE, (j) => j.releases.unshift(draft));
 const emptyDraft = (version: string): Json => ({
   version,
-  date: "2026-10-21",
+  date: "2026-10-20",
   summary: "Draft.",
   evePeer: "0.71.0",
   breaking: [],

@@ -696,7 +696,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
             oe_wake_id: "eab60e37-0000-1111-2222-333344445555",
             team_id: "T1",
             channel_id: "C0EXCHAN003",
-            thread_ts: "1777025145.935000",
+            thread_ts: "1769593485.935000",
             trust_checked: "true",
           },
           principalId: "U_CLAIMANT",

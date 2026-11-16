@@ -116,7 +116,7 @@ console.log("4. a confirmed link-set member derives the link-set subject, and th
 
 console.log("5. the broker hands the owner subject to the transport, and refuses before any burn:");
 {
-  const NOW = Date.parse("2026-01-29T18:22:00.000Z");
+  const NOW = Date.parse("2026-08-24T12:00:00.000Z");
   const seen: GrantOwnerSubject[] = [];
   _resetGrantBorrowTransportsForTest();
   selectConnectorTransport({ connector: "notion", directUrl: "https://mcp.notion.com/mcp", provider: "notion" });

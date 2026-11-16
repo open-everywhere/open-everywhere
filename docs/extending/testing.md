@@ -472,7 +472,7 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
     `scripts/it-memory-config-test.ts` asserts the heap cap, the native load and the console setting
     beside the worker count, because a diff that drops a setting and leaves the count would red
     nothing — it would make the tier die silently at a count it can no longer afford.
-- 🔴 **THE WORKER COUNT IS CAPPED BY THE HARNESS, NOT BY MEMORY (OPE-2229, measured 2026-10-03).**
+- 🔴 **THE WORKER COUNT IS CAPPED BY THE HARNESS, NOT BY MEMORY (OPE-2229, measured 2026-10-02).**
   OPE-2229 set out to run 4 workers per sandbox and the memory analysis behind it is sound — 4
   workers peak at 4.3–4.6 GB of 13 680 MB with no OOM. It is not memory that stops it. More than one
   concurrent agent host widens the OPE-2197 / OPE-2174 window where one leg's settlement turn is
@@ -518,7 +518,7 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
     window only where nothing is owed, so the guard those three files lean on is untouched — every
     between-leg `awaitWindowQuiet()` call in them still pays the full 1 500 ms, because each leg
     dispatches a worker inside its own slice of the audit log.
-    **Measured 2026-10-03 on the raising head, the WHOLE tier** (120 files, 277 tests, 4 sequential
+    **Measured 2026-10-02 on the raising head, the WHOLE tier** (120 files, 277 tests, 4 sequential
     one-process shards) on the same 4-core 13 680 MB sandbox. Wall is the sum of the four shards' own
     wall clocks; the build is the prepare step's and sits outside them:
 
@@ -642,7 +642,7 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
 - **The fixed setup is a STEP, and it is cached** (OPE-2235). `npm run test:integration:prepare`
   (`tests/integration/prepare.ts`) is what builds the tier's target, in a process that exits before
   vitest starts. One cold receipt it printed itself, on a 4-core cloud sandbox (13.7 GB cgroup, Node
-  24.21.0, n=1, 2026-10-03): `oe:build` **7.2 s**, `eve build` **169.8 s**, the just-bash prewarm
+  24.21.0, n=1, 2026-10-02): `oe:build` **7.2 s**, `eve build` **169.8 s**, the just-bash prewarm
   **18.8 s**, the PGlite template mint **3.6 s**, `fixed-setup` **204.9 s** (the remainder is the
   key read, the stamp and publishing an 8.1 MB archive; it is 5.5 s by the printed fields). On the same tree a stamp hit is **10.6 s** and a
   remote hit **12.7 s** — `oe:build` and the mint run on every path, and what a hit skips is `eve build`

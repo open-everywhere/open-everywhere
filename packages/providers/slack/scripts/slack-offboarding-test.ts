@@ -13,7 +13,7 @@ const ok = (cond: boolean, label: string) => {
 };
 
 const SECRET = "shhh-signing-secret";
-const NOW_MS = 1769564200000;
+const NOW_MS = 1768685440000;
 const OUR = "T0ACME";
 const PARTNER = "T0PARTNER";
 

@@ -341,16 +341,16 @@ const find = (checks: readonly Check[], needle: string): Check | undefined => ch
 {
   const rows = [
     { ts: "2026-08-10T00:00:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
-    { ts: "2026-04-04T23:30:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
+    { ts: "2026-08-01T00:00:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
     { ts: "2026-08-12T00:00:00.000Z", platform: "slack", workspace: "T0", surface: "C1" },
     { ts: "2026-08-05T00:00:00.000Z", platform: "github", workspace: "acme", surface: "repo" },
-    { ts: "2026-04-09T23:30:00.000Z", platform: "slack", workspace: "T0" },
+    { ts: "2026-08-06T00:00:00.000Z", platform: "slack", workspace: "T0" },
   ];
   const folded = surfaceTrafficFromAudit(rows);
   eq(folded.length, 2, "the fold groups by surface key");
   eq(
     folded.find((f) => f.surfaceKey === "slack/T0/C1"),
-    { surfaceKey: "slack/T0/C1", firstSeen: "2026-04-04T23:30:00.000Z", lastSeen: "2026-08-12T00:00:00.000Z" },
+    { surfaceKey: "slack/T0/C1", firstSeen: "2026-08-01T00:00:00.000Z", lastSeen: "2026-08-12T00:00:00.000Z" },
     "…and takes the EARLIEST as firstSeen and the LATEST as lastSeen, whatever order the rows arrive in",
   );
   ok(folded.every((f) => f.surfaceKey.split("/").length === 3), "🔴 a row with NO surface is SKIPPED — an org-scoped event names no room to declare");

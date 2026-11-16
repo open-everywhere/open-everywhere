@@ -659,7 +659,7 @@ on every call. A model classifier
 would see context these cannot, but it would cost a model call per outbound call, and its accuracy
 is not measured. So the shipped table is deterministic, and the classifier is not built.
 `npm run measure:sensitive-data` produces these numbers, and it fails if a detector change crosses
-its bounds (measured on 2026-10-23):
+its bounds (measured on 2026-10-22):
 
 | Corpus | Size | Matched |
 |---|---|---|

@@ -49,7 +49,7 @@ const AUTHOR = "author-user-id-111";
 const PAGE = "page-456";
 const PAGE_KEY = "ch_bm90aW9uOnBhZ2UtNDU2";
 const DISCUSSION = "disc-789";
-const NOW = () => "2026-02-18T14:05:00.000Z";
+const NOW = () => "2026-07-10T10:00:00.000Z";
 
 ok(notionSupervisorSentinel(3) === "oe-sup:g3", "sentinel is oe-sup:g<gen>");
 ok(notionSupervisorToken(PAGE, 1) === `notion:${PAGE}:oe-sup:g1`, "token is notion:<pageId>:oe-sup:g<gen>");
@@ -147,9 +147,9 @@ ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user" } }, o
   ok(classifyNotionComment({ ...base, created_by: { id: AUTHOR, object: "user" } }, own(BOT)).addressing === "channel-watch", "NEGATIVE CONTROL: the identical comment with a COMPLETE set is judged, so the drop above is driven by `complete` and by nothing else");
 }
 
-const trigger: NotionWakeMessage = { from: "human", id: "c-trig", authorId: AUTHOR, sentAt: "2026-03-24T18:51:00Z", text: "does section 2 still hold?", trust: "peer" };
+const trigger: NotionWakeMessage = { from: "human", id: "c-trig", authorId: AUTHOR, sentAt: "2026-07-10T09:59:00Z", text: "does section 2 still hold?", trust: "peer" };
 const siblings: NotionWakeMessage[] = [
-  { from: "human", id: "c-prior", authorId: AUTHOR, sentAt: "2026-03-24T17:52:00Z", text: "an earlier note", trust: "peer" },
+  { from: "human", id: "c-prior", authorId: AUTHOR, sentAt: "2026-07-10T09:00:00Z", text: "an earlier note", trust: "peer" },
   { from: "self", id: "c-mine", sentAt: "2026-07-10T09:30:00Z", text: "my earlier reply", trust: "relay" },
 ];
 {
@@ -337,7 +337,7 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
     token: notionSupervisorToken(PAGE, 2),
     generation: 2,
     freshGeneration: true,
-    tail: [{ from: "human", author: "U_ADA", authorId: "U_ADA", id: "c-prev", sentAt: "2026-02-09T21:34:00Z", trust: "peer", body: "the API rename is mid-flight" }],
+    tail: [{ from: "human", author: "U_ADA", authorId: "U_ADA", id: "c-prev", sentAt: "2026-08-18T09:00:00Z", trust: "peer", body: "the API rename is mid-flight" }],
   };
   const { deps, wakes } = captureDeps(session);
   await handleNotionSupervisorDispatch(dispatch(), deps);
@@ -413,7 +413,7 @@ for (const [label, err] of [
 
   const graded = notionIngestedMessages({
     workspaceId: "ws-1",
-    trigger: { from: "human", id: "c1", authorId: AUTHOR, sentAt: "2026-03-24T17:52:00Z", text: "hi", trust: "peer" },
+    trigger: { from: "human", id: "c1", authorId: AUTHOR, sentAt: "2026-07-10T09:00:00Z", text: "hi", trust: "peer" },
     threadComments: [{ from: "human", id: "c0", authorId: GUEST, sentAt: "2026-07-10T08:00:00Z", text: "earlier", trust: "peer" }],
   });
   ok(graded.length === 2, "the ingested set covers the trigger AND every hydrated sibling — Notion re-sends the whole discussion each wake");

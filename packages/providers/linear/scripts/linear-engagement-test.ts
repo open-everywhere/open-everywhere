@@ -55,7 +55,7 @@ function stubDeps(row: EngagementRow | null): LinearEngagementDeps & { reads: st
       seen.push(key);
       return first;
     },
-    now: () => "2026-05-12T11:30:00.000Z",
+    now: () => "2026-09-07T12:00:00.000Z",
   };
 }
 
@@ -120,7 +120,7 @@ ok(linearEngagementAnchor({ ...FACTS, issueId: "" }) === undefined, "1c: NEGATIV
   const anchor = await markLinearEngaged(FACTS, "sess-1", deps);
   ok(anchor === "ISSUE_L", "3a: the mention leg's mark returns the issue it enrolled");
   ok(deps.writes.length === 1 && deps.writes[0]!.key === "ISSUE_L", "🔴 3b: …and writes the SAME key the comment leg reads — the two legs' join, and the thing a per-comment-thread mark would break");
-  ok(deps.writes[0]!.at === "2026-05-12T11:30:00.000Z", "3c: …stamped with the injected clock");
+  ok(deps.writes[0]!.at === "2026-09-07T12:00:00.000Z", "3c: …stamped with the injected clock");
 }
 
 {

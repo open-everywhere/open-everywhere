@@ -67,9 +67,9 @@ try {
   await driver.assertReady();
   ok((await driver.inspectHalt()) === undefined && (await driver.inspectSpendLimit()) === undefined, "read-only preflight sees an empty exact address");
 
-  await sqliteOperationalStore.setHalt(org, { orgWide: false, level: "surface", scopeKey: surfaceKey }, { setBy: "U-driver", setAt: "2026-05-26T05:32:00.123Z", setRef: "wake-owned" });
+  await sqliteOperationalStore.setHalt(org, { orgWide: false, level: "surface", scopeKey: surfaceKey }, { setBy: "U-driver", setAt: "2026-02-03T04:40:00.123Z", setRef: "wake-owned" });
   const halt = await driver.inspectHalt();
-  ok(halt?.scopeKey === surfaceKey && halt.setBy === "U-driver" && halt.setAt === "2026-05-26T05:32:00.123Z" && halt.setRef === "wake-owned", "halt inspection returns exact time + wake ownership facts from the stdio store");
+  ok(halt?.scopeKey === surfaceKey && halt.setBy === "U-driver" && halt.setAt === "2026-02-03T04:40:00.123Z" && halt.setRef === "wake-owned", "halt inspection returns exact time + wake ownership facts from the stdio store");
   await sqliteOperationalStore.setHalt(org, { orgWide: false, level: "surface", scopeKey: surfaceKey }, { setBy: "U-operator" });
   ok((await driver.clearOwnedHalt(halt!)) === "changed", "a stale halt handle cannot clear a concurrent operator restamp");
   const currentHalt = await driver.inspectHalt();

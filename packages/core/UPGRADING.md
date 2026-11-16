@@ -722,7 +722,7 @@ eve peer: `0.54.3`
 - Read `GET /eve/v1/oe/status` after the deploy to confirm the result. It answers one verdict per deployment-contract requirement id, and it reports the core version it is running. `docs/deploy/contract.md` explains the payload.
 - Sync these template files from the 0.1.4 `@open-everywhere/create` template, if the app was scaffolded at 0.1.3 or earlier: `agent/lib/register-adapters.ts`, `scripts/ops-mcp.ts`, `scripts/env-pipe.mjs`, `AGENTS.md`, `.env.example`, `README.md` and `.claude/skills/quickstart-open-everywhere/SKILL.md`, and add `.claude/skills/upgrade-open-everywhere/SKILL.md`. The app owns its scaffolded files, so `oe upgrade` changes none of them. 🔴 `agent/lib/register-adapters.ts` is the one that breaks a deployment: the 0.1.2 and 0.1.3 copies register the Neon client only when `OE_MEMORY_PROVIDER` or `OE_OPERATIONAL_PROVIDER` reads `postgres`. On this release a bare `DATABASE_URL` selects Postgres for both stores, so with the old copy a Vercel+Neon deployment registers no client and fails at its first audit write, while `npm run typecheck` and `npm run build` both pass. A core that carries the boot refusal for this wiring names it in its own release entry. That core refuses to boot over the old copy instead, and its `npx oe upgrade --plan` lists every scaffolded file that differs from the target's template.
 
-## 0.1.3 — 2026-10-03
+## 0.1.3 — 2026-10-02
 
 Four first-install fixes: a pretypecheck build, pinned undici overrides, allowed install scripts, and a scaffold into a fresh clone.
 

@@ -92,7 +92,7 @@ await store.addRoutine(routine({ id: "r-mine-dm", surfaceKey: MY_DM.surfaceKey }
 await store.addRoutine(routine({ id: "r-mine-room", surfaceKey: "slack/T1/C-ROOM", trigger: { kind: "watch", everyMinutes: 30 }, prompt: "Watch the status page" }));
 await store.addRoutine(routine({ id: "r-theirs-dm", surfaceKey: THEIR_DM.surfaceKey, createdBy: "U_OTHER", prompt: "Their secret routine" }));
 await store.addRoutine(routine({ id: "r-theirs-room", surfaceKey: "slack/T1/C-ROOM", createdBy: "U_OTHER", prompt: "Their room routine" }));
-await store.addRoutine(routine({ id: "r-mine-once", surfaceKey: MY_DM.surfaceKey, trigger: { kind: "once", at: "2026-12-01T15:00:00Z" }, prompt: "Remind me to send the invoice", createdAt: "2026-01-16T15:00:00Z" }));
+await store.addRoutine(routine({ id: "r-mine-once", surfaceKey: MY_DM.surfaceKey, trigger: { kind: "once", at: "2026-12-01T15:00:00Z" }, prompt: "Remind me to send the invoice", createdAt: "2026-10-09T09:00:00Z" }));
 await store.addRoutine(routine({ id: "r-mine-fired", surfaceKey: MY_DM.surfaceKey, trigger: { kind: "once", at: "2026-10-01T15:00:00Z" }, prompt: "Remind me about the dentist", status: "disabled", disabledReason: "once: fired and ok at 2026-10-01T15:00:00.000Z", createdAt: "2026-09-30T09:00:00Z" }));
 await store.addRoutine(routine({ id: "r-mine-declined", surfaceKey: MY_DM.surfaceKey, trigger: { kind: "once", at: "2026-10-02T15:00:00Z" }, prompt: "Remind me to call the bank", status: "disabled", disabledReason: "once: declined (over budget) at 2026-10-02T15:00:00.000Z", createdAt: "2026-09-30T08:00:00Z" }));
 await store.addRoutine(routine({ id: "r-other-org", org: "other-org", surfaceKey: MY_DM.surfaceKey, prompt: "Another tenant" }));

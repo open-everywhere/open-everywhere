@@ -405,7 +405,7 @@ section replaces the paste-ready sentences it used to carry.
 | --- | --- |
 | `ROSTER-doc-exemption` | Documented — [Every mounted name must be documented](../extending/tools.md#every-mounted-name-must-be-documented--and-the-one-escape-hatch): the escape-hatch table, its two failure directions, and the two kinds of entry that are legitimate. |
 | `SEAT-harness-internal` | Documented — a new **harness-internal** term in [glossary § 1](../glossary.md#1-seat-grain-posture): the one-member set no per-wake filter may remove, and why both filters read it. |
-| `CTRL-unified_domain_audit` | 🔴 **The mark was STALE.** The verb has been named as a code span in the control-plane page's own "What the MCP exposes" table since 2026-09-13., which is the table this page said it was absent from. The cell now cites that table. |
+| `CTRL-unified_domain_audit` | 🔴 **The mark was STALE.** The verb has been named as a code span in the control-plane page's own "What the MCP exposes" table since 2026-09-13, which is the table this page said it was absent from. The cell now cites that table. |
 | `TOOL-sandbox_tools` | **EXEMPT**, not undocumented — see below. |
 | `TOOL-browser_tools` | **EXEMPT**, not undocumented — see below. |
 

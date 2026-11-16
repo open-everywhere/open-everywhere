@@ -204,11 +204,11 @@ registerConfig({
   row = await store.getEngagement("orgO", sk, "o.1");
   ok(row !== null && row.ownerToken === "T_ENG:oe-sup:1", "sqlite: a refresh carrying ownerToken sets it on an existing row");
 
-  await store.markEngaged("orgO", sk, "o.1", "2026-07-11T12:00:00Z", { participating: true });
+  await store.markEngaged("orgO", sk, "o.1", "2026-07-09T12:00:00Z", { participating: true });
   row = await store.getEngagement("orgO", sk, "o.1");
   ok(row !== null && row.ownerToken === "T_ENG:oe-sup:1" && row.participating === true, "sqlite: a refresh omitting ownerToken never clears the existing owner");
 
-  await store.markEngaged("orgO", sk, "o.1", "2026-03-25T21:52:00Z", { kind: "spawned" });
+  await store.markEngaged("orgO", sk, "o.1", "2026-07-09T13:00:00Z", { kind: "spawned" });
   row = await store.getEngagement("orgO", sk, "o.1");
   ok(row !== null && row.kind === "thread", "sqlite: kind is immutable after first touch — a later call can't flip it");
 
@@ -277,11 +277,11 @@ registerConfig({
   ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.createdAt === "2026-07-09T11:00:00Z", "sqlite: getChannelSession reflects the rotated generation (no stale gen-1 fields)");
 
   ok((await store.getChannelSession("orgOther", sk)) === null, "sqlite: channel session is org-isolated");
-  await store.rotateChannelSession("orgOther", sk, "T_ENG:oe-sup:1", "2026-07-11T12:00:00Z");
+  await store.rotateChannelSession("orgOther", sk, "T_ENG:oe-sup:1", "2026-07-09T12:00:00Z");
   ok((await store.getChannelSession("orgS", sk))!.generation === 2, "sqlite: another org's rotation doesn't disturb this org's row");
 
   ok((await store.getChannelSession("orgS", "slack/T_ENG/C_NOSUP")) === null, "sqlite: sanity — no row for an untouched surface");
-  await store.touchChannelSession("orgS", "slack/T_ENG/C_NOSUP", "2026-03-25T21:52:00Z");
+  await store.touchChannelSession("orgS", "slack/T_ENG/C_NOSUP", "2026-07-09T13:00:00Z");
   ok((await store.getChannelSession("orgS", "slack/T_ENG/C_NOSUP")) === null, "sqlite: touchChannelSession on a surface with no session is a no-op");
 
   const atomicSk = "slack/T_ENG/C_ATOMIC";
@@ -1133,7 +1133,7 @@ registerConfig({
   ok(wakeMsg.includes('trigger="true"'), "wake envelope's sole message carries trigger=true");
   ok(wakeMsg.includes('<thread ts="1.1"'), "wake envelope nests under <thread> for an in-thread wake");
   ok(!wakeMsg.includes('mention="true"'), "wake envelope never sets mention=true — this path is never an @mention");
-  ok(renderWakeMessage(ev, () => "2026-07-11T12:00:00Z", { trust: "peer" }).includes('current-time="2026-07-11T12:00:00Z"'), "renderWakeMessage's now() seam controls the envelope's current-time");
+  ok(renderWakeMessage(ev, () => "2026-07-09T12:00:00Z", { trust: "peer" }).includes('current-time="2026-07-09T12:00:00Z"'), "renderWakeMessage's now() seam controls the envelope's current-time");
 
   const woke: string[] = [];
   const deps: MessageRouteDeps = {
@@ -1318,7 +1318,7 @@ registerConfig({
       latched.push({ threadTs, participating: opts?.participating, at, order: step });
       step++;
     },
-    now: () => "2027-03-01T09:00:00Z",
+    now: () => "2026-07-08T09:00:00Z",
     displayName: async () => "Ada",
   });
 
@@ -1326,7 +1326,7 @@ registerConfig({
   ok(out.woke && calls.length === 1, "enabled + internal + name → wakes");
   ok(calls[0].threadTs === "42.1", "reply thread is rooted at the triggering message's ts");
   ok(latched.length === 1 && latched[0].threadTs === "42.1" && latched[0].participating === false, "warm-on-wake latches the triggering message's thread as a non-participating watcher");
-  ok(latched[0].order === 0 && latched[0].at === "2027-03-01T09:00:00Z", "warm latch happens BEFORE the wake (order 0), stamped from the clock seam");
+  ok(latched[0].order === 0 && latched[0].at === "2026-07-08T09:00:00Z", "warm latch happens BEFORE the wake (order 0), stamped from the clock seam");
   {
     const a = (calls[0].auth as { attributes: Record<string, string> }).attributes;
     ok(a.is_ext_shared === "false" && a.trust_checked === "true", "name-drop wake auth carries the gate's own internal verdict (session arms trusted)");
@@ -1632,7 +1632,7 @@ registerConfig({
     ok(watch.nameDrop === undefined, "…and states no name-drop contract");
     const mention = slackChannelWatchWake(ev, { trust: "peer", nameDrop: true, directMention: true });
     ok(mention.addressing === "direct-mention", "an @mention wins over the name-drop tier — it is the more addressed fact");
-    const rendered = renderWake(nd, () => "2027-03-01T09:00:00Z").message;
+    const rendered = renderWake(nd, () => "2026-07-08T09:00:00Z").message;
     ok(rendered.includes('addressing="name-drop"'), "the rendered seat envelope carries the name-drop addressing");
     ok(rendered.includes('follow-up="follows-on-reply"'), "…and the follow-up attribute the mechanic owes");
   }
@@ -1943,7 +1943,7 @@ registerConfig({
     wake: async (input) => {
       wakes.push(input);
     },
-    now: () => "2026-01-14T02:00:00Z",
+    now: () => "2026-07-09T12:00:00Z",
     ...over,
   });
 
@@ -2288,11 +2288,11 @@ registerConfig({
   ok(!shouldRotate(base, "2026-07-08T23:00:00Z"), "quiet gap just under 12h → no rotate");
 
   ok(
-    shouldRotate({ createdAt: "2026-07-01T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-11T12:00:00Z"),
+    shouldRotate({ createdAt: "2026-07-01T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-09T12:00:00Z"),
     "a generation older than the 7d expiry rotates even though it was woken one second ago (expiry is the primary)",
   );
   ok(
-    !shouldRotate({ createdAt: "2026-07-03T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-11T12:00:00Z"),
+    !shouldRotate({ createdAt: "2026-07-03T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-09T12:00:00Z"),
     "…and a generation just under the expiry does not",
   );
 
@@ -2420,7 +2420,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     wake: async (input) => {
       wakes2.push(input);
     },
-    now: () => "2026-01-14T02:00:00Z",
+    now: () => "2026-07-09T12:00:00Z",
   });
 
   backscrollCalls.length = 0;
@@ -2897,7 +2897,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
       wake: async (input) => {
         wakes.push(input as (typeof wakes)[number]);
       },
-      now: () => "2026-01-14T02:00:00Z",
+      now: () => "2026-07-09T12:00:00Z",
       unifiedMeta: () => ({ unified: true, singleWindow: true }),
       ...over,
     });

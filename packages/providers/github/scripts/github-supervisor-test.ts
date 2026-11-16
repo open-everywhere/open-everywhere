@@ -35,7 +35,7 @@ const SLUG = "open-everywhere";
 const OWNER = "acme";
 const REPO = "widgets";
 const REPO_KEY = "ch_Z2l0aHViOmFjbWUvd2lkZ2V0cw";
-const NOW = () => "2026-02-18T14:05:00.000Z";
+const NOW = () => "2026-07-10T10:00:00.000Z";
 
 ok(githubSupervisorSentinel(3) === "oe-sup:g3", "sentinel is oe-sup:g<gen>");
 ok(githubSupervisorToken(OWNER, REPO, 1) === `github:${OWNER}/${REPO}:oe-sup:g1`, "token is github:<owner>/<repo>:oe-sup:g<gen>");
@@ -97,7 +97,7 @@ ok(classifyGitHubAmbientComment(mention, SLUG, { treatMentionAsDirect: true, vou
 ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: true }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention, PRIVATE but un-vouched -> DROP (private flag never admits the window — the vouch is the floor)");
 ok(classifyGitHubAmbientComment(base, SLUG, { treatMentionAsDirect: true, vouched: true }).addressing === "channel-watch", "a NON-mention comment is unaffected by treatMentionAsDirect -> channel-watch (judged)");
 
-const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:51:00Z", text: "should we bump the retry budget here?", trust: "unauth" as const };
+const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-07-10T09:59:00Z", text: "should we bump the retry budget here?", trust: "unauth" as const };
 {
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries on cold start", trigger, engagementTier: "reserved" });
   const { message, context } = renderWake(nw, NOW);
@@ -147,7 +147,7 @@ const TITLE = "Flaky retries on cold start";
     repo: REPO,
     issueNumber: 7,
     trigger,
-    tail: [{ from: "human", author: "octocat", authorId: "octocat", id: "c-prev", sentAt: "2026-02-09T21:34:00Z", trust: "peer", body: "the retry-budget question in #42" }],
+    tail: [{ from: "human", author: "octocat", authorId: "octocat", id: "c-prev", sentAt: "2026-08-18T09:00:00Z", trust: "peer", body: "the retry-budget question in #42" }],
   });
   const { message } = renderWake(nw, NOW);
   ok(message.includes("the retry-budget question in #42"), "the inherited tail renders in the wake");
@@ -203,7 +203,7 @@ const TITLE = "Flaky retries on cold start";
   const payload = {
     action: "created",
     issue: { number: 42, title: "Flaky retries on cold start" },
-    comment: { id: 9001, body: "should we bump the retry budget?", user: { login: "human-dev", type: "User", id: 7 }, author_association: "MEMBER", created_at: "2026-03-24T18:51:00Z" },
+    comment: { id: 9001, body: "should we bump the retry budget?", user: { login: "human-dev", type: "User", id: 7 }, author_association: "MEMBER", created_at: "2026-07-10T09:59:00Z" },
     repository: { name: REPO, full_name: `${OWNER}/${REPO}`, id: 555, private: true, owner: { login: OWNER } },
     installation: { id: 4242 },
   } as unknown as Record<string, unknown>;

@@ -38,7 +38,7 @@ async function throws(label: string, fn: () => Promise<unknown>, messageIncludes
   ok(false, `${label} — expected a throw, got none`);
 }
 
-const T0 = "2026-01-16T13:12:00.000Z";
+const T0 = "2026-08-19T12:00:00.000Z";
 
 {
   {

@@ -479,7 +479,7 @@ an outside workspace. Recover with the `reopen_slack_setup` control call. To kee
      > 🔴 **Turn on the agent view first, then subscribe this event.** Slack refuses to save the
      > `app_context_changed` subscription while the app has no agent view. The page shows only a
      > generic error, *"Hmm, something's gone wrong"*, and does not name the cause. The app console
-     > has no switch for the agent view (seen 2026-10-12). Turn it on in the manifest: **App
+     > has no switch for the agent view (seen 2026-10-11). Turn it on in the manifest: **App
      > Manifest** → add `features.agent_view` (copy the block from the generated manifest) → **Save
      > Changes**. Then come back here and add `app_context_changed`. The generated manifest carries
      > both in one document. No run has yet measured that Slack saves both in one paste. If that save
@@ -969,7 +969,7 @@ prove that Slack attaches the room to a real panel message.
 the manifest, so a change reaches people only after the operator pastes the manifest again (App
 Manifest → Save Changes). The shipped three name no product.
 
-**Requirements and limits, from Slack's documentation (re-read 2026-10-12):**
+**Requirements and limits, from Slack's documentation (re-read 2026-10-11):**
 
 - Slack says some AI features need a **paid plan**, though the settings appear on every plan. Its
   developer sandbox has them for free.

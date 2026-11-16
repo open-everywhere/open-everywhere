@@ -58,7 +58,7 @@ ok(OPERATIONAL_TABLES.includes("halt"), "§1 `halt` is in OPERATIONAL_TABLES —
 async function storeContract(store: OperationalStore, engine: string): Promise<void> {
   ok((await store.activeHalts(ORG)).length === 0, `§1/${engine} a fresh store holds no halts`);
 
-  const fixedSetAt = "2026-05-26T05:32:00.123Z";
+  const fixedSetAt = "2026-03-20T01:50:00.123Z";
   await store.setHalt(ORG, ORG_WIDE, { setBy: "U-alice", setAt: fixedSetAt, setRef: "wake-owned" });
   const afterSet = await store.activeHalts(ORG);
   ok(afterSet.length === 1 && afterSet[0]!.address.orgWide === true, `§1/${engine} an org-wide halt round-trips as the org-wide ADDRESS, not as a scope key`);

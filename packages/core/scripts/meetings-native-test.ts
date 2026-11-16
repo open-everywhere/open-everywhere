@@ -132,7 +132,7 @@ function args(over: Partial<NativeRecapArgs> = {}): NativeRecapArgs {
     when: "past",
     askedAt: NOW,
     requestedBy: "U1",
-    origin: { platform: "slack", channelId: "C1", threadTs: "1700159720.000100" },
+    origin: { platform: "slack", channelId: "C1", threadTs: "1700000000.000100" },
     partition,
     watchHours: 6,
     disclosure: "OE reads the transcript the platform made, with the organisation's own app.",
@@ -190,7 +190,7 @@ const deps = { policy: NATIVE_ON, post, now: () => NOW, secret: async (name: str
   ok(out.kind === "posted" && out.posted, "a ready transcript is recapped at the click");
   ok(reads.length === 1 && reads[0]!.secrets[0] === "value-of-TEAMS_TRANSCRIPT_SECRET", "the reader gets the stored secret the policy names, resolved by core");
   ok(reads[0]!.ref.organizerId === OID && reads[0]!.ref.tenantId === TENANT && reads[0]!.ref.startedAfter === undefined, "a `past` ask reads the newest session of the meeting the link names");
-  ok(posts.length === 1 && posts[0]!.channelId === "C1" && posts[0]!.threadTs === "1700159720.000100", "ONE recap goes into the thread the ask came from");
+  ok(posts.length === 1 && posts[0]!.channelId === "C1" && posts[0]!.threadTs === "1700000000.000100", "ONE recap goes into the thread the ask came from");
   ok(posts[0]!.text.startsWith("Meeting recap: Microsoft Teams, 32 min, from Microsoft Teams's own transcript") && posts[0]!.text.includes("Ben Okafor: Book the venue (due Friday)"), "the recap names its source, the length, and the owner the platform labelled");
   ok(prompts.length === 1 && prompts[0]!.includes("untrusted_external_data") && prompts[0]!.includes("[Ana Lopez] We agreed") && prompts[0]!.includes("as the meeting platform's own transcript labelled it"), "the recap model reads the speaker-labelled transcript inside the untrusted fence");
   const fence = prompts[0]!.indexOf("untrusted_external_data");

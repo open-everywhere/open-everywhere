@@ -59,7 +59,7 @@ const deps = (singleWindow: boolean): SupervisorRouteDeps => ({
     wakes.push({ message: input.message, auth: input.auth as Captured["auth"], ...(input.window ? { wakeId: input.window.wakeId } : {}) });
   },
   unifiedMeta: () => ({ unified: true, singleWindow }),
-  now: () => "2026-06-18T09:30:00.000Z",
+  now: () => "2026-10-14T10:00:00.000Z",
 });
 
 const org = resolvePartition(bindableFor(ev("1.1", "x"))).org;
