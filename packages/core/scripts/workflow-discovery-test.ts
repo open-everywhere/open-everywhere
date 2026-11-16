@@ -122,13 +122,13 @@ console.log("§2 the store read");
     await store.appendToolUsage(row({ ts: "2026-10-05T09:06:00.000Z", connector: "", tool: "remember" }));
     await store.appendToolUsage(row({ ts: "2026-08-01T09:00:00.000Z" }));
     await store.appendToolUsage(row({ ts: "2026-10-06T09:00:00.000Z", tool: "create_issue" }));
-    const got = await store.listPersonConnectorCalls("store-org", "UALICE", "slack/T1/", "2026-05-11T23:30:00.000Z", 100);
+    const got = await store.listPersonConnectorCalls("store-org", "UALICE", "slack/T1/", "2026-09-07T00:00:00.000Z", 100);
     ok(got.length === 2 && got[0]!.tool === "list_issues" && got[1]!.tool === "create_issue", `${name}: only the person's own ok connector calls in the window, oldest first`);
     ok(!got.some((c) => c.ts === "2026-10-05T09:01:00.000Z"), `🔴 ${name}: a call made in a ROUTINE's session is left out — a routine's own runs are not the person repeating the work`);
     await store.appendToolUsage(row({ ts: "2026-10-05T10:00:00.000Z", surfaceKey: "discord/G1/C1", principalId: "D123", sessionId: "s-discord" }));
-    const discordRows = await store.listPersonConnectorCalls("store-org", "D123", "discord/", "2026-05-11T23:30:00.000Z", 100);
+    const discordRows = await store.listPersonConnectorCalls("store-org", "D123", "discord/", "2026-09-07T00:00:00.000Z", 100);
     ok(discordRows.length === 1, `${name}: a Discord person's calls read under the bare platform prefix`);
-    const capped = await store.listPersonConnectorCalls("store-org", "UALICE", "slack/T1/", "2026-05-11T23:30:00.000Z", 1);
+    const capped = await store.listPersonConnectorCalls("store-org", "UALICE", "slack/T1/", "2026-09-07T00:00:00.000Z", 1);
     ok(capped.length === 1 && capped[0]!.tool === "create_issue", `${name}: the cap keeps the newest rows`);
   }
 }
@@ -368,11 +368,11 @@ console.log("§8 repeated questions");
   ok((await ledgerHook.settleQuestion("s2", "t2", true)) === "none", "🔴 a question the turn answered with a connector op is NOT written — the tool-call ledger already holds that work");
   ledgerHook.holdQuestion("s3", "t3", entry("UHAL", "2026-10-05T09:06:00.000Z"));
   ok((await ledgerHook.settleQuestion("s3", "t3", false)) === "none", "a failed or cancelled turn writes nothing");
-  const halRows = await store.listPersonQuestions(ORG, "UHAL", "slack/T1/", "2026-05-05T23:30:00.000Z", 100);
+  const halRows = await store.listPersonQuestions(ORG, "UHAL", "slack/T1/", "2026-09-01T00:00:00.000Z", 100);
   ok(halRows.length === 1 && halRows[0]!.words === "who is on call this week?", "the ledger holds the one answered question");
   await setPersonOptOut({ org: ORG, platform: "slack", workspace: "T1", surface: "D-UIVY", principalKey: "slack/T1/UIVY" }, "command");
   ok((await ledgerHook.writeQuestion(entry("UIVY", "2026-10-05T09:00:00.000Z"))) === "opted-out", "🔴 a person who opted out of the agent remembering their content is never recorded");
-  ok((await store.listPersonQuestions(ORG, "UIVY", "slack/T1/", "2026-05-05T23:30:00.000Z", 100)).length === 0, "…and the ledger holds nothing for them");
+  ok((await store.listPersonQuestions(ORG, "UIVY", "slack/T1/", "2026-09-01T00:00:00.000Z", 100)).length === 0, "…and the ledger holds nothing for them");
 
   const pg = new PGlite();
   const pgClient: PgClient = { query: (text, params) => pg.query(text, params ? [...params] : undefined) };
@@ -394,23 +394,23 @@ console.log("§8 repeated questions");
     await eng.appendToolUsage(tu({ ts: "2026-10-05T09:02:00.000Z", sessionId: "s-room-routine" }));
     await eng.appendUsageEvent({ org: o, surfaceKey: "slack/T1/C-OPS", sessionId: "s-room-routine", principalId: "UANN", ts: "2026-10-05T09:02:00.000Z", kind: "routine", routineId: "r9", inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
     await eng.appendToolUsage(tu({ ts: "2026-10-05T09:03:00.000Z", outcome: "error" }));
-    const roomCalls = await eng.listRoomConnectorCalls(o, "slack/T1/C-OPS", "2026-05-05T23:30:00.000Z", 100);
+    const roomCalls = await eng.listRoomConnectorCalls(o, "slack/T1/C-OPS", "2026-09-01T00:00:00.000Z", 100);
     ok(roomCalls.length === 1 && roomCalls[0]!.surfaceKey === "slack/T1/C-OPS" && roomCalls[0]!.principalId === "UANN", `🔴 ${name}: the room read holds ok connector calls in rooms only, and never a routine's run`);
     await eng.appendToolUsage(tu({ ts: "2026-10-05T09:04:00.000Z", surfaceKey: "slack/T1/C-DEV" }));
     await at("2026-10-05T09:05:00.000Z", "UBEN", "channel", "C-ASK");
-    ok((await eng.listRoomConnectorCalls(o, "slack/T1/C-OPS", "2026-05-05T23:30:00.000Z", 100)).length === 1 && (await eng.listRoomConnectorCalls(o, "slack/T1/C-DEV", "2026-05-05T23:30:00.000Z", 100)).length === 1, `🔴 ${name}: a room's connector read holds that room's rows only`);
+    ok((await eng.listRoomConnectorCalls(o, "slack/T1/C-OPS", "2026-09-01T00:00:00.000Z", 100)).length === 1 && (await eng.listRoomConnectorCalls(o, "slack/T1/C-DEV", "2026-09-01T00:00:00.000Z", 100)).length === 1, `🔴 ${name}: a room's connector read holds that room's rows only`);
     ok((await eng.listRoomQuestions(o, "slack/T1/C-ASK", "2026-07-01T00:00:00.000Z", 100)).length === 1, `${name}: a room's question read holds that room's rows only`);
-    const listed = await eng.listDiscoveryRooms(o, "2026-05-05T23:30:00.000Z");
+    const listed = await eng.listDiscoveryRooms(o, "2026-09-01T00:00:00.000Z");
     ok(listed.join(",") === "slack/T1/C-ASK,slack/T1/C-DEV,slack/T1/C-OPS", `🔴 ${name}: the room list names each room with a call or a question once, sorted, and never a DM (got ${listed.join(",")})`);
     const R = `routine-org-${name}`;
     await eng.appendToolUsage({ ...tu({ ts: "2026-10-05T09:06:00.000Z", surfaceKey: "slack/T1/C-ROUTINE", sessionId: "s-routine-only" }), org: R });
     await eng.appendUsageEvent({ org: R, surfaceKey: "slack/T1/C-ROUTINE", sessionId: "s-routine-only", principalId: "UANN", ts: "2026-10-05T09:06:00.000Z", kind: "routine", routineId: "r1", inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 });
-    ok((await eng.listDiscoveryRooms(R, "2026-05-05T23:30:00.000Z")).length === 0, `${name}: the room list leaves out a room where only a routine's session called a connector`);
+    ok((await eng.listDiscoveryRooms(R, "2026-09-01T00:00:00.000Z")).length === 0, `${name}: the room list leaves out a room where only a routine's session called a connector`);
   }
 
   const qrows = (who: string, dates: readonly string[], text = "who is on call this week?"): QuestionLedgerRow[] =>
     dates.map((d) => ({ ts: `${d}T16:00:00.000Z`, surfaceKey: `slack/T1/D-${who}`, principalId: who, ...questions.questionOf(text)! }));
-  const FRIDAYS = ["2026-09-25", "2026-10-03", "2026-10-09"];
+  const FRIDAYS = ["2026-09-25", "2026-10-02", "2026-10-09"];
   const found = discovery.findRepeatedQuestions(qrows("UJO", FRIDAYS), NOW, 3);
   ok(found.length === 1 && found[0]!.question === "who is on call this week?" && found[0]!.weekday === 5 && found[0]!.fingerprint.startsWith("weekly:q:"), "the same question three Fridays in a row is one pattern");
   ok(discovery.findRepeatedQuestions(qrows("UJO", FRIDAYS.slice(1)), NOW, 3).length === 0, "two Fridays are not enough");
@@ -627,7 +627,7 @@ console.log("§10 the room's stop, the holds, the per-room scan");
   ok(resumedRows.some((r) => r.principalId === "slack/T1/UBEN" && r.detail?.["changed"] === true), "the lift files `room_watch.resumed` naming who");
   ok(!("silence" in JSON.parse((await store.getRoomWatch(O, ROOM))!.stateJson)), "the lift forgets the last hold, so a new stop files its row again");
   await newDay();
-  const open = await roomDiscovery.roomDiscoveryTick(O, deps(), new Date("2026-06-18T09:30:00.000Z"));
+  const open = await roomDiscovery.roomDiscoveryTick(O, deps(), new Date("2026-10-14T10:00:00.000Z"));
   ok(open.proposed === 1 && posted.join(",") === ROOM && roomReads.includes(ROOM), "🔴 after the lift the scan reads the room again and the card posts");
 
   const RACE = "slack/T1/C-RACE";

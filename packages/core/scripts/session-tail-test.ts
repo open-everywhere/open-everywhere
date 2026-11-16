@@ -42,7 +42,7 @@ function eq<T>(actual: T, expected: T, msg: string): void {
   n++;
 }
 
-const T0 = Date.parse("2026-04-23T08:30:00.000Z");
+const T0 = Date.parse("2026-08-19T09:00:00.000Z");
 const at = (secs: number): string => new Date(T0 + secs * 1000).toISOString();
 
 function wake(secs: number, text: string, over: Partial<SessionTailEntry> = {}): SessionTailEntry {

@@ -715,7 +715,7 @@ const rejectingReceive = (() => ({
 
 {
   ok(MIN_CONSECUTIVE_FAILURE_SPAN_MS === 60 * 60_000, "§5: the span floor is exactly one hour");
-  const start = new Date("2026-04-04T23:30:00.000Z");
+  const start = new Date("2026-08-01T00:00:00.000Z");
   let r: Routine = routine({ id: "r-pure-span", consecutiveFailures: 0 });
   r = applyOutcome(r, "failed", start);
   ok(r.status === "active" && r.firstFailureAt === start.toISOString(), "§5: the first failure of a streak stamps firstFailureAt and does not disable");

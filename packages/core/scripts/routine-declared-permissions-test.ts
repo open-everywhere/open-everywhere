@@ -72,7 +72,7 @@ const ROUTINE: Routine = {
   status: "active",
   consecutiveFailures: 0,
 };
-const NOW = "2026-03-30T11:30:00.000Z";
+const NOW = "2026-07-26T12:00:00.000Z";
 
 {
   const key = routinePermissionKey(ROUTINE);
@@ -294,7 +294,7 @@ const NOW = "2026-03-30T11:30:00.000Z";
   }
   ok(pendingCardExpiryClause(ROUTINE_PERMISSION_NO_EXPIRY) === "open until the routine changes", "a no-clock row's footer names the routine generation, not the year 9999");
   ok(!pendingCardExpiryClause(ROUTINE_PERMISSION_NO_EXPIRY).includes("9999"), "a no-clock row's footer never shows the sentinel year");
-  ok(pendingCardExpiryClause("2026-01-28T17:16:00Z") === "expires 23 September, 01:00 UTC", "a clocked row's footer shows the instant in short form");
+  ok(pendingCardExpiryClause("2026-09-23T01:00:00Z") === "expires 23 September, 01:00 UTC", "a clocked row's footer shows the instant in short form");
 }
 
 {

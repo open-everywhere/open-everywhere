@@ -352,7 +352,7 @@ await inSession(async () => {
     trigger: { kind: "cron", expr: "0 3 * * *" },
     prompt: "post the nightly report page",
     createdBy: "U0CREATOR",
-    createdAt: "2026-05-07T23:30:00.000Z",
+    createdAt: "2026-09-03T00:00:00.000Z",
     status: "active",
     consecutiveFailures: 0,
   };

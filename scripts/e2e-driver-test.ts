@@ -454,7 +454,7 @@ const { parseAppMentionEvent } = await import(
 
   const notTheBucket = [
     "discord/@me/(dms) 50",
-    "teams/00000000-0000-4000-8000-000000000090/(dms) 50",
+    "teams/0f1e2d3c-1111-2222-3333-444455556666/(dms) 50",
     "discord/123456789012345678/(dms) 9",
     "Discord/(dms) 41",
     "your workspace/(dms)",
@@ -636,8 +636,8 @@ const { parseAppMentionEvent } = await import(
   ok(!/isreachableindomain|derivedthisopasreachable/u.test(body.replace(/\s+/g, "")), "🔴 …and no longer carries either overclaiming sentence");
 
   const at = "2026-06-03T13:02:00.000Z";
-  const SEAT = "wrun_example44";
-  const FIRE = "wrun_example45";
+  const SEAT = "wrun_2092SEAT";
+  const FIRE = "wrun_41MBA5EDGR0GTM8AGXGHJQHGYF";
   const seen = { ts: at, org: "o", platform: "slack", workspace: "w", action: FIRE_ATTRS_SEEN_ACTION, detail: { attrKeys: [], attrCount: 0, sessionId: FIRE } };
   const worker = (id: string, parent: string, root: string, tools: string[]) => ({
     ts: at,
@@ -647,7 +647,7 @@ const { parseAppMentionEvent } = await import(
     action: "worker.toolset",
     detail: { worker: id, parentSession: parent, rootSession: root, grain: "task", tools, toolCount: tools.length, namesTruncated: false },
   });
-  const creationWorker = worker("wrun_example46", SEAT, SEAT, ["bash", "load_skill", "read_file", "reply"]);
+  const creationWorker = worker("wrun_2092CREATE", SEAT, SEAT, ["bash", "load_skill", "read_file", "reply"]);
 
   ok(
     JSON.stringify(fireSessionIds([seen, seen, { ...seen, detail: { sessionId: null } }, creationWorker])) === JSON.stringify([FIRE]),
@@ -662,10 +662,10 @@ const { parseAppMentionEvent } = await import(
   );
   ok(nRh.verdict === "unexplained" && nRh.road.workers === 0, "🔴 …and the creation roster no longer buys the arm a NOT PROVEN: the empty plane stays HARD");
 
-  const fireWorker = worker("wrun_example47", FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
+  const fireWorker = worker("wrun_2092FIREW", FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
   const own = unattendedArmRoad({ planeRows: 0, workerRows: [creationWorker, fireWorker], fireSessions: [FIRE], op: OP });
   ok(own.verdict === "not-proven" && own.road.workers === 1, "NEGATIVE CONTROL: the FIRE's own worker without the op still explains the road — NOT PROVEN, one worker counted");
-  const nested = worker("wrun_example48", "wrun_example47", FIRE, ["bash", OP]);
+  const nested = worker("wrun_2092NESTED", "wrun_2092FIREW", FIRE, ["bash", OP]);
   ok(
     unattendedArmRoad({ planeRows: 0, workerRows: [nested], fireSessions: [FIRE], op: OP }).verdict === "unexplained",
     "a worker of the fire's worker joins by rootSession — and it mounted the op, so the empty plane is HARD",
@@ -767,7 +767,7 @@ const { parseAppMentionEvent } = await import(
   ok(called.note.startsWith(`fire ${FIRE} CALLED ${OP} and the connector plane carries no row`) && called.verdict === "unexplained", "an op call with no plane row names the calling session and the fence recording nothing, HARD");
 
   const { workerSessionIdsOfFire, transcriptTookRestRoad, attendedRowsForOp } = await import("../packages/core/scripts/e2e/gate-joins.js");
-  const W = "wrun_example58";
+  const W = "wrun_41MBA5EMBG0GTKFMFFCJBSW0XA";
   const restWorker = worker(W, FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
   ok(
     JSON.stringify(workerSessionIdsOfFire([creationWorker, restWorker, restWorker], [FIRE])) === JSON.stringify([W]),
@@ -813,8 +813,8 @@ const { parseAppMentionEvent } = await import(
 
 {
   const { fireReportJoin, readsAsSpendRefusalReport, FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
-  const FIRE = "wrun_example56";
-  const SEAT = "wrun_example57";
+  const FIRE = "wrun_41MBA5EKC80GVSV9WKA9PCBPBY";
+  const SEAT = "wrun_2109SEAT";
   const WAKE = "7664ed40-2109-4000-8000-000000000238";
   const row = (action: string, ts: string, detail: Record<string, unknown>) => ({ ts, org: "o", platform: "slack", workspace: "w", action, detail });
   const sent = row(FIRE_ATTRS_SENT_ACTION, "2026-06-02T19:52:13.000Z", { routineId: "r-2109", wakeId: WAKE, attrKeys: [], attrCount: 0 });
@@ -888,9 +888,9 @@ const { parseAppMentionEvent } = await import(
 
 {
   const { fireReportJoin, fireSettleSessionIds, FIRE_REPORT_JOIN_ACTIONS, FIRE_ATTRS_SENT_ACTION, ROUTINE_FIRE_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
-  const SEAT = "wrun_example71";
-  const WORK = "wrun_example72";
-  const SIBLING_WORK = "wrun_example73";
+  const SEAT = "wrun_2361SEATFIRE";
+  const WORK = "wrun_2361WORKSESSION";
+  const SIBLING_WORK = "wrun_2361OTHERWORK";
   const FIRE_WAKE = "2361f1e0-0000-4000-8000-00000000fire";
   const REQUEST = "2361f1e0-0000-4000-8000-0000000req1";
   const row = (action: string, ts: string, detail: Record<string, unknown>, platform = "slack") => ({ ts, org: "o", platform, workspace: "w", action, detail });
@@ -929,7 +929,7 @@ const { parseAppMentionEvent } = await import(
 {
   const { fireReportJoin, readsAsSpendRefusalReport, FIRE_ATTRS_SENT_ACTION, SETTLEMENT_REPORT_POSTED_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
   const { fireReportWaitMs, isPendingWorkHandoff } = await import("../packages/core/scripts/e2e/scenarios.js");
-  const FIRE = "wrun_example59";
+  const FIRE = "wrun_41MBA5EPA00GKC5P9VGXW7VWP9";
   const WAKE = "7664ed40-2117-4000-8000-000000000240";
   const TASK_WAKE = "7664ed40-2117-4000-8000-00000000task";
   const TASK = "task_2117";
@@ -4517,11 +4517,11 @@ const { parseAppMentionEvent } = await import(
   const { signLinearBody, buildAgentSessionEvent } = await import("../packages/core/scripts/e2e/linear-driver.js");
   const { signLinearWebhookBody } = await import(`${pathToFileURL(eveRootDir).href}/dist/src/public/channels/linear/verify.js`);
   const secret = "lin-e2e-secret";
-  const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_009_900_000 });
+  const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_000_000_000 });
   ok(signLinearBody(secret, raw) === signLinearWebhookBody(raw, secret), "the linear forge signer matches eve's own signLinearWebhookBody (hex, no prefix)");
   ok(!/^sha256=/.test(signLinearBody(secret, raw)), "the linear signature carries NO sha256= prefix (unlike github/notion)");
-  const ev = buildAgentSessionEvent({ action: "created", organizationId: "org1", sessionId: "s1", issueId: "i1", issueIdentifier: "OE-1", teamId: "t1", creatorId: "u1", nowMs: 1_720_009_900_000 });
-  ok(ev.type === "AgentSessionEvent" && ev.webhookTimestamp === 1_720_009_900_000, "forged AgentSessionEvent carries the type + the ±60s webhookTimestamp field");
+  const ev = buildAgentSessionEvent({ action: "created", organizationId: "org1", sessionId: "s1", issueId: "i1", issueIdentifier: "OE-1", teamId: "t1", creatorId: "u1", nowMs: 1_720_000_000_000 });
+  ok(ev.type === "AgentSessionEvent" && ev.webhookTimestamp === 1_720_000_000_000, "forged AgentSessionEvent carries the type + the ±60s webhookTimestamp field");
   const session = ev.agentSession as { issue?: { team?: { id?: string } }; creator?: { id?: string } };
   ok(session.issue?.team?.id === "t1" && session.creator?.id === "u1", "forged event nests issue.team.id + creator.id (enrichTeamPrivacy + creator read them)");
 }
@@ -5376,7 +5376,7 @@ const { parseAppMentionEvent } = await import(
   {
     const { seatDelegationRows, pollForFinalReply } = await import("../packages/core/scripts/e2e/read-channel-lib.js");
     const SEAT = "wrun_SEAT_2361";
-    const W = "wrun_example69";
+    const W = "wrun_41MBA5ET700GRVAPZNEFHBQTW6";
     const WAKE = "2361aaaa-0000-4000-8000-000000000027";
     const REQ = "2361bbbb-0000-4000-8000-000000000027";
     const at = (action: string, ts: string, detail: Record<string, unknown>) => ({ ts, org: "default", platform: "unified", workspace: "delegation", action, detail });
@@ -5447,7 +5447,7 @@ const { parseAppMentionEvent } = await import(
     const HUMAN = "U0EXOWNER";
     const DM = "D0EXDMCH001";
     const SK = `slack/T0EXAMPLE/${DM}`;
-    const SEAT = "wrun_example70";
+    const SEAT = "wrun_41MBA5EV680GZEH3YGV8FC9P04";
     const ASK = "00000000-0000-4000-8000-0000000000a1";
     const PENDING = "00000000-0000-4000-8000-0000000000b2";
     const anchorTs = "2026-06-14T05:11:00.000Z";
@@ -6999,7 +6999,7 @@ await removeTempDir(dir);
   ok(seatContinuity([seatPost(SEAT), seatPost("")]).unattributed === 1, "NEGATIVE: an EMPTY sessionId names no session either");
   ok(seatContinuity([seatPost(SEAT, "C1"), seatPost(OTHER_SEAT, "CZ")], { surface: "C1" }).sessionIds.join(",") === SEAT, "the surface scope keeps another room's seat out of this room's continuity claim");
   ok(
-    seatContinuity([seatPost(SEAT, "C1-messageid-1"), seatPost(OTHER_SEAT, "C1-messageid-2"), seatPost("wrun_example8", "C1-messageid-3")], { surface: ["C1-messageid-1", "C1-messageid-2"] }).sessionIds.join(",") ===
+    seatContinuity([seatPost(SEAT, "C1-messageid-1"), seatPost(OTHER_SEAT, "C1-messageid-2"), seatPost("wrun_elsewhere", "C1-messageid-3")], { surface: ["C1-messageid-1", "C1-messageid-2"] }).sessionIds.join(",") ===
       `${SEAT},${OTHER_SEAT}`,
     "🔴 OPE-2604: a LIST scope admits each named reply chain exactly, so two seats across the two chains still read as two, and a third chain stays out",
   );
@@ -7010,8 +7010,8 @@ await removeTempDir(dir);
   ok(seatContinuity([row(STOOD_DOWN_ACTION, { sessionId: SEAT })]).replies === 0, "NEGATIVE: another action carrying a sessionId is not a reply");
   ok(seatContinuity([]).replies === 0 && seatContinuity([]).sessionIds.length === 0, "VACUITY: an empty window evidences no seat — a caller gating on `sessionIds.length === 1` must gate on `replies` too");
 
-  const WORKER = "wrun_example50";
-  const SEATRj = "wrun_example51";
+  const WORKER = "wrun_41MBA5EGEG0GPTCW6NJH27C2XY";
+  const SEATRj = "wrun_41MBA5EFF80GN8PNVT33ZWEN79";
   const toolset = (worker: string, parentSession?: string, rootSession?: string) =>
     row("worker.toolset", { worker, grain: "task", tools: ["reply"], toolCount: 1, ...(parentSession ? { parentSession } : {}), ...(rootSession ? { rootSession } : {}) });
   const viaWorker = seatContinuity([seatPost(WORKER), seatPost(SEATRj)], { workerRows: [toolset(WORKER, SEATRj, SEATRj)] });
@@ -7029,8 +7029,8 @@ await removeTempDir(dir);
     "🔴 RED ARM — a worker whose parent is a DIFFERENT seat resolves to THAT seat, so the pair is still two seats",
   );
   ok(seatOfSession(WORKER, [toolset(WORKER, SEATRj)]) === SEATRj, "seatOfSession: a row with parentSession and no rootSession still resolves the worker to its parent");
-  ok(seatOfSession("wrun_example52", [toolset("wrun_example52", WORKER), toolset(WORKER, SEATRj)]) === SEATRj, "seatOfSession: a worker of a worker walks TRANSITIVELY to the seat");
-  ok(seatOfSession("wrun_example52", [toolset("wrun_example52", WORKER, SEATRj)]) === SEATRj, "seatOfSession: rootSession names the seat in one step, even when the parent's own row is outside the window");
+  ok(seatOfSession("wrun_grandchild", [toolset("wrun_grandchild", WORKER), toolset(WORKER, SEATRj)]) === SEATRj, "seatOfSession: a worker of a worker walks TRANSITIVELY to the seat");
+  ok(seatOfSession("wrun_grandchild", [toolset("wrun_grandchild", WORKER, SEATRj)]) === SEATRj, "seatOfSession: rootSession names the seat in one step, even when the parent's own row is outside the window");
   ok(seatOfSession(SEATRj, [toolset(WORKER, SEATRj)]) === SEATRj, "NEGATIVE: a session no row names as a worker IS its own seat");
   ok(seatOfSession("wrun_a", [toolset("wrun_a", "wrun_b"), toolset("wrun_b", "wrun_a")]) === "wrun_b", "a cycle in the rows stops the walk instead of looping");
   ok(seatOfSession(WORKER, [row(STOOD_DOWN_ACTION, { worker: WORKER, parentSession: SEATRj })]) === WORKER, "NEGATIVE: only worker.toolset rows resolve a session — another action carrying the same keys does not");

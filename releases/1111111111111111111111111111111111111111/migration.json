@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "sha": "1111111111111111111111111111111111111111",
+  "previousSha": "0000000000000000000000000000000000000000",
+  "date": "2026-08-22",
+  "summary": "eve framework pin 0.39.3 -> 0.44.0.",
+  "changes": [
+    {
+      "unit": "evePin",
+      "summary": "eve framework pin 0.39.3 -> 0.44.0.",
+      "derived": true
+    }
+  ],
+  "migrations": [
+    {
+      "id": "rotate-windows-after-eve-bump",
+      "unit": "evePin",
+      "required": true,
+      "backwardsCompatible": true,
+      "description": "Rotate every seat window. An eve version bump changes the runtime under every open window; rotation rows are per seat, never per surface.",
+      "derived": true
+    }
+  ],
+  "verify": [
+    "deploy:verify",
+    "deploy:census",
+    "deploy:smoke"
+  ],
+  "rollback": {
+    "command": "rollback"
+  }
+}

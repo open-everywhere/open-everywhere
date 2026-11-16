@@ -20,7 +20,7 @@ function ok(cond: boolean, label: string): void {
 }
 const count = (h: string, n: string): number => h.split(n).length - 1;
 
-const NOW = () => "2026-02-18T14:05:00.000Z";
+const NOW = () => "2026-07-10T10:00:00.000Z";
 
 const G_DISCORD_DIRECT = `hey can you summarise this channel?`;
 
@@ -58,7 +58,7 @@ eq(renderWake(discordNativeWake({ channelId: "disc-thread", parentChannelId: "di
 eq(renderWake(discordNativeWake({ channelId: "disc-ch", isThread: false, isDm: false, addressing: "name-drop", botName: "OpenBot", trigger: discordTrig("does OpenBot handle retries?", "peer") }), NOW).message, G_DISCORD_NAMEDROP_BASE, "discord name-drop base-channel (not-following, no <thread>)");
 
 const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWake["trigger"] =>
-  mkMessageTrigger({ from: "human", author: "U1", id: "1.0", sentAt: "2026-03-24T18:52:00Z", trust: "peer", body, ...extra });
+  mkMessageTrigger({ from: "human", author: "U1", id: "1.0", sentAt: "2026-07-10T10:00:00Z", trust: "peer", body, ...extra });
 
 {
   const nw: NormalizedWake = { platform: "discord", reason: "mention", addressing: "direct", locus: { channel: { id: "c1" } }, trigger: trig(`please summarise <script>x</script>`, { trust: "principal" }) };

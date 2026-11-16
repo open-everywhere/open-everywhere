@@ -25,6 +25,10 @@ releases/<sha>/migration.json
 fork tracks a commit range. The format can also serve an npm-package upgrade unit — see
 `previousSha` below.
 
+The repo ships one example record, `releases/1111111111111111111111111111111111111111/`. Its
+`sha` and `previousSha` are placeholders, so it matches no real deployment. It is there to show the
+format and to give the validator real data to check.
+
 A record is a **contract with a machine**, not a changelog for a human. Every field is either a
 typed enum, a structured object, or a reference to something that already exists (an npm script
 name) — nothing here is free prose a reader has to parse for meaning.
