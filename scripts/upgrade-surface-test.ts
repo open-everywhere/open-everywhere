@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEPLOYMENT_CONTRACT } from "../packages/core/agent/ops/contract.js";
 import { OPERATIONAL_TABLES } from "../packages/core/agent/operational/store.js";
 import { NOTES_FILE, parseUpgradingNotes, type ReleaseNote } from "../packages/core/scripts/upgrade-notes.js";
@@ -216,7 +216,7 @@ for (const base of ["packages", join("packages", "providers")]) {
   for (const e of readdirSync(join(ROOT, base), { withFileTypes: true })) {
     const file = join(ROOT, base, e.name, "agent", "contributions.ts");
     if (!e.isDirectory() || !existsSync(file)) continue;
-    const mod = (await import(file)) as { CONTRIBUTIONS: { contributions: readonly Contribution[] } };
+    const mod = (await import(pathToFileURL(file).href)) as { CONTRIBUTIONS: { contributions: readonly Contribution[] } };
     manifests.push({ dir: join(ROOT, base, e.name), contributions: mod.CONTRIBUTIONS.contributions });
   }
 }
@@ -226,7 +226,7 @@ for (const m of manifests) {
   for (const c of m.contributions.filter((x) => x.kind === "channel")) {
     const file = join(m.dir, c.module.replace(/\.js$/u, ".ts"));
     ok(existsSync(file), `the channel \`${c.name}\` has its module at ${file}`);
-    const mod = (await import(file)) as { default?: { readonly routes?: readonly { readonly method?: string; readonly path?: string }[] } };
+    const mod = (await import(pathToFileURL(file).href)) as { default?: { readonly routes?: readonly { readonly method?: string; readonly path?: string }[] } };
     for (const r of mod.default?.routes ?? []) {
       if (typeof r.method === "string" && typeof r.path === "string") routes.push(`${r.method.toUpperCase()} ${r.path.length > 1 ? r.path.replace(/\/+$/u, "") : r.path}`);
     }
