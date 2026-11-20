@@ -364,6 +364,10 @@ export async function pollForOwnWakeReply(
   let foreignSeen = 0;
   let ownSkipped = 0;
   let belowFloor = 0;
+  // A message with no reply.post row yet ends the wait on the unattributed arm only when a SECOND read still shows
+  // it unattributed. The row lands after the message, so an interim done:false reply read in that gap would
+  // otherwise pass on its prose alone.
+  let unattributedBefore: ReadonlySet<string> = new Set();
   for (;;) {
     const rows = await deps.fetchRows();
     if (wakeId === undefined) {
@@ -383,6 +387,7 @@ export async function pollForOwnWakeReply(
       foreignSeen = candidates.filter((c) => foreign.has(c.id)).length;
       ownSkipped = candidates.filter((c) => !c.substantive && mine.has(c.id)).length;
       belowFloor = candidates.filter((c) => c.substantive && !mine.has(c.id) && !foreign.has(c.id) && !(floorMs !== undefined && c.atMs >= floorMs)).length;
+      const unattributedNow = new Set<string>();
       for (const c of candidates) {
         if (!c.substantive) continue;
         const postedBy = mine.get(c.id);
@@ -397,16 +402,19 @@ export async function pollForOwnWakeReply(
           };
         }
         if (!foreign.has(c.id) && floorMs !== undefined && c.atMs >= floorMs) {
+          unattributedNow.add(c.id);
+          if (!unattributedBefore.has(c.id)) continue;
           return {
             kind: "unattributed",
             id: c.id,
             wakeId,
             detail:
               `message ${c.id} is attributed to no wake by any ${REPLY_POST_ACTION} row and stands at or after wake ${wakeId}'s own ` +
-              `${WAKE_TURN_START_ACTION} — a host-posted answer, or a reply row that carried no wake`,
+              `${WAKE_TURN_START_ACTION} on two consecutive reads — a host-posted answer, or a reply row that carried no wake`,
           };
         }
       }
+      unattributedBefore = unattributedNow;
     }
     if (deps.now() >= deadline) break;
     await deps.sleep(opts.pollMs);

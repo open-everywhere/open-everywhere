@@ -20,6 +20,8 @@ import { markSurfaceSession, parkedSurfaceStatus, pinSurfaceSession, stepSurface
 import { conversationHasWaitingJob } from "../channels/work-surface-wait.js";
 import { resetSessionAttention, sessionNeedsPerson } from "../status/attention.js";
 import { closeTurnTally, openTurnTally, readTurnTally, recordTallyAction, recordTallyHand, recordTallyStep } from "./turn-tally.js";
+import { activeTurn, call } from "eve/events";
+import { optional } from "./control-refusal.js";
 
 export { TURN_CANCELLED_ACTION, TURN_STOP_IGNORED_ACTION };
 
@@ -142,8 +144,8 @@ function mutate(fn: (s: TurnAnchorState) => void): void {
   }
 }
 
-function isDelegation(action: { readonly kind: string }): boolean {
-  return action.kind === "subagent-call";
+function isDelegation(capability: { readonly kind: string }): boolean {
+  return capability.kind === "agent";
 }
 
 const STOP_HAND = { slackName: STOP_HAND_SLACK_NAME, unicode: STOP_HAND_UNICODE } as const;
@@ -446,103 +448,113 @@ async function parkTurnSession(ctx: HookContext, end?: SurfaceTurnEnd): Promise<
   await markSurfaceSession(started.platform, started.attributes, startedStatus, end);
 }
 
+const SESSION_END_CUT_REASON = "session-ended";
+
+const sessionEndPark = defineState<boolean>("open-everywhere.turn-anchor.session-end-park", () => false);
+
+function deferParkToSessionEnd(): boolean {
+  try {
+    sessionEndPark.update(() => true);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function takeDeferredSessionEndPark(): boolean {
+  try {
+    const deferred = sessionEndPark.get();
+    if (deferred) sessionEndPark.update(() => false);
+    return deferred;
+  } catch {
+    return false;
+  }
+}
+
 async function stepTurnSession(ctx: HookContext, actions: readonly unknown[]): Promise<void> {
   const turn = surfaceTurnOf(ctx);
   if (turn) await stepSurfaceSession(turn, actions);
 }
 
+async function drainIgnoredStops(): Promise<void> {
+  try {
+    await drainDueIgnoredStops();
+  } catch (err) {
+    console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
+  }
+}
+
 export default defineHook({
   events: {
-    "turn.started": async (event, ctx: HookContext) => {
+    "turn.started": optional("turn-anchor", async (event, ctx) => {
       try {
         await onTurnStarted(event.data.turnId, ctx);
       } catch (err) {
         console.warn(`[open-everywhere:turn-anchor] turn.started failed: ${String(err)}`);
       }
       await startTurnSession(ctx);
-      try {
-        await drainDueIgnoredStops();
-      } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
-      }
-    },
-    "actions.requested": async (event, ctx: HookContext) => {
+      await drainIgnoredStops();
+    }),
+    "call.requested": optional("turn-anchor", async (event, ctx) => {
       try {
         if (!turnAnchorRecordable(ctx as unknown as BindableContext)) return;
         if (isWorkSessionContext(ctx as unknown as BindableContext)) return;
-        if (event.data.actions.some((a) => isDelegation(a as { kind: string }))) await placeStopHand();
+        if (isDelegation(event.data.capability)) await placeStopHand();
       } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] actions.requested failed: ${String(err)}`);
+        console.warn(`[open-everywhere:turn-anchor] call.requested failed: ${String(err)}`);
       }
-      await stepTurnSession(ctx, event.data.actions);
-    },
-    "action.result": async (event) => {
+      await stepTurnSession(ctx, [event.data]);
+    }),
+    "call.settled": optional("turn-anchor", (event, ctx) => {
+      if (event.data.outcome === "rejected") return;
+      const observed = call(ctx.view, event.data.callId);
+      if (observed === undefined || observed.kind !== "tool") return;
+      const name = observed.name;
+      const s = read();
+      if (s) recordTallyAction(s.sessionId, s.turnId, name);
+      mutate((st) => {
+        st.ran.push(name);
+      });
+    }),
+    "model.settled": optional("turn-anchor", (event) => {
+      if (event.data.outcome !== "completed" || event.scope?.changeId !== undefined) return;
+      const s = read();
+      if (s) recordTallyStep(s.sessionId, s.turnId);
+      mutate((st) => {
+        st.steps += 1;
+      });
+    }),
+    "turn.settled": optional("turn-anchor", async (event, ctx) => {
       try {
-        const result = event.data.result as { kind?: string; toolName?: string };
-        if (result?.kind === "tool-result" && event.data.status !== "rejected" && typeof result.toolName === "string") {
-          const name = result.toolName;
-          const s = read();
-          if (s) recordTallyAction(s.sessionId, s.turnId, name);
-          mutate((st) => {
-            st.ran.push(name);
-          });
+        switch (event.data.outcome) {
+          case "completed":
+            await onTurnEnded(event.data.turnId, ctx, "completed");
+            return;
+          case "failed":
+            await onTurnEnded(event.data.turnId, ctx, "failed");
+            return;
+          case "cancelled":
+            await onTurnCancelled(event.data.turnId, ctx);
+            return;
+          default:
+            await onTurnEnded(event.data.turnId, ctx, "completed");
+            return;
         }
-      } catch {
-      }
-    },
-    "step.completed": async () => {
-      try {
-        const s = read();
-        if (s) recordTallyStep(s.sessionId, s.turnId);
-        mutate((st) => {
-          st.steps += 1;
-        });
-      } catch {
-      }
-    },
-    "turn.completed": async (event, ctx: HookContext) => {
-      try {
-        await onTurnEnded(event.data.turnId, ctx, "completed");
       } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] turn.completed failed: ${String(err)}`);
+        console.warn(`[open-everywhere:turn-anchor] turn.settled ${event.data.outcome} failed: ${String(err)}`);
       }
-    },
-    "turn.failed": async (event, ctx: HookContext) => {
-      try {
-        await onTurnEnded(event.data.turnId, ctx, "failed");
-      } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] turn.failed failed: ${String(err)}`);
-      }
-    },
-    "turn.cancelled": async (event, ctx: HookContext) => {
-      try {
-        await onTurnCancelled(event.data.turnId, ctx);
-      } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] turn.cancelled failed: ${String(err)}`);
-      }
-    },
-    "session.waiting": async (_event, ctx: HookContext) => {
+    }),
+    "delivery.settled": optional("turn-anchor", async (event, ctx) => {
+      if (event.data.outcome !== "awaiting-input" && activeTurn(ctx.view) !== undefined) return;
+      if (event.data.reason === SESSION_END_CUT_REASON && deferParkToSessionEnd()) return;
       await parkTurnSession(ctx);
-      try {
-        await drainDueIgnoredStops();
-      } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
-      }
-    },
-    "session.completed": async () => {
-      try {
-        await drainDueIgnoredStops();
-      } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
-      }
-    },
-    "session.failed": async (_event, ctx: HookContext) => {
-      await parkTurnSession(ctx, { failed: true });
-      try {
-        await drainDueIgnoredStops();
-      } catch (err) {
-        console.warn(`[open-everywhere:turn-anchor] ignored-stop drain failed: ${String(err)}`);
-      }
-    },
+      await drainIgnoredStops();
+    }),
+    "session.ended": optional("turn-anchor", async (event, ctx) => {
+      const deferred = takeDeferredSessionEndPark();
+      if (event.data.outcome === "failed") await parkTurnSession(ctx, { failed: true });
+      else if (deferred) await parkTurnSession(ctx);
+      await drainIgnoredStops();
+    }),
   },
 });

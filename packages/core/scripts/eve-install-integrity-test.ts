@@ -79,10 +79,10 @@ assert.ok(
       .map((p) => `${p.file} (${p.field}) pins "${p.version}"`)
       .join("; ") +
     ". A divergent pin installs a NESTED node_modules/eve that patch-package never patches — " +
-    "the OE addition (the __oeProjectToolSet untrusted-output projection) is silently absent from it.",
+    "the OE addition (patch part 10, the authored-package boundary) is silently absent from it.",
 );
 n++;
-ok(/^\d+\.\d+\.\d+$/.test(pinned), `pins: eve is pinned to an EXACT version (got "${pinned}") — a range would let the installed bytes drift off the patch`);
+ok(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pinned), `pins: eve is pinned to an EXACT version (got "${pinned}") — a range would let the installed bytes drift off the patch`);
 
 const patchFile = join(repoRoot, "patches", `eve+${pinned}.patch`);
 ok(
@@ -145,7 +145,8 @@ ok(
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
 const WEB_FETCH_REQUEST = join("dist", "src", "execution", "web-fetch", "request.js");
-const COMPACTION = join("dist", "src", "harness", "compaction.js");
+const COMPACTION = join("dist", "src", "harness", "compaction", "engine.js");
+const COMPACTION_STEP = join("dist", "src", "harness", "compaction", "step.js");
 const AUTHORED_PACKAGE_BOUNDARY = join("dist", "src", "internal", "authored-package-boundary.js");
 
 const RETIRED = [
@@ -172,6 +173,10 @@ const RETIRED = [
   { symbol: "__oeTurnTerminalActionScan", why: "OPE-2252" },
   { symbol: "__oeProjectModelMessages", why: "OPE-2251" },
   { symbol: "__oeProjectModelMessagesPatched", why: "OPE-2251" },
+  { symbol: "__oeProjectToolSet", why: "OPE-2690" },
+  { symbol: "__oeCompactionReduced", why: "OPE-2704" },
+  { symbol: "__oeWithReduced", why: "OPE-2704" },
+  { symbol: "__oeCompactionContractPatched", why: "OPE-2704" },
 ] as const;
 
 const CARRIAGE = [
@@ -204,37 +209,48 @@ const SEMANTICS = [
   {
     rel: join("dist", "src", "public", "channels", "slack", "slackChannel.js"),
     test: (s: string): boolean =>
-      /onInputResponse\?\?defaultOnInputResponse/.test(s) &&
-      /function defaultOnInputResponse\([A-Za-z_$][A-Za-z_$0-9]*\)\{return\{auth:[A-Za-z_$][A-Za-z_$0-9]*\.defaultAuth\}\}/.test(s),
+      /onAnswers\?\?defaultOnAnswers/.test(s) &&
+      /function defaultOnAnswers\([A-Za-z_$][A-Za-z_$0-9]*\)\{return\{auth:[A-Za-z_$][A-Za-z_$0-9]*\.defaultAuth\}\}/.test(s),
     what:
-      "an OMITTED Slack `onInputResponse` accepts the submitting user unconditionally. This is the hole OPE-574 closes; if eve ever tightens the default, packages/providers/slack/agent/channels/slack-input-response.ts is still the authority but its header stops being true",
+      "an OMITTED Slack `onAnswers` accepts the submitting user unconditionally. This is the hole OPE-574 closes; if eve ever tightens the default, packages/providers/slack/agent/channels/slack-input-response.ts is still the authority but its header stops being true",
   },
   {
     rel: join("dist", "src", "public", "channels", "slack", "interactions.js"),
-    test: (s: string): boolean => /authorizeInputResponse\([^;]*\);if\([A-Za-z_$][A-Za-z_$0-9]*!==null\)\{/.test(s),
+    test: (s: string): boolean => /=await authorizeAnswer\([^;]*\);if\([A-Za-z_$][A-Za-z_$0-9]*===null\)return;/.test(s),
     what:
-      "a `null` result from `onInputResponse` skips the `respond()` that resolves the parked batch, so a refusal leaves the request pending. If this guard goes, a refused answer would resolve the turn anyway",
+      "a `null` result from `onAnswers` returns before the `respond()` that resolves the parked batch, so a refusal leaves the request pending. If this guard goes, a refused answer would resolve the turn anyway",
+  },
+  {
+    rel: join("dist", "src", "public", "channels", "slack", "answers.js"),
+    test: (s: string): boolean =>
+      /try\{return await [A-Za-z_$][A-Za-z_$0-9]*\.deps\.onAnswers\([^)]*\)\}catch\([A-Za-z_$][A-Za-z_$0-9]*\)\{return [A-Za-z_$][A-Za-z_$0-9]*\.error\(`HITL input response authorization failed`/.test(s) &&
+      /HITL input response authorization failed`,\{error:[A-Za-z_$][A-Za-z_$0-9]*\}\),null\}/.test(s),
+    what:
+      "a THROWN Slack `onAnswers` is caught and the answer dropped (`null`). This is why packages/providers/slack/agent/channels/slack-input-response.ts must fail OPEN rather than let an error escape",
   },
   {
     rel: join("dist", "src", "public", "channels", "teams", "teamsChannel.js"),
     test: (s: string): boolean =>
-      /onInputResponse\?\?\([A-Za-z_$][A-Za-z_$0-9]*\.onMessage===void 0\?defaultOnInputResponse:rejectInput\)/.test(s) &&
+      /onAnswers\?\?\([A-Za-z_$][A-Za-z_$0-9]*\.onMessage===void 0\?defaultOnAnswers:rejectInput\)/.test(s) &&
       /function rejectInput\(\)\{return null\}/.test(s),
     what:
-      "on Teams the default is CONDITIONAL: authoring `onMessage` (which OE does) makes an omitted `onInputResponse` reject every answer silently. This is why the Teams arm of OPE-574 opens a path rather than narrowing one",
+      "on Teams the default is CONDITIONAL: authoring `onMessage` (which OE does) makes an omitted `onAnswers` reject every answer silently. This is why the Teams arm of OPE-574 opens a path rather than narrowing one",
   },
   {
     rel: join("dist", "src", "public", "channels", "teams", "teamsChannel.js"),
     test: (s: string): boolean =>
-      /onInputResponse\([A-Za-z_$][A-Za-z_$0-9]*,[A-Za-z_$][A-Za-z_$0-9]*\.activity\)\}catch/.test(s) &&
-      /Teams input response authorization failed/.test(s) &&
-      /if\([A-Za-z_$][A-Za-z_$0-9]*!==null\)try\{await [A-Za-z_$][A-Za-z_$0-9]*\.from\(/.test(s),
+      /=await [A-Za-z_$][A-Za-z_$0-9]*\.onAnswers\([A-Za-z_$][A-Za-z_$0-9]*,[A-Za-z_$][A-Za-z_$0-9]*\.activity\)\}catch/.test(s) &&
+      /Teams input response authorization failed`,\{error:[A-Za-z_$][A-Za-z_$0-9]*\}\);return\}if\([A-Za-z_$][A-Za-z_$0-9]*===null\)return;/.test(s),
     what:
-      "a THROWN Teams hook is swallowed and the answer dropped, and a `null` result skips `respond()`. Both are why packages/providers/teams/agent/channels/teams-input-response.ts must fail OPEN rather than let an error escape",
+      "a THROWN Teams `onAnswers` is swallowed and the answer dropped, and a `null` result returns before `respond()`. Both are why packages/providers/teams/agent/channels/teams-input-response.ts must fail OPEN rather than let an error escape",
   },
 ] as const;
 
 const WHY: Record<string, string> = {
+  "OPE-2690":
+    "patch part 1, the untrusted output projection (OPE-73), is NOT carried onto eve 1.0.0-rc.18 (OPE-2691). Its carrier harness/tool-loop.js does not exist on the rc, and on v1 connector calls reach the model through eve__tool, so a byte re-anchor would leave connector results unfenced. The fence returns as OE-owned deferred tools whose toModelOutput applies it (OPE-2690). The eve 0.x toolset projection is deleted (OPE-2750). The seat cuts, the halt subtraction, the outbound filter, the test-run fence and the replay by card id returned on eve's public API; the work-session cancel fence and the continuation fence wait on OPE-2748",
+  "OPE-2704":
+    "patch part 4, the compaction event contract (OPE-697), RETIRED on eve 1.0.0-rc.18 (OPE-2691, OPE-2704): its carrier harness/tool-loop.js does not exist on the rc. eve v1 opens a compaction's context change only when it is about to call the summary model (a blocking failure on context.started can still stop that call, and the change then settles failed), so a pre-call pass under the trigger (compactUnder) publishes no context event. A manual compaction has no trigger: on a non-empty history it summarizes, unless the fixed part is over the limit, and that failure opens no change and publishes no context event. A pass that summarizes publishes context.started, the summary run's model.requested and model.started, and then settles: model.settled and context.settled (outcome completed), or a failed outcome. eve rewrites the history only when the result differs from the input",
   "OPE-172": "the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once)",
   "OPE-407":
     "the per-turn step ceiling LEFT the patch in OPE-407 and lives in userland at packages/core/agent/model/step-boundary.ts (two-tier: a wrap-up instruction at the budget, a text-only stub at the backstop). Porting it back would regress behaviour — the bytes could only stop the loop mutely",
@@ -253,19 +269,18 @@ for (const eveDir of copies) {
     version === pinned,
     `copies: ${where} is eve@${version} but the tree pins ${pinned} — a version-skewed copy is unpatched and can be resolved by anything that imports eve from inside that package`,
   );
-  const toolLoop = join(eveDir, TOOL_LOOP);
-  ok(existsSync(toolLoop), `copies: ${where}/${TOOL_LOOP} exists (if eve moved the harness file, the patch and every sibling test are stale)`);
-  const src = readFileSync(toolLoop, "utf8");
+  const src = eveSourceFiles(eveDir)
+    .map((file) => readFileSync(join(eveDir, file), "utf8"))
+    .join("\n");
+  ok(src.length > 0, `copies: ${where}/dist/src holds eve's own modules (zero would mean the rows below check nothing)`);
   ok(
-    src.includes("__oeProjectToolSet"),
-    `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means connector and MCP results reach the model unfenced (prompt-injection containment regression) and every seat cut is lost: the lean seat, the job wake, the worker subtraction, the invoker-posture withdrawal and the \`agent\` gate all run in that hook`,
+    !existsSync(join(eveDir, TOOL_LOOP)),
+    `copies: ${where}/${TOOL_LOOP} does NOT exist — eve 1.0.0-rc.18 removed it, and patch parts 1 and 4 were dropped with it (OPE-2691). If the file is back, this tree holds a 0.x eve`,
   );
   ok(
-    src.includes("__oeCompactionReduced(") && src.includes("__oeWithReduced("),
-    `copies: ${where} carries the compaction event-contract stamp (OPE-697, __oeCompactionReduced + __oeWithReduced) — without it maybeCompact emits compaction.completed with no \`reduced\` field, so a pass that returned the history unchanged is indistinguishable from a real summary`,
-  );
-  ok(
-    !src.includes("__oeThrowEmptyResponseUnlessTerminal") && !src.includes("__oeEmptyStepTerminalPatched") && src.includes("throw new EmptyModelResponseError;"),
+    !src.includes("__oeThrowEmptyResponseUnlessTerminal") &&
+      !src.includes("__oeEmptyStepTerminalPatched") &&
+      /throw new EmptyModelResponseError[;}]/.test(src),
     `copies: ${where} carries NO empty-step terminal guard (part 5, OPE-762) — it RETIRED at OPE-2252 onto eve's native \`endsTurn\`, so eve's own \`EmptyModelResponseError\` throws must be pristine. A re-roll that ports it back re-arms a scan with no producer`,
   );
   const boundaryFile = join(eveDir, AUTHORED_PACKAGE_BOUNDARY);
@@ -282,7 +297,7 @@ for (const eveDir of copies) {
     boundarySrc.includes("function __oeResolvesThroughInstalledPackage(") &&
       boundaryCalls === 2 &&
       /if\(isNodeModulesPath\([A-Za-z_$][A-Za-z_$0-9]*\.id\)\|\|__oeResolvesThroughInstalledPackage\(/.test(runtimeLoaderSrc),
-    `boundary: ${where} carries patch part 10 (OPE-2276, __oeResolvesThroughInstalledPackage, defined once and called ONLY from createRuntimeLoaderPackageBoundaryPlugin's node_modules route; found ${boundaryCalls} occurrence(s) of the call shape, want 2: the definition and one call). An unpatched copy makes a cold \`eve build\` evaluate the whole @open-everywhere graph once per authored file (31 evaluations on eve 0.54.3, about 140 s against 48 s, OPE-2276). A second call site, in the GENERATION plugin, would drop dynamic-tool callback stamps (OPE-2270)`,
+    `boundary: ${where} carries patch part 10 (OPE-2276, __oeResolvesThroughInstalledPackage, defined once and called ONLY from createRuntimeLoaderPackageBoundaryPlugin's node_modules route; found ${boundaryCalls} occurrence(s) of the call shape, want 2: the definition and one call). An unpatched copy of eve 1.0.0-rc.18 inlines the @open-everywhere packages into the authored graph, and \`eve build\` exits 13 (Node's unsettled top-level await) before it writes a build (OPE-2705). On eve 0.54.3 it cost 31 graph evaluations per cold build, about 140 s against 48 s (OPE-2276). A second call site, in the GENERATION plugin, would drop dynamic-tool callback stamps (OPE-2270)`,
   );
   ok(
     !boundarySrc.includes("globalThis.__oe"),
@@ -300,13 +315,39 @@ for (const eveDir of copies) {
   }
   const compactionFile = join(eveDir, COMPACTION);
   ok(
-    existsSync(compactionFile),
-    `adjust: ${where}/${COMPACTION} exists (if eve moved the harness file, this tripwire and eve-compaction-anchor-test.ts are both stale)`,
+    existsSync(compactionFile) && existsSync(join(eveDir, COMPACTION_STEP)),
+    `adjust: ${where}/${COMPACTION} and ${COMPACTION_STEP} exist (if eve moved the compaction engine, this tripwire and eve-compaction-anchor-test.ts are both stale)`,
   );
   const compactionSrc = existsSync(compactionFile) ? readFileSync(compactionFile, "utf8") : "";
+  const compactionStepSrc = existsSync(join(eveDir, COMPACTION_STEP)) ? readFileSync(join(eveDir, COMPACTION_STEP), "utf8") : "";
   ok(
-    compactionSrc.includes("tokenEstimateAdjustment"),
-    `adjust: ${where} carries eve's OWN tokenEstimateAdjustment (landed 0.52.3) — without it the work step re-decides with JSON.stringify/4 while the trigger counted the provider's real token figure, so a dense session emits compaction.completed having compacted NOTHING and the generation wedges. OE's part-3 hunk was retired against this; a red here means it must be restored`,
+    !src.includes("tokenEstimateAdjustment"),
+    `adjust: ${where} carries NO tokenEstimateAdjustment — the v1 engine anchors the trigger on the provider's count and scales its estimate by estimateRatio. An additive estimate adjustment on top of that double-counts the real-minus-estimate gap, so a red here means eve changed the correction and eve-compaction-anchor-test.ts must be re-derived`,
+  );
+  ok(
+    /function getInputTokenCount\([^)]*\)\{let [A-Za-z_$]{1,2}=[A-Za-z_$]{1,2}\.lastKnownInputTokens;/.test(compactionSrc) &&
+      /function shouldCompact\([^)]*\)\{return [A-Za-z_$]{1,2}\.length>0&&getInputTokenCount\(/.test(compactionSrc),
+    `adjust: ${where} anchors the compaction trigger on the provider's reported input-token count (getInputTokenCount reads lastKnownInputTokens, and shouldCompact reads getInputTokenCount). Without the anchor the trigger counts JSON.stringify/4 and a dense session never compacts`,
+  );
+  ok(
+    /let reachesTarget=[A-Za-z_$]{1,2}=>Math\.ceil\(estimateTokens\([A-Za-z_$]{1,2}\)\*[A-Za-z_$]{1,2}\)<=[A-Za-z_$]{1,2}\.target;/.test(compactionSrc),
+    `adjust: ${where} accepts a kept tail only when its estimate, scaled by the session's estimateRatio, reaches the target (half the window). Without it a compaction can leave the history over the threshold, and the next call compacts again`,
+  );
+  const heuristicAt = compactionSrc.indexOf("async function fixedTailHeuristic(");
+  const heuristicSrc = heuristicAt < 0 ? "" : compactionSrc.slice(heuristicAt, compactionSrc.indexOf("function overLimitError(", heuristicAt));
+  const summarizeAt = heuristicSrc.search(/=await [A-Za-z_$]{1,2}\(\{messages:\[createFrameworkUserMessage\(`context\.compaction`/);
+  const firstReturnAt = heuristicSrc.search(/return\{messages:/);
+  ok(
+    summarizeAt > 0 && firstReturnAt > summarizeAt &&
+      compactionSrc.includes("const COMPACTION_HEURISTICS=[fixedTailHeuristic];") &&
+      /if\([A-Za-z_$]{1,2}\.type===`compacted`\)return\{messages:[A-Za-z_$]{1,2}\.messages,stage:[A-Za-z_$]{1,2}\.stage\}\}throw overLimitError\(/.test(compactionSrc),
+    `adjust: ${where} has NO no-op path — fixedTailHeuristic is the only compaction heuristic, it calls the summary model before its first return, and compactMessages throws rather than return the input when no heuristic compacts. A return ahead of the summary call is the 0.x no-op exit that wedged a dense session (OPE-689)`,
+  );
+  ok(
+    /if\(!shouldCompact\([^)]*\)\)return;/.test(compactionStepSrc) &&
+      /let summarize=async [A-Za-z_$]{1,2}=>\{await [A-Za-z_$]{1,2}\.open\(\)/.test(compactionStepSrc) &&
+      /let ([A-Za-z_$]{1,2})=isDeepStrictEqual\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\);if\([A-Za-z_$]{1,2}\.opened&&await settleChange\([^;]*\),\1\)return;let [A-Za-z_$]{1,2}=changeHistory\(/.test(compactionStepSrc),
+    `adjust: ${where}/${COMPACTION_STEP} compacts before a model call only past the trigger, the summary call opens the context change before the model runs, and the step settles a change only when it opened one and rewrites the history only when the result differs from the input. So a pre-call pass under the trigger publishes no context event`,
   );
   ok(
     !compactionSrc.includes("__oeAnchoredConfig(") && !compactionSrc.includes("__oeNoteNoOpCompaction("),
@@ -334,7 +375,7 @@ for (const eveDir of copies) {
   for (const dead of RETIRED) {
     ok(
       !src.includes(dead.symbol),
-      `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; port ONLY the __oeProjectToolSet projection helper and its one call site`,
+      `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; on eve 1.0.0-rc.18 port ONLY part 10 (OPE-2691)`,
     );
   }
   {
@@ -364,5 +405,5 @@ for (const eveDir of copies) {
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} the OE projection hook, the compaction event-contract stamp, a PRISTINE compaction.js (part 3 retired), all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion}, and no eve module rehydrates a tool schema with eve's vendored zod)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} patch part 10 and no part 1 or part 4 symbol, eve's own compaction anchor (part 3 retired), all ${CARRIAGE.length} turnPolicy restore hunks and all ${SEMANTICS.length} HITL-answer semantics, and none of the ${RETIRED.length} retired symbols; root zod @${rootZodVersion}, and no eve module rehydrates a tool schema with eve's vendored zod)\n`,
 );

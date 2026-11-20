@@ -43,7 +43,7 @@ function mcpServerBundleName(name: string): string {
 function declarationProblems(s: McpServerDeclaration, where: string): string[] {
   const bad: string[] = [];
   if (typeof s.name !== "string" || !MCP_SERVER_NAME.test(s.name)) {
-    bad.push(`${where}: name must match ${MCP_SERVER_NAME} (lowercase, a letter first) — it becomes agent/connections/<name>.ts.`);
+    bad.push(`${where}: name must match ${MCP_SERVER_NAME} (lowercase, a letter first) — it becomes agent/tools/<name>.ts and the prefix of each op name.`);
   }
   let url: URL | undefined;
   try {

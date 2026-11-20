@@ -17,6 +17,7 @@ import {
   ticketCreateFn,
   resolveTicketCreate,
 } from "@open-everywhere/core/agent/channels/ticket-create.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 const dir = join(tmpdir(), `open-everywhere-linear-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -91,7 +92,7 @@ interface ArmedTool {
   readonly execute: (input: Record<string, unknown>, c: unknown) => Promise<Record<string, unknown>>;
 }
 const armReply = (tool: unknown, c: unknown): ArmedTool | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, c) as ArmedTool | null;
+  _dynamicResolverForTest(tool)({}, c) as ArmedTool | null;
 
 assert.deepStrictEqual(
   capabilitiesForPlatform("linear"),

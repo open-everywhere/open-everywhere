@@ -25,14 +25,20 @@ lint:model-ids
 lint:model-adapter
 test:model-ids-scope
 test:model-pricing-wiring
+test:subagent-root-model
 test:model-stacks
 test:transcription-role
 test:stt-bakeoff
 test:model-catalog-snapshot
+test:eve-deep-reads
+test:eve-hook-replay
+test:skill-package-shape
+test:egress-rule-shape
 lint:hydration-stub
 lint:human-only-invariants
 lint:principal-gate
 lint:own-account-gate
+lint:stand-down-gate
 test:own-account-gate-refusal
 lint:principal-key
 lint:invisible-bytes
@@ -167,7 +173,7 @@ test:owned-thread-ingress-wiring
 test:deployment-identity-boot
 test:instrumentation-hosted-boot
 lint:glossary-citations
-lint:dynamic-replay
+lint:dynamic-tools
 lint:suite-store
 test:suite-store-reach
 lint:provider-events
@@ -198,6 +204,7 @@ lint:skill-sync
 lint:ops-secret-args
 test:scripted-wake-ownership
 test:scripted-task-receipt
+test:scripted-resolve-frame
 lint:hook-throw
 test:hook-throw-lint
 test:ends-turn-final

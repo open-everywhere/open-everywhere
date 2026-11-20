@@ -1,5 +1,5 @@
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import { verifyDiscordSignature } from "eve/channels/discord";
+import { createPublicKey, verify } from "node:crypto";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
 import { LINK_CONSENT_CLICK_PREFIX, OE_GRANT_ACTION_PREFIX, friendlyDiscordBody, getSettings } from "@open-everywhere/core/agent/adapter-api.js";
@@ -14,6 +14,27 @@ export const PUBLIC_DISCORD_ROUTE = "/eve/v1/discord";
 export const INTERNAL_DISCORD_ROUTE = "/eve/v1/discord/interaction";
 
 const DISCORD_MAX_SKEW_SECONDS = 60 * 5;
+
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+const HEX = /^(?:[0-9a-f]{2})+$/iu;
+
+export function verifyDiscordSignature(input: {
+  readonly body: string;
+  readonly publicKey: string;
+  readonly signature: string;
+  readonly timestamp: string;
+}): boolean {
+  if (!HEX.test(input.publicKey) || !HEX.test(input.signature)) return false;
+  const key = Buffer.from(input.publicKey, "hex");
+  const signature = Buffer.from(input.signature, "hex");
+  if (key.length !== 32 || signature.length !== 64) return false;
+  try {
+    const publicKey = createPublicKey({ format: "der", key: Buffer.concat([ED25519_SPKI_PREFIX, key]), type: "spki" });
+    return verify(null, Buffer.from(`${input.timestamp}${input.body}`), publicKey, signature);
+  } catch {
+    return false;
+  }
+}
 
 export function verifyDiscordInteraction(
   rawBody: string,

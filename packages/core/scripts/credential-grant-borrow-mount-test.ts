@@ -30,7 +30,7 @@ import { installGrantBorrowTransports } from "../agent/connections/grant-mcp-tra
 import { _resetGrantBorrowTransportsForTest } from "../agent/access/grant-borrow-transport-registry.internal.js";
 import { grantOwnerSubject } from "../agent/access/credential-grant-owner.js";
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
-import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent/access/window-gated.js";
+import { _resetMountedVariantsForTest, registeredMountedEntries, type MountedToolEntry } from "../agent/access/window-gated.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { resolvePartition } from "../agent/memory/partition.js";
@@ -47,23 +47,6 @@ const eq = (a: unknown, b: unknown, label: string): void => {
   n++;
 };
 
-const requireEve = createRequire(import.meta.url);
-const eveRoot = dirname(requireEve.resolve("eve/package.json"));
-const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
-const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
-  validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): { execute: { closure: Record<string, unknown> } };
-};
-const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
-};
-const ownerFor = (name: string): Record<string, unknown> => ({ sessionId: "sess-credential-grant-borrow", scope: "session", resolverSlug: name, entryKey: "_single", name });
-
-const boundExecute = (name: string): ((closure: Record<string, unknown>, input: unknown, ctx: unknown) => unknown) => {
-  const cb = durable.lookupDurableDynamicCallback(ownerFor(name), "execute");
-  assert.ok(typeof cb === "function", `eve bound one execute callback under ${name}`);
-  return cb as (closure: Record<string, unknown>, input: unknown, ctx: unknown) => unknown;
-};
-
 const SCOPE = "wrun_borrow_1";
 const MCP_URL = "https://mcp.notion.com/mcp";
 const NAME = "grant__rowan_notion__notion_fetch";
@@ -77,7 +60,7 @@ const ORG = resolvePartition(seatCtx("probe") as never).org;
 
 _resetGrantBorrowTransportsForTest();
 _resetGrantRoomNoticeForTest();
-_resetDynamicVariantsForTest();
+_resetMountedVariantsForTest();
 
 selectConnectorTransport({ connector: "notion", directUrl: MCP_URL, provider: "notion" });
 
@@ -114,9 +97,9 @@ const borrowRow = (over: Partial<CredentialGrantRow> = {}): CredentialGrantRow =
   };
 };
 
-const descriptionOf = (entry: ReplayableToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
+const descriptionOf = (entry: MountedToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
 
-const pinnedPageId = (entry: ReplayableToolEntry | undefined): unknown =>
+const pinnedPageId = (entry: MountedToolEntry | undefined): unknown =>
   (entry as unknown as { inputSchema?: { properties?: { page_id?: { const?: unknown } } } } | undefined)?.inputSchema?.properties?.page_id?.const;
 
 console.log("1. the mount reads the row, not a registry:");
@@ -188,21 +171,15 @@ console.log("2. two rows in one chat pinned to one name:");
     ["store order first-then-second", [first, second]],
     ["store order second-then-first", [second, first]],
   ] as const) {
-    _resetDynamicVariantsForTest();
+    _resetMountedVariantsForTest();
     const mounted = mountGrantEntries(rows);
     eq(Object.keys(mounted), [NAME], `[${label}] exactly ONE tool mounts — the collision does not double-mount`);
     eq(pinnedPageId(mounted[NAME]), "FIRST-PAGE", `[${label}] the FIRST-MINTED grant holds the name — read off the schema constant, which is the value the fence compares`);
     ok(descriptionOf(mounted[NAME]).includes("First brief"), `[${label}] …and the description shows the FIRST grant's own target label`);
     ok(!descriptionOf(mounted[NAME]).includes("Second brief"), `[${label}] …and the later grant's narrowing is nowhere in what the model reads`);
-    lifecycle.validateDurableDynamicToolCallbacks(NAME, mounted[NAME], ownerFor(NAME));
-    assert.throws(
-      () => boundExecute(NAME)({ entryKey: "grant-second" }, {}, seatCtx(SCOPE)),
-      /no variant key in its durable closure/u,
-      `[${label}] the later grant was never registered as a variant, so no replay can reach it either`,
-    );
-    n++;
-    const winner = (await boundExecute(NAME)({ entryKey: "grant-first" }, {}, seatCtx("wrun_elsewhere"))) as { refused?: string; message?: string };
-    eq(winner.refused, "out_of_scope", `[${label}] …while the winner IS registered and its replay reaches the broker`);
+    ok(![...(registeredMountedEntries().get(NAME) ?? [])].some((e) => descriptionOf(e).includes("Second brief")), `[${label}] the later grant was never registered under the name, so no entry for it exists to reach`);
+    const winner = (await mounted[NAME].execute({}, seatCtx("wrun_elsewhere"))) as { refused?: string; message?: string };
+    eq(winner.refused, "out_of_scope", `[${label}] …while the winner's mounted entry reaches the broker`);
     ok(winner.message?.includes("First brief") === true, `[${label}] …and the row it read is the FIRST-MINTED one`);
   }
 
@@ -212,11 +189,11 @@ console.log("2. two rows in one chat pinned to one name:");
     [tieA, tieB],
     [tieB, tieA],
   ]) {
-    _resetDynamicVariantsForTest();
+    _resetMountedVariantsForTest();
     eq(pinnedPageId(mountGrantEntries(rows)[NAME]), "AAA-PAGE", "a createdAt tie breaks on the grant id, so the answer never depends on store order");
   }
 
-  _resetDynamicVariantsForTest();
+  _resetMountedVariantsForTest();
   const late = borrowRow({ createdAt: "2026-08-25T13:00:00.000Z", frozenArgs: { page_id: "LATE-PAGE" }, id: "grant-late" });
   const mid = borrowRow({ createdAt: "2026-08-25T12:30:00.000Z", frozenArgs: { page_id: "MID-PAGE" }, id: "grant-mid" });
   const early = borrowRow({ createdAt: "2026-08-25T09:00:00.000Z", frozenArgs: { page_id: "EARLY-PAGE" }, id: "grant-early" });
@@ -338,31 +315,42 @@ console.log("5. permission is judged first, then every absence refuses no_transp
   );
 }
 
-console.log("6. two chats, one pinned name, the installed eve:");
+console.log("6. two chats, one pinned name: eve offers each chat its own grant, and each entry runs its own:");
 {
-  _resetDynamicVariantsForTest();
+  _resetMountedVariantsForTest();
   const store = getOperationalStore();
   const chatA = borrowRow({ id: "grant-chat-a", resource: `Chat A brief — notion-fetch(${JSON.stringify({ page_id: "CHAT-A" })})`, scopeKey: "wrun_a" });
   const chatB = borrowRow({ id: "grant-chat-b", resource: `Chat B brief — notion-fetch(${JSON.stringify({ page_id: "CHAT-B" })})`, scopeKey: "wrun_b" });
   await store.addCredentialGrant(ORG, chatA);
   await store.addCredentialGrant(ORG, chatB);
 
-  const mountedA = mountGrantEntries([chatA])[NAME];
-  const aClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, mountedA, ownerFor(NAME)).execute.closure;
-  const mountedB = mountGrantEntries([chatB])[NAME];
-  lifecycle.validateDurableDynamicToolCallbacks(NAME, mountedB, ownerFor(NAME));
-  eq(aClosure, { entryKey: "grant-chat-a" }, "eve persists the GRANT ID in chat A's durable closure");
-
-  const bound = boundExecute(NAME);
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const eveUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
+  const { contributeTools } = (await import(eveUrl("definitions/tools.js"))) as {
+    contributeTools(def: { logicalPath: string; slug: string }, value: unknown, ctx: unknown): {
+      value: { name: string; description: string }[] | null;
+    };
+  };
+  const { ContextContainer } = (await import(eveUrl("context/container.js"))) as { ContextContainer: new () => unknown };
+  const mountFor = (row: CredentialGrantRow) => {
+    const mounted = mountGrantEntries([row]);
+    const offered = contributeTools({ logicalPath: "agent/tools/grant_tools.ts", slug: "grant_tools" }, mounted, new ContextContainer()).value ?? [];
+    eq(offered.map((t) => t.name), [NAME], `eve offers ${row.id}'s tool under the pinned name`);
+    return { entry: mounted[NAME]!, offered: offered[0]! };
+  };
+  const chatAMount = mountFor(chatA);
+  const chatBMount = mountFor(chatB);
+  ok(chatAMount.offered.description.includes("Chat A brief") && !chatAMount.offered.description.includes("Chat B brief"), "eve offers chat A a tool that names only chat A's grant, though chat B mounted LAST");
+  ok(chatBMount.offered.description.includes("Chat B brief") && !chatBMount.offered.description.includes("Chat A brief"), "…and offers chat B its own grant");
+  const mountedA = chatAMount.entry;
+  const mountedB = chatBMount.entry;
   const elsewhere = seatCtx("wrun_elsewhere");
-  const fromA = (await bound(aClosure, {}, elsewhere)) as { ok: boolean; refused?: string; message?: string };
-  eq(fromA.refused, "out_of_scope", "the replayed entry reaches the broker, which refuses a call from a chat the owner did not approve");
-  ok(fromA.message?.includes("Chat A brief") === true, "a replay driven from chat A's closure read chat A's GRANT ROW, though chat B registered LAST");
-  const fromB = (await bound({ entryKey: "grant-chat-b" }, {}, elsewhere)) as { message?: string };
-  ok(fromB.message?.includes("Chat B brief") === true, "…and chat B's closure still reads chat B's row");
+  const fromA = (await mountedA.execute({}, elsewhere)) as { ok: boolean; refused?: string; message?: string };
+  eq(fromA.refused, "out_of_scope", "chat A's mounted entry reaches the broker, which refuses a call from a chat the owner did not approve");
+  ok(fromA.message?.includes("Chat A brief") === true, "chat A's entry read chat A's GRANT ROW, though chat B mounted LAST: each session rebuilds its own entry from its own rows");
+  const fromB = (await mountedB.execute({}, elsewhere)) as { message?: string };
+  ok(fromB.message?.includes("Chat B brief") === true, "…and chat B's entry reads chat B's row");
   ok(!fromB.message?.includes("Chat A brief"), "…with no trace of the other chat's grant in it");
-  assert.throws(() => bound({}, {}, elsewhere), /no variant key in its durable closure/u, "a closure with no grant id FAILS CLOSED — guessing whose credential to spend is the defect this exists for");
-  n++;
 }
 
 console.log("7. the borrow-transport registry fails closed on a second registration:");

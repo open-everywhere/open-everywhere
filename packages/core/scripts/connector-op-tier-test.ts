@@ -56,25 +56,21 @@ ok(classifyConnectorOp("notion__notion-create-pages") === "gate:member", "vendor
 ok(classifyConnectorOp("notion__notionette") === "gate:member", "prefix strip requires a separator — notionette is not stripped (fail-safe)");
 
 const approve = connectorOpApproval();
-const noneApproved = new Set<string>();
-ok((await approve({ toolName: "notion__search", approvedTools: noneApproved } as never)) === "not-applicable", "read op → not-applicable (no prompt)");
-ok((await approve({ toolName: "notion__create_page", approvedTools: noneApproved } as never)) === "user-approval", "unapproved write → user-approval (prompt)");
-const oneApproved = new Set<string>(["notion__create_page"]);
-ok((await approve({ toolName: "notion__create_page", approvedTools: oneApproved } as never)) === "not-applicable", "already-approved write → not-applicable (once-per-op)");
-ok((await approve({ toolName: "notion__delete_page", approvedTools: oneApproved } as never)) === "user-approval", "a DIFFERENT write still prompts (approval is per-op, not blanket)");
-ok((await approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["notion__delete_page"]) } as never)) === "user-approval", "an already-approved DESTRUCTIVE op STILL prompts (per-call, OPE-11)");
+ok((await approve({ toolName: "notion__search" } as never)) === "not-applicable", "read op → not-applicable (no prompt)");
+ok((await approve({ toolName: "notion__create_page" } as never)) === "user-approval", "write → user-approval (prompt)");
+ok((await approve({ toolName: "notion__delete_page" } as never)) === "user-approval", "destructive → user-approval (prompt, per call: the card plane's memo covers one call, OPE-11)");
 
 registerSettings({ connectors: { opTiering: false, userPrincipal: false } });
 {
   const off = connectorApprovalPolicy();
-  const read = await off({ toolName: "notion__search", approvedTools: new Set<string>() } as never);
+  const read = await off({ toolName: "notion__search" } as never);
   ok(read !== "not-applicable", "flag OFF → once(): an unapproved READ is not auto-allowed (blanket policy)");
 }
 resetSettingsForTest();
 {
   const on = connectorApprovalPolicy();
-  ok((await on({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "flag ON (shipped) → tiered: a READ is auto-allowed");
-  ok(isDeniedStatus(await on({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)), "flag ON → tiered: a WRITE is denied, never prompted (OE card plane)");
+  ok((await on({ toolName: "notion__search" } as never)) === "not-applicable", "flag ON (shipped) → tiered: a READ is auto-allowed");
+  ok(isDeniedStatus(await on({ toolName: "notion__create_page" } as never)), "flag ON → tiered: a WRITE is denied, never prompted (OE card plane)");
 }
 resetSettingsForTest();
 
@@ -83,11 +79,11 @@ resetSettingsForTest();
   const builtBeforeRegistration = connectorApprovalPolicy();
   registerSettings({ connectors: { opTiering: false, userPrincipal: false } });
   ok(
-    (await builtBeforeRegistration({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) !== "not-applicable",
+    (await builtBeforeRegistration({ toolName: "notion__search" } as never)) !== "not-applicable",
     "a policy BUILT before registerSettings() still honours the deployment's opTiering (OPE-1450)",
   );
   ok(
-    isDeniedStatus(await builtBeforeRegistration({ toolName: "notion__create_page", approvedTools: new Set<string>() } as never)),
+    isDeniedStatus(await builtBeforeRegistration({ toolName: "notion__create_page" } as never)),
     "negative control: the same deferred policy still GATES a write (denied with no card plane — OPE-2340)",
   );
   resetSettingsForTest();
@@ -105,7 +101,7 @@ resetSettingsForTest();
   const afterRegistration = reads;
   const policy = connectorApprovalPolicy();
   ok(reads === afterRegistration, "building the policy performs NO settings read (OPE-1450)");
-  await policy({ toolName: "notion__search", approvedTools: new Set<string>() } as never);
+  await policy({ toolName: "notion__search" } as never);
   ok(reads > afterRegistration, "negative control: the CALL does read the flag — deferred, not dropped");
   resetSettingsForTest();
 }

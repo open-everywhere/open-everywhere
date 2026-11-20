@@ -437,23 +437,29 @@ the fork.
   (`scripts/source-gate-lint.ts` and `scripts/work-mount-lint.ts` enumerate
   `packages/providers/*/agent/tools`; `scripts/consequence-lint.ts` resolves
   `@open-everywhere/provider-<x>` re-exports to `packages/providers/<x>`).
-- **The replay doctrine travels with the tools.** A bundle's `defineDynamic` tools must keep the
-  factored + `preRegisterDynamicEntry` shape; the bundle carries its own tripwire
-  (`scripts/dynamic-replay-test.ts`) and the corresponding rows left core's inventory.
-- **One tool name, one implementation.** eve keys a durable dynamic-tool callback on
-  `(toolName, phase)` alone, so two entries mounted under one name share one `execute` and a
-  replayed turn can run the wrong one behind the right contract. A tool that needs several
-  implementations under one name — the `reply` plane's unified/per-surface pair is the only one —
-  registers them with `preRegisterDynamicVariants`, which puts ONE dispatcher in that slot and
-  persists each variant's key in its own durable closure.
-  `packages/core/scripts/dynamic-entry-collision-test.ts` fails the build on any other shape.
-  A variant may author its own `toModelOutput`: that phase rides the same dispatcher, because eve
-  hands the replayed projection the persisted closure as well. The durable descriptor is the only
-  carrier of an authored projection for a variant and for a single entry alike —
-  `packages/core/scripts/dynamic-tool-native-heal-test.ts` §4 drives it against the installed eve.
-  A variant family's mounted name is also the one shape that stays OUT of the projection
-  registry (which holds names, not functions): the registry's job is to keep the connector wrap off
-  a `ns__name` tool that fences its own result, and one dispatcher cannot vouch for every variant.
+- **The dynamic-tool doctrine travels with the tools.** A bundle's dynamic tool mounts through
+  `sessionMountedTool` (from `@open-everywhere/core/agent/adapter-api.js`). eve 1.x runs every
+  `defineDynamic` function before every model call, so the helper keeps the seat decision in
+  `ctx.memo`, keyed on the session. A session keeps the seat it started with until a deployment
+  change; eve then discards the memo and decides the seat again from the session's latest frame. A
+  fresh process on the same deployment reads the same decision back. The bundle carries its own test (`scripts/dynamic-replay-test.ts`).
+  `npm run lint:dynamic-tools` refuses a file that calls `defineDynamic(` directly with no
+  `memoized(`. Its exemption list is closed: each entry names one file, a reason, and the leg whose
+  test fails if the reason stops being true. Two core files are on it. The seat cut must re-decide
+  before each model call, so a halt lands on the next one. The connector mount keeps its own
+  listing memo, keyed by session and principal and held for one turn on a refusal or a sign-in need.
+- **One tool name, one implementation per session.** eve 1.x builds each session's tools from the
+  value its dynamic returns for that session, so two sessions that mount different entries under one
+  name are each offered their own (`credential-grant-borrow-mount-test.ts` §6 passes each chat's
+  mount through eve's `contributeTools`, and runs each chat's own entry). A tool that
+  needs several implementations under one name — the `reply` plane's unified/per-surface pair —
+  registers them with `sessionVariantTool`, which memoizes the variant key for the session.
+  A dynamic tool no longer replaces a static tool of the same name: define a per-session tool ONLY
+  in a dynamic file. `packages/core/scripts/dynamic-entry-collision-test.ts` fails on a dynamic name
+  that equals a static tool file name, and on a new overlap with eve's default tools.
+  A variant family that fences its own result declares its mounted name with
+  `setVariantProjectedName` (`access/connector-result-fence.ts`), so the connector executed-fact line
+  is never added to its result.
 
 **Two known non-mechanical spots** for the remaining sweep:
 

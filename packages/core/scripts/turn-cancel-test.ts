@@ -1,9 +1,11 @@
 // proves: REPLY-53
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { SessionNotActiveError } from "eve/sessions";
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { registerOperationalStore } from "../agent/operational/provider.js";
 import { isTurnCancelNote, renderCancelNote, TURN_CANCELLED_ACTION } from "../agent/hooks/turn-anchor.js";
 import { resolvePartition } from "../agent/memory/partition.js";
@@ -19,6 +21,10 @@ import { resolveTurnAnchor, recordTurnAnchor, clearTurnAnchor, turnAnchorAddress
 import { cancelAnchoredTurn, isStopDirective, unpairedStops, TURN_CANCEL_ACTION, TURN_STOP_IGNORED_ACTION, type AttachSessionForCancel } from "../agent/channels/turn-cancel.js";
 import { appendAudit, readAudit } from "../agent/audit/audit.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
+import { v27Hooks } from "./_hook-view.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 process.env.OE_SQLITE_PATH = ":memory:";
 const { sqliteOperationalStore, _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
@@ -119,7 +125,9 @@ function fakeAttach(status: string | undefined, calls: { sessionId?: string; tur
     async cancel(options?: { turnId?: string }) {
       calls.sessionId = sessionId;
       calls.turnId = options?.turnId;
-      return status === undefined ? undefined : { status };
+      if (status === "no_active_turn") throw new SessionNotActiveError();
+      if (status === "not_ready") throw new SessionNotActiveError({ retryable: true });
+      return undefined;
     },
   });
 }
@@ -152,6 +160,18 @@ function fakeAttach(status: string | undefined, calls: { sessionId?: string; tur
   });
   ok(r.outcome === "no_active_turn", "`no_active_turn` is reported as its own outcome — it is the parked signal, not an error");
   ok(/waiting on you/i.test(r.message), "…and reads to a human as 'I'm already waiting on you'");
+}
+
+{
+  const r = await cancelAnchoredTurn({
+    org: "org-a",
+    platform: "slack",
+    workspace: "T1",
+    via: "command",
+    query: { windowKey: "w-3" },
+    attachSession: fakeAttach("not_ready", {}),
+  });
+  ok(r.outcome === "error", "a RETRYABLE not-ready session is an error to retry, never the parked `no_active_turn` signal");
 }
 
 {
@@ -321,7 +341,7 @@ const NO_REQUESTER_BASELINE =
   const storageKey = Symbol.for("eve.context-storage");
   g[storageKey] ??= new AsyncLocalStorage();
   const storage = g[storageKey] as AsyncLocalStorage<unknown>;
-  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(asEveStore(new FakeSession()), fn));
 
   ok(readPendingCancelNote() === null, "no eve context: the reader returns null and never throws");
   setPendingCancelNote({ turnId: "t-x", steps: 1, ran: [] });
@@ -393,18 +413,18 @@ const NO_REQUESTER_BASELINE =
 
   const session = new SeededSession();
   session.set({ name: ANCHOR_KEY }, { ...anchorState });
-  await storage.run(session, async () => {
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1" } });
+  await storage.run(asEveStore(session), async () => {
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1" } });
     const pending = readPendingCancelNote();
     ok(pending !== null, "🔴 the turn.cancelled HOOK writes the reconstruction — delete that call and this is the assertion that goes red");
     ok(pending!.steps === 4 && pending!.ran.join(",") === "read_thread,create_ticket", "…carrying the SAME {steps, ran} the human-facing note and the audit row get");
 
     session.set({ name: ANCHOR_KEY }, { ...anchorState });
-    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1" } });
+    await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1" } });
     ok(readPendingCancelNote() !== null, "🔴 the cancelled turn's own turn.completed does NOT retire the note");
 
     session.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-2" });
-    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2" } });
+    await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2" } });
     ok(readPendingCancelNote() === null, "…and the NEXT turn's completion does retire it");
   });
 
@@ -419,8 +439,8 @@ const NO_REQUESTER_BASELINE =
 
   const joined = new SeededSession();
   joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-453", sessionId: "s-453" });
-  await storage.run(joined, async () => {
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-453" } });
+  await storage.run(asEveStore(joined), async () => {
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-453" } });
     const pending = readPendingCancelNote();
     ok(pending?.by === "U-STOPPER", "🔴 the hook reads the paired cancel_requested row and carries the REQUESTER into the note");
     ok(renderPendingCancelNote()!.includes("U-STOPPER"), "🔴 …and the model's reminder names them — delete the join and this goes red");
@@ -428,7 +448,7 @@ const NO_REQUESTER_BASELINE =
     clearPendingCancelNoteAfter("t-later");
     ok(readPendingCancelNote() === null, "(the previous note retires before the negative control)");
     joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-454", sessionId: "s-454" });
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-454" } });
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-454" } });
     const orphan = readPendingCancelNote();
     ok(orphan !== null, "an unmatched cancel still writes the reconstruction (the OPE-430 half is untouched)");
     ok(orphan!.by === undefined, "🔴 no matching request row ⇒ NO requester — never a placeholder, never the wrong turn's");
@@ -445,7 +465,7 @@ const NO_REQUESTER_BASELINE =
       detail: { via: "reaction", outcome: "requested", sessionId: "s-other", turnId: "t-456" },
     });
     joined.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-456", sessionId: "s-456" });
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-456" } });
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-456" } });
     ok(readPendingCancelNote()!.by === undefined, "🔴 a request row for the SAME turn id in ANOTHER session names NOBODY — the join keys on both ids");
   });
 
@@ -459,8 +479,8 @@ const NO_REQUESTER_BASELINE =
   });
   const forged = new SeededSession();
   forged.set({ name: ANCHOR_KEY }, { ...anchorState, turnId: "t-455", sessionId: "s-455" });
-  await storage.run(forged, async () => {
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-455" } });
+  await storage.run(asEveStore(forged), async () => {
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-455" } });
     const pending = readPendingCancelNote();
     ok(pending !== null, "a forged principal id does not break the reconstruction");
     ok(pending!.by === undefined, "🔴 a principal id that is not a plain identifier is DROPPED, not rendered");
@@ -480,8 +500,8 @@ const NO_REQUESTER_BASELINE =
 
     const before = await countRows();
     const blind = new SeededSession();
-    await storage.run(blind, async () => {
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: TURN } }, ctx);
+    await storage.run(asEveStore(blind), async () => {
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: TURN } }, ctx);
 
       ok((await countRows()) === before + 1, "🔴 a cancel with NO surviving accumulator still writes the turn.cancelled audit row");
       const row = (await readAudit({ org, action: TURN_CANCELLED_ACTION, limit: 1 }))[0]!;
@@ -499,8 +519,8 @@ const NO_REQUESTER_BASELINE =
 
     const noCtx = await countRows();
     const blind2 = new SeededSession();
-    await storage.run(blind2, async () => {
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-745-noctx" } });
+    await storage.run(asEveStore(blind2), async () => {
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-745-noctx" } });
       ok(readPendingCancelNote() === null, "…and no reconstruction either");
     });
     ok((await countRows()) === noCtx, "🔴 no slot AND no ctx ⇒ NO row (the arm never invents a partition it cannot read)");
@@ -538,22 +558,22 @@ const NO_REQUESTER_BASELINE =
     }): Promise<void> => {
       const ctx = { channel: { ...(input.childOfWork ? { kind: "subagent" } : {}), continuationToken: input.window }, session: { id: input.session } };
       const container = new SeededSession();
-      await storage.run(container, async () => {
+      await storage.run(asEveStore(container), async () => {
         await hook.events["turn.started"]({ type: "turn.started", data: { turnId: input.turnId } }, ctx);
         container.set({ name: ANCHOR_KEY }, { ...(container.get({ name: ANCHOR_KEY }) as Record<string, unknown>), ...addressed });
-        await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "read_thread" } } });
-        await hook.events["step.completed"]({ type: "step.completed", data: {} });
+        await v27Hooks(hook).callSettled({ data: { status: "completed", result: { kind: "tool-result", toolName: "read_thread" } } });
+        await v27Hooks(hook).modelSettled({ data: {} });
         const committed = JSON.parse(JSON.stringify(container.get({ name: ANCHOR_KEY }))) as Record<string, unknown>;
 
         if (input.delegates === "subagent") {
-          await hook.events["actions.requested"]({ type: "actions.requested", data: { actions: [{ kind: "subagent-call", subagentName: "fresh_eyes_review" }] } }, ctx);
+          await v27Hooks(hook).callRequested({ data: { actions: [{ kind: "subagent-call", subagentName: "fresh_eyes_review" }] } }, ctx);
         } else if (input.delegates === "agent") {
-          await hook.events["actions.requested"]({ type: "actions.requested", data: { actions: [{ kind: "tool-call", toolName: "agent" }] } }, ctx);
+          await v27Hooks(hook).callRequested({ data: { actions: [{ kind: "tool-call", toolName: "agent" }] } }, ctx);
         }
-        await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+        await v27Hooks(hook).callSettled({ data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
 
         container.set({ name: ANCHOR_KEY }, committed);
-        await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: input.turnId } }, ctx);
+        await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: input.turnId } }, ctx);
       });
     };
 
@@ -627,7 +647,7 @@ const NO_REQUESTER_BASELINE =
     const ROOT = "m-1190-root";
     const STOPPER = "U-1190";
     const droppingDoor: AttachSessionForCancel = () => ({ cancel: async () => ({ status: "accepted" }) });
-    const parkedDoor: AttachSessionForCancel = () => ({ cancel: async () => ({ status: "no_active_turn" }) });
+    const parkedDoor: AttachSessionForCancel = () => ({ cancel: async () => { throw new SessionNotActiveError(); } });
 
     const rowsFor = async (org: string, action: string): Promise<Record<string, unknown>[]> =>
       (await readAudit({ org, action })).map((r) => ({ ...r.detail, principalId: r.principalId, platform: r.platform }));
@@ -643,7 +663,7 @@ const NO_REQUESTER_BASELINE =
       const ctx = { channel: { continuationToken: input.window }, session: { id: input.session } };
       const org = resolvePartition(ctx as never).org;
       const container = new SeededSession();
-      await storage.run(container, async () => {
+      await storage.run(asEveStore(container), async () => {
         await hook.events["turn.started"]({ type: "turn.started", data: { turnId: input.turnId } }, ctx);
         container.set({ name: ANCHOR_KEY }, { ...(container.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
       });
@@ -663,9 +683,8 @@ const NO_REQUESTER_BASELINE =
         ok(receipt.turnId === input.turnId, `(precondition) the ingress resolved this turn's anchor — got ${String(receipt.turnId)}`);
         ok(receipt.outcome === (input.stop === "dropped" ? "requested" : "no_active_turn"), `(precondition) the ingress recorded the ${input.stop} outcome — got ${receipt.outcome}`);
       }
-      await storage.run(container, async () => {
-        const event = input.endedAs === "cancelled" ? "turn.cancelled" : `turn.${input.endedAs}`;
-        await hook.events[event]!({ type: event, data: { turnId: input.turnId } }, ctx);
+      await storage.run(asEveStore(container), async () => {
+        await hook.events["turn.settled"]!({ type: "turn.settled", data: { turnId: input.turnId, outcome: input.endedAs } }, ctx);
       });
       await flush();
       return org;
@@ -690,7 +709,7 @@ const NO_REQUESTER_BASELINE =
     ok(posts[0]!.text === IGNORED_STOP_NOTE, `🔴 …and it says the stop did not take effect — got ${JSON.stringify(posts[0]?.text)}`);
     ok(posts[0]!.channelId === CHANNEL, "…in the room the stopped turn was running in");
 
-    await storage.run(new SeededSession(), async () => {
+    await storage.run(asEveStore(new SeededSession()), async () => {
       ok(readPendingCancelNote() === null, "🔴 an ignored stop writes NO reconstruction — the model must not be told it was interrupted");
     });
 
@@ -713,13 +732,13 @@ const NO_REQUESTER_BASELINE =
     const container5 = new SeededSession();
     const ctx5 = { channel: { continuationToken: "w-1190e" }, session: { id: "s-1190e" } };
     const org5 = resolvePartition(ctx5 as never).org;
-    await storage.run(container5, async () => {
+    await storage.run(asEveStore(container5), async () => {
       await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-1190e" } }, ctx5);
       container5.set({ name: ANCHOR_KEY }, { ...(container5.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
     });
     await cancelAnchoredTurn({ org: org5, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190e" }, attachSession: droppingDoor });
-    await storage.run(container5, async () => {
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190e" } }, ctx5);
+    await storage.run(asEveStore(container5), async () => {
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1190e" } }, ctx5);
       ok(readPendingCancelNote()?.turnId === "t-1190e", "🔴 (positive control) a REAL cancel still writes the reconstruction — so leg ①'s null is a decision, not a dead arm");
       ok(readPendingCancelNote()?.by === STOPPER, "…and still names the requester through the tightened session-aware join");
     });
@@ -744,15 +763,15 @@ const NO_REQUESTER_BASELINE =
     const container8 = new SeededSession();
     const ctx8 = { channel: { continuationToken: "w-1190h" }, session: { id: "s-1190h" } };
     const org8 = resolvePartition(ctx8 as never).org;
-    await storage.run(container8, async () => {
+    await storage.run(asEveStore(container8), async () => {
       await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-1190h" } }, ctx8);
       container8.set({ name: ANCHOR_KEY }, { ...(container8.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
     });
     await cancelAnchoredTurn({ org: org8, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-1190h" }, attachSession: droppingDoor });
-    await storage.run(container8, async () => {
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190h" } }, ctx8);
+    await storage.run(asEveStore(container8), async () => {
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1190h" } }, ctx8);
       ok(__pendingIgnoredStopCountForTest() === 1, `(precondition) the ordinary arm SCHEDULED a check rather than deciding at once — got ${__pendingIgnoredStopCountForTest()}`);
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190h" } }, ctx8);
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1190h" } }, ctx8);
       ok(__pendingIgnoredStopCountForTest() === 0, "🔴 the cancelled arm DROPS the scheduled check — the decision is answered, not merely out-voted later");
       await flush();
     });
@@ -770,10 +789,10 @@ const NO_REQUESTER_BASELINE =
     const container9 = new SeededSession();
     const ctx9 = { channel: { continuationToken: "w-1190i" }, session: { id: "s-1190i" } };
     const org9 = resolvePartition(ctx9 as never).org;
-    await storage.run(container9, async () => {
+    await storage.run(asEveStore(container9), async () => {
       await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-1190i" } }, ctx9);
       container9.set({ name: ANCHOR_KEY }, { ...(container9.get({ name: ANCHOR_KEY }) as Record<string, unknown>), platform: "discord", channelId: CHANNEL, messageId: ROOT });
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190i" } }, ctx9);
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1190i" } }, ctx9);
     });
     const cancelledRow = (await rowsFor(org9, TURN_CANCELLED_ACTION)).filter((r) => r["turnId"] === "t-1190i");
     ok(cancelledRow.length === 1, `🔴 the strict row now carries its own turn id — without it the pair is not joinable at all (got ${cancelledRow.length})`);
@@ -784,9 +803,9 @@ const NO_REQUESTER_BASELINE =
     ok(late.outcome === "requested", `(precondition) the second stop was accepted, so an ignored-stop row is genuinely in play — got ${late.outcome}`);
     posts.length = 0;
     const container9b = new SeededSession();
-    await storage.run(container9b, async () => {
+    await storage.run(asEveStore(container9b), async () => {
       container9b.set({ name: ANCHOR_KEY }, { turnId: "t-1190i", sessionId: "s-1190i", org: org9, windowKey: "w-1190i", workspace: "G1", surfaceKey: "discord/G1/C-1190", platform: "discord", channelId: CHANNEL, messageId: ROOT, handPlaced: false, ran: [], steps: 0 });
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190i" } }, ctx9);
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1190i" } }, ctx9);
       await flush();
     });
     ok(
@@ -806,8 +825,8 @@ const NO_REQUESTER_BASELINE =
     const cancelledBeforeJ = (await readAudit({ org: orgJ, action: TURN_CANCELLED_ACTION })).length;
     const mismatched = new SeededSession();
     mismatched.set({ name: ANCHOR_KEY }, { ...slotJ, turnId: "t-1190j-other" });
-    await storage.run(mismatched, async () => {
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1190j" } }, ctxJ);
+    await storage.run(asEveStore(mismatched), async () => {
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1190j" } }, ctxJ);
     });
     ok(
       (await readAudit({ org: orgJ, action: TURN_CANCELLED_ACTION })).length === cancelledBeforeJ,
@@ -815,8 +834,8 @@ const NO_REQUESTER_BASELINE =
     );
     const endedJ = new SeededSession();
     endedJ.set({ name: ANCHOR_KEY }, { ...slotJ });
-    await storage.run(endedJ, async () => {
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190j" } }, ctxJ);
+    await storage.run(asEveStore(endedJ), async () => {
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1190j" } }, ctxJ);
       await flush();
     });
     ok(
@@ -835,8 +854,8 @@ const NO_REQUESTER_BASELINE =
     for (const delivery of [1, 2]) {
       const container = new SeededSession();
       container.set({ name: ANCHOR_KEY }, { ...slotK });
-      await storage.run(container, async () => {
-        await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1190k" } }, ctxK);
+      await storage.run(asEveStore(container), async () => {
+        await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1190k" } }, ctxK);
         await flush();
       });
       ok(
@@ -866,8 +885,8 @@ const NO_REQUESTER_BASELINE =
     const endedL = new SeededSession();
     endedL.set({ name: ANCHOR_KEY }, { ...slotL });
     try {
-      await storage.run(endedL, async () => {
-        await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2283a" } }, ctxL);
+      await storage.run(asEveStore(endedL), async () => {
+        await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2283a" } }, ctxL);
       });
     } finally {
       globalThis.setTimeout = realSetTimeout;
@@ -877,8 +896,8 @@ const NO_REQUESTER_BASELINE =
     ok(__pendingIgnoredStopCountForTest() === 1, `(precondition) the check is DUE and still unresolved — nothing but a drain can answer it now (got ${__pendingIgnoredStopCountForTest()})`);
     ok((await rowsFor(orgL, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283a").length === 0, "(precondition) …and no ignored-stop row exists yet");
     const parkedM = new SeededSession();
-    await storage.run(parkedM, async () => {
-      await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, { channel: { continuationToken: "w-2283b" }, session: { id: "s-2283b" } });
+    await storage.run(asEveStore(parkedM), async () => {
+      await v27Hooks(hook).deliverySettled({ data: {} }, { channel: { continuationToken: "w-2283b" }, session: { id: "s-2283b" } });
     });
     ok(__pendingIgnoredStopCountForTest() === 0, "🔴 `session.waiting` DRAINS the due check — a parked session is an awaited drain point");
     const parkedRow = (await rowsFor(orgL, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283a");
@@ -894,9 +913,9 @@ const NO_REQUESTER_BASELINE =
     await cancelAnchoredTurn({ org: orgN, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "command", query: { windowKey: "w-2283c" }, attachSession: droppingDoor });
     const endedN = new SeededSession();
     endedN.set({ name: ANCHOR_KEY }, { ...slotN });
-    await storage.run(endedN, async () => {
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2283c" } }, ctxN);
-      await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctxN);
+    await storage.run(asEveStore(endedN), async () => {
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2283c" } }, ctxN);
+      await v27Hooks(hook).deliverySettled({ data: {} }, ctxN);
     });
     ok(__pendingIgnoredStopCountForTest() === 1, `🔴 NEGATIVE CONTROL: the turn's OWN park leaves a check inside its grace alone — got ${__pendingIgnoredStopCountForTest()}`);
     ok((await rowsFor(orgN, TURN_STOP_IGNORED_ACTION)).filter((r) => r["turnId"] === "t-2283c").length === 0, "…and writes no row for it");
@@ -949,11 +968,11 @@ const NO_REQUESTER_BASELINE =
     const ctxA = { channel: { continuationToken: "w-1724a" }, session: { id: "s-1724a" } };
     const orgA = resolvePartition(ctxA as never).org;
     const containerA = new SeededSession();
-    await storage.run(containerA, async () => {
+    await storage.run(asEveStore(containerA), async () => {
       containerA.set({ name: ANCHOR_KEY }, slotFor("t-1724a", "s-1724a", orgA, "w-1724a"));
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724a" } }, ctxA);
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1724a" } }, ctxA);
       containerA.set({ name: ANCHOR_KEY }, slotFor("t-1724a", "s-1724a", orgA, "w-1724a"));
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724a" } }, ctxA);
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1724a" } }, ctxA);
       ok(readPendingCancelNote() === null, "🔴 a cancel for an already-ended turn writes NO reconstruction — the model is never told a finished turn was interrupted");
     });
     await __flushIgnoredStopChecksForTest();
@@ -967,11 +986,11 @@ const NO_REQUESTER_BASELINE =
     const stopped = await cancelAnchoredTurn({ org: orgB, platform: "discord", workspace: "G1", requestedBy: STOPPER, via: "reaction", query: { windowKey: "w-1724b" }, attachSession: acceptingDoor });
     ok(stopped.outcome === "requested", `(precondition) the ingress accepted the stop, so a request row really exists — got ${stopped.outcome}`);
     const containerB = new SeededSession();
-    await storage.run(containerB, async () => {
+    await storage.run(asEveStore(containerB), async () => {
       containerB.set({ name: ANCHOR_KEY }, slotFor("t-1724b", "s-1724b", orgB, "w-1724b"));
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724b" } }, ctxB);
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1724b" } }, ctxB);
       containerB.set({ name: ANCHOR_KEY }, slotFor("t-1724b", "s-1724b", orgB, "w-1724b"));
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724b" } }, ctxB);
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1724b" } }, ctxB);
       ok(readPendingCancelNote()?.turnId === "t-1724b", "🔴 (positive control) a stop that was really asked for still writes the reconstruction");
       ok(readPendingCancelNote()?.by === STOPPER, "…and still names the person who asked");
     });
@@ -984,12 +1003,12 @@ const NO_REQUESTER_BASELINE =
     const ctxC = { channel: { continuationToken: "w-1724c" }, session: { id: "s-1724c" } };
     const orgC = resolvePartition(ctxC as never).org;
     const containerC = new SeededSession();
-    await storage.run(containerC, async () => {
+    await storage.run(asEveStore(containerC), async () => {
       containerC.set({ name: ANCHOR_KEY }, slotFor("t-1724c", "s-1724c", orgC, "w-1724c"));
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724c" } }, ctxC);
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1724c" } }, ctxC);
       __clearEndedTurnsForTest();
       containerC.set({ name: ANCHOR_KEY }, slotFor("t-1724c", "s-1724c", orgC, "w-1724c"));
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724c" } }, ctxC);
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1724c" } }, ctxC);
     });
     await __flushIgnoredStopChecksForTest();
     ok((await cancelledRowsFor(orgC, "t-1724c", "s-1724c")).length === 1, "🔴 with the ended-turn witness gone the row IS written — leg ① is that witness deciding, not a dead arm");
@@ -1000,14 +1019,14 @@ const NO_REQUESTER_BASELINE =
     const ctxD2 = { channel: { continuationToken: "w-1724d2" }, session: { id: "s-1724d2" } };
     const orgD = resolvePartition(ctxD1 as never).org;
     const containerD1 = new SeededSession();
-    await storage.run(containerD1, async () => {
+    await storage.run(asEveStore(containerD1), async () => {
       containerD1.set({ name: ANCHOR_KEY }, slotFor("turn_1", "s-1724d1", orgD, "w-1724d1"));
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "turn_1" } }, ctxD1);
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "turn_1" } }, ctxD1);
     });
     const containerD2 = new SeededSession();
-    await storage.run(containerD2, async () => {
+    await storage.run(asEveStore(containerD2), async () => {
       containerD2.set({ name: ANCHOR_KEY }, slotFor("turn_1", "s-1724d2", orgD, "w-1724d2"));
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "turn_1" } }, ctxD2);
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "turn_1" } }, ctxD2);
     });
     await __flushIgnoredStopChecksForTest();
     ok((await cancelledRowsFor(orgD, "turn_1", "s-1724d2")).length === 1, "🔴 another session's turn_1 is cancelled normally — the witness keys on BOTH ids");
@@ -1017,11 +1036,11 @@ const NO_REQUESTER_BASELINE =
     posts.length = 0;
     const orgE = resolvePartition({ channel: { continuationToken: "w-1724e" }, session: { id: "s-1724e" } } as never).org;
     const containerE = new SeededSession();
-    await storage.run(containerE, async () => {
+    await storage.run(asEveStore(containerE), async () => {
       containerE.set({ name: ANCHOR_KEY }, slotFor("t-1724e-other", "s-1724e", orgE, "w-1724e"));
-      await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-1724e" } });
+      await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-1724e" } });
       containerE.set({ name: ANCHOR_KEY }, slotFor("t-1724e", "s-1724e", orgE, "w-1724e"));
-      await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-1724e" } });
+      await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-1724e" } });
       ok(readPendingCancelNote()?.turnId === "t-1724e", "🔴 an UNKNOWN stop answer still writes the reconstruction — `undefined` is never read as `false`");
     });
     await __flushIgnoredStopChecksForTest();
@@ -1041,37 +1060,90 @@ const NO_REQUESTER_BASELINE =
     ok(src.includes(cut) && !re.test(src.replaceAll(cut, "")), `negative control: the pin "${label}" fails once \`${cut}\` is cut`);
   };
 
+  // eve 1.x (v27): a cancel is the session machine's `cancel` transition, published by the cancel step;
+  // every fact the publisher writes runs the authored hooks as definition effects.
   const settle = eveDist("execution/settle-cancelled-turn-step.js");
   const publish = eveDist("execution/publish-session-events.js");
+  const machine = eveDist("harness/session-machine/transitions.js");
 
-  pin(settle, /async function settleCancelledTurnStep\(\w+\)\{"use step";return await withSessionStateDelta\(/, "withSessionStateDelta(", "(0) eve's cancel step still returns its session state as a delta");
-  pin(settle, /publishFromSessionStep\(\w+,\{origin:`own`,async publish\((\w+)\)\{[^]*?await emitCancelledTurn\(\1,/, "emitCancelledTurn(", "(0) …and emits `turn.cancelled` through the shared session-step publisher");
-  pin(eveDist("harness/cancelled-turn-emission.js"), /await (\w+)\(createTurnCancelledEvent\(/, "createTurnCancelledEvent(", "(0) …which hands that publisher a real `turn.cancelled` event");
-
-  pin(publish, /async publish\(\w+\)\{await \w+\.runHooks\(await emit\(\w+\)\)\}/, ".runHooks(await emit(", "🔴 (1) every event the publisher emits runs the hooks");
-  pin(publish, /async runHooks\(\w+,\w+\)\{await dispatchStreamEventHooks\(\{cancelTurn:\w+,ctx:\w+,event:\w+,registry:/, "dispatchStreamEventHooks(", "🔴 (1) …and runHooks dispatches the authored hooks — no dispatch, no reconstruction is ever written");
-
-  pin(publish, /return await withContextScope\(\w+,\w+,async \w+=>\{let (\w+)=\w+\?\.createHandleEvent\(\{handleEvent:\w+\.publish,[^;]*\?\?\w+\.publish;return\{result:await \w+\.publish\(\1,\w+\),session:\w+\}\}\)/, "withContextScope(", "🔴 (2) …and the publish (so every hook) runs inside a context scope, which is what makes the defineState slot resolvable from the hook");
+  pin(settle, /async function settleCancelledTurnStep\(\w+\)\{"use step";return await withSessionStateDelta\(\w+,settleCancelledTurn\)\}/, "withSessionStateDelta(", "(0) eve's cancel step still returns its session state as a delta");
+  pin(
+    settle,
+    /let (\w+)=controlled\(\w+\.control,`cancel`,\w+=>cancel\([^]*?publishFromSessionStep\(\w+,\{origin:`own`,publish:\((\w+),(\w+)\)=>applyTransition\(\3,\1,\2\)/,
+    "applyTransition(",
+    "(0) …and publishes the session machine's `cancel` transition through the shared session-step publisher",
+  );
+  pin(machine, /function cancel\(\w+,\w+=\{\}\)\{[^]*?\.push\(\.\.\.turnSettled\(\w+,\{cause:\w+\.cause,outcome:`cancelled`\}/, "outcome:`cancelled`", "(0) …and that transition writes a real `turn.settled` fact with `outcome: cancelled` (0.x `turn.cancelled`)");
+  pin(publish, /let publish=async (\w+)=>\{let \w+=\w+\.cancelTurn;await (\w+)\.react\(await emit\(\1\)/, ".react(await emit(", "🔴 (1) every fact the publisher writes is handed to `react`");
+  pin(publish, /react\((\w+),(\w+)\)\{if\(\1\.length===0\)return Promise\.resolve\(\);let \w+=\w+\.then\(\(\)=>runEffects\(\w+,\{\.\.\.\2,written:\1\}\)\)/, "runEffects(", "🔴 (1) …and `react` runs the session's definition effects over the written facts");
+  pin(
+    eveDist("definitions/hooks.js"),
+    /function hookDefinition\((\w+)\)\{[^]*?effects:\(\)=>\(\w+\.commit\?\.written\?\?\[\]\)\.flatMap\([^]*?let (\w+)=\1\.events\[\w+\];return \2===void 0\?\[\]:\[\{id:\w+\.id,run:\(\)=>runHandler\(/,
+    "runHandler(",
+    "🔴 (1) …and an authored hook IS such a definition: each written fact whose type it binds runs its handler — no dispatch, no reconstruction is ever written",
+  );
+  pin(
+    eveDist("definitions/kernel.js"),
+    /async function runEffects\(\w+,(\w+)\)\{[^]*?for\(let \w+ of await collectEffects\(\[\w+\]\)\)try\{await withUsageInEffect\(\(\)=>\w+\.run\(\)\)/,
+    "withUsageInEffect(",
+    "🔴 (1) …and `runEffects` awaits each effect's `run`",
+  );
+  pin(
+    publish,
+    /return await withContextScope\(\w+,\w+,async \w+=>\{let (\w+)=\w+\?\.createHandleEvent\(\{handleEvent:(\w+)\.publish,[^;]*\?\?\2\.publish;let \w+=await \w+\.publish\(\1,\w+\);/,
+    "withContextScope(",
+    "🔴 (2) …and the publish (so every hook) runs inside a context scope, which is what makes the defineState slot resolvable from the hook",
+  );
   pin(eveDist("context/run-step.js"), /async function withContextScope\(\w+,\w+,\w+\)\{[^]*?contextStorage\.run\(/, "contextStorage.run(", "🔴 (2) …and the scope makes that context current");
-  pin(eveDist("public/definitions/state.js"), /update\(\w+\)\{let \w+=loadContext\(\)/, "loadContext()", "🔴 (2) …and a defineState update writes to the current context");
-
-  pin(publish, /let\{ctx:(\w+)\}=\w+,\w+=await publishInSessionScope\([^]*?published:\{serializedContext:serializeContext\(\1\)/, "serializeContext(", "🔴 (3) …and the context is RE-SERIALIZED out of the cancel step");
+  pin(
+    eveDist("public/definitions/state.js"),
+    /update\((\w+)\)\{let (\w+)=loadStateContext\(\);let (\w+)=\2\.ensure\(\w+,\w+\);\2\.set\(\w+,\1\(\3\)\)\}/,
+    "loadStateContext()",
+    "🔴 (2) …and a defineState update writes to the current context",
+  );
+  pin(publish, /async function publishFromSessionStep\(\w+,\w+\)\{let\{ctx:(\w+)\}=\w+;let \w+=await publishInSessionScope\([^]*?published:\{serializedContext:serializeContext\(\1\)/, "serializeContext(", "🔴 (3) …and the context is RE-SERIALIZED out of the cancel step");
   pin(settle, /\{published:(\w+),result:(\w+)\}=await publishFromSessionStep\([^]*?return \2===void 0\?\1:/, "publishFromSessionStep(", "🔴 (3) …and the cancel step returns that re-serialized context as its result");
-  pin(eveDist("execution/session/state-delta.js"), /SESSION_VALUE_KEYS=\[`serializedContext`/, "`serializedContext`", "🔴 (3) …and the step delta keeps serializedContext");
+  pin(
+    eveDist("execution/session/state-delta.js"),
+    /function applySessionStateDelta\(\w+,\w+\)\{return\{serializedContext:applyValueDelta\(\w+\.serializedContext,\w+\.serializedContext\)/,
+    "serializedContext:applyValueDelta(",
+    "🔴 (3) …and the step delta keeps serializedContext",
+  );
   pin(eveDist("execution/session/state-cursor.js"), /let (\w+)=applySessionStateDelta\(\w+,\w+\.stateDelta\)[^]*?this\.values=\1/, "applySessionStateDelta(", "🔴 (3) …and the session cursor applies that delta to the next step's input");
   pin(eveDist("execution/session/program.js"), /advanceWithHistory\(\w+=>settleCancelledTurnStep\(/, "settleCancelledTurnStep(", "🔴 (3) …and the cancel step runs through that cursor");
 
-  pin(settle, /let (\w+)=await relayWithdrawnRequests\(\w+,\(\)=>!0\),\w+=\{\.\.\.await restoreSessionStep\(\{\.\.\.\1,/, "()=>!0", "eve's cancel step still withdraws EVERY proxied request (an always-true filter), and builds on the wiped state");
-  const withdraw = eveDist("execution/tools/workflow/withdraw-step.js");
-  pin(withdraw, /async function relayWithdrawnRequests\(\w+,(\w+)\)\{let \w+=withdrawProxyInputRequests\(readDurableSession\(\w+\.sessionState\),\1\)/, "withdrawProxyInputRequests(", "…and relayWithdrawnRequests removes what the filter matches from the proxy map");
-  pin(eveDist("harness/proxy-input-requests.js"), /function withdrawProxyInputRequests\(\w+,\w+\)\{[^]*?return\{events:\w+,session:retireProxyInputRequests\(\w+,\w+\)\}\}/, "retireProxyInputRequests(", "…and the withdraw really retires the matched entries");
-  ok(/relayWithdrawnRequests\(\w+,\(\w+,\w+\)=>\w+\.runId===/.test(withdraw) && !/relayWithdrawnRequests\(\w+,\(\w+,\w+\)=>/.test(settle), "…and a scoped withdraw exists, and the cancel path does NOT use one");
+  pin(
+    machine,
+    /function cancel\(\w+,\w+=\{\}\)\{[^]*?Object\.values\(\w+\.interactions\)\.filter\((\w+)=>\1\.status===`open`&&\(\w+\.relayedRequestIds\.has\(\1\.interactionId\)\|\|/,
+    "relayedRequestIds.has(",
+    "eve's cancel still withdraws EVERY open relayed (proxied) request, with no run or task scope",
+  );
+  ok(
+    /function finishRun\(\w+,\w+\)\{[^]*?\w+\.taskId!==void 0&&interactionOwner\(/.test(machine) && !/function cancel\(\w+,\w+=\{\}\)\{[^}]*interactionOwner\(/.test(machine),
+    "…and a scoped withdraw exists (`finishRun`, by request and task), and the cancel path does NOT use one",
+  );
 
   const hitl = eveDist("subagents/hitl-proxy.js");
-  ok(/payload:\{inputResponses:/.test(hitl), "eve still routes a child's answer ONLY through payload.inputResponses");
+  ok(
+    /function routeDeliverPayload\(\w+\)\{[^]*?let \w+=\[\.\.\.\w+\.payload\.answers\?\?\[\],/.test(hitl) && !/inputResponses/.test(hitl),
+    "eve routes a child's answer ONLY through `payload.answers`, keyed on the interaction id (0.x `payload.inputResponses`)",
+  );
+  const { answerSchema } = (await import(pathToFileURL(join(eveRoot, "dist", "src", "shared", "input.js")).href)) as { answerSchema: { safeParse(v: unknown): { success: boolean } } };
+  ok(answerSchema.safeParse({ interactionId: "int_1", text: "yes" }).success, "…and eve's strict answer schema admits `{ interactionId, text }`");
+  ok(!answerSchema.safeParse({ requestId: "int_1", text: "yes" }).success, "🔴 NEGATIVE CONTROL: …and REFUSES the 0.x `{ requestId, text }` shape, so a client still sending it reaches no worker");
 }
+
 {
   const HITL_CLIENTS = ["providers/notion/agent/channels/notion.ts"];
+  // An answer call site on eve 1.x: `respond(…)`, or a `deliver(…)` in a file that builds `answers`
+  // (`respond` is a thin wrapper on `deliver({ answers })`). The file-wide `answers` read catches a
+  // payload built elsewhere and passed by name.
+  const answerCallSite = (code: string): boolean => /\.respond\s*\(/.test(code) || (/\.deliver\s*\(/.test(code) && /\banswers\b/.test(code));
+  ok(answerCallSite("x.deliver({ answers }, {});"), "control: the scan sees a shorthand `answers` deliver");
+  ok(answerCallSite("x.deliver({ context, answers: a }, {});"), "control: …and a deliver whose first key is not `answers`");
+  ok(answerCallSite("const p = { answers: a };\nawait x.deliver(p, {});"), "control: …and a payload built elsewhere and passed by name");
+  ok(answerCallSite("await x.respond([a], {});"), "control: …and a plain `respond`");
+  ok(!answerCallSite("await x.deliver({ message, context }, {});"), "control: …and NOT a deliver that carries no answers (an ordinary send)");
   const roots = ["agent", "../providers", "../adapters"].map((r) => new URL(`../${r}/`, import.meta.url));
   const found: string[] = [];
   const walk = (dir: URL): void => {
@@ -1085,17 +1157,37 @@ const NO_REQUESTER_BASELINE =
       if (!e.name.endsWith(".ts") || e.name.endsWith(".d.ts")) continue;
       const src = readFileSync(child, "utf8");
       const code = src.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
-      if (/\.respond\s*\(/.test(code)) found.push(child.pathname);
+      if (answerCallSite(code)) found.push(child.pathname);
     }
   };
   for (const r of roots) walk(r);
   const rel = found.map((p) => p.slice(p.indexOf("/packages/") + "/packages/".length)).sort();
   ok(
     rel.length === HITL_CLIENTS.length && rel.every((p, i) => p === HITL_CLIENTS[i]),
-    `🔴 OE's HITL client is EXACTLY [${HITL_CLIENTS.join(", ")}] — a second .respond() call site is a second thing a cancel orphans. Found: ${rel.join(", ") || "none"}`,
+    `🔴 OE's HITL client is EXACTLY [${HITL_CLIENTS.join(", ")}] — a second answer call site (\`.respond(\` or an answers-bearing \`.deliver(\`) is a second thing a cancel orphans. Found: ${rel.join(", ") || "none"}`,
   );
-  const native = readFileSync(new URL("../../providers/notion/agent/channels/notion.ts", import.meta.url), "utf8");
-  ok(/requestId: input\.requestId, text: input\.text/.test(native), "…and the NATIVE client really builds an inputResponses entry keyed on the request id, so the allow-list cannot pass by a client quietly becoming inert");
+  {
+    const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+    const { parseAnswers } = (await import(pathToFileURL(join(eveRoot, "dist", "src", "shared", "input.js")).href)) as { parseAnswers(v: unknown): readonly { interactionId: string; text?: string }[] };
+    const { notionRespondFrom } = await import("../../providers/notion/agent/channels/notion.js");
+    const sent: { answers?: unknown; context?: unknown }[] = [];
+    const from = (() => ({ deliver: async (payload: { answers?: unknown; context?: unknown }) => sent.push(payload) })) as unknown as Parameters<typeof notionRespondFrom>[0];
+    await notionRespondFrom(from)({ requestId: "int_native_1", text: "<wake>yes</wake>" }, { continuationToken: "page_1", context: ["c1"] });
+    let parsed: readonly { interactionId: string; text?: string }[] | undefined;
+    try {
+      parsed = parseAnswers(sent[0]?.answers);
+    } catch {
+      parsed = undefined;
+    }
+    ok(
+      parsed?.length === 1 && parsed[0]!.interactionId === "int_native_1" && parsed[0]!.text === "<wake>yes</wake>",
+      `🔴 …and the NATIVE client's answer passes eve's own strict \`parseAnswers\`, keyed on the interaction id, so the allow-list cannot pass by a client quietly becoming inert (sent ${JSON.stringify(sent[0])})`,
+    );
+    ok(
+      JSON.stringify(sent[0]?.context) === JSON.stringify(["c1"]),
+      `🔴 …and the discussion context rides the delivered payload with the answer, where eve reads it (sent ${JSON.stringify(sent[0])})`,
+    );
+  }
   const anchor = readFileSync(new URL("../agent/hooks/turn-anchor.ts", import.meta.url), "utf8");
   ok(
     /forgetBridgedQuestion\(/.test(anchor.replace(/^\s*(\/\/|\*|\/\*).*$/gm, "")),
@@ -1355,16 +1447,16 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
   };
 
   const container = new Container();
-  await storage.run(container, async () => {
+  await storage.run(asEveStore(container), async () => {
     await openWake("wk-2051-human-1", true);
     await startTurn("t-2051-cancelled", "wk-2051-human-1");
-    await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-2051-cancelled" } });
+    await v27Hooks(hook).callSettled({ data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-2051-cancelled" } });
     ok(readPendingCancelNote() !== null, "(precondition) the cancelled turn armed the reconstruction");
 
     await openWake("wk-2051-internal", false);
     await startTurn("t-2051-internal", "wk-2051-internal");
-    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-internal" } });
+    await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2051-internal" } });
     ok(
       readPendingCancelNote() !== null,
       "🔴 a SELF-MINTED turn that ends between the cancel and the human's next message does NOT retire the reconstruction",
@@ -1375,26 +1467,26 @@ ok(renderHelp().includes("/oe stop"), "…and help ADVERTISES stop — an afford
 
     await openWake("wk-2051-human-2", true);
     await startTurn("t-2051-human", "wk-2051-human-2");
-    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-human" } });
+    await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2051-human" } });
     ok(readPendingCancelNote() === null, "NEGATIVE CONTROL: a turn a person sent still retires the reconstruction");
 
     await startTurn("t-2051-rearm", "wk-2051-human-2");
-    await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-2051-rearm" } });
+    await v27Hooks(hook).callSettled({ data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-2051-rearm" } });
     ok(readPendingCancelNote() !== null, "(precondition) a second cancel re-arms the reconstruction");
     await startTurn("t-2051-unknown", "wk-2051-never-registered");
-    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-unknown" } });
+    await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2051-unknown" } });
     ok(readPendingCancelNote() === null, "🔴 NEGATIVE CONTROL: an UNKNOWN wake reads as attended and retires it — a per-surface deployment keeps the behaviour it had");
 
     await startTurn("t-2051-rearm-2", "wk-2051-human-2");
-    await hook.events["action.result"]({ type: "action.result", data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
-    await hook.events["turn.cancelled"]({ type: "turn.cancelled", data: { turnId: "t-2051-rearm-2" } });
+    await v27Hooks(hook).callSettled({ data: { status: "completed", result: { kind: "tool-result", toolName: "create_ticket" } } });
+    await v27Hooks(hook).turnSettled("cancelled")({ data: { turnId: "t-2051-rearm-2" } });
     ok(readPendingCancelNote() !== null, "(precondition) a third cancel re-arms the reconstruction");
     noteTurnBoundary("t-2051-rearm-2", "stamp-2051");
     noteTurnBoundary("t-2051-settle", "stamp-2051");
     ok(uningressedTurn("t-2051-settle"), "(precondition) the settlement turn reads as UNINGRESSED — without this the arm below proves nothing");
     await hook.events["turn.started"]({ type: "turn.started", data: { turnId: "t-2051-settle" } }, { channel: { continuationToken: "w-2051" }, session: { id: "s-2051", auth: { current: { attributes: {} } } } });
-    await hook.events["turn.completed"]({ type: "turn.completed", data: { turnId: "t-2051-settle" } });
+    await v27Hooks(hook).turnSettled("completed")({ data: { turnId: "t-2051-settle" } });
     ok(
       readPendingCancelNote() !== null,
       "🔴 a BACKGROUND TASK SETTLING does NOT retire the reconstruction — it brought no delivery of its own, so it is not a turn a person sent",

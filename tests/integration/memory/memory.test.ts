@@ -10,6 +10,7 @@ import {
   auditCursor,
   disposeLater,
   awaitWorkResult,
+  bashToolResult,
   bootAgent,
   discordMentionWake,
   registerScript,
@@ -170,13 +171,11 @@ test("session.started seeds the domain's own silo at the expected path and body,
 
   assertWriteBitsBite("TEST 1's shell-fence legs");
 
-  const shells = childResults
-    .filter((t) => t.name === "bash")
-    .map((t) => t.output as { exitCode: number; stdout: string; stderr: string });
+  const shells = childResults.filter((t) => t.name === "bash").map(bashToolResult);
   expect(shells.length).toBe(3);
   const unownedShell = shells[0];
   expect(unownedShell.exitCode).not.toBe(0);
-  expect(`${unownedShell.stderr}${unownedShell.stdout}`).toMatch(/Permission denied|EACCES/i);
+  expect(unownedShell.text).toMatch(/Permission denied|EACCES/i);
 
   const stolenPath = siloFilePath("it-memory-b-brain", "stolen-via-shell.md");
   expect(existsSync(stolenPath)).toBe(false);
@@ -185,7 +184,7 @@ test("session.started seeds the domain's own silo at the expected path and body,
 
   const surfaceShell = shells[2];
   expect(surfaceShell.exitCode).not.toBe(0);
-  expect(`${surfaceShell.stderr}${surfaceShell.stdout}`).toMatch(/Permission denied|EACCES/i);
+  expect(surfaceShell.text).toMatch(/Permission denied|EACCES/i);
   expect(existsSync(surfaceFilePath(IT_MEMORY_CHANNEL_ID, "stolen-surface.md"))).toBe(false);
 
   const notesPath = siloFilePath("it-memory-brain", "notes.md");
@@ -257,11 +256,12 @@ test("OPE-999 — update_status still writes STATUS.md against the fenced memory
 
   const childTerminal = handle.requests.filter((r) => r.role === "child").at(-1);
   if (!childTerminal) throw new Error("memory test: no child request recorded — the delegation never ran");
-  const shell = childTerminal.toolResults.find((t) => t.name === "bash")?.output as { exitCode: number; stdout: string; stderr: string } | undefined;
-  expect(shell, `bash result: ${JSON.stringify(childTerminal.toolResults.find((t) => t.name === "bash"))}`).toBeDefined();
+  const shellRecord = childTerminal.toolResults.find((t) => t.name === "bash");
+  expect(shellRecord, `child tool results: ${JSON.stringify(childTerminal.toolResults.map((t) => t.name))}`).toBeDefined();
   assertWriteBitsBite("TEST 1b's re-lock leg");
-  expect(shell!.exitCode, `bash result: ${JSON.stringify(shell)}`).not.toBe(0);
-  expect(`${shell!.stderr}${shell!.stdout}`).toMatch(/Permission denied|EACCES/i);
+  const shell = bashToolResult(shellRecord!);
+  expect(shell.exitCode, `bash result: ${JSON.stringify(shell)}`).not.toBe(0);
+  expect(shell.text).toMatch(/Permission denied|EACCES/i);
   expect(existsSync(siloFilePath("it-memory-b-brain", "after-status.md"))).toBe(false);
 
   const shellResult = await awaitWorkResult({ handle: settlement, taskId: shellTaskId, label: "the seat's result-wake step for the shell-trying worker" });
@@ -471,7 +471,7 @@ test("OPE-426/OPE-1162/OPE-1210 — a worker turn that ingests a hostile plant l
   expect(detail.bullets).toBe(2);
   expect(detail.files?.some((f) => f.endsWith(marked))).toBe(true);
   expect(detail.kinds).toBeUndefined();
-  expect(detail.where).toBe("turn.completed");
+  expect(detail.where, "the mark runs at the clean settle of the worker's turn (eve 1.x has no turn.completed event)").toBe("turn.settled completed");
   expect(JSON.stringify(detail)).not.toContain("PROV-ADDED-A");
 
   const { renderProvenanceMark, renderClaimAttribution, EXTERNAL_PROVENANCE_PREFIX, EXTERNAL_CLAIM_PREFIX } = await import(

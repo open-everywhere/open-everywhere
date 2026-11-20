@@ -1,8 +1,9 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { auditSurfaceModeStamp, bindFrom, currentTurnId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { markThreadStopped, roomEngagementAddress } from "../channels/engagement.js";
+import { holdStandDownAck, markThreadStopped, readStandDownAck, roomEngagementAddress } from "../channels/engagement.js";
+import { durableTurnKey } from "../model/turn-state.js";
 import { markStoodDownThisTurn, peekDeliveryArm } from "../channels/reply-signal.js";
 import { standDownAckSentence, type DeliveryArm } from "../instructions/seat-prompt.js";
 import { appendAudit } from "../audit/audit.js";
@@ -88,12 +89,24 @@ export default defineTool({
         "stand_down: this turn carries no conversation anchor, so nothing was marked — reply that you could NOT stop following here, and that someone must ask again in the conversation or ask an admin.",
       );
     }
-    let marked = await markThreadStopped(partition, anchor);
     const room = binding.roomEngagementKey === undefined ? null : roomEngagementAddress(partition);
+    let marked = await markThreadStopped(partition, anchor);
     let stoppedRoom = false;
     if (!marked && room) {
       marked = await markThreadStopped(room.partition, room.anchor);
       stoppedRoom = marked;
+    }
+    let acknowledgedElsewhere = false;
+    if (marked) {
+      const ackPartition = stoppedRoom && room ? room.partition : partition;
+      const ackAnchor = stoppedRoom && room ? room.anchor : anchor;
+      const holder = standDownHolderKey(c, currentTurnId(c));
+      const claim = await holdStandDownAck(ackPartition, ackAnchor, holder);
+      if (claim === "taken") {
+        const prior = await readStandDownAck(ackPartition, ackAnchor);
+        const mine = prior.kind === "held" && holder !== undefined && prior.holder === holder && !prior.spent;
+        acknowledgedElsewhere = prior.kind !== "unreadable" && !mine;
+      }
     }
     await appendAudit({
       org: partition.org,
@@ -115,6 +128,9 @@ export default defineTool({
         "stand_down: nothing was marked, so this stop did not take — reply that you could NOT stop following here, because either this conversation was never enrolled, which an @mention fixes, or the registry could not be written to just now.",
       );
     }
+    if (acknowledgedElsewhere) {
+      return { standingDown: true, note: ALREADY_ACKNOWLEDGED_NOTE };
+    }
     markStoodDownThisTurn(currentTurnId(c));
     return {
       standingDown: true,
@@ -126,3 +142,16 @@ export default defineTool({
     };
   },
 });
+
+export const ALREADY_ACKNOWLEDGED_NOTE =
+  "This conversation had already stood down, and its one acknowledgement is spent or belongs to another turn. " +
+  "Post nothing here and end the turn. Someone @mentioning you is what brings you back.";
+
+function standDownHolderKey(bind: BindableContext, turnId: string | undefined): string | undefined {
+  if (turnId === undefined || turnId.length === 0) return undefined;
+  try {
+    return durableTurnKey(currentSessionId(bind), turnId);
+  } catch {
+    return undefined;
+  }
+}

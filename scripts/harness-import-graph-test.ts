@@ -121,14 +121,21 @@ function coreSources(dir: string): string[] {
 }
 const HOOK_SHAPES = [/^(?:void\s+)?install\w*Hook\([^)]*\);/m, /^[A-Za-z_$][\w$.]*\.__oe\w+\s*=(?![=>])/m];
 const HOOK_EXEMPT = new Map<string, string>([]);
-const hookModules = coreSources(join(ROOT, "packages/core/agent")).filter((f) => {
+const scanned = coreSources(join(ROOT, "packages/core/agent"));
+ok(scanned.length > 100 && scanned.includes(join(ROOT, "packages/core/agent/access/untrusted.ts")), `the hook scan walks the real core tree (${scanned.length} files, access/untrusted.ts among them)`);
+const hookModules = scanned.filter((f) => {
   const src = readFileSync(f, "utf8");
   return HOOK_SHAPES.some((re) => re.test(src));
 });
 for (const exempt of HOOK_EXEMPT.keys()) {
   ok(hookModules.includes(exempt), `${rel(exempt)} is exempt but the scan no longer finds it — drop the stale exemption`);
 }
-ok(hookModules.length >= 1, `the scan finds the preloaded global-hook module (found ${hookModules.length})`);
+// eve 1.x retired the last module that installs a globalThis hook at load (the 0.x tool-result
+// projection, removed with the 0.x tool seam), so the real tree may hold none. The scan keeps its
+// teeth through two controls: each hook shape matches a module that installs one, and neither
+// matches a module that only reads a hook or compares against one.
+ok(HOOK_SHAPES[0]!.test("installToolResultHook(projector);") && HOOK_SHAPES[1]!.test("globalThis.__oeToolResultProjection = project;"), "the scan's hook shapes match a module that installs a global hook");
+ok(!HOOK_SHAPES.some((re) => re.test("const seen = globalThis.__oeToolResultProjection === project;\nif (x) installed = true;")), "the scan's hook shapes do NOT match a module that only reads or compares a hook");
 const direct = new Set(
   staticSpecifiers(readFileSync(HARNESS, "utf8"))
     .map((s) => resolveSpecifier(HARNESS, s))

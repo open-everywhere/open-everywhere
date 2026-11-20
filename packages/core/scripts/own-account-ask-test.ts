@@ -313,8 +313,8 @@ function producerCtx(sessionId: string, attrs: Record<string, unknown>, turnId?:
     },
   } as unknown as HookContext;
 }
-function delivery(message: string): HookEvent<"message.received"> {
-  return { data: { message } } as unknown as HookEvent<"message.received">;
+function delivery(message: string): HookEvent<"delivery.consumed"> {
+  return { data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: message }] } } as unknown as HookEvent<"delivery.consumed">;
 }
 
 const OWN_ACCOUNT_SENTENCE = "please use my own notion account for this";

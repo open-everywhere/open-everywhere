@@ -52,7 +52,7 @@ export interface ThreadSeatCloseOutcome {
   readonly priorState?: ThreadSeatState;
   readonly cleared: boolean;
   readonly handedBack: boolean;
-  readonly reaction: "placed" | "failed" | "unsupported" | "not-owed";
+  readonly reaction: "placed" | "failed" | "unsupported" | "not-owed" | "withheld";
 }
 
 function handBackOpening(reason: ThreadSeatCloseReason): string {
@@ -74,6 +74,7 @@ export function renderThreadSeatHandBack(input: {
   readonly closedAt: string;
   readonly afterExpiry?: boolean;
   readonly report?: string;
+  readonly threadStoodDown?: boolean;
 }): string {
   const report = input.report?.trim();
   const lines = [
@@ -84,7 +85,13 @@ export function renderThreadSeatHandBack(input: {
     report ? `The seat's own report:\n${report}` : "The seat left no report. The thread itself is the record of what happened there.",
     "",
   ];
-  if (input.reason === "completed") lines.push("The thread shows its completion, and its first message carries a done reaction where the surface has reactions.");
+  if (input.reason === "completed") {
+    lines.push(
+      input.threadStoodDown === true
+        ? "The thread stood down, so the seat posted nothing there and placed no done reaction. Post nothing there until someone @mentions you."
+        : "The thread shows its completion, and its first message carries a done reaction where the surface has reactions.",
+    );
+  }
   lines.push("The task is off the thread seat now: a later message in that thread wakes you. Nothing is owed to the room. Speak only if this changes what someone is waiting for.");
   return lines.join("\n");
 }
@@ -98,6 +105,8 @@ export async function closeThreadSeat(
     readonly report?: string;
     readonly origin?: UnifiedWakeOrigin;
     readonly auditDetail?: AuditDetail;
+    /** Required: the done reaction is a visible write, so every caller states the thread's stand-down state. */
+    readonly threadStoodDown: boolean;
   },
   deps: ThreadSeatCloseDeps,
 ): Promise<ThreadSeatCloseOutcome> {
@@ -130,13 +139,13 @@ export async function closeThreadSeat(
           org,
           record.row,
           origin,
-          renderThreadSeatHandBack({ reason, ref, openedAt: record.row.openedAt, lastActiveAt: record.lastActiveAt, closedAt, ...(record.priorState === "expired" ? { afterExpiry: true } : {}), ...(report !== undefined ? { report } : {}) }),
+          renderThreadSeatHandBack({ reason, ref, openedAt: record.row.openedAt, lastActiveAt: record.lastActiveAt, closedAt, ...(record.priorState === "expired" ? { afterExpiry: true } : {}), ...(report !== undefined ? { report } : {}), ...(input.threadStoodDown ? { threadStoodDown: true } : {}) }),
           deps,
         )
       : false;
-    if (reason === "completed") reaction = origin ? await markThreadDone(origin, deps) : "unsupported";
+    if (reason === "completed") reaction = input.threadStoodDown ? "withheld" : origin ? await markThreadDone(origin, deps) : "unsupported";
   } else if (!record && reason === "completed" && input.origin && cleared) {
-    reaction = await markThreadDone(input.origin, deps);
+    reaction = input.threadStoodDown ? "withheld" : await markThreadDone(input.origin, deps);
   }
 
   const detail = {
@@ -202,7 +211,7 @@ export async function sweepIdleThreadSeats(
   let expired = 0;
   let handedBack = 0;
   for (const row of rows) {
-    const out = await closeThreadSeat({ org, ref: { channelKey: row.channelKey, threadKey: row.threadKey }, reason: "expired", seatToken: row.seatToken }, deps);
+    const out = await closeThreadSeat({ org, ref: { channelKey: row.channelKey, threadKey: row.threadKey }, reason: "expired", seatToken: row.seatToken, threadStoodDown: false }, deps);
     if (out.closedNow) expired++;
     if (out.handedBack) handedBack++;
   }

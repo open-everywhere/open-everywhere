@@ -187,7 +187,7 @@ console.log("5. lean-seat interplay:");
   eq([...DM_SEAT_CARVE_IN].sort(), ["ask_domain", "confirm_link", "expect_bot_reply", "link_identity", "revoke_credential_grant", "unlink_identity"], "the carve-in is EXACTLY the identity trio, the owner's grant off switch, the person's question to a domain and the person's asked thread to another bot — nothing else is seat-shaped");
 
   ok(!allowedOnLeanSeat("purge_memory", true), "a DM seat does NOT keep `purge_memory` — memory work relocates cleanly (the worker inherits the DM binding, so its trust gate is the same one)");
-  ok(!allowedOnLeanSeat("connection_search", true), "…nor `connection_search` — a DM-spawned worker inherits mode \"dm\", so the DM-only connector wall passes inside it");
+  ok(!allowedOnLeanSeat("eve__search", true), "…nor `eve__search` — a DM-spawned worker inherits mode \"dm\", so the DM-only connector wall passes inside it");
   ok(!allowedOnLeanSeat("aws", true) && !allowedOnLeanSeat("notion__search", true), "…nor anything else: default-deny is unchanged for a DM seat");
   ok(allowedOnLeanSeat("reply", true) && allowedOnLeanSeat("agent", true), "the base roster still applies on a DM seat");
 
@@ -205,7 +205,7 @@ console.log("5. lean-seat interplay:");
   for (const name of DM_SEAT_CARVE_IN) {
     ok(!workerOnly.includes(name), `the worker-capability index does NOT list ${name} as routable — a verb the person must answer back is not a thing a leaf worker can carry out`);
   }
-  ok(workerOnly.includes("purge_memory") && workerOnly.includes("connection_search"), "…while everything that genuinely DOES relocate is still listed (the index stays a complete routing table)");
+  ok(workerOnly.includes("purge_memory") && workerOnly.includes("eve__search"), "…while everything that genuinely DOES relocate is still listed (the index stays a complete routing table)");
 }
 
 console.log("6. OPE-351 fences (capacity only — nothing mints a DM window token yet):");

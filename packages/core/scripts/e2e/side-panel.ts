@@ -67,22 +67,26 @@ export function namesRoom(text: string, room: ViewedRoom): boolean {
 
 export function toolCallsNamingRoom(events: readonly TranscriptWireEvent[], room: ViewedRoom, sinceMs: number): string[] {
   const out: string[] = [];
+  const nameByCallId = new Map<string, string>();
+  for (const e of events) {
+    if (e.type !== "call.requested") continue;
+    const d = e.data as { callId?: unknown; capability?: { name?: unknown } } | null;
+    if (typeof d?.callId === "string" && typeof d.capability?.name === "string") nameByCallId.set(d.callId, d.capability.name);
+  }
   for (const e of events) {
     const at = e.at === null ? Number.NaN : Date.parse(e.at);
     if (Number.isFinite(at) && at < sinceMs) continue;
-    if (e.type === "actions.requested") {
-      const actions = (e.data as { actions?: readonly unknown[] } | null)?.actions ?? [];
-      for (const a of actions) {
-        const toolName = (a as { toolName?: unknown } | null)?.toolName;
-        const name = typeof toolName === "string" ? toolName : "?";
-        if (NOT_A_READ_TOOLS.has(name)) continue;
-        if (namesRoom(JSON.stringify(a ?? null), room)) out.push(name);
-      }
-    } else if (e.type === "action.result") {
-      const result = (e.data as { result?: { toolName?: unknown; output?: unknown } } | null)?.result;
-      const toolName = typeof result?.toolName === "string" ? result.toolName : "";
+    if (e.type === "call.requested") {
+      const call = e.data as { capability?: { name?: unknown }; input?: unknown } | null;
+      const toolName = call?.capability?.name;
+      const name = typeof toolName === "string" ? toolName : "?";
+      if (NOT_A_READ_TOOLS.has(name)) continue;
+      if (namesRoom(JSON.stringify(call?.input ?? null), room)) out.push(name);
+    } else if (e.type === "call.settled") {
+      const settled = e.data as { callId?: unknown; output?: unknown } | null;
+      const toolName = typeof settled?.callId === "string" ? (nameByCallId.get(settled.callId) ?? "") : "";
       if (!NO_TARGET_READ_TOOLS.has(toolName)) continue;
-      const channel = (result?.output as { channel?: unknown } | null | undefined)?.channel;
+      const channel = (settled?.output as { channel?: unknown } | null | undefined)?.channel;
       if (typeof channel === "string" && channel.includes(room.id)) out.push(`${toolName} (read ${channel})`);
     }
   }
@@ -96,7 +100,7 @@ export function viewedRoomNotePhrase(channelId: string): string {
 export function noteNamesViewedRoom(events: readonly TranscriptWireEvent[], channelId: string, sinceMs: number): boolean {
   const phrase = viewedRoomNotePhrase(channelId);
   return events.some((e) => {
-    if (e.type !== "message.received") return false;
+    if (e.type !== "delivery.consumed") return false;
     const at = e.at === null ? Number.NaN : Date.parse(e.at);
     if (Number.isFinite(at) && at < sinceMs) return false;
     return JSON.stringify(e.data ?? null).includes(phrase);

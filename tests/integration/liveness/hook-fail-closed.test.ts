@@ -10,11 +10,13 @@ import {
   SLACK_TEAM_ID,
   slackMentionWake,
   slackTs,
+  awaitWindowQuiet,
   waitFor,
   type AuditRow,
   type SlackWebApiStub,
 } from "../harness";
 import { EVE_PATCH_PARTS, _resetEvePatchTurnCheckForTest } from "@open-everywhere/core/agent/access/eve-patch-probe.js";
+import { _faultOptionalHookForTest, _optionalHookFaultsThrownForTest } from "@open-everywhere/core/agent/hooks/control-refusal.js";
 
 const BOT_USER_ID = "U0BOTSELF2249";
 const BOT_ID = "B0BOTSELF2249";
@@ -102,7 +104,11 @@ test("§2 a MISSING PATCH MARKER cancels the real turn, and no model call runs",
   disposeLater(handle);
 
   const bag = globalThis as Record<string, unknown>;
-  const part = EVE_PATCH_PARTS[0]!;
+  const part = EVE_PATCH_PARTS[0];
+  if (part === undefined) {
+    expect(EVE_PATCH_PARTS, "this eve carries no live patch part, so the gate has no marker to miss and refuses nothing (§1 proves a healthy turn runs)").toEqual([]);
+    return;
+  }
   const saved = bag[part.marker];
   const cursor = await auditCursor();
   let row: AuditRow | undefined;
@@ -136,4 +142,65 @@ test("§2 a MISSING PATCH MARKER cancels the real turn, and no model call runs",
   expect(row?.detail?.cancelCalled, "the hook CALLED ctx.cancel() — not that eve honoured it, which no hook can observe; the model-call row below is what proves the stop").toBe(true);
 
   expect(handle.requests, `the refused turn made ${handle.requests.length} model call(s) — the refusal did not stop the turn`).toEqual([]);
+});
+
+test("§3 an OPTIONAL hook that throws does NOT fail the real turn — the model call still runs", async () => {
+  await armSeams();
+  const handle = registerScript({ parent: [{ say: "ope2692 optional fault turn ran" }] });
+  disposeLater(handle);
+
+  const cursor = await auditCursor();
+  const faultsBefore = _optionalHookFaultsThrownForTest("turn.started");
+  _faultOptionalHookForTest("telemetry");
+  try {
+    const ts = slackTs(Date.now(), 3);
+    const res = await slackMentionWake({
+      channelId: SLACK_NAME_DROP_CHANNEL_ID,
+      userId: USER_ID,
+      text: "ope2692 an optional hook throws, this turn must still run",
+      ts,
+      eventId: `Ev2692OF${ts.replace(".", "")}`,
+    });
+    expect(res.status, `the Slack front refused the wake: ${res.body.slice(0, 200)}`).toBe(200);
+
+    await waitFor(() => (_optionalHookFaultsThrownForTest("turn.started") > faultsBefore ? true : undefined), "the injected fault to fire in the real telemetry hook — never arriving means the turn never reached the hook, not that optional() caught it");
+    await waitFor(
+      () => handle.requests.at(0),
+      "the faulted turn's first model call. eve 1.x fails a turn before its next model call when a hook throws, so " +
+        "never arriving means an OPTIONAL hook's error escaped optional() and failed the turn",
+    );
+    await awaitWindowQuiet();
+  } finally {
+    _faultOptionalHookForTest(undefined);
+  }
+  expect(handle.requests.length, "🔴 the turn whose telemetry hook threw at turn.started still reached the model").toBeGreaterThan(0);
+  expect(await refusalRow(cursor, "telemetry"), "an OPTIONAL failure is not a refusal, so no hook.refused row names it").toBeUndefined();
+});
+
+test("§4 NEGATIVE CONTROL — the same fault thrown PAST optional() fails the real turn, so §3 measures the wrapper", async () => {
+  await armSeams();
+  const handle = registerScript({ parent: [{ say: "ope2692 this step must never be reached" }] });
+  disposeLater(handle);
+
+  const faultsBefore = _optionalHookFaultsThrownForTest("turn.started");
+  _faultOptionalHookForTest("telemetry", "escaped");
+  try {
+    const ts = slackTs(Date.now(), 4);
+    const res = await slackMentionWake({
+      channelId: SLACK_NAME_DROP_CHANNEL_ID,
+      userId: USER_ID,
+      text: "ope2692 a hook error escapes, this turn must fail before its model call",
+      ts,
+      eventId: `Ev2692OE${ts.replace(".", "")}`,
+    });
+    expect(res.status, `the Slack front refused the wake: ${res.body.slice(0, 200)}`).toBe(200);
+    await waitFor(
+      () => (_optionalHookFaultsThrownForTest("turn.started") > faultsBefore ? true : undefined),
+      "the escaped fault to fire in the real telemetry hook — the positive witness that this turn ran and hit the fault, so the empty model log below is not a dropped wake",
+    );
+    await awaitWindowQuiet();
+  } finally {
+    _faultOptionalHookForTest(undefined);
+  }
+  expect(handle.requests, `🔴 eve 1.x fails a turn before its next model call when a hook error escapes — ${handle.requests.length} model call(s) ran`).toEqual([]);
 });

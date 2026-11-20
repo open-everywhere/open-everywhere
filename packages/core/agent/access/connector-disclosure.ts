@@ -63,13 +63,14 @@ export class ConnectorAudienceUnverifiedError extends Error {
   }
 }
 
-export async function assertConnectorDisclosure(connection: string, ctx: BindableContext): Promise<void> {
+export async function assertConnectorDisclosure(connection: string, ctx: BindableContext, opts: { readonly audit?: boolean } = {}): Promise<void> {
+  const audit = opts.audit !== false;
   let domains: readonly Domain[] | null;
   try {
     domains = domainsOrNull();
   } catch (err) {
     if (err instanceof ConfigLoadRefusalError) {
-      await auditDisclosure(ctx, "connector.refused", { connection, reason: "config_unavailable" }).catch(() => undefined);
+      if (audit) await auditDisclosure(ctx, "connector.refused", { connection, reason: "config_unavailable" }).catch(() => undefined);
     }
     throw err;
   }
@@ -92,13 +93,13 @@ export async function assertConnectorDisclosure(connection: string, ctx: Bindabl
   if (verdict.ok) return;
 
   if (verdict.reason === "audience-floor") {
-    await auditDisclosure(ctx, "connector.refused", {
+    if (audit) await auditDisclosure(ctx, "connector.refused", {
       connection,
       reason: "audience_floor",
       floor: verdict.floor,
       ...(channelKey ? { from: channelKey } : {}),
     });
-    await auditDisclosure(ctx, "governance.redirected", {
+    if (audit) await auditDisclosure(ctx, "governance.redirected", {
       kind: "connector.read",
       connection,
       to: "requester-dm",
@@ -116,7 +117,7 @@ export async function assertConnectorDisclosure(connection: string, ctx: Bindabl
   }
 
   if (verdict.reason === "audience-unverified") {
-    await auditDisclosure(ctx, "connector.refused", {
+    if (audit) await auditDisclosure(ctx, "connector.refused", {
       connection,
       reason: "audience_unverified",
       ...(channelKey ? { from: channelKey } : {}),

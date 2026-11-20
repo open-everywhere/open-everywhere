@@ -27,25 +27,25 @@ export default defineRoster({
         "don't (window-tool-gating Stage C). The sentinel is what makes the per-grain provision " +
         "authoritative — a dynamic tool can only SHADOW a static built-in when it resolves, never " +
         "REMOVE it.",
+      edit_file:
+        "the eve built-in is DISABLED as a static tool. It is re-provided per session GRAIN " +
+        "(stall-guarded) by tools/sandbox_tools.ts: task/native sessions mount it, standing seats " +
+        "don't (window-tool-gating Stage C). The sentinel is what makes the per-grain provision " +
+        "authoritative — a dynamic tool can only SHADOW a static built-in when it resolves, never " +
+        "REMOVE it.",
     },
   },
 
   core: {
     note: {
-      "connection/notion":
-        "Re-mount of the host-side Notion MCP connection (core owns the definition; see " +
-        "@open-everywhere/core/agent/connections/notion.ts for the full auth/approval/enforcement " +
-        "story). Deleted 2026-07-03 (commit e69af27) because Eve advertises every " +
-        "agent/connections/*.ts file to EVERY session with no per-surface visibility filter — an " +
-        "unmounted-but-ungranted connection is invisible; a mounted-but-ungranted one just leaks " +
-        "the integration's existence in \"what tools do you have?\" (the hard gate still refuses " +
-        "USE — no teeth were ever at risk, this is purely a UX/inventory-hygiene rule enforced by " +
-        "scripts/connections-lint.ts: \"mount only when a bundle grants it\"). Restored 2026-07-05 " +
-        "(backlog item 19, \"link real connectors\") because agent/access/bundles.ts now grants " +
-        "\"notion\" for real (a `connectors: [{ name: \"notion\", credential: \"workspace-oauth\" " +
-        "}]` grant — it named `team-key` until OPE-1914 re-credentialled " +
-        "it to the org-subject MCP credential) — so the mount/grant pair is back in sync and " +
-        "connections-lint passes.",
+      "tool/notion":
+        "The Notion connector mount (core owns the definition; see " +
+        "@open-everywhere/core/agent/connections/notion.ts and connector-mount.ts). It offers each " +
+        "Notion MCP op as a deferred connector tool whose result reaches the model inside the " +
+        "connector-result fence, and the seat cut decides which ops each seat holds. It replaces the " +
+        "eve connection of the same name: eve's MCP connection runtime has no per-result transform, " +
+        "and eve refuses a dynamic tool named notion__* while a connection named notion is mounted. " +
+        "Mount it only while agent/access/bundles.ts grants \"notion\" (scripts/connections-lint.ts).",
     },
   },
 

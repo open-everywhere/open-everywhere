@@ -129,11 +129,7 @@ const REVERSE_EXEMPT = new Map<string, string>([
   ],
   [
     "LINEAR_WEBHOOK_SECRET",
-    "read by eve's own bundled Linear channel handler (node_modules/eve/dist/src/public/channels/linear/auth.js) — the native webhook signature check is eve's, not this repo's source.",
-  ],
-  [
-    "MICROSOFT_TENANT_ID",
-    "read by eve's own bundled Teams channel handler (node_modules/eve/dist/src/public/channels/teams/api.js).",
+    "not read as `process.env`: the provider's `linearWebhookVerifier` (packages/providers/linear/agent/channels/linear-webhook-verify.ts) reads it by name through `operatorSecretOrUnset`. eve's own default reader never runs, because the provider supplies `credentials.webhookVerifier`.",
   ],
   [
     "OE_EGRESS_MITM",

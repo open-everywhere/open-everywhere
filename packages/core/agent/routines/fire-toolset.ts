@@ -1,5 +1,5 @@
 import { declarationForPermissionKind } from "../approvals/session-grant.js";
-import { readConnectionExecuteTarget } from "../access/connection-execute-target.js";
+import { isMountableConnectorOp } from "../connections/connector-tool-name.js";
 
 const TOOL_DECLARATION_PREFIX = "tool:";
 
@@ -52,7 +52,10 @@ export function resolveDeclaredConnectorOps(input: {
       }
     }
     const only = matches.length === 1 ? matches[0]! : undefined;
-    if (only !== undefined && readConnectionExecuteTarget({ connection: only.connection, tool: only.tool }) !== undefined) resolved.push(only);
+    // The reach block is model-visible instruction text. It names an op only when the mount can key
+    // it (`isMountableConnectorOp`, the mount's own rule), so a name with a space, a newline, a dot or
+    // a colon is reported unresolved and never named.
+    if (only !== undefined && isMountableConnectorOp(only.connection, only.tool)) resolved.push(only);
     else unresolved.push(qualifiedName);
   }
   return { resolved, unresolved };

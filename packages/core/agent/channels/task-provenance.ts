@@ -259,6 +259,30 @@ export async function noteTaskClaimDispatched(org: string, parentSessionId: stri
   }
 }
 
+/**
+ * The repair of `noteTaskClaimDispatched` on a re-run that the start edge's once-claim skips. It writes
+ * the call into the claim row only when the row of the task's CURRENT generation is this turn's own
+ * claim and names no call yet: the continuation's commit landed, and the dead first run did not mark
+ * the claim as dispatched. It never creates a claim row, so it cannot mark a later generation busy.
+ * It returns whether it wrote.
+ */
+export async function repairTaskClaimDispatched(org: string, parentSessionId: string, taskId: string, callId: string, turnId: string | undefined): Promise<boolean> {
+  try {
+    if (turnId === undefined || turnId.length === 0) return false;
+    const store = getOperationalStore();
+    const opening = parseOpening(await store.getTaskResult(org, taskProvenanceKey(parentSessionId, taskId)));
+    if (opening === undefined) return false;
+    const key = taskClaimKey(parentSessionId, taskId, opening.generation);
+    const claim = parseClaim(await store.getTaskResult(org, key));
+    if (claim === undefined || claim.turn !== turnId || claim.call !== undefined) return false;
+    await store.putTaskResult(org, key, JSON.stringify({ turn: turnId, call: callId }), new Date().toISOString(), TASK_PROVENANCE_TTL_MS);
+    return true;
+  } catch (err) {
+    console.warn(`[open-everywhere:task-provenance] task ${taskId}: the re-run could not mark the claim dispatched: ${String(err).slice(0, 160)}`);
+    return false;
+  }
+}
+
 export function auditTaskContinuation(input: {
   readonly org: string;
   readonly parentSessionId: string;

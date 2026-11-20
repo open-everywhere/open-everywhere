@@ -252,13 +252,27 @@ function notionSendFrom(from: RouteHandlerArgs<NotionState>["from"]): SendFn {
 
 type RespondFn = (input: { requestId: string; text: string }, opts: { continuationToken: string; context?: readonly string[] }) => Promise<void>;
 
-function notionRespondFrom(from: RouteHandlerArgs<NotionState>["from"]): RespondFn {
+/**
+ * The answer edge to a worker parked on a question. The outstanding-question row's `requestId` is the
+ * eve interaction id (`interaction.opened`), and eve's answer contract is `{ interactionId, text }`:
+ * `parseAnswers` refuses any other key. The edge sends a `deliver` whose payload carries the answers
+ * AND the discussion context: eve's `respond(answers, options)` builds a payload of `answers` only and
+ * reads no `context` from its options, so the context would never reach the worker. eve's typed
+ * `deliver` also asks for `auth`, and this edge hands it none (the commenter's identity never reaches
+ * the held turn), so the cast narrows only that.
+ */
+export function notionRespondFrom(from: RouteHandlerArgs<NotionState>["from"]): RespondFn {
   return async (input, opts) => {
-    await (from(opts.continuationToken) as unknown as { respond: (r: readonly { requestId: string; text: string }[], o: unknown) => Promise<unknown> }).respond(
-      [{ requestId: input.requestId, text: input.text }],
+    await (
+      from(opts.continuationToken) as unknown as {
+        deliver: (payload: { readonly answers: readonly { interactionId: string; text: string }[]; readonly context?: readonly string[] }, o: unknown) => Promise<unknown>;
+      }
+    ).deliver(
       {
+        answers: [{ interactionId: input.requestId, text: input.text }],
         ...(opts.context && opts.context.length > 0 ? { context: [...opts.context] } : {}),
       },
+      {},
     );
   };
 }
@@ -652,7 +666,6 @@ const notionWebhookRouteHandler = timedNotionWebhookRoute(
 );
 
 export default withEndsTurnFinalChannel(defineChannel<NotionState, { state: NotionState }>({
-  kindHint: "notion",
   turnPolicy: "queue",
   state: { discussionId: null, pageId: null, workspaceId: null },
   context(state) {
@@ -663,7 +676,8 @@ export default withEndsTurnFinalChannel(defineChannel<NotionState, { state: Noti
     POST(NOTION_INGRESS_DRAIN_PATH, notionWebhookRouteHandler),
   ],
   events: {
-    "turn.started"(_data, channel, ctx) {
+    "turn.started"(_event, ctx) {
+      const channel = ctx.channel;
       const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
       const s = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
       const discussionId = s(attrs?.discussion_id);
@@ -676,10 +690,15 @@ export default withEndsTurnFinalChannel(defineChannel<NotionState, { state: Noti
           } satisfies NotionReplyTarget)
         : undefined;
     },
-    async "input.requested"(data, channel) {
+    async "interaction.opened"(event, ctx) {
+      const channel = ctx.channel;
       const target = channel.state.oeReplyTarget;
       if (target === undefined) return;
-      const question = detectBridgeableInputRequest((data as { requests?: unknown } | undefined)?.requests);
+      const { interactionId, request, origin } = event.data;
+      if (request.kind === "sign-in" || request.kind === "budget") return;
+      const question = detectBridgeableInputRequest([
+        { requestId: interactionId, kind: request.kind, prompt: request.prompt, options: request.options ?? [], action: { toolName: origin?.call?.name } },
+      ]);
       if (!question) return;
       try {
         await postHostNotice({ platform: "notion", ...target }, renderQuestionForSurface(question));
@@ -699,9 +718,10 @@ export default withEndsTurnFinalChannel(defineChannel<NotionState, { state: Noti
           : `question bridge: posted ${question.toolName} (${question.kind}) into discussion ${target.discussionId} — NOT answerable by request id (no outstanding-question row)`,
       );
     },
-    async "message.completed"(data, channel, ctx) {
+    async "content.completed"(event, ctx) {
+      const channel = ctx.channel;
       const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(event.data);
       if (action.kind === "buffer-tool-status") return;
       const target = channel.state.oeReplyTarget;
       const discussionId = target?.discussionId;

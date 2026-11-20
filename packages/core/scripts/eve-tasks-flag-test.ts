@@ -29,6 +29,11 @@ const READ_SHAPES: readonly { readonly name: string; readonly build: (field: str
 
 const NITRO_OPTION_RECEIVER = /(?:\?\.|\.)\s*options\s*(?:\?\.|\.)\s*$/u;
 
+// eve 1.x writes nitro's own flag as an object literal (`{experimental:{tasks:!0}}` in
+// internal/nitro/host/host-routes.js). A field set to a constant boolean is a WRITE, not a read, and
+// counts with the 0.x `.options.` write as the one excluded nitro site.
+const constantWrite = (field: string): RegExp => new RegExp(String.raw`^experimental\s*:\s*\{\s*${field}\s*:\s*(?:!0|!1|true|false)\s*[,}]`, "u");
+
 function inProse(src: string, anchor: number): boolean {
   if (src[anchor - 1] !== " ") return false;
   const open = src.lastIndexOf("`", anchor - 1);
@@ -62,7 +67,7 @@ function scanForFlagReads(src: string, field: string): Scan {
       }
       const named = src.indexOf("experimental", m.index);
       const anchor = named === -1 ? m.index : named;
-      if (NITRO_OPTION_RECEIVER.test(src.slice(Math.max(0, anchor - 40), anchor))) {
+      if (NITRO_OPTION_RECEIVER.test(src.slice(Math.max(0, anchor - 40), anchor)) || constantWrite(field).test(src.slice(m.index, m.index + m[0].length + 12))) {
         excluded++;
         continue;
       }
@@ -100,6 +105,7 @@ console.log(`eve-tasks-flag: pinning against installed eve ${eveVersion}`);
   const mustNotMatch: readonly [string, string][] = [
     ["nitro's own option bag", "e.options.experimental.tasks=!0;"],
     ["nitro's option bag, optional", "e?.options?.experimental?.tasks=!0;"],
+    ["nitro's config written as an object literal", "return{tasks:s,...e.length>0&&{experimental:{tasks:!0}}}"],
     ["a sibling experimental field", "if(t.experimental.workflow){}"],
     ["an unrelated `tasks` owner", "for(const x of session.tasks){}"],
     ["a name that merely contains both words", "const experimentalTasksEnabled=!1;"],
@@ -113,6 +119,14 @@ console.log(`eve-tasks-flag: pinning against installed eve ${eveVersion}`);
     "PIN 1: the nitro exclusion is what drops the option write — it is doing the work, not a shape gap",
   );
   ok(
+    scanForFlagReads("return{tasks:s,...e.length>0&&{experimental:{tasks:!0}}}", "tasks").excluded === 1,
+    "PIN 1: the constant-write exclusion is what drops nitro's 1.x object-literal write — it is doing the work, not a shape gap",
+  );
+  ok(
+    scanForFlagReads("const b={experimental:{tasks:t}};", "tasks").reads.length === 1,
+    "PIN 1: …and a non-constant value under the same key is still a read",
+  );
+  ok(
     scanForFlagReads("`Background task execution was removed: and experimental.tasks is gone.`", "tasks").prose === 1,
     "PIN 1: the prose exclusion is what drops the release-note sentence — it is doing the work, not a shape gap",
   );
@@ -124,7 +138,9 @@ const carriesExperimental = filesMatching(/experimental/u);
     carriesExperimental.length > 0,
     "PIN 2: eve's `dist/src` still holds modules naming `experimental` — the walk resolved a real tree",
   );
-  for (const sibling of ["instrumentationProviders", "workflow"]) {
+  // eve 1.x's agent `experimental` block holds `workflow` alone (compiler/manifest-schema.js is a strict
+  // `{ workflow }` object); 0.x also read `instrumentationProviders`, which 1.x no longer has.
+  for (const sibling of ["workflow"]) {
     let found = 0;
     for (const rel of carriesExperimental) found += scanForFlagReads(readEveDist(rel), sibling).reads.length;
     ok(
@@ -150,11 +166,11 @@ const carriesExperimental = filesMatching(/experimental/u);
     );
   ok(
     excludedIn.length === 1 && excludedIn[0]!.endsWith("×1"),
-    `PIN 3 OPE-1491: the \`.options.\` exclusion no longer drops exactly one match. It exists for ONE site — nitro's \`<app>.options.experimental.tasks=!0\` in \`internal/nitro/host/schedule-task-routes.js\`, which arms nitro's schedule-task routes and is not the agent definition. Read each site below and decide whether it is nitro's option bag or a real read the exclusion is now hiding: ${excludedIn.join(", ") || "(none — the nitro write is gone, so the exclusion is dead and should go)"}`,
+    `PIN 3 OPE-1491: the nitro exclusions no longer drop exactly one match. They exist for ONE site — nitro's own flag write, which on eve 1.x is the object literal \`{experimental:{tasks:!0}}\` in \`internal/nitro/host/host-routes.js\` (dropped by the constant-write exclusion; on eve 0.x it was \`<app>.options.experimental.tasks=!0\` in \`internal/nitro/host/schedule-task-routes.js\`), which arms nitro's schedule-task routes and is not the agent definition. Read each site below and decide whether it is nitro's option bag or a real read the exclusion is now hiding: ${excludedIn.join(", ") || "(none — the nitro write is gone, so the exclusion is dead and should go)"}`,
   );
   ok(
-    proseIn.length === 1 && proseIn[0]!.startsWith("compiler/extension-compatibility.js") && proseIn[0]!.endsWith("×1"),
-    `PIN 3: the prose exclusion no longer drops exactly one match in \`compiler/extension-compatibility.js\`. It exists for ONE sentence — eve's note "…and experimental.tasks is gone." Read each site below and decide whether it is prose or a real read the rule is now hiding: ${proseIn.join(", ") || "(none — the note is gone, so the exclusion is dead and should go)"}`,
+    proseIn.length === 0,
+    `PIN 3: the prose exclusion drops a match on eve 1.x, which ships no prose that names the flag (0.x had ONE sentence in \`compiler/extension-compatibility.js\`, eve's note "…and experimental.tasks is gone."), so the exclusion must hide nothing. Read each site below and decide whether it is prose or a real read the rule is now hiding: ${proseIn.join(", ") || "(none — the note is gone, so the exclusion is dead and should go)"}`,
   );
 }
 

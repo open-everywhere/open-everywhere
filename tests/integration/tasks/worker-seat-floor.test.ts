@@ -20,6 +20,13 @@ import {
 
 const RECEIPT_STEP = [{ say: NO_REPLY_SENTINEL }] as const;
 
+/** Tools that eve 1.x mounts on a delegated worker from outside the seat cut: its own tools, a static slot, a declared subagent. */
+const EVE_MOUNTED_ON_WORKER = ["eve__skill", "fresh_eyes_review"] as const;
+// eve mounts these on the worker too, and the seat cut withholds them at the model call, as eve 0.x
+// did: a work-session child asks with `ask_room`, never `ask_question`, and a `leaf` verdict
+// withdraws the task-parent verbs.
+const EVE_MOUNTED_WITHHELD_FROM_WORKER = ["ask_question", "eve__task_cancel", "eve__task_wait"] as const;
+
 interface DrivenForward {
   readonly taskId: string;
   readonly workSessionId: string;
@@ -188,4 +195,22 @@ test("a delegated worker's mounted toolset is written to the audit trail, once, 
   expect(detail.withheld).toContain("no_reply");
   expect(detail.withheld).toContain("stand_down");
   for (const kept of ["reply", "bash", "update_status"]) expect(detail.tools).toContain(kept);
+
+  // eve 1.x mounts these on the worker outside every seat-cut slot. The row names each one, and says so.
+  const outside = detail.outsideSeatCut as string[];
+  for (const name of EVE_MOUNTED_ON_WORKER) {
+    expect(offered, `fixture guard: the worker's model is offered \`${name}\``).toContain(name);
+    expect(detail.tools).toContain(name);
+    expect(outside).toContain(name);
+  }
+  for (const name of EVE_MOUNTED_WITHHELD_FROM_WORKER) {
+    expect(offered, `🔴 the seat cut withholds \`${name}\` from a work-session child's model call`).not.toContain(name);
+    expect(detail.tools).not.toContain(name);
+  }
+  expect(offered, "the work-session child asks with ask_room").toContain("ask_room");
+  expect(detail.seatCutSeen).toBe(true);
+  expect(detail.outsideSeatCutCount).toBe(outside.length);
+  for (const name of outside) expect(offered).toContain(name);
+  expect(outside).not.toContain("reply");
+  expect(detail.refused).toEqual([]);
 });

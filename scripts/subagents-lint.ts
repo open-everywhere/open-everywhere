@@ -30,5 +30,5 @@ if (problems.length > 0) {
 console.log(
   subagents.length === 0
     ? `✓ subagents-lint: no declared subagents under ${subagentsDir(root)} (nothing to check).`
-    : `✓ subagents-lint: ${subagents.length} declared subagent(s) (${subagents.map((s) => s.name).join(", ")}) — no authored outputSchema, own instructions, zero hands (${disableableFrameworkTools.filter((n) => !reservedFrameworkTools.includes(n)).length} framework tools disabled each${reservedFrameworkTools.length === 0 ? "" : `; eve reserves ${reservedFrameworkTools.join(", ")}, which take no file at all`}), own spend hook.`,
+    : `✓ subagents-lint: ${subagents.length} declared subagent(s) (${subagents.map((s) => s.name).join(", ")}) — the root agent's model, no authored outputSchema, own instructions, zero hands (${disableableFrameworkTools.filter((n) => !reservedFrameworkTools.includes(n)).length} framework tools disabled each${reservedFrameworkTools.length === 0 ? "" : `; eve reserves ${reservedFrameworkTools.join(", ")}, which take no file at all`}), own spend hook.`,
 );

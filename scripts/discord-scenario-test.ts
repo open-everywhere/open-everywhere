@@ -65,9 +65,9 @@ await scenario("01-mention-autothread-reply", async (s) => {
     mentionsBot: true,
   });
   await s.event("discord:TH1", "turn.started");
-  await s.event("discord:TH1", "message.appended");
-  await s.event("discord:TH1", "message.appended");
-  await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "Here's the answer: roll back to v42." });
+  await s.event("discord:TH1", "content.delta", { partId: "part-1", kind: "text", delta: "" });
+  await s.event("discord:TH1", "content.delta", { partId: "part-1", kind: "text", delta: "" });
+  await s.event("discord:TH1", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "Here's the answer: roll back to v42." });
 });
 
 await scenario("02-thread-followup-resume", async (s) => {
@@ -81,7 +81,7 @@ await scenario("02-thread-followup-resume", async (s) => {
     mentionsBot: true,
   });
   await s.event("discord:TH1", "turn.started");
-  await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "The build fails on the lint step." });
+  await s.event("discord:TH1", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "The build fails on the lint step." });
   await s.inbound({
     id: "M22",
     content: "and which rule is tripping it?",
@@ -92,8 +92,8 @@ await scenario("02-thread-followup-resume", async (s) => {
     mentionsBot: false,
   });
   await s.event("discord:TH1", "turn.started");
-  await s.event("discord:TH1", "message.appended", { messageSoFar: "no-unused-vars" });
-  await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "no-unused-vars, in ci.ts line 12." });
+  await s.event("discord:TH1", "content.delta", { partId: "part-1", kind: "text", delta: "no-unused-vars" });
+  await s.event("discord:TH1", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "no-unused-vars, in ci.ts line 12." });
 }, { channelInfo: { TH1: { name: "can you check the failing build?", type: 11, parent_id: "C2" } } });
 
 await scenario("03-dm-direct-divert", async (s) => {
@@ -121,7 +121,7 @@ await scenario("04-judged-silence", async (s) => {
     mentionsBot: false,
   });
   await s.event("discord:C4", "turn.started");
-  await s.event("discord:C4", "message.completed", { finishReason: "stop", message: NO_REPLY_SENTINEL });
+  await s.event("discord:C4", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: NO_REPLY_SENTINEL });
 });
 
 await scenario("05-card-suppression", async (s) => {
@@ -135,14 +135,11 @@ await scenario("05-card-suppression", async (s) => {
     mentionsBot: true,
   });
   await s.event("discord:C5T", "turn.started");
-  await s.event("discord:C5T", "actions.requested");
+  await s.event("discord:C5T", "call.requested");
   await s.markCardPosted("discord:C5T", markCardPostedThisTurn);
-  await s.event("discord:C5T", "action.result");
-  await s.event("discord:C5T", "message.appended");
-  await s.event("discord:C5T", "message.completed", {
-    finishReason: "stop",
-    message: "I've posted an approval card proposing a $5/month cap — an admin needs to approve it.",
-  });
+  await s.event("discord:C5T", "call.settled");
+  await s.event("discord:C5T", "content.delta", { partId: "part-1", kind: "text", delta: "" });
+  await s.event("discord:C5T", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "I've posted an approval card proposing a $5/month cap — an admin needs to approve it." });
 }, { channelInfo: { C5T: { name: "spend chat", type: 11, parent_id: "C5" } } });
 
 await scenario("06-cap-decline-nonadmin", async (s) => {
@@ -176,7 +173,7 @@ await scenario("07-cap-admin-bypass-throttle", async (s) => {
     mentionsBot: true,
   });
   await s.event("discord:TH1", "turn.started");
-  await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "Checklist started — 6 items queued." });
+  await s.event("discord:TH1", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "Checklist started — 6 items queued." });
   await s.inbound({
     id: "M72",
     content: "<@BOT> also page the on-call",
@@ -187,7 +184,7 @@ await scenario("07-cap-admin-bypass-throttle", async (s) => {
     mentionsBot: true,
   });
   await s.event("discord:TH2", "turn.started");
-  await s.event("discord:TH2", "message.completed", { finishReason: "stop", message: "Paged. They ack'd." });
+  await s.event("discord:TH2", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "Paged. They ack'd." });
 });
 
 await scenario("08-turn-failed", async (s) => {
@@ -201,7 +198,7 @@ await scenario("08-turn-failed", async (s) => {
     mentionsBot: true,
   });
   await s.event("discord:TH1", "turn.started");
-  await s.event("discord:TH1", "turn.failed", { error: { message: "model exploded" } });
+  await s.event("discord:TH1", "turn.settled", { outcome: "failed", error: { message: "model exploded" } });
 });
 
 await scenario(
@@ -217,7 +214,7 @@ await scenario(
       mentionsBot: true,
     });
     await s.event("discord:C9", "turn.started");
-    await s.event("discord:C9", "message.completed", { finishReason: "stop", message: "Two changes: the cache fix and the new webhook route." });
+    await s.event("discord:C9", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "Two changes: the cache fix and the new webhook route." });
   },
   { failNextThreadCreate: true },
 );
@@ -253,7 +250,7 @@ await scenario("11-warm-prose-drop-no-promote", async (s) => {
     mentionsBot: false,
   });
   await s.event("discord:C11", "turn.started");
-  await s.event("discord:C11", "message.completed", { finishReason: "stop", message: "It finished at step 5 of 5." });
+  await s.event("discord:C11", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "It finished at step 5 of 5." });
 });
 
 await scenario("12-warm-card-promotes", async (s) => {
@@ -271,7 +268,7 @@ await scenario("12-warm-card-promotes", async (s) => {
   });
   await s.event("discord:C12", "turn.started");
   await s.markCardPosted("discord:C12", markCardPostedThisTurn);
-  await s.event("discord:C12", "message.completed", { finishReason: "stop", message: "I've posted an approval card." });
+  await s.event("discord:C12", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "I've posted an approval card." });
 });
 
 await scenario("13-warm-reply-tool-promotes", async (s) => {
@@ -289,7 +286,7 @@ await scenario("13-warm-reply-tool-promotes", async (s) => {
   });
   await s.event("discord:C13", "turn.started");
   await s.markReplied("discord:C13", markRepliedThisTurn);
-  await s.event("discord:C13", "message.completed", { finishReason: "stop", message: "Rolled back with `oe deploy --to v42`." });
+  await s.event("discord:C13", "content.completed", { partId: "part-1", kind: "text", phase: "reply", value: "Rolled back with `oe deploy --to v42`." });
 });
 
 const gateRows = async (part: Partition): Promise<{ door?: unknown; over?: unknown }[]> =>

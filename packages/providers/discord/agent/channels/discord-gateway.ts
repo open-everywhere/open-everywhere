@@ -594,6 +594,21 @@ export function typingGateOpen(channelId: string, gates: Set<string> = closedTyp
   return !gates.has(channelId);
 }
 
+const DELTA_PREFIX_MAX = 256;
+const textSoFarByChannel = new Map<string, { readonly partId: string; readonly text: string }>();
+
+export function textSoFar(
+  channelId: string,
+  partId: string,
+  delta: string,
+  store: Map<string, { readonly partId: string; readonly text: string }> = textSoFarByChannel,
+): string {
+  const prev = store.get(channelId);
+  const text = (prev !== undefined && prev.partId === partId ? prev.text + delta : delta).slice(0, DELTA_PREFIX_MAX);
+  store.set(channelId, { partId, text });
+  return text;
+}
+
 export function typingGateFeed(
   channelId: string,
   messageSoFar: string,
@@ -1597,7 +1612,6 @@ export async function maybeShedWarmSurface(state: DiscordGatewayState): Promise<
 }
 
 export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, DiscordGatewayContext>({
-  kindHint: "discord",
   turnPolicy: "queue",
   state: { channelId: "" },
   context: (state: DiscordGatewayState): DiscordGatewayContext => ({
@@ -1679,38 +1693,52 @@ export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, Disco
     }),
   ],
   events: {
-    "turn.started": async (_data, channel, ctx) => {
+    "turn.started": async (_event, ctx) => {
+      const channel = ctx.channel;
       if (statusUxEnabled() && typingGateOpen(channel.channelId)) await triggerDiscordTyping(channel.channelId);
-      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId({ session: ctx.session });
     },
-    "actions.requested": async (_data, channel) => {
+    "call.requested": async (_event, ctx) => {
+      const channel = ctx.channel;
       if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
     },
-    "action.result": async (_data, channel) => {
+    "call.settled": async (_event, ctx) => {
+      const channel = ctx.channel;
       if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
     },
-    "message.appended": async (data, channel) => {
+    "content.delta": async (event, ctx) => {
+      const channel = ctx.channel;
       if (!statusUxEnabled()) return;
-      const soFar = (data as { messageSoFar?: string } | undefined)?.messageSoFar ?? "";
-      if (!typingGateFeed(channel.channelId, soFar)) return;
-      if (!peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+      switch (event.data.kind ?? "text") {
+        case "text": {
+          const soFar = textSoFar(channel.channelId, event.data.partId, event.data.delta);
+          if (!typingGateFeed(channel.channelId, soFar)) return;
+          if (!peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+          return;
+        }
+        case "reasoning":
+          if (typingGateOpen(channel.channelId) && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+          return;
+        default:
+          return;
+      }
     },
-    "reasoning.appended": async (_data, channel) => {
-      if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
-    },
-    "turn.failed": async (data, channel) => {
+    "turn.settled": async (event, ctx) => {
+      const channel = ctx.channel;
+      if (event.data.outcome !== "failed") return;
       openTypingGate(channel.channelId);
-      const detail = (data as { error?: { message?: string } } | undefined)?.error?.message;
+      const detail = event.data.error?.message;
       log(`turn failed (channel ${channel.channelId || "?"})${detail ? `: ${detail}` : ""}`);
       await postDiscordReply(channel.channelId, `⚠️ ${TURN_FAILED_TEXT}`);
     },
-    "message.completed": async (data, channel, ctx) => {
+    "content.completed": async (event, ctx) => {
+      const channel = ctx.channel;
       const sessionId = ctx?.session?.id;
-      const rawAction = finalMessageAction(data.finishReason, data.message);
+      const rawAction = finalMessageAction(event.data);
       if (rawAction.kind === "buffer-tool-status") return;
       openTypingGate(channel.channelId);
       const status = takeTurnStatus(channel.state);
-      const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
+      const turnId = event.scope?.turnId ?? ctx.session.turn?.id;
       const repliedThisTurn = consumeRepliedThisTurn(turnId);
       const cardPostedThisTurn = consumeCardPostedThisTurn();
       const noReplyToolCalledThisTurn = consumeNoReplyThisTurn() !== null;
@@ -1750,7 +1778,7 @@ export default withEndsTurnFinalChannel(defineChannel<DiscordGatewayState, Disco
           log(`closing prose DROPPED (${text.length}c) — nothing posted, and no partition to audit it under (channel ${channel.channelId || "?"})`);
         }
       } else if (action.kind === "silent") {
-        if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
+        if (typeof event.data.value === "string" && event.data.value.length > 0) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
         if (action.reason === NO_REPLY_SENTINEL_REASON && !noReplyToolCalledThisTurn && auditP) {
           await auditNoReplySentinelObserved(auditP, sessionId).catch(() => undefined);
         }

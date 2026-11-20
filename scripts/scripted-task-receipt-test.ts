@@ -121,11 +121,11 @@ const unfilled = fillTaskPlaceholder({ taskId: TASK_FROM_RECEIPT }, undefined);
 ok(unfilled.unresolved, "⑧ a prompt with no receipt leaves the placeholder UNRESOLVED, so the call is never emitted");
 ok((unfilled.value as { taskId: string }).taskId === TASK_FROM_RECEIPT, "⑧ …and the placeholder is left verbatim for the record");
 ok(
-  unresolvedTaskPlaceholderFault("task_cancel").includes(TASK_FROM_RECEIPT),
+  unresolvedTaskPlaceholderFault("eve__task_cancel").includes(TASK_FROM_RECEIPT),
   "⑧ the fault names the placeholder it could not resolve",
 );
 ok(
-  unresolvedTaskPlaceholderFault("task_cancel").includes("AFTER the step whose call started the task"),
+  unresolvedTaskPlaceholderFault("eve__task_cancel").includes("AFTER the step whose call started the task"),
   "⑧ …and names the script-order mistake that causes it",
 );
 const untouched = { taskId: "literal-id" };

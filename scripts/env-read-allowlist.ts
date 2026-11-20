@@ -48,6 +48,16 @@ allow("platform", [
     "the file holding this deployment's AWS OIDC web-identity token, the standard AWS spelling a federated host injects. The host writes the file; no operator sets the value.",
   ],
   ["NODE_ENV", "Node's own ambient mode."],
+  [
+    "MICROSOFT_APP_PASSWORD",
+    "the Teams bot's client secret, under the name eve's own Teams channel reads (eve defines the name and the order). The Teams provider reads the same name for its own Bot Connector and Graph tokens (packages/providers/teams/agent/channels/teams-credentials.ts), so both mint as one app. docs/deploy/configuration-reference.md keeps it an env var.",
+  ],
+  ["TEAMS_APP_PASSWORD", "the second name eve's Teams channel accepts for the Teams client secret, after MICROSOFT_APP_PASSWORD. The Teams provider reads it in the same order, so the two resolve the same secret."],
+  [
+    "MICROSOFT_TENANT_ID",
+    "the Teams bot's Entra tenant, under the name eve's own Teams channel reads. The Teams provider reads the same name for its token mints (teams-credentials.ts). docs/deploy/configuration-reference.md keeps it an env var.",
+  ],
+  ["TEAMS_TENANT_ID", "the second name eve's Teams channel accepts for the Teams tenant, after MICROSOFT_TENANT_ID. The Teams provider reads it in the same order."],
   ["VERCEL", "Vercel's own marker that this process runs on Vercel."],
   ["VERCEL_ENV", "Vercel's deployment environment name."],
   ["VERCEL_DEPLOYMENT_ID", "Vercel's id for this deployment."],
@@ -116,7 +126,7 @@ const DYNAMIC_SITES = new Map<string, string>([
   ],
   [
     "packages/providers/teams/agent/ops.ts::k",
-    "the Teams preflight's `pick(env, ...keys)` helper walking the literal key list its caller passes. 🔴 The names reached this way are NOT inventoried — MICROSOFT_APP_PASSWORD, TEAMS_APP_PASSWORD, MICROSOFT_TENANT_ID and TEAMS_TENANT_ID have no allowlist entry, because no arm resolves a call-site argument list. Closing that needs call-site resolution, which OPE-1212 carries with the alias half.",
+    "the Teams preflight's `pick(env, ...keys)` helper walking the literal key list its caller passes. The names it reaches (MICROSOFT_APP_PASSWORD, TEAMS_APP_PASSWORD, MICROSOFT_TENANT_ID, TEAMS_TENANT_ID) each have their own allowlist entry since OPE-2700, because the Teams provider also reads them directly in teams-credentials.ts.",
   ],
   [
     "packages/core/agent/access/host-egress.ts::names[0]",

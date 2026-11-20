@@ -22,6 +22,15 @@ export const READ_ONLY_SHAPES: ReadonlySet<SeatShape> = new Set<SeatShape>([
   "untrustedRemoteWindowNoOneshot",
 ]);
 
+// The rows hold the eve 1.x names. eve 0.x's `connection_execute` and `connection_search` are gone:
+// their eve 1.x routes (`eve__tool`, `eve__search`) appear only when the session can reach a
+// deferred entry or a connection, and no fixture here mounts one. `eve__skill` appears only when the
+// session has a skill: the routine fixtures' surfaces and the second listed channel grant none, so
+// `jobWakeRestricted`, `jobWakeOpen` and `wideSeatNoOneshot` do not hold it here, although their seat
+// cut keeps it (`test:seat-cut` §2, §6). eve offers `web_search` only to a model whose provider has a
+// search backend (`resolveWebSearchBackend`), and the scripted model's provider has none, so no row
+// here holds it; `test:seat-cut` §6 pins its cut. `edit_file` is eve 1.x's own write tool, mounted
+// per grain by `sandbox_tools` on the sessions that also hold `write_file`.
 const ROWS = {
   leanChannelSeat: [
     "answer_domain_question",
@@ -78,8 +87,6 @@ const ROWS = {
     "clear_connector_override",
     "clear_spend_limit",
     "complete_job",
-    "connection_execute",
-    "connection_search",
     "connector",
     "create_agent",
     "create_routine",
@@ -91,6 +98,7 @@ const ROWS = {
     "describe_image",
     "dm_person",
     "doing_for_me",
+    "edit_file",
     "edit_reply",
     "edit_routine",
     "enable_routine",
@@ -106,7 +114,7 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
+    "eve__skill",
     "look_up",
     "meeting_join",
     "meeting_leave",
@@ -178,8 +186,6 @@ const ROWS = {
     "clear_spend_limit",
     "complete_job",
     "confirm_link",
-    "connection_execute",
-    "connection_search",
     "connector",
     "create_agent",
     "create_routine",
@@ -203,7 +209,7 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
+    "eve__skill",
     "look_up",
     "meeting_join",
     "meeting_leave",
@@ -272,8 +278,6 @@ const ROWS = {
     "clear_spend_limit",
     "complete_job",
     "confirm_link",
-    "connection_execute",
-    "connection_search",
     "connector",
     "create_agent",
     "create_routine",
@@ -297,7 +301,7 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
+    "eve__skill",
     "look_up",
     "meeting_join",
     "meeting_leave",
@@ -362,7 +366,6 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
     "look_up",
     "permission_fit_report",
     "query_analytics",
@@ -390,8 +393,6 @@ const ROWS = {
     "clear_connector_override",
     "clear_spend_limit",
     "complete_job",
-    "connection_execute",
-    "connection_search",
     "connector",
     "create_agent",
     "create_routine",
@@ -401,6 +402,7 @@ const ROWS = {
     "delete_skill",
     "describe_image",
     "doing_for_me",
+    "edit_file",
     "edit_reply",
     "edit_routine",
     "enable_routine",
@@ -415,7 +417,6 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
     "look_up",
     "meeting_join",
     "meeting_leave",
@@ -458,7 +459,6 @@ const ROWS = {
     "usage_report",
     "waiting_on_me",
     "web_fetch",
-    "web_search",
     "write_canvas",
     "write_file",
   ],
@@ -475,8 +475,6 @@ const ROWS = {
     "clear_spend_limit",
     "complete_job",
     "confirm_link",
-    "connection_execute",
-    "connection_search",
     "connector",
     "create_agent",
     "create_routine",
@@ -486,6 +484,7 @@ const ROWS = {
     "delete_skill",
     "describe_image",
     "doing_for_me",
+    "edit_file",
     "edit_reply",
     "edit_routine",
     "enable_routine",
@@ -501,7 +500,6 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
     "look_up",
     "meeting_join",
     "meeting_leave",
@@ -548,7 +546,6 @@ const ROWS = {
     "usage_report",
     "waiting_on_me",
     "web_fetch",
-    "web_search",
     "write_canvas",
     "write_file",
   ],
@@ -567,8 +564,6 @@ const ROWS = {
     "clear_spend_limit",
     "complete_job",
     "confirm_link",
-    "connection_execute",
-    "connection_search",
     "connector",
     "create_agent",
     "create_routine",
@@ -592,7 +587,7 @@ const ROWS = {
     "list_routines",
     "list_skills",
     "list_webhooks",
-    "load_skill",
+    "eve__skill",
     "look_up",
     "meeting_join",
     "meeting_leave",
@@ -653,7 +648,7 @@ const ROWS = {
 export const EXPECTED_OFFERED: Readonly<Record<SeatShape, readonly string[]>> = {
   ...ROWS,
   haltedWorker: ROWS.delegatedWorker,
-  haltedWideSeatNoOneshot: ROWS.wideSeatNoOneshot.filter((n) => n !== "web_fetch" && n !== "web_search"),
+  haltedWideSeatNoOneshot: ROWS.wideSeatNoOneshot.filter((n) => n !== "web_fetch"),
 };
 
 export function diffOffered(shape: SeatShape, offered: readonly string[], expected: readonly string[] = EXPECTED_OFFERED[shape]): string[] {

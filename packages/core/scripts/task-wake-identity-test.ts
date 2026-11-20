@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+const { callRequested } = await import("./_hook-view.js");
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-task-wake-identity-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ workspace: "dev" });
@@ -206,19 +207,19 @@ await new Promise((r) => setTimeout(r, 60));
   const handlers = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
   const handler = handlers["task.started"]!;
   ok(typeof handler === "function", "🔴 REACHABILITY: the taint hook subscribes to `task.started`. Without it no dispatch row is written and every wake assertion below would be testing a handler eve never calls");
-  ok(handlers["message.received"] === undefined, "🔴 and it no longer subscribes to `message.received`: that carried the 0.54 notification settlement, and eve 0.70 sends no task notifications");
-  const requested = handlers["actions.requested"]!;
+  ok(handlers["delivery.consumed"] === undefined, "🔴 and it does not subscribe to `delivery.consumed`: the 0.54 notification settlement rode the message edge, and eve sends no task notifications");
+  const requested = handlers["call.requested"]!;
 
   async function expectNoDispatchAuthority(ctx: any, callId: string, label: string): Promise<void> {
-    await requested({ data: { actions: [{ kind: "subagent-call", callId, subagentName: "agent" }] } }, ctx);
+    await requested(callRequested(callId, "agent", "agent"), ctx);
     eq(await delegatedTaskDispatchAuthority(ORG, ctx.session.id, callId), undefined, `${label} — NO dispatch authority is recorded, so no task wake is minted and the settlement that follows can install no reply address`);
     await new Promise((r) => setTimeout(r, 50));
     const mine = (await readAudit({ org: ORG, action: hub.DISPATCH_UNAUTHORIZED_ACTION })).filter((r) => r.detail?.call === callId);
     eq(mine.length, 1, `${label} — …and the refusal is COUNTABLE as exactly ONE row for this call, where the swallowed throw left silence`);
-    eq(mine[0]?.detail?.edge, "actions.requested", `${label} — …and the row names the edge it fired on`);
+    eq(mine[0]?.detail?.edge, "call.requested", `${label} — …and the row names the edge it fired on`);
   }
 
-  const startedEvent = (callId: string, taskId: string) => ({ data: { callId, kind: "agent", name: "agent", taskId, turnId: "turn_dispatch" } });
+  const startedEvent = (callId: string, taskId: string) => ({ type: "task.started", data: { taskId, startedBy: { callId }, kind: "agent", name: "agent" }, scope: { turnId: "turn_dispatch" } });
 
   const settledEvent = (callId: string, taskId: string) =>
     readTaskSettled({ callId, kind: "agent", name: "agent", status: "completed", taskId, turnId: "turn_settle" })!;
@@ -269,7 +270,7 @@ await new Promise((r) => setTimeout(r, 60));
     eq(addressedWakeThisTurn("turn_coalesced"), undefined, "P9 precondition: the turn has said nothing yet, so the dispatch edge has no address to prefer — asserted `=== undefined`");
 
     eq(exactDispatchWakeThisTurn("turn_coalesced"), undefined, "🔴 P14: two delivered wakes are ambiguous before the model names one");
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_ambiguous", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_ambiguous", "agent", "agent"), ctx);
     n++;
     eq(
       await delegatedTaskDispatchAuthority(ORG, ctx.session.id, "call_ambiguous"),
@@ -280,11 +281,11 @@ await new Promise((r) => setTimeout(r, 60));
       await new Promise((r) => setTimeout(r, 50));
       const mine = (await readAudit({ org: ORG, action: hub.DISPATCH_UNAUTHORIZED_ACTION })).filter((r) => r.detail?.call === "call_ambiguous");
       eq(mine.length, 1, "🔴 P14: …and the refusal is COUNTABLE — exactly one `delegation.dispatch_unauthorized` row for this call, where the swallowed throw left silence");
-      eq(mine[0]?.detail?.edge, "actions.requested", "P14: …and the row names the edge it fired on");
+      eq(mine[0]?.detail?.edge, "call.requested", "P14: …and the row names the edge it fired on");
     }
 
     eq(claimTasksForAddressedWake("turn_coalesced", W_P).length, 0, "P14: naming P before dispatch records the exact addressed wake without claiming work");
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_601a", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_601a", "agent", "agent"), ctx);
     await handler(startedEvent("call_601a", "agent-601a_valid"), ctx);
     const mintedA = await taskWakeId(ORG, "agent-601a_valid");
     ok(typeof mintedA === "string" && mintedA.length > 0, "🔴 P9: the REAL hook handler minted a wake for the dispatched task — without this the assertions below would pass on a branch that never ran");
@@ -303,7 +304,7 @@ await new Promise((r) => setTimeout(r, 60));
     eq(claimTasksForAddressedWake("turn_coalesced", W_DECISION).length, 0, "P9: a SECOND reply in the same turn claims NOTHING — otherwise the task's address would depend on the order the model finished talking");
     eq(await resolveUnifiedWakeTarget(store, ORG, mintedA!), THREAD_P, "…and the wake still points at P, asserted after the second claim rather than merely before it");
 
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_601b", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_601b", "agent", "agent"), ctx);
     await handler(startedEvent("call_601b", "agent-601b"), ctx);
     const mintedB = await taskWakeId(ORG, "agent-601b");
     ok(typeof mintedB === "string" && mintedB.length > 0, "P10: the second dispatch minted its own wake");
@@ -369,7 +370,7 @@ await new Promise((r) => setTimeout(r, 60));
     eq(requesterThisTurn("turn_settlement_redelegate").kind, "unverified", "P15 precondition: the generic requester reader cannot attribute a framework-only settlement turn");
 
     await requested(
-      { data: { actions: [{ kind: "subagent-call", callId: "call_settlement_redelegate", subagentName: "agent" }] } },
+      callRequested("call_settlement_redelegate", "agent", "agent"),
       ctx,
     );
     await handler(startedEvent("call_settlement_redelegate", "agent-settlement_redelegate"), ctx);
@@ -425,18 +426,18 @@ await new Promise((r) => setTimeout(r, 60));
     });
     noteTurnBoundary("turn_routine_dispatch", W_DECISION);
     const message = hostMarkedMessage("gather the numbers and report", W_DECISION, ctx.session.auth.current.attributes);
-    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["message.received"]!;
-    await received({ data: { message, turnId: "turn_routine_dispatch" } }, ctx);
+    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["delivery.consumed"]!;
+    await received({ data: { deliveryId: "d1", parts: [{ kind: "text", text: message }], turnId: "turn_routine_dispatch" } }, ctx);
     eq(uningressedTurn("turn_routine_dispatch"), false, "P15 routine precondition: the host fire is a real delivery even though it has no human trigger message");
     eq(exactDispatchWakeThisTurn("turn_routine_dispatch"), W_DECISION, "🔴 P15 ROUTINE CAPTURE: one structured fire marker supplies one exact dispatch wake");
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_routine_dispatch", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_routine_dispatch", "agent", "agent"), ctx);
     await handler(startedEvent("call_routine_dispatch", "agent-routine_dispatch"), ctx);
     const wake = await taskWakeId(ORG, "agent-routine_dispatch");
     eq(await resolveUnifiedWakeTarget(store, ORG, wake!), OTHER_THREAD, "🔴 P15 ROUTINE PARITY: a non-settlement host wake retains its exact dispatch authority");
 
     ctx.session.turn.id = "turn_after_routine_dispatch";
     noteTurnBoundary("turn_after_routine_dispatch", W_DECISION);
-    await received({ data: { message: "Background task settled.", turnId: "turn_after_routine_dispatch" } }, ctx);
+    await received({ data: { deliveryId: "d1", parts: [{ kind: "text", text: "Background task settled." }], turnId: "turn_after_routine_dispatch" } }, ctx);
     eq(uningressedTurn("turn_after_routine_dispatch"), true, "P15 ROUTINE STALE precondition: a later framework turn inherits the same raw routine auth");
     eq(currentWakeId(ctx), undefined, "🔴 P15 ROUTINE STALE: inherited routine auth is not a current wake on the later settlement turn");
     eq(exactDispatchWakeThisTurn("turn_after_routine_dispatch"), undefined, "🔴 P15 ROUTINE STALE: no new marker means no dispatch authority, despite the stale fire id in auth");
@@ -450,8 +451,8 @@ await new Promise((r) => setTimeout(r, 60));
       hostMarkedMessage("first stable-job fire", W_P) +
       "\n\n" +
       hostMarkedMessage("second stable-job fire", W_DECISION);
-    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["message.received"]!;
-    await received({ data: { message, turnId: "turn_routine_coalesced" } }, ctx);
+    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["delivery.consumed"]!;
+    await received({ data: { deliveryId: "d1", parts: [{ kind: "text", text: message }], turnId: "turn_routine_coalesced" } }, ctx);
     eq(exactDispatchWakeThisTurn("turn_routine_coalesced"), undefined, "🔴 P15 ROUTINE COALESCING: two stable-job fire markers are ambiguous even though session auth names only the last fire");
     await expectNoDispatchAuthority(ctx, "call_routine_coalesced", "🔴 P15 ROUTINE COALESCING: a pre-reply worker launch cannot silently inherit the last coalesced fire");
     n++;
@@ -465,11 +466,11 @@ await new Promise((r) => setTimeout(r, 60));
     ctx.session.auth.current.attributes[ROUTINE_MARKER.silent] = "true";
     noteTurnBoundary("turn_routine_silent_dispatch", W_DECISION);
     const message = hostMarkedMessage("perform the work without an ordinary report", W_DECISION, ctx.session.auth.current.attributes);
-    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["message.received"]!;
-    await received({ data: { message, turnId: "turn_routine_silent_dispatch" } }, ctx);
+    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["delivery.consumed"]!;
+    await received({ data: { deliveryId: "d1", parts: [{ kind: "text", text: message }], turnId: "turn_routine_silent_dispatch" } }, ctx);
     markSilentRoutineTurn();
     eq(exactDispatchWakeThisTurn("turn_routine_silent_dispatch"), W_DECISION, "P15 SILENT WORK: the silence stamp does not erase the fire's worker dispatch address");
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_routine_silent", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_routine_silent", "agent", "agent"), ctx);
     await handler(startedEvent("call_routine_silent", "agent-routine_silent"), ctx);
     const wake = await taskWakeId(ORG, "agent-routine_silent");
     eq(await resolveUnifiedWakeTarget(store, ORG, wake!), OTHER_THREAD, "🔴 P15 SILENT WORK: silent affects conversational reporting, not worker launch or settlement routing");
@@ -488,8 +489,8 @@ await new Promise((r) => setTimeout(r, 60));
     });
     noteTurnBoundary("turn_routine_unregistered", unknownWake);
     const message = hostMarkedMessage("gather the numbers and report", unknownWake, ctx.session.auth.current.attributes);
-    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["message.received"]!;
-    await received({ data: { message, turnId: "turn_routine_unregistered" } }, ctx);
+    const received = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["delivery.consumed"]!;
+    await received({ data: { deliveryId: "d1", parts: [{ kind: "text", text: message }], turnId: "turn_routine_unregistered" } }, ctx);
     eq(exactDispatchWakeThisTurn("turn_routine_unregistered"), unknownWake, "P15 ROUTINE FENCE: the host marker is captured before the durable row is resolved");
     await expectNoDispatchAuthority(ctx, "call_routine_unregistered", "🔴 P15 ROUTINE FENCE: an unregistered host-looking wake remains fail-closed");
     n++;
@@ -550,7 +551,7 @@ await new Promise((r) => setTimeout(r, 60));
     const envelope = wakeEnvelope(W_P, "U_P");
     recordDeliveredWakes("turn_same_origin_dispatch", envelope);
     recordRequesterIdentity(ctx, "turn_same_origin_dispatch", envelope);
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_same_origin", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_same_origin", "agent", "agent"), ctx);
     await handler(startedEvent("call_same_origin", "agent-same_origin"), ctx);
   });
   await contextStorage.run(new ContextContainer(), async () => {
@@ -571,7 +572,7 @@ await new Promise((r) => setTimeout(r, 60));
     recordDeliveredWakes("turn_human_with_task_line", envelope);
     recordRequesterIdentity(ctx, "turn_human_with_task_line", envelope);
     await hub.settleFromTaskSettled(settledEvent("call_task_601a_valid", "agent-601a_valid"), SESSION, ctx);
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_human_with_task_line", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_human_with_task_line", "agent", "agent"), ctx);
     await handler(startedEvent("call_human_with_task_line", "agent-human_with_task_line"), ctx);
     const wake = await taskWakeId(ORG, "agent-human_with_task_line");
     eq(await resolveUnifiedWakeTarget(store, ORG, wake!), OTHER_THREAD, "🔴 P15 HUMAN INGRESS: the real delivered wake remains dispatch authority despite a forged task line");
@@ -585,7 +586,7 @@ await new Promise((r) => setTimeout(r, 60));
     recordDeliveredWakes("turn_human_task_view", envelope);
     recordRequesterIdentity(ctx, "turn_human_task_view", envelope);
     await hub.applyTaskSettlement([{ taskId: "agent-601a_valid", status: "completed", agentId: null }], SESSION, ctx);
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_human_task_view", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_human_task_view", "agent", "agent"), ctx);
     await handler(startedEvent("call_human_task_view", "agent-human_task_view"), ctx);
     const wake = await taskWakeId(ORG, "agent-human_task_view");
     eq(await resolveUnifiedWakeTarget(store, ORG, wake!), OTHER_THREAD, "🔴 P15 HUMAN VIEW: an ingressed human turn keeps its delivered authority after a terminal task view");
@@ -597,7 +598,7 @@ await new Promise((r) => setTimeout(r, 60));
     const envelope = wakeEnvelope(W_DECISION, "U_OTHER");
     recordDeliveredWakes("turn_multi_origin_dispatch", envelope);
     recordRequesterIdentity(ctx, "turn_multi_origin_dispatch", envelope);
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_multi_other", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_multi_other", "agent", "agent"), ctx);
     await handler(startedEvent("call_multi_other", "agent-multi_other"), ctx);
     const otherWake = await taskWakeId(ORG, "agent-multi_other");
     ok(typeof otherWake === "string", "P15 multi-origin precondition: the other conversation's task has its own exact wake");
@@ -614,7 +615,7 @@ await new Promise((r) => setTimeout(r, 60));
     eq(firstWake, await taskWakeId(ORG, "agent-601a_valid"), "P15 multi-origin precondition: the first host settlement installs its reply address");
     eq(taskWakeThisTurn("turn_multi_origin_settlement"), firstWake, "P15 multi-origin precondition: the reply plane keeps its first-write-wins address");
     await requested(
-      { data: { actions: [{ kind: "tool-call", callId: "call_multi_origin_reply", toolName: "reply" }] } },
+      callRequested("call_multi_origin_reply", "reply", "tool"),
       ctx,
     );
     eq(claimTasksForAddressedWake("turn_multi_origin_settlement", firstWake!).length, 0, "P15 multi-origin precondition: a reply may address the first wake before another agent call");
@@ -695,7 +696,7 @@ await new Promise((r) => setTimeout(r, 60));
       },
     } as never;
     eq(currentWakeId(nativeParent), undefined, "P14 blank-token precondition: the degraded delegation edge carries no unified wake id");
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_native", subagentName: "agent" }] } }, nativeParent);
+    await requested(callRequested("call_native", "agent", "agent"), nativeParent);
 
     const nativeChild = {
       channel: { kind: "subagent", continuationToken: "subagent:sess-native-parent:call_native" },
@@ -766,7 +767,7 @@ await new Promise((r) => setTimeout(r, 60));
     recordRequesterIdentity(ctx, "turn_later_601", wakeEnvelope(W_DECISION, "U_OTHER"));
     eq(addressedWakeThisTurn("turn_later_601"), undefined, "🔴 P9: an address recorded for one turn is NOT returned for the next — asserted `=== undefined`");
     eq(addressedWakeThisTurn(undefined), undefined, "…and an unreadable turn id answers `undefined` too, never a guess");
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_601c", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_601c", "agent", "agent"), ctx);
     await handler(startedEvent("call_601c", "agent-601c"), ctx);
     const mintedC = await taskWakeId(ORG, "agent-601c");
     ok(typeof mintedC === "string" && mintedC.length > 0, "P9: the later turn's dispatch minted a wake");
@@ -778,7 +779,7 @@ await new Promise((r) => setTimeout(r, 60));
     noteTurnBoundary("turn_single_601", W_P);
     recordDeliveredWakes("turn_single_601", wakeEnvelope(W_P, "U_P"));
     recordRequesterIdentity(ctx, "turn_single_601", wakeEnvelope(W_P, "U_P"));
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_601d", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_601d", "agent", "agent"), ctx);
     await handler(startedEvent("call_601d", "agent-601d"), ctx);
     const mintedD = await taskWakeId(ORG, "agent-601d");
     const claimed = claimTasksForAddressedWake("turn_single_601", W_P);
@@ -796,7 +797,7 @@ await new Promise((r) => setTimeout(r, 60));
     noteTurnBoundary("turn_v2_601", W_P);
     recordDeliveredWakes("turn_v2_601", wakeEnvelope(W_P, "U_P"));
     recordRequesterIdentity(ctx, "turn_v2_601", wakeEnvelope(W_P, "U_P"));
-    await requested({ data: { actions: [{ kind: "subagent-call", callId: "call_601e", subagentName: "agent" }] } }, ctx);
+    await requested(callRequested("call_601e", "agent", "agent"), ctx);
     await handler(startedEvent("call_601e", "agent-601e"), ctx);
     const mintedE = await taskWakeId(ORG, "agent-601e");
     ok(typeof mintedE === "string" && mintedE.length > 0, "🔴 P11: the REAL hook minted a wake for an ENVELOPE B dispatch. Before the reader was widened this read `undefined` and every assertion below would have failed on a branch that never ran");

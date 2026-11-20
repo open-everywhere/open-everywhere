@@ -512,11 +512,12 @@ export function proveSiblingWakes(
 ): CoalescedDeliveryProof {
   const byTurn = new Map<string, string[]>();
   for (const e of events) {
-    if (e.type !== "message.received") continue;
-    const d = e.data as { message?: unknown; turnId?: unknown } | null | undefined;
+    if (e.type !== "delivery.consumed") continue;
+    const d = e.data as { parts?: unknown; turnId?: unknown } | null | undefined;
     const turnId = typeof d?.turnId === "string" && d.turnId.length > 0 ? d.turnId : null;
     if (turnId === null) continue;
-    const message = typeof d?.message === "string" ? d.message : "";
+    const parts = Array.isArray(d?.parts) ? (d.parts as { kind?: unknown; text?: unknown }[]) : [];
+    const message = parts.map((p) => (p?.kind === "text" && typeof p.text === "string" ? p.text : "")).join("\n");
     const slot = byTurn.get(turnId);
     if (slot) slot.push(message); else byTurn.set(turnId, [message]);
   }
@@ -893,18 +894,22 @@ function evStr(data: unknown, keys: readonly string[]): string {
 
 function segmentTurns(events: readonly TranscriptWireEvent[]): TurnTexts[] {
   const turns: TurnTexts[] = [];
-  let reasoning = "";
+  let reasoningDone = "";
+  let reasoningDelta = "";
   let prose = "";
   for (const e of events) {
-    const t = e.type;
-    if (t.includes("reasoning")) {
-      reasoning += evStr(e.data, ["delta", "text", "content"]);
-    } else if (t === "message.appended" || t === "message.delta") {
-      prose += evStr(e.data, ["delta", "text", "content", "message"]);
-    } else if (t === "message.completed") {
-      const finalProse = evStr(e.data, ["message", "text", "content"]) || prose;
-      turns.push({ atEnd: e.at, prose: finalProse, reasoning });
-      reasoning = "";
+    const kind = (e.data as { kind?: unknown } | null | undefined)?.kind;
+    if (e.type === "content.delta") {
+      if (kind === "reasoning") reasoningDelta += evStr(e.data, ["delta"]);
+      else if (kind === undefined || kind === "text") prose += evStr(e.data, ["delta"]);
+    } else if (e.type === "content.completed" && kind === "reasoning") {
+      reasoningDone += evStr(e.data, ["value", "fallbackText"]);
+      reasoningDelta = "";
+    } else if (e.type === "content.completed" && kind === "text") {
+      const finalProse = evStr(e.data, ["value", "fallbackText"]) || prose;
+      turns.push({ atEnd: e.at, prose: finalProse, reasoning: reasoningDone + reasoningDelta });
+      reasoningDone = "";
+      reasoningDelta = "";
       prose = "";
     }
   }

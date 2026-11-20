@@ -3,6 +3,7 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
+import { SessionNotActiveError } from "eve/sessions";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readAudit } from "../agent/audit/audit.js";
@@ -16,7 +17,7 @@ import {
   GENERATION_DELEGATION_TTL_MS,
   MAX_GENERATION_DELEGATIONS,
   MAX_PENDING,
-  RESET_STATUS_RETIRED,
+  END_NOT_ACTIVE_CODE,
   clearGenerationDelegation,
   drainGenerationRetirements,
   generationOwedDelegation,
@@ -52,21 +53,22 @@ const PER_CONTAINER = "C0EXCHAN013:oe-sup:g3";
 
 const labelsFor = (token: string): { workspace: string; surface: string | undefined } => ({ workspace: "payments", surface: `oe-domain::${token.slice(0, 4)}` });
 
-function recordingFrom(status: string = RESET_STATUS_RETIRED): { from: RetirementFrom; reset: { address: string; reason: string | undefined }[] } {
-  const reset: { address: string; reason: string | undefined }[] = [];
+function recordingFrom(answer: "ended" | "not-active" = "ended"): { from: RetirementFrom; ended: { address: string; reason: string | undefined }[] } {
+  const ended: { address: string; reason: string | undefined }[] = [];
   return {
-    reset,
+    ended,
     from: (address: string) => ({
-      async reset(options?: { readonly reason?: string }): Promise<{ readonly status?: string }> {
-        reset.push({ address, reason: options?.reason });
-        return { status };
+      async end(options?: { readonly reason?: string }): Promise<{ readonly sessionId: string }> {
+        ended.push({ address, reason: options?.reason });
+        if (answer === "not-active") throw new SessionNotActiveError();
+        return { sessionId: `s-${address}` };
       },
     }),
   };
 }
 
 const throwingFrom: RetirementFrom = () => ({
-  async reset(): Promise<{ readonly status?: string }> {
+  async end(): Promise<never> {
     throw new Error("no such continuation address");
   },
 });
@@ -152,11 +154,11 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
 {
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING } }), labelsFor });
-  eq(reset.length, 1, "🔴 exactly one reset is issued for one rotated generation");
-  eq(reset[0]?.address, OUTGOING, "🔴 …addressed to the OUTGOING token, which is what runs eve's child reaper over that generation's parked workers");
-  eq(reset[0]?.reason, GENERATION_RETIREMENT_REASON, "…carrying the documented reason");
+  eq(ended.length, 1, "🔴 exactly one `end()` is issued for one rotated generation");
+  eq(ended[0]?.address, OUTGOING, "🔴 …addressed to the OUTGOING token, which is what runs eve's child reaper over that generation's parked workers");
+  eq(ended[0]?.reason, GENERATION_RETIREMENT_REASON, "…carrying the documented reason");
 
   const rows = await rowsFor(GENERATION_RETIRED_AUDIT_ACTION);
   eq(rows.length, 1, "one audit row per retirement");
@@ -172,25 +174,41 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
   const before = (await rowsFor(GENERATION_RETIRED_AUDIT_ACTION)).length;
-  const { from, reset } = recordingFrom("no_active_session");
+  const { from, ended } = recordingFrom("not-active");
   await drainGenerationRetirements(from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING } }), labelsFor });
-  eq(reset.length, 1, "the reset was still ISSUED — this arm is about what eve answered, not about refusing to ask");
+  eq(ended.length, 1, "the `end()` was still ISSUED — this arm is about what eve answered, not about refusing to ask");
   eq((await rowsFor(GENERATION_RETIRED_AUDIT_ACTION)).length, before, "🔴 …and NO retirement row was written for a session eve never opened");
   const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "no-active-session");
   eq(rows.length, 1, "🔴 it is audited as a skip instead, so the reap census stays honest");
-  eq(rows[0]?.detail?.status, "no_active_session", "…carrying eve's own status verbatim");
+  eq(rows[0]?.detail?.status, END_NOT_ACTIVE_CODE, "…carrying eve's own error code verbatim");
+  eq(new SessionNotActiveError().code, END_NOT_ACTIVE_CODE, "🔴 END_NOT_ACTIVE_CODE is the code eve's real `SessionNotActiveError` carries");
+}
+
+{
+  const NOT_READY_ORG = "acme-not-ready";
+  __resetGenerationRetirementsForTest();
+  noteGenerationForRetirement({ org: NOT_READY_ORG, registryKey: REG, token: OUTGOING });
+  const notReady: RetirementFrom = () => ({
+    async end(): Promise<never> {
+      throw new SessionNotActiveError({ retryable: true });
+    },
+  });
+  await drainGenerationRetirements(notReady, { org: NOT_READY_ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING } }), labelsFor });
+  const skips = await readAudit({ org: NOT_READY_ORG, action: GENERATION_RETIRE_SKIPPED_AUDIT_ACTION });
+  eq(skips.filter((r) => r.detail?.skipped === "no-active-session").length, 0, "NEGATIVE CONTROL: eve's OTHER 409 code, `session_not_ready`, is not read as 'no session'");
+  ok(skips.some((r) => r.detail?.skipped === "end-failed" && String(r.detail?.error ?? "").includes("not ready")), "…it is audited as a failed `end()` instead");
 }
 
 {
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(
     from,
     { org: ORG, incomingToken: INCOMING },
     { store: storeStub({ row: { token: INCOMING }, anchor: { org: ORG, windowKey: OUTGOING } }), labelsFor },
   );
-  eq(reset.length, 0, "🔴 NO reset is issued while the outgoing generation has a live turn");
+  eq(ended.length, 0, "🔴 NO `end()` is issued while the outgoing generation has a live turn");
   const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "skip-live-turn");
   eq(rows.length, 1, "🔴 …and the skip is AUDITED, never silent — a generation whose workers were not reaped stays visible");
   eq(rows[0]?.detail?.token, OUTGOING, "…naming the generation that was left alone");
@@ -199,9 +217,9 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
 {
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: OUTGOING } }), labelsFor });
-  eq(reset.length, 0, "🔴 NO reset while the registry row still points at the token — the seat is still using it");
+  eq(ended.length, 0, "🔴 NO `end()` while the registry row still points at the token — the seat is still using it");
   const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "skip-still-live");
   eq(rows.length, 1, "…and that skip is audited too");
 }
@@ -209,9 +227,9 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
 {
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: INCOMING });
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING } }), labelsFor });
-  eq(reset.length, 0, "🔴 the FRESH generation this wake is being delivered to is never retired");
+  eq(ended.length, 0, "🔴 the FRESH generation this wake is being delivered to is never retired");
   const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "skip-incoming");
   eq(rows.length, 1, "…and the refusal is audited, so a caller that keeps producing it is findable");
 }
@@ -220,9 +238,9 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
   for (const throwOn of ["registry", "turn"] as const) {
     __resetGenerationRetirementsForTest();
     noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
-    const { from, reset } = recordingFrom();
+    const { from, ended } = recordingFrom();
     await drainGenerationRetirements(from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ throwOn }), labelsFor });
-    eq(reset.length, 0, `🔴 a thrown ${throwOn} read refuses the retirement — the opposite direction to the tail read's fail-soft, because a reset cannot be undone`);
+    eq(ended.length, 0, `🔴 a thrown ${throwOn} read refuses the retirement — the opposite direction to the tail read's fail-soft, because an end() cannot be undone`);
   }
   const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "skip-unreadable");
   eq(rows.length, 2, "…both refusals are audited");
@@ -233,15 +251,15 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
   await drainGenerationRetirements(throwingFrom, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING } }), labelsFor });
   n++;
-  const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "reset-failed");
-  eq(rows.length, 1, "🔴 a reset eve refuses is audited as a failed retirement, and the wake it rode is unaffected");
+  const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "end-failed");
+  eq(rows.length, 1, "🔴 an `end()` eve refuses is audited as a failed retirement, and the wake it rode is unaffected");
   ok(typeof rows[0]?.detail?.error === "string" && (rows[0].detail.error as string).includes("continuation address"), "…with eve's own refusal text on the row");
 }
 
 {
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
-  const neverResolves: RetirementFrom = () => ({ reset: async () => await new Promise<{ readonly status?: string }>(() => undefined) });
+  const neverResolves: RetirementFrom = () => ({ end: async () => await new Promise<never>(() => undefined) });
   const startedAt = Date.now();
   await drainGenerationRetirements(
     neverResolves,
@@ -249,7 +267,7 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
     { store: storeStub({ row: { token: INCOMING } }), labelsFor, confirmTimeoutMs: 50 },
   );
   ok(Date.now() - startedAt < 2_000, "🔴 the drain returns on its own bound rather than waiting on eve forever");
-  const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "reset-unconfirmed");
+  const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "end-unconfirmed");
   eq(rows.length, 1, "…and the unconfirmed retirement is audited as such, never as a completed one");
   eq((await rowsFor(GENERATION_RETIRED_AUDIT_ACTION)).filter((r) => r.detail?.token === OUTGOING).length, 1, "NEGATIVE CONTROL: only §3's real retirement claims the retired action");
 }
@@ -257,9 +275,9 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
 {
   __resetGenerationRetirementsForTest();
   const before = (await rowsFor(GENERATION_RETIRED_AUDIT_ACTION)).length + (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).length;
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING } }), labelsFor });
-  eq(reset.length, 0, "🔴 a NON-ROTATING window's wake retires nothing");
+  eq(ended.length, 0, "🔴 a NON-ROTATING window's wake retires nothing");
   const after = (await rowsFor(GENERATION_RETIRED_AUDIT_ACTION)).length + (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).length;
   eq(after, before, "🔴 …and writes no audit row at all — the feature is silent on the path it does not own");
 }
@@ -279,10 +297,10 @@ async function rowsFor(action: string): Promise<readonly { detail?: Record<strin
   eq(noted[0]?.token, minted.token, "🔴 …and it is the OUTGOING generation's token, not the fresh one's");
   eq(noted[0]?.registryKey, key, "…filed under the seat's own registry key");
 
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(from, { org: ORG, incomingToken: rotated.token }, { store, labelsFor });
-  eq(reset.length, 1, "🔴 END TO END: the rotation's outgoing generation is retired on the next unified wake");
-  eq(reset[0]?.address, minted.token, "…addressed to the generation that was rotated away");
+  eq(ended.length, 1, "🔴 END TO END: the rotation's outgoing generation is retired on the next unified wake");
+  eq(ended[0]?.address, minted.token, "…addressed to the generation that was rotated away");
   const live = await store.getChannelSession(ORG, key);
   eq(live?.token, rotated.token, "NEGATIVE CONTROL: the registry still points at the FRESH generation — the retirement did not touch the live seat");
 }
@@ -380,13 +398,13 @@ async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token:
 {
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
-  const { from, reset } = recordingFrom();
+  const { from, ended } = recordingFrom();
   await drainGenerationRetirements(
     from,
     { org: ORG, incomingToken: INCOMING },
     { store: storeStub({ row: { token: INCOMING }, owed: ["task-still-working"] }), labelsFor },
   );
-  eq(reset.length, 0, "🔴 §13: NO reset is issued while the outgoing generation still owes a worker its answer");
+  eq(ended.length, 0, "🔴 §13: NO `end()` is issued while the outgoing generation still owes a worker its answer");
   const rows = (await rowsFor(GENERATION_RETIRE_SKIPPED_AUDIT_ACTION)).filter((r) => r.detail?.skipped === "skip-owed-delegation");
   eq(rows.length, 1, "🔴 §13: …and the skip is AUDITED, never silent — a generation whose workers were not reaped stays visible");
   eq(rows[0]?.detail?.token, OUTGOING, "§13: …naming the generation that was left alone");
@@ -400,13 +418,13 @@ async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token:
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
   const clear = recordingFrom();
   await drainGenerationRetirements(clear.from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING }, owed: [] }), labelsFor });
-  eq(clear.reset.length, 1, "🔴 §13 NEGATIVE CONTROL: a generation whose ledger row is EMPTY is retired normally");
+  eq(clear.ended.length, 1, "🔴 §13 NEGATIVE CONTROL: a generation whose ledger row is EMPTY is retired normally");
 
   __resetGenerationRetirementsForTest();
   noteGenerationForRetirement({ org: ORG, registryKey: REG, token: OUTGOING });
   const blind = recordingFrom();
   await drainGenerationRetirements(blind.from, { org: ORG, incomingToken: INCOMING }, { store: storeStub({ row: { token: INCOMING }, throwOn: "delegation" }), labelsFor });
-  eq(blind.reset.length, 0, "🔴 §13: a THROWN owed-delegation read refuses the retirement — a read that proves nothing is not permission");
+  eq(blind.ended.length, 0, "🔴 §13: a THROWN owed-delegation read refuses the retirement — a read that proves nothing is not permission");
 
   const taint = readFileSync(join(REPO_ROOT, "packages/core/agent/hooks/delegation-settlement.ts"), "utf8");
   ok(
@@ -417,9 +435,17 @@ async function rawOwedRow(store: Pick<OperationalStore, "getTaskResult">, token:
     /await clearGenerationDelegation\(deploymentOrg\(\), view\.taskId\);/.test(taint),
     "🔴 §13: …and the SETTLEMENT edge clears it, so a settled task stops blocking its generation's reap",
   );
+  // The dispatch edge writes its session-local state through `armTaskStartTurn`, which a re-run that
+  // the start claim skips calls again. The durable record comes first on the edge's own run.
+  const durableAt = taint.indexOf("await noteGenerationDelegation(");
+  const localAt = taint.indexOf("armTaskStartTurn(dispatchTurnId, started.taskId,");
   ok(
-    taint.indexOf("await noteGenerationDelegation(") < taint.indexOf("noteTaskDispatched(started.taskId);"),
+    durableAt >= 0 && localAt >= 0 && durableAt < localAt,
     "§13: the record is written on the dispatch edge, beside the session-local one it makes durable",
+  );
+  ok(
+    /function armTaskStartTurn\([^)]*\): void \{[^}]*noteTaskDispatched\(taskId\);/.test(taint),
+    "§13: …and that session-local write is the live-task arm (`noteTaskDispatched`)",
   );
 }
 

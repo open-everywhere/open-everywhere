@@ -46,7 +46,8 @@ export type BareModelFact =
       readonly via: string;
       readonly source: "role" | "default";
     }
-  | { readonly where: string; readonly id: undefined };
+  | { readonly where: string; readonly id: undefined; readonly rootModel: true }
+  | { readonly where: string; readonly id: undefined; readonly rootModel?: undefined };
 
 function bareModelWords(bare: readonly BareModelFact[] | undefined, fallback: string | undefined, registered: boolean | "unknown" | undefined): string {
   if (fallback === undefined) return "";
@@ -55,7 +56,11 @@ function bareModelWords(bare: readonly BareModelFact[] | undefined, fallback: st
     return "; bare model ids (declared subagents, eve evaluate()): all via gateway, because agent/model/models.ts does not call registerBareModelRoutes (the 0.8.0 upgrade step)";
   }
   const each = (bare ?? []).map((b) =>
-    b.id === undefined ? `${b.where} model unknown (its module did not load)` : b.source === "role" ? `${b.where} via ${b.via}` : `${b.where} ${b.id} via ${b.via} (no role names this model)`,
+    "rootModel" in b && b.rootModel === true
+      ? `${b.where} takes the root agent's model (the primary model resolver, the same route as the root agent's turns)`
+      : b.id === undefined
+        ? `${b.where} model unknown (its module did not load, or its model is not a model id)`
+        : b.source === "role" ? `${b.where} via ${b.via}` : `${b.where} ${b.id} via ${b.via} (no role names this model)`,
   );
   const listed = bare === undefined ? "subagents unknown; " : each.length > 0 ? `${each.join(", ")}; ` : "";
   return `; bare model ids (declared subagents, eve evaluate()): ${listed}any other via ${fallback}, the primary role's target`;

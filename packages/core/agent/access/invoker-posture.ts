@@ -41,6 +41,7 @@ export const UNTRUSTED_REMOTE_WITHHELD_TOOLS: ReadonlySet<string> = new Set([
   "grep",
   "read_file",
   "write_file",
+  "edit_file",
   "web_fetch",
   "checkout_repo",
   "open_pull_request",

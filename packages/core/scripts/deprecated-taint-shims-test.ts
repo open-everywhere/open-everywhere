@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 class FakeSession {
   private readonly store = new Map<string, unknown>();
@@ -16,7 +19,7 @@ class FakeSession {
 const g = globalThis as Record<PropertyKey, unknown>;
 g[Symbol.for("eve.context-storage")] ??= new AsyncLocalStorage();
 const als = g[Symbol.for("eve.context-storage")] as AsyncLocalStorage<unknown>;
-const inTurn = <T>(fn: () => T | Promise<T>): Promise<T> => als.run(new FakeSession(), fn) as Promise<T>;
+const inTurn = <T>(fn: () => T | Promise<T>): Promise<T> => als.run(asEveStore(new FakeSession()), fn) as Promise<T>;
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {

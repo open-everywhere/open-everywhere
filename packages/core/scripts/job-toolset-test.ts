@@ -44,7 +44,7 @@ import {
 import { grantBorrowToolName } from "../agent/operational/credential-grant-rows.js";
 
 const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
-import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { seatCutToolset } from "../agent/access/seat-cut.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { grainBackstopAtExecute } from "../agent/access/window-gated.js";
 import { isJobRoutine, JOB_STATE_MAX_BYTES, type Routine } from "../agent/routines/routine.js";
@@ -98,7 +98,7 @@ for (const name of ["record_job_state", "complete_job", "record_watch_state"]) {
 for (const name of ["read_channel", "read_thread", "read_notion_page", "read_notion_comments", "read_linear_issue", "describe_image", "check_pr_status", "query_analytics"]) {
   ok(allowedOnRestrictedJobWake(name), `job kit keeps the read ${name}`);
 }
-ok(allowedOnRestrictedJobWake("final_output"), "job kit keeps eve's structured-output sink (a restricted turn must still be able to return)");
+ok(allowedOnRestrictedJobWake("eve__reply"), "job kit keeps eve's structured-output sink (a restricted turn must still be able to return)");
 
 const mustBeWithheld: readonly [string, string][] = [
   ["purge_memory", "durable memory ERASURE — an injected fire that can empty the brain is a denial weapon"],
@@ -118,7 +118,7 @@ const mustBeWithheld: readonly [string, string][] = [
   ["memory_admin_read", "admin-gated cross-silo read"],
   ["extend_workspace_time", "a restricted fire has no sandbox to extend"],
   ["ask_question", "there is no human in the turn to answer"],
-  ["connection_search", "discovery whose only payoff is a connector op, and it ingests MCP-authored text"],
+  ["eve__search", "discovery whose only payoff is a connector op, and it ingests MCP-authored text"],
   ["web_search", "provider-executed and unfenceable in-tree — absence is the only control that works"],
   ["open_pull_request", "audience-expanding artifact write"],
   ["post_file", "audience-expanding write"],
@@ -188,8 +188,8 @@ ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromJ
   }
   ok(restricted.includes("agent") && restricted.includes("bash"), "…while the consequential names stay on the row (the subtraction is the exemption set, not the whole list)");
   ok(
-    withheldList.includes("task_wait") && !restricted.includes("task_wait"),
-    "the BARE reader still names `task_wait` and the restricted one does not — which is the whole reason the two readers exist",
+    withheldList.includes("eve__task_wait") && !restricted.includes("eve__task_wait"),
+    "the BARE reader still names `eve__task_wait` and the restricted one does not — which is the whole reason the two readers exist",
   );
   const hookSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "hooks", "job-posture.ts"), "utf8");
   ok(
@@ -198,7 +198,7 @@ ok(withheldList.join(",") === [...withheldList].sort().join(","), "withheldFromJ
   );
   ok(
     !/withheld:\s*withheldFromJobWake\(/u.test(hookSrc),
-    "…and NOT from the bare withheldFromJobWake(), which would name `task_wait` as withheld while the filter keeps it — a row claiming a withholding that never happened",
+    "…and NOT from the bare withheldFromJobWake(), which would name `eve__task_wait` as withheld while the filter keeps it — a row claiming a withholding that never happened",
   );
 }
 
@@ -218,7 +218,7 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
     "notion__create_page",
     "notion__delete_block",
     "browser_navigate",
-    "final_output",
+    "eve__reply",
     GRANT_TOOL,
   ];
   const out: Record<string, { description: string; execute: () => unknown }> = {};
@@ -232,7 +232,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel", "task_wait"] as const;
+const TASK_FAMILY = ["eve__task_cancel", "eve__task_wait"] as const;
 
 {
   const toolset = makeToolset();
@@ -268,11 +268,11 @@ inSession(() => {
   ok(!jobWakeEscalated(), "the escalation bit starts clear");
   ok(currentJobWakePosture() === "restricted", "an un-escalated job wake resolves RESTRICTED inside a live session");
   const toolset = makeToolset();
-  projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("purge_memory" in toolset) && !("open_pull_request" in toolset) && !("agent" in toolset) && !("web_search" in toolset), "projectToolSet withholds the consequential names on an un-escalated job wake");
-  ok("reply" in toolset && "record_job_state" in toolset && "complete_job" in toolset && "read_channel" in toolset, "projectToolSet keeps the job kit");
-  ok("notion__search" in toolset && !("notion__create_page" in toolset), "connector reads survive the seam, connector writes do not");
-  ok(!(GRANT_TOOL in toolset), "🔴 OPE-1091: projectToolSet REMOVES this chat's mounted grant on a restricted job wake — absence, so the model never sees a credential it may not spend");
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
+  ok(!("purge_memory" in toolset) && !("open_pull_request" in toolset) && !("agent" in toolset) && !("web_search" in toolset), "`seatCutToolset` (the pure rule) withholds the consequential names on an un-escalated job wake");
+  ok("reply" in toolset && "record_job_state" in toolset && "complete_job" in toolset && "read_channel" in toolset, "`seatCutToolset` (the pure rule) keeps the job kit");
+  ok("notion__search" in toolset && !("notion__create_page" in toolset), "the pure rule keeps connector reads and withholds connector writes — on eve 1.x a connector op reaches the model through `eve__tool`, which no seat cut wraps, so this rule does not run there");
+  ok(!(GRANT_TOOL in toolset), "🔴 OPE-1091: `seatCutToolset` (the pure rule) REMOVES this chat's mounted grant on a restricted job wake — absence, so the model never sees a credential it may not spend");
 });
 
 inSession(() => {
@@ -282,10 +282,10 @@ inSession(() => {
   ok(currentJobWakePosture() === "unrestricted", "an escalated wake on a job session resolves UNRESTRICTED");
   const toolset = makeToolset();
   const before = { ...toolset };
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   eq(removedBy(before, toolset), ["ask_room", "cancel_work", "work"], "an ESCALATED job wake keeps the FULL toolset except the forwarding seat's two verbs and the work-session child's question card — the OPE-111 restriction exists because nobody is watching, so it lifts when somebody is");
   ok("open_pull_request" in toolset && "purge_memory" in toolset && "agent" in toolset, "the escalated turn holds the human's normal posture");
-  ok("task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
+  ok("eve__task_cancel" in toolset, "…including the PARENT task verb, because a seat that may delegate may stop its own work");
   ok(GRANT_TOOL in toolset, "🔴 an ESCALATED job wake KEEPS the mounted grant — a person is in the room, so the requester the grant is spent for exists");
 });
 
@@ -294,7 +294,7 @@ inSession(() => {
   ok(currentJobWakePosture() === "unrestricted", "a session that never took a job fire is out of scope");
   const toolset = makeToolset();
   const before = { ...toolset };
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   eq(removedBy(before, toolset), ["ask_room", "cancel_work", "work"], "an ordinary session's toolset is unchanged by OPE-111 except the forwarding seat's two verbs and the work-session child's question card (OPE-2340), and eve 0.54.1 removed the child-only `task_update` that used to be its one loss");
 });
 
@@ -302,24 +302,24 @@ inSession(() => {
   ok(currentJobWakePosture() === "unrestricted", "outside an eve context the posture read fails soft to unrestricted");
   const toolset = makeToolset();
   const before = { ...toolset };
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "…while the DELEGATION verdict fails CLOSED outside a context (unclassified ⇒ deny) — the opposite direction, on purpose");
-  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "a context-less projectToolSet call withholds nothing from the job plane — only the fail-closed delegation verb, the task family that follows it, the forwarding seat's two verbs and the work-session child's question card");
+  eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "a context-less `seatCutToolset` call withholds nothing from the job plane — only the fail-closed delegation verb, the task family that follows it, the forwarding seat's two verbs and the work-session child's question card");
 }
 
 inSession(() => {
   markJobSession();
   ok(currentJobWakePosture() === "restricted", "FAIL CLOSED: a job session with no escalation verdict written is restricted");
   const toolset = makeToolset();
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   ok(!("open_pull_request" in toolset), "the unclassifiable wake gets the restricted set");
 });
 
 inSession(() => {
   const toolset = makeToolset();
   const before = { ...toolset };
-  projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("agent" in toolset), "OPE-396: on a default (native-armed) deployment an UNCLASSIFIED seat loses `agent` at the projection seam — the delegation verdict fails closed");
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
+  ok(!("agent" in toolset), "OPE-396: on a default (native-armed) deployment seatCutToolset (the pure rule) withholds `agent` from an UNCLASSIFIED seat — the delegation verdict fails closed (on eve 1.x no file reaches `agent` — seat-cut-test §5)");
   ok("open_pull_request" in toolset && "purge_memory" in toolset, "…and nothing else moves: the job filter is untouched by the delegation one");
   eq(removedBy(before, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "…exactly the delegation verb, the task family that follows it, the forwarding seat's two verbs (OPE-2338) and the work-session child's question card (OPE-2340), so the filters compose without overlap");
 });

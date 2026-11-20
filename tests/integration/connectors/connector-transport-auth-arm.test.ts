@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import {
   armSettlement,
@@ -22,12 +22,43 @@ import {
   type AuditRow,
   type ScriptedHandle,
 } from "../harness";
+import { installHostFetchStub } from "../fetch-stub";
+import { CONNECTOR_GATE_PROBE, installConnectorGateProbe, type ConnectorGateProbe } from "./connector-gate-probe";
 
 const OPERATOR_ID = "U0EXOWNER";
 const DM_CHANNEL_ID = "D0IT1465OPERATOR";
 const BOT_USER_ID = "U0IT1465BOT";
 
 let tsCounter = 0;
+
+const SIGN_IN_TOOL = "notion__sign_in";
+
+const cleanups: (() => void)[] = [];
+afterAll(() => {
+  for (const c of cleanups.reverse()) c();
+});
+
+/**
+ * Notion's MCP endpoint, answering every call with HTTP 401: no arm here holds a token. On eve 1.x
+ * the notion connector mount lists the ops anonymously when the person has not signed in, and a 401
+ * makes it offer one tool, `notion__sign_in`. That tool's call runs the connection's OE resolver
+ * with no listing marker: the same grant check, mint and sign-in card a connector op runs.
+ */
+function armNotionUnauthorized(): { readonly calls: readonly { url: string }[]; uninstall(): void } {
+  return installHostFetchStub("https://mcp.notion.com/mcp", () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json" } }));
+}
+
+let probe: ConnectorGateProbe | undefined;
+/** Arm the Notion MCP stub, and the gate probe that captures the agent's own `notion__sign_in` where the mount offers it. */
+function armGateProbe(): ConnectorGateProbe {
+  if (probe !== undefined) return probe;
+  probe = installConnectorGateProbe("notion", "sign_in");
+  const armed = probe;
+  cleanups.push(() => armed.restore());
+  const vendor = armNotionUnauthorized();
+  cleanups.push(() => vendor.uninstall());
+  return armed;
+}
 
 const POSTED: { readonly channel: string; readonly text: string }[] = [];
 
@@ -88,10 +119,48 @@ async function armUserPrincipal(on: boolean): Promise<void> {
   expect(settings.getSettings().connectors.userPrincipal, `the ${on ? "ON" : "OFF"} arm did not take the flag it drives`).toBe(on);
 }
 
-function connectionSearchOutputs(handle: ScriptedHandle): readonly string[] {
-  const out: string[] = [];
-  for (const r of handle.requests) for (const t of r.toolResults) if (t.name === "connection_search") out.push(String(t.output));
+function textOf(output: unknown): string {
+  return typeof output === "string" ? output : JSON.stringify(output);
+}
+
+function resultsOf(handle: ScriptedHandle, callId: string): readonly { readonly output: unknown; readonly isError: boolean }[] {
+  const out: { output: unknown; isError: boolean }[] = [];
+  for (const r of handle.requests) for (const t of r.toolResults) if (t.id === callId) out.push({ output: t.output, isError: t.isError });
   return out;
+}
+
+/**
+ * What the connector mount offered the worker, as the worker's `eve__search` shows it. eve offers
+ * `eve__search` only while the catalogue holds a deferred tool. So either the search ran and its
+ * output is returned, or the worker's step held no `eve__search` at all: the catalogue was empty, and
+ * the result is "". An absence check on the result therefore never reads a search that silently
+ * failed for another reason.
+ */
+function catalogOutput(handle: ScriptedHandle, label: string): string {
+  const callId = `it1465-${label}-search`;
+  const step = handle.requests.find((r) => r.role === "child" && r.stepIndex === 0);
+  expect(step, `control: ${label}: the worker never made its search step`).toBeDefined();
+  const out = resultsOf(handle, callId);
+  expect(out.length, `control: ${label}: the worker's eve__search returned nothing`).toBeGreaterThan(0);
+  if (!step!.tools.includes("eve__search")) {
+    expect(textOf(out[0]!.output), `control: ${label}: the search failed for a reason other than an empty catalogue`).toContain("eve__search");
+    return "";
+  }
+  expect(out[0]!.isError, `control: ${label}: the worker's eve__search failed: ${textOf(out[0]!.output).slice(0, 400)}`).toBe(false);
+  return textOf(out[0]!.output);
+}
+
+/** The output of the worker's connector call (the sign-in tool, or the gate probe). */
+function connectorCallOutput(handle: ScriptedHandle, label: string): string {
+  return resultsOf(handle, `it1465-${label}-call`).map((r) => textOf(r.output)).join("\n");
+}
+
+/** The call-time gate's refusal: the agent's own `notion__sign_in`, called through the probe, throws it. */
+function probeRefusal(handle: ScriptedHandle, label: string): string {
+  const out = resultsOf(handle, `it1465-${label}-call`);
+  expect(out.length, `${label}: the gate probe returned nothing`).toBeGreaterThan(0);
+  expect(out[0]!.isError, `🔴 ${label}: the call-time gate let the sign-in run: ${textOf(out[0]!.output).slice(0, 400)}`).toBe(true);
+  return textOf(out[0]!.output);
 }
 
 async function notionMintRows(cursor: AuditCursor): Promise<readonly AuditRow[]> {
@@ -99,17 +168,38 @@ async function notionMintRows(cursor: AuditCursor): Promise<readonly AuditRow[]>
   return rows.filter((r) => r.detail?.connector === "notion");
 }
 
+/**
+ * One delegated turn: the worker searches the catalogue for the notion connection's tools, then
+ * makes one call. `call: "sign-in"` calls `notion__sign_in` through `eve__tool`, where the mount
+ * offers it. `call: "probe"` runs the connector gate probe, for an arm whose listing the gate
+ * refuses, so the mount offers the model nothing to call. `call: "search"` makes a second
+ * `eve__search`. `query` replaces the first search's query, and `secondQuery` the second's.
+ */
 async function driveConnectorTurn(input: {
   readonly label: string;
   readonly origin: "dm" | "channel";
+  readonly call: "sign-in" | "probe" | "search";
+  readonly query?: string;
+  readonly secondQuery?: string;
 }): Promise<ScriptedHandle> {
-  const search = { tool: "connection_search", input: { query: "handbook" }, id: `it1465-${input.label}-search` };
+  const armed = armGateProbe();
+  if (input.call === "probe") {
+    expect(armed.captured(), `${input.label}: the gate probe holds no notion__sign_in yet — no earlier DM step offered it`).toBe(true);
+  }
+  const search = { tool: "eve__search", input: { query: input.query ?? "notion__" }, id: `it1465-${input.label}-search` };
+  const callId = `it1465-${input.label}-call`;
+  const call =
+    input.call === "sign-in"
+      ? { tool: "eve__tool", input: { name: SIGN_IN_TOOL, input: {} }, id: callId }
+      : input.call === "search"
+        ? { tool: "eve__search", input: { query: input.secondQuery ?? "notion pages" }, id: callId }
+        : { tool: CONNECTOR_GATE_PROBE, input: {}, id: callId };
   const delegateId = `it1465-${input.label}-delegate`;
   const cursor = await auditCursor();
   const handle = disposeLater(
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: "look in notion" }, id: delegateId }] }, { say: NO_REPLY_SENTINEL }],
-      child: [{ delayMs: 120_000, calls: [search] }, { say: "reported" }],
+      child: [{ delayMs: 120_000, calls: [search] }, { calls: [call] }, { say: "reported" }],
     }),
   );
 
@@ -131,7 +221,7 @@ async function driveConnectorTurn(input: {
   const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
   const taskId = await workTaskIdOfCall(cursor, handle, delegateId, `${input.label}: the forward`);
   handle.releaseHolds();
-  await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: `${input.label}: the worker's terminal step` });
+  await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: `${input.label}: the worker's terminal step` });
   const resultStep = await awaitWorkResult({ handle: settlement, taskId, label: `${input.label}: the seat's result-wake step` });
   expect(resultStep.fault).toBeUndefined();
   for (const h of [handle, settlement]) expect(h.requests.filter((r) => r.fault !== undefined), `${input.label}: the scripted model reported a fault`).toEqual([]);
@@ -163,7 +253,8 @@ test("a slackDmWake turn reaches the connector plane as mode \"dm\"; the same dr
     await armUserPrincipal(true);
 
     const dmCursor = await auditCursor();
-    await driveConnectorTurn({ label: "dm-ingress", origin: "dm" });
+    const dmHandle = await driveConnectorTurn({ label: "dm-ingress", origin: "dm", call: "sign-in" });
+    expect(catalogOutput(dmHandle, "dm-ingress"), "control: the DM's catalogue does not offer the notion sign-in").toContain(SIGN_IN_TOOL);
     const dmUse = await waitForAuditRows({
       probe: async () => {
         const rows = await rowsSinceCursor(dmCursor, ["connector.use"]);
@@ -176,7 +267,10 @@ test("a slackDmWake turn reaches the connector plane as mode \"dm\"; the same dr
     expect(dmUse.detail?.mode, "the DM wake did not reach the connector plane as a DM — the helper produced a channel binding").toBe("dm");
 
     const channelCursor = await auditCursor();
-    const channelHandle = await driveConnectorTurn({ label: "channel-control", origin: "channel" });
+    const channelHandle = await driveConnectorTurn({ label: "channel-control", origin: "channel", call: "probe" });
+    // On eve 1.x the grant check refuses the mount's LISTING in the channel, so the catalogue holds
+    // no notion tool at all. The probe then runs the call-time gate on the channel's own session.
+    expect(catalogOutput(channelHandle, "channel-control"), "🔴 the channel's catalogue offers a notion tool").not.toContain("notion__");
     const refused = await waitForAuditRows({
       probe: async () => {
         const rows = await rowsSinceCursor(channelCursor, ["connector.refused"]);
@@ -191,10 +285,9 @@ test("a slackDmWake turn reaches the connector plane as mode \"dm\"; the same dr
       (await rowsSinceCursor(channelCursor, ["connector.use"])).filter((r) => r.detail?.connection === "notion"),
       "a CHANNEL-origin turn reached the notion connector's credential gate — the DM universe is not confining the principal binding",
     ).toEqual([]);
-    expect(
-      connectionSearchOutputs(channelHandle).join("\n"),
-      "the channel control produced no connection_search output to read at all",
-    ).toContain("not granted to this surface");
+    expect(probeRefusal(channelHandle, "channel-control"), "the channel's call-time gate did not refuse the missing grant").toContain(
+      "not granted to this surface",
+    );
   } finally {
     stub.uninstall();
   }
@@ -207,10 +300,11 @@ test("connectors.userPrincipal ON selects userAwareProviderToken: the DM turn ta
   try {
     await armUserPrincipal(true);
     const cursor = await auditCursor();
-    const handle = await driveConnectorTurn({ label: "arm-on", origin: "dm" });
+    const handle = await driveConnectorTurn({ label: "arm-on", origin: "dm", call: "sign-in" });
 
-    const output = connectionSearchOutputs(handle).join("\n");
-    expect(output, "the ON arm produced no connection_search output at all").not.toBe("");
+    expect(catalogOutput(handle, "arm-on"), "the ON arm's catalogue does not offer the notion sign-in").toContain(SIGN_IN_TOOL);
+    const output = connectorCallOutput(handle, "arm-on");
+    expect(output, "the ON arm produced no sign-in output at all").not.toBe("");
     expect(output, "the ON arm did not reach the per-user mint — the transport selected the APP builder").toContain(
       'needs-sign-in: connection "notion" needs the person who asked to connect their own account',
     );
@@ -238,12 +332,20 @@ test("connectors.userPrincipal OFF selects appProviderToken: the SAME DM turn re
 
   const stub = armSlackStub();
   try {
+    // The probe needs the agent's notion__sign_in, which only an ON-arm DM step offers.
+    if (!armGateProbe().captured()) {
+      await armUserPrincipal(true);
+      await driveConnectorTurn({ label: "arm-off-capture", origin: "dm", call: "sign-in" });
+    }
     await armUserPrincipal(false);
     const cursor = await auditCursor();
-    const handle = await driveConnectorTurn({ label: "arm-off", origin: "dm" });
+    const handle = await driveConnectorTurn({ label: "arm-off", origin: "dm", call: "probe" });
 
-    const output = connectionSearchOutputs(handle).join("\n");
-    expect(output, "the OFF arm produced no connection_search output at all").not.toBe("");
+    // The app builder refuses the user-oauth credential at the listing too, so the OFF arm's
+    // catalogue holds no notion tool. The probe reads the call-time verdict on the same session.
+    expect(catalogOutput(handle, "arm-off"), "🔴 the OFF arm's catalogue offers a notion tool").not.toContain("notion__");
+    const output = probeRefusal(handle, "arm-off");
+    expect(output, "the OFF arm's call-time gate did not refuse at all").not.toBe("");
     expect(output, "the OFF arm did not take the app-principal path — the transport selected the USER-AWARE builder").toContain(
       "is not valid on an app connection",
     );
@@ -281,11 +383,13 @@ test("OPE-2462: a DM job's personal sign-in is said once by the host, and the si
     await armUserPrincipal(true);
     const postedBefore = POSTED.length;
     const cursor = await auditCursor();
-    const search = { tool: "connection_search", input: { query: "handbook" }, id: "it2462-search" };
+    armGateProbe();
+    const search = { tool: "eve__search", input: { query: "notion__" }, id: "it2462-search" };
+    const signIn = { tool: "eve__tool", input: { name: SIGN_IN_TOOL, input: {} }, id: "it2462-sign-in" };
     const handle = disposeLater(
       registerScript({
         parent: [{ calls: [{ tool: "work", input: { message: "look in notion" }, id: "it2462-delegate" }] }, { say: NO_REPLY_SENTINEL }],
-        child: [{ delayMs: 120_000, calls: [search] }, { say: "Notion needs your sign-in." }],
+        child: [{ delayMs: 120_000, calls: [search] }, { calls: [signIn] }, { say: "Notion needs your sign-in." }],
       }),
     );
     const ts = slackTs(Date.now(), (tsCounter += 1));
@@ -296,9 +400,9 @@ test("OPE-2462: a DM job's personal sign-in is said once by the host, and the si
     const seat = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }] }));
     const taskId = await workTaskIdOfCall(cursor, handle, "it2462-delegate", "it2462: the forward");
     handle.releaseHolds();
-    await waitForChildren(handle, { count: 1, lastStepIndex: 1, label: "it2462: the worker's terminal step" });
+    await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: "it2462: the worker's terminal step" });
 
-    const output = connectionSearchOutputs(handle).join("\n");
+    const output = resultsOf(handle, "it2462-sign-in").map((r) => textOf(r.output)).join("\n");
     expect(output, "the worker did not settle needs-sign-in with a delivered card").toContain("A sign-in card with a private link went to that person directly.");
     expect(output, "the worker's report promises no automatic resume").toContain("When they connect, the host starts this job again.");
 
@@ -373,6 +477,55 @@ test("OPE-2462: a DM job's personal sign-in is said once by the host, and the si
     expect(continued.requests.some((r) => r.role === "child"), "it2462: the continued task never reached a worker turn").toBe(true);
   } finally {
     flows.registerUserAuthFlow(live!);
+    stub.uninstall();
+  }
+});
+
+/**
+ * The ungranted-connector evidence on eve 1.x. The operator's DM holds notion (its catalogue offers
+ * `notion__sign_in`, so the step holds `eve__search`) and does not hold the mounted `slack-as-you`
+ * connection, whose listing the gate refuses. The worker searches for `slack-as-you` twice.
+ */
+test("a search for a mounted connection the surface does not hold writes the ungranted evidence row, and the permission proposal offers the grant", async () => {
+  await bootAgent();
+
+  const stub = armSlackStub();
+  try {
+    await armUserPrincipal(true);
+    const cursor = await auditCursor();
+    const handle = await driveConnectorTurn({ label: "dm-attempt", origin: "dm", call: "search", query: "slack-as-you search", secondQuery: "slack-as-you messages" });
+    // The withholding stands: the gate refuses the listing, so the search finds no slack-as-you op.
+    expect(catalogOutput(handle, "dm-attempt"), "control: the DM's catalogue holds no eve__search, so no search ran").not.toBe("");
+    expect(catalogOutput(handle, "dm-attempt"), "🔴 the DM's catalogue offers a slack-as-you op").not.toContain("slack-as-you__");
+
+    const attempts = await waitForAuditRows({
+      probe: async () => {
+        const rows = (await rowsSinceCursor(cursor, ["connector.refused"])).filter((r) => r.detail?.connection === "slack-as-you");
+        return rows.length >= 2 ? rows : undefined;
+      },
+      label: "🔴 two connector.refused rows for the two searches (no row means the permission-proposal evidence has no source on eve 1.x)",
+      actions: ["connector.refused"],
+      cursor,
+    });
+    expect(attempts.map((r) => [r.detail?.reason, r.detail?.via]), "the rows carry some other reason or source than an ungranted search").toEqual(
+      attempts.map(() => ["ungranted", "eve__search"]),
+    );
+    expect(
+      (await rowsSinceCursor(cursor, ["connector.use", "connector.op", "connector.mint"])).filter(
+        (r) => r.detail?.connection === "slack-as-you" || r.detail?.connector === "slack-as-you",
+      ),
+      "the evidence rows came with a use, an op or a mint: the search reached the connector",
+    ).toEqual([]);
+
+    const { permissionEvidence, makeWindow } = await import("@open-everywhere/core/agent/access/permission-evidence.js");
+    const { proposePermissionChanges } = await import("@open-everywhere/core/agent/access/permission-proposal.js");
+    const evidence = permissionEvidence(attempts, [], makeWindow(1, new Date(Date.now() + 60_000)));
+    const found = evidence.refusals.find((r) => r.kind === "connector-refused" && r.connection === "slack-as-you");
+    expect(found !== undefined && found.kind === "connector-refused" ? found.ungranted : 0, "🔴 the permission evidence does not count the two ungranted searches").toBe(2);
+    expect(proposePermissionChanges(evidence, "widen").map((p) => p.id), "🔴 the proposal does not offer the slack-as-you grant").toContain(
+      "widen:connector:ungranted:slack-as-you",
+    );
+  } finally {
     stub.uninstall();
   }
 });

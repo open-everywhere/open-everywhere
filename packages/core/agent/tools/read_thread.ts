@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
@@ -7,7 +7,7 @@ import { getConfig } from "../access/config.js";
 import { readThreadResult, renderThreadBody, threadReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
 import { resolveWakeChannel, requireWakeThreadRoot } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { assertSeatReadBudget } from "../access/seat-read-budget.js";
 import { capReadForInline } from "../channels/read-spool.js";
 import type { Domain } from "../memory/domain.js";
@@ -73,13 +73,8 @@ const readThreadEntry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("read_thread", "_single", readThreadEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (resolveWindowSources(ctx as BindableContext, safeDomains()).length === 0) return null;
-      return readThreadEntry;
-    },
-  },
+export default sessionMountedTool("read_thread", readThreadEntry, (ctx) => {
+  if (resolveWindowSources(ctx, safeDomains()).length === 0) return false;
+  return true;
 });

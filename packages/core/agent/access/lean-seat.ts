@@ -19,7 +19,7 @@ export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
   "cancel_work",
   "spawn_thread_session",
   "complete_thread",
-  "task_cancel",
+  "eve__task_cancel",
   "read_channel",
   "read_thread",
   "look_up",
@@ -60,7 +60,7 @@ export function withheldFromLeanSeat(gated: Readonly<Record<string, readonly str
   return [...new Set([...Object.keys(gated), ...ungated])].filter((name) => !allowedOnLeanSeat(name, dmSeat)).sort();
 }
 
-export const WORK_SESSION_TOOLS: ReadonlySet<string> = new Set(["agent", "task_cancel"]);
+export const WORK_SESSION_TOOLS: ReadonlySet<string> = new Set(["agent", "eve__task_cancel"]);
 
 export function restrictToolsetForWorkSession(toolset: Record<string, unknown>): string[] {
   const removed: string[] = [];

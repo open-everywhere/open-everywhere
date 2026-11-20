@@ -20,6 +20,10 @@ import { registerBotDisplayName, _resetBotDisplayNamesForTest } from "../agent/i
 import { registerSlackFixtureMapper, registerSlackFixtureManifest, registerSlackTestBridge } from "./_slack-test-stubs.js";
 import { capabilitiesForPlatform, registerCapabilityManifest } from "../agent/identity/capabilities.js";
 import { overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
+import { evaluateDynamic } from "../agent/access/window-gated.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -269,6 +273,17 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(!slackMd.includes("every wake, without exception"), "unified persona drops the old unqualified 'without exception' claim");
 
   ok(slackMd.includes("payments-notes"), "unified block carries the domain-anchored memory index (frozen snapshot)");
+
+  // eve 1.x hands the seat its token with the channel's `unified:` send prefix (OPE-2795).
+  const prefixedCtx = (token: string): BindableContext => ({
+    channel: { kind: "channel:unified", continuationToken: `unified:${token}` },
+    session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
+  });
+  const prefixedStanding = await renderScopeMarkdown(prefixedCtx("oe-dom:payments:oe-sup:g1"));
+  ok(prefixedStanding.includes("payments-notes"), "🔴 OPE-2795: a `unified:`-prefixed standing token still resolves its domain, so the seat reads its memory index");
+  ok(prefixedStanding.includes("hand off a lookup: `work`") && !prefixedStanding.includes("delegate a lookup: `agent`"), "🔴 OPE-2795: …and that forwarding seat's index names `work`, never `agent`");
+  const prefixedThread = await renderScopeMarkdown(prefixedCtx("oe-dom:payments:win:s/slack/T_PAY/C_PAY/1700000000.000100:oe-sup:g1"));
+  ok(prefixedThread.includes("payments-notes") && prefixedThread.includes("hand off a lookup: `work`"), "🔴 OPE-2795: a `unified:`-prefixed thread-seat token resolves the same domain, and its index names `work`");
 }
 
 {
@@ -359,7 +374,7 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   const storageKey = Symbol.for("eve.context-storage");
   g[storageKey] ??= new AsyncLocalStorage();
   const storage = g[storageKey] as AsyncLocalStorage<unknown>;
-  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(asEveStore(new FakeSession()), fn));
 
   const ctx = (): BindableContext =>
     ({
@@ -596,12 +611,10 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
     channel: { kind: "teams" },
     session: { auth: { current: { attributes: { tenant_id: "TEN1", channel_id: "CH1", channel_type: "channel" }, principalId: "U1", principalType: "user" } } },
   } as BindableContext;
-  type ResolveCtx = Parameters<NonNullable<(typeof dynamicInstructions.events)["session.started"]>>[1];
+  const turnOf: Record<"session.started" | "turn.started", { id: string } | null> = { "session.started": null, "turn.started": { id: "turn-1" } };
 
   for (const event of ["session.started", "turn.started"] as const) {
-    const handler = dynamicInstructions.events[event];
-    ok(handler !== undefined, `${event}: the dynamic instructions resolver is registered`);
-    const def = await handler!(undefined, ctx as unknown as ResolveCtx);
+    const def = (await evaluateDynamic(dynamicInstructions, { ...ctx, session: { ...ctx.session, id: `sess-${event}` }, turn: turnOf[event] })) as { content?: string; role?: string } | null;
     ok(def !== null && typeof def === "object", `${event}: the resolver returns an instructions definition`);
     ok("content" in def!, `${event}: the definition uses the typed \`content\` key`);
     const liveHalt = event === "turn.started";
@@ -920,14 +933,14 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   const threadReporting = flatten(renderSupervisorPersona(threadSeat));
   ok(threadReporting.includes("Your turn-final text is DISCARDED"), "🔴 OPE-2006: a THREAD seat on a drop surface reads the drop too — the arm keys on the manifest, not on the grain");
   ok(!threadReporting.includes("reply` posts into the channel mid-turn"), "🔴 OPE-2006: …and never reads the dual-mode claim that its closing text posts");
-  ok(threadReporting.includes("`cancel_work`") && !threadReporting.includes("`task_cancel`"), "OPE-2350: the thread seat stops a job with `cancel_work` — it forwards, so it holds no `task_cancel`");
+  ok(threadReporting.includes("`cancel_work`") && !threadReporting.includes("`eve__task_cancel`"), "OPE-2350: the thread seat stops a job with `cancel_work` — it forwards, so it holds no `eve__task_cancel`");
   const reportingSection = (persona: string): string => {
     const start = persona.indexOf("### Reporting");
     const end = persona.indexOf(" ### ", start + "### Reporting".length);
     return start < 0 ? "" : persona.slice(start, end < 0 ? undefined : end);
   };
   ok(reportingSection(threadReporting).length > 200, "fixture guard: the thread seat's persona really carries a Reporting section to compare");
-  ok(reportingSection(threadReporting) === reportingSection(slackReporting).replaceAll("`task_cancel`", "`cancel_work`"), "🔴 OPE-2006: …and apart from that verb its delivery section is BYTE-IDENTICAL to the container supervisor's — one section, every seat on a drop surface");
+  ok(reportingSection(threadReporting) === reportingSection(slackReporting).replaceAll("`eve__task_cancel`", "`cancel_work`"), "🔴 OPE-2006: …and apart from that verb its delivery section is BYTE-IDENTICAL to the container supervisor's — one section, every seat on a drop surface");
 }
 
 {

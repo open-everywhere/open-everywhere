@@ -5,6 +5,7 @@ import { foldRoutineOutcome, type RoutineOutcomeMarker } from "../routines/outco
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { OE_WAKE_ID_ATTR } from "../channels/unified-window.js";
 import { routineTestStamped } from "../routines/test-run.js";
+import { optional } from "./control-refusal.js";
 
 export interface FireBagContext {
   readonly session?: {
@@ -153,32 +154,36 @@ export function noteDeclaredRunFailure(ctx: FireBagContext): DeclaredFailureFate
   }
 }
 
+function foldCancelledFire(): void {
+  const armed = foldState.get().armed;
+  foldState.update((s) => ({ ...s, lateFold: null }));
+  if (armed === null) return;
+  foldState.update((s) => ({ ...s, armed: null, folded: { ...s.folded, [armed.wakeKey]: true } }));
+  log(`fire cancelled for ${armed.marker.id} [${armed.marker.surfaceKey}] — no outcome recorded`);
+}
+
 export default defineHook({
   events: {
-    "turn.started": (_event, ctx) => {
-      try {
-        foldState.update((s) => ({ ...s, armed: armFireFold(ctx, s.folded), lateFold: null }));
-      } catch {
+    "turn.started": optional("routine-outcome", (_event, ctx) => {
+      foldState.update((s) => ({ ...s, armed: armFireFold(ctx, s.folded), lateFold: null }));
+    }),
+    "turn.settled": optional("routine-outcome", async (event) => {
+      switch (event.data.outcome) {
+        case "completed":
+          await record("ok");
+          return;
+        case "cancelled":
+          foldCancelledFire();
+          return;
+        case "failed":
+          await record("failed");
+          return;
+        default:
+          return;
       }
-    },
-    "turn.completed": async () => {
-      await record("ok");
-    },
-    "turn.cancelled": () => {
-      try {
-        const armed = foldState.get().armed;
-        foldState.update((s) => ({ ...s, lateFold: null }));
-        if (armed === null) return;
-        foldState.update((s) => ({ ...s, armed: null, folded: { ...s.folded, [armed.wakeKey]: true } }));
-        log(`fire cancelled for ${armed.marker.id} [${armed.marker.surfaceKey}] — no outcome recorded`);
-      } catch {
-      }
-    },
-    "turn.failed": async () => {
-      await record("failed");
-    },
-    "session.failed": async () => {
-      await record("failed");
-    },
+    }),
+    "session.ended": optional("routine-outcome", async (event) => {
+      if (event.data.outcome === "failed") await record("failed");
+    }),
   },
 });

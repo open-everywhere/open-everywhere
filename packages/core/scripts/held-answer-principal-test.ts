@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+const { callRequested } = await import("./_hook-view.js");
 
 delete process.env.DATABASE_URL;
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-held-answer-principal-")), "ops.sqlite3");
@@ -125,7 +126,7 @@ function seatCtx(turnId: string, who: { principal: string; deliveryId: string })
 
 function turnStarted(ctx: never): void {
   settlementHook.events["turn.started"]!({}, ctx);
-  settlementHook.events["step.started"]!({}, ctx);
+  settlementHook.events["model.requested"]!({}, ctx);
 }
 
 const askBy = (authorId: string): string =>
@@ -183,17 +184,17 @@ const delegatedRow = async (callId: string): Promise<{ binding?: { principalId?:
   const raw = await getOperationalStore().getTaskResult(ORG, `oe-delegated-task-wake:sess-native:${callId}`);
   return raw === null ? null : (JSON.parse(raw) as { binding?: { principalId?: string }; requester?: unknown });
 };
-const delegate = (callId: string) => ({ data: { actions: [{ kind: "tool-call", toolName: "agent", callId, input: { message: "list it" } }] } });
+const delegate = (callId: string) => callRequested(callId, "agent", "tool", { message: "list it" });
 await contextStorage.run(new ContextContainer(), async () => {
   const ctxA = nativeCtx("turn_h4", A);
   turnStarted(ctxA);
   recordRequesterIdentity(ctxA as never, "turn_h4", askBy(A.principal));
-  await settlementHook.events["actions.requested"]!(delegate("call-own"), ctxA);
+  await settlementHook.events["call.requested"]!(delegate("call-own"), ctxA);
   const own = await delegatedRow("call-own");
   eq(own?.binding?.principalId, A.principal, "H4: with no swap the binding names A");
   eq(own?.requester, { kind: "requester", principalId: A.principal }, "H4: …and the requester names A — both halves from A's own act");
 
-  await settlementHook.events["actions.requested"]!(delegate("call-swapped"), nativeCtx("turn_h4", B));
+  await settlementHook.events["call.requested"]!(delegate("call-swapped"), nativeCtx("turn_h4", B));
   eq(await delegatedRow("call-swapped"), null, "🔴 H4 THE FIX: after a swap NO row binds B's live identity to A's ask — the child resolves no authority and fails closed");
 });
 

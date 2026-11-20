@@ -1,8 +1,10 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { SurfaceMode, ToolUsageEntry, ToolUsageOutcome } from "../operational/store.js";
 import { isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
+import { canonicalConnectorOpName } from "../access/connector-op-alias.js";
 
-export function toolUsageNames(toolName: string): { readonly connector: string; readonly tool: string } {
+export function toolUsageNames(rawToolName: string): { readonly connector: string; readonly tool: string } {
+  const toolName = canonicalConnectorOpName(rawToolName);
   try {
     if (isConnectorOpTool(toolName) && parseQualifiedToolName(toolName)?.namespace === undefined) {
       const sep = toolName.indexOf("__");

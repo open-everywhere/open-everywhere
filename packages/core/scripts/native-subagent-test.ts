@@ -34,6 +34,8 @@ import { canDelegateFromSeat, resolveOwnWindowToken } from "../agent/access/dele
 import { resolveLeanSeatPosture } from "../agent/access/lean-seat.js";
 import { registerSettings, resetSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { v27Hooks } from "./_hook-view.js";
+const { callRequested } = await import("./_hook-view.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -144,8 +146,8 @@ await inSession(async () => {
       events: Record<string, (e: unknown, c: unknown) => Promise<void> | void>;
     }
   ).events;
-  await spawnEvents["actions.requested"]!(
-    { data: { actions: [{ kind: "subagent-call", callId: "call_1", subagentName: "agent" }] } },
+  await spawnEvents["call.requested"]!(
+    callRequested("call_1", "agent", "agent"),
     parentCtx,
   );
   const bindingStarted = (
@@ -274,7 +276,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 }
 
 {
-  const { projectToolSet } = await import("../agent/access/untrusted-projection.js");
+  const { seatCutToolset } = await import("../agent/access/seat-cut.js");
   const { setNativeDelegationSeat, nativeAgentAllowedNow } = await import("../agent/access/native-delegation-state.js");
   const { noteEnvelopeWrapThisTurn } = await import("../agent/memory/turn-provenance.js");
 
@@ -284,7 +286,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     setNativeDelegationSeat("allow");
     ok(nativeAgentAllowedNow(), "an allowed seat on a clean turn may hold the built-in");
     const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
     ok("agent" in toolset, "🔴 D6 ARMED, CLEAN: a delegating conversational seat keeps `agent`, and it is eve's built-in — OE mounts nothing under that name (a dynamic `agent` would COLLIDE with the runtime-visible subagent and throw)");
   });
 
@@ -293,8 +295,8 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     noteEnvelopeWrapThisTurn();
     eq(nativeAgentAllowedNow(), true, "🔴 D6 TAINT IS NOT A CONJUNCT (OPE-471): a tainted turn KEEPS its delegation verb, because taint is not a delegation condition — asserted `=== true`, not merely truthy");
     const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
-    ok("agent" in toolset, "…and the projection seam leaves `agent` in place on a tainted turn");
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
+    ok("agent" in toolset, "…and seatCutToolset (the pure rule) leaves `agent` in place on a tainted turn (on eve 1.x no file reaches `agent` — seat-cut-test §5)");
     ok("reply" in toolset && "no_reply" in toolset, "…with nothing else touched either");
   });
 
@@ -303,15 +305,15 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     noteEnvelopeWrapThisTurn();
     eq(nativeAgentAllowedNow(), false, "🔴 D6 SEAT HALF STILL FIRES: an unclassified seat is refused `agent` on the same tainted turn — so (c) reads 'taint stopped gating', never 'the gate is dead'");
     const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
-    ok(!("agent" in toolset), "…and the projection seam really removes it");
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
+    ok(!("agent" in toolset), "…and seatCutToolset (the pure rule) really removes it (on eve 1.x no file reaches `agent` — seat-cut-test §5)");
   });
 
   inSession(() => {
     setNativeDelegationSeat("leaf");
     const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
-    ok(!("agent" in toolset), "🔴 D6 LEAF: a native child never sees `agent` — eve blocks its own built-in's recursion, and this is the belt (the roll-own route is closed separately by canDelegateFromSeat)");
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
+    ok(!("agent" in toolset), "🔴 D6 LEAF: seatCutToolset (the pure rule) withholds `agent` from a native child — eve blocks its own built-in's recursion; on eve 1.x the rule reaches no `agent` slot (seat-cut-test §5), and the roll-own route is closed separately by canDelegateFromSeat");
   });
 
   inSession(() => {
@@ -324,7 +326,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
       post_file: { execute: () => undefined },
       update_status: { execute: () => undefined },
     };
-    projectToolSet(toolset);
+    seatCutToolset(toolset);
     eq(Object.keys(toolset).sort(), ["bash", "describe_image", "post_file", "read_file_upload", "update_status"], "🔴 D6 LEAF, WHOLE KIT: the leaf withdrawal removes `agent` and NOTHING ELSE — a native child keeps its vision read, its upload read, its sandbox and its return leg");
   });
 
@@ -333,20 +335,20 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   const makeTaskToolset = () => ({
     agent: { execute: () => undefined },
     reply: { execute: () => undefined },
-    task_wait: { execute: () => undefined },
-    task_cancel: { execute: () => undefined },
+    eve__task_wait: { execute: () => undefined },
+    eve__task_cancel: { execute: () => undefined },
   });
 
-  eq([...TASK_PARENT_TOOL_NAMES], ["task_wait", "task_cancel"], "🔴 D6 TASKS: the PARENT list is eve 0.70's mounted set, in eve's order. This leg asserts a LITERAL and reads no eve bytes, so it pins the list against an accidental edit only — `scripts/background-task-taint-test.ts` PART 0B is the leg that reads `protocol/task-tools.js` and reds when eve moves");
+  eq([...TASK_PARENT_TOOL_NAMES], ["eve__task_wait", "eve__task_cancel"], "🔴 D6 TASKS: the PARENT list is eve 0.70's mounted set, in eve's order. This leg asserts a LITERAL and reads no eve bytes, so it pins the list against an accidental edit only — `scripts/background-task-taint-test.ts` PART 0B is the leg that reads `protocol/task-tools.js` and reds when eve moves");
 
   inSession(() => {
     setNativeDelegationSeat("allow");
     setWorkerWake(false);
     const toolset = makeTaskToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
     eq(
       Object.keys(toolset).sort(),
-      ["agent", "reply", "task_cancel", "task_wait"],
+      ["agent", "eve__task_cancel", "eve__task_wait", "reply"],
       "🔴 D6 TASKS, DELEGATING SEAT: it keeps `agent` and both parent lifecycle verbs — the verbs that wait on and stop work THIS seat started",
     );
   });
@@ -355,7 +357,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     setNativeDelegationSeat("no-seat");
     setWorkerWake(false);
     const toolset = makeTaskToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
     eq(
       Object.keys(toolset).sort(),
       ["reply"],
@@ -366,7 +368,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   inSession(() => {
     setWorkerWake(false);
     const toolset = makeTaskToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
     eq(Object.keys(toolset).sort(), ["reply"], "🔴 D6 TASKS, FAIL-CLOSED: a wake nothing classified loses the whole family — the clear-first default is DENY here too");
   });
 
@@ -374,7 +376,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     setNativeDelegationSeat("leaf");
     setWorkerWake(true);
     const toolset = makeTaskToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
     eq(
       Object.keys(toolset).sort(),
       ["reply"],
@@ -386,14 +388,14 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     setNativeDelegationSeat("allow");
     setWorkerWake(false);
     const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
     eq(Object.keys(toolset).sort(), ["agent", "no_reply", "reply"], "🔴 D6 TASKS, NO TASK NAME: a set carrying no `task_*` name comes back untouched — the subtraction removes only names it was given");
   });
 
   inSession(() => {
     const toolset = makeToolset();
-    projectToolSet(toolset as unknown as Record<string, unknown>);
-    ok(!("agent" in toolset), "🔴 D6 FAIL-CLOSED: a wake nothing classified loses `agent` — the OPPOSITE default from the lean slot next door, because a wrongly-allowed delegation route is worse than a turn that has to do its own work");
+    seatCutToolset(toolset as unknown as Record<string, unknown>);
+    ok(!("agent" in toolset), "🔴 D6 FAIL-CLOSED: seatCutToolset (the pure rule) withholds `agent` from a wake nothing classified (on eve 1.x no file reaches `agent` — seat-cut-test §5) — the OPPOSITE default from the lean slot next door, because a wrongly-allowed delegation route is worse than a turn that has to do its own work");
   });
 
   {
@@ -422,7 +424,6 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
   const hook = hub.default as unknown as {
     events: {
       "turn.started": (event: unknown, ctx: unknown) => Promise<void> | void;
-      "action.result": (event: unknown, ctx: unknown) => Promise<void> | void;
     };
   };
   const turnStarted = (ctx: unknown) => hook.events["turn.started"](undefined, ctx);
@@ -485,13 +486,22 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 
     const turnStepFiles = filesMatching(/export\{turnStep\}/);
     eq(turnStepFiles.length, 1, "🔴 D9 TURN SCOPING: exactly one eve module exports `turnStep` — the module whose `AuthKey` writers this leg counts");
-    const steps = dist(turnStepFiles[0]!);
+    const wrapper = dist(turnStepFiles[0]!);
+    const delegated = /import\{turnStepOn\}from"#(execution\/session\/turn-step)\.js"/.exec(wrapper);
+    if (delegated !== null) {
+      eq(
+        (wrapper.match(/\.(?:set|setVirtualContext|ensure)\(\s*AuthKey\s*,|\.delete\(\s*AuthKey\s*\)|[{,]\s*\[AuthKey\.name\]\s*:|\[AuthKey\.name\]\s*(?:\?\?|\|\||&&)?=(?!=)/g) ?? []).length,
+        0,
+        "🔴 D9 TURN SCOPING (eve 1.x): the exported `turnStep` is a wrapper that writes no `AuthKey` itself — it delegates to `turnStepOn`, the module this leg counts instead",
+      );
+    }
+    const steps = delegated === null ? wrapper : dist(`${delegated[1]}.js`);
     eq(
       steps.split("set(AuthKey,").length - 1,
       3,
-      "🔴 D9 TURN SCOPING: the turn step writes `AuthKey` in exactly THREE places at eve 0.70 — the delivery writer, the authorization-resume writer and the no-input rollback. A fourth writer is a new road for the bag to be replaced before a dispatch reads it",
+      "🔴 D9 TURN SCOPING: the turn step `.set`s `AuthKey` in exactly THREE places (eve 1.0.0-rc.18) — the delivery writer, the authorization-resume writer and the closing writer. A fourth writer is a new road for the bag to be replaced before a dispatch reads it",
     );
-    const w1 = /let (\w+)=(\w+)\.get\(AuthKey\);(\w+)\?\.auth!==void 0&&\(\2\.set\(AuthKey,\3\.auth\?\?null\)/.exec(steps);
+    const w1 = /let (\w+)=(\w+)\.get\(AuthKey\);(?:let \w+=\2\.has\(InitiatorAuthKey\);)?(\w+)\?\.auth!==void 0&&\(\2\.set\(AuthKey,\3\.auth\?\?null\)/.exec(steps);
     ok(
       w1 !== null,
       "🔴 D9 TURN SCOPING W1: the delivery writer fires on EVERY delivery that carries auth, mid-turn included, and the step captures the previous value before it writes",
@@ -503,10 +513,26 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
         ).test(steps),
       "🔴 D9 TURN SCOPING W2: the authorization-resume writer fires only when no delivery is left, and writes the pending challenge's recorded requester",
     );
+    const w3 =
+      w1 === null
+        ? null
+        : new RegExp(
+            `let (\\w+)=${w1[2]}\\.get\\(AuthKey\\);if\\((\\w+)!==void 0\\|\\|(\\w+)\\?\\1=${w1[1]}:${w1[3]}!==void 0&&!(\\w+)&&\\(\\1=(\\w+)\\?\\.message===void 0\\?${w1[1]}:continueTurnAuth\\(${w1[1]},\\1\\)\\),\\1===void 0\\?${w1[2]}\\.delete\\(AuthKey\\):${w1[2]}\\.set\\(AuthKey,\\1\\)`,
+          ).exec(steps);
+    ok(
+      w3 !== null,
+      "🔴 D9 TURN SCOPING W3 (eve 1.x): the closing writer restores exactly the value captured before W1 — the same bag by reference — after an attributed answer, after a mid-turn delivery with no turn input, and after a mid-turn input with no message",
+    );
     ok(
       w1 !== null &&
-        new RegExp(`${w1[1]}===void 0\\?${w1[2]}\\.delete\\(AuthKey\\):${w1[2]}\\.set\\(AuthKey,${w1[1]}\\)`).test(steps),
-      "🔴 D9 TURN SCOPING W3: the rollback writer restores exactly the value captured before W1 — the same bag by reference, never a new one",
+        w3 !== null &&
+        new RegExp(`let ${w3[3]}=${w1[3]}!==void 0&&${w3[5]}===void 0&&!${w3[4]};`).test(steps) &&
+        new RegExp(`let ${w3[4]}=isBetweenTurns\\(currentProjection\\(${w1[2]}\\)\\)`).test(steps),
+      "D9 TURN SCOPING W3: …where the rollback flag means a delivery that yields no turn input while a turn runs",
+    );
+    ok(
+      /function continueTurnAuth\((\w+),(\w+)\)\{if\(\2===void 0\)return \1;if\(principalOf\(\2\)!==principalOf\(\1\)\)throw Error\(`[^`]*`\);return \2\}/.test(dist("execution/session/principal.js")),
+      "🔴 D9 TURN SCOPING W3: a mid-turn MESSAGE of the same principal keeps continueTurnAuth's result (a message with no auth keeps the earlier bag) — the same principal or a throw, but the LATER delivery's bag, a new object. OE's turn-start writes on the earlier bag do not ride a dispatch after it. On a seat window OE's join issuer admits such a message only when its authority attributes match the turn's (OPE-2789); a work window joins by design",
     );
   }
 
@@ -658,7 +684,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     reset();
     const sandbox = new FakeSandbox();
     await contextStorage.run(new ContextContainer(), async () => {
-      await hook.events["session.completed"]({ type: "session.completed" }, withSandbox(rootCtx, sandbox) as never);
+      await v27Hooks(hook).sessionEnded("completed")({}, withSandbox(rootCtx, sandbox) as never);
     });
     ok(calls.writeTier > 0, `…and a ROOT session DOES persist at session end (writeTier=${calls.writeTier})`);
   }
@@ -678,7 +704,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     reset();
     const sandbox = new FakeSandbox();
     await contextStorage.run(new ContextContainer(), async () => {
-      await hook.events["session.completed"]({ type: "session.completed" }, withSandbox(childCtx, sandbox) as never);
+      await v27Hooks(hook).sessionEnded("completed")({}, withSandbox(childCtx, sandbox) as never);
     });
     ok(calls.writeTier === 0, `🔴 D4: a native child PERSISTS NOTHING — the parent owns its own tree, and a second writer through mergePreservingConflicts/guardDestructiveWrites (with a different sessionId and no baseline) would file the parent's in-flight edits as conflict siblings of themselves (writeTier=${calls.writeTier})`);
   }
@@ -686,7 +712,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     reset();
     const sandbox = new FakeSandbox();
     await contextStorage.run(new ContextContainer(), async () => {
-      await hook.events["session.failed"]({ type: "session.failed" }, withSandbox(childCtx, sandbox) as never);
+      await v27Hooks(hook).sessionEnded("failed")({}, withSandbox(childCtx, sandbox) as never);
     });
     ok(calls.writeTier === 0, "…on the FAILED edge too, which shares the same persist path");
   }
@@ -695,4 +721,4 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
 
 console.log(`✓ native-subagent: ${n} assertions passed`);
 
-// proves: TOOL-agent, TOOL-task_cancel
+// proves: TOOL-agent, TOOL-eve__task_cancel

@@ -9,8 +9,8 @@ IN  relay message M1 · guild G1 channel C1 (type 0) · from U_DEV1 · mention
   ⇠ 200 ok
 EVT turn.started on discord:TH1
   → POST /channels/TH1/typing ⇒ 204
-EVT message.appended on discord:TH1
+EVT content.delta on discord:TH1 {"partId":"part-1","kind":"text","delta":""}
   → POST /channels/TH1/typing ⇒ 204
-EVT message.appended on discord:TH1
-EVT message.completed on discord:TH1 {"finishReason":"stop","message":"Here's the answer: roll back to v42."}
+EVT content.delta on discord:TH1 {"partId":"part-1","kind":"text","delta":""}
+EVT content.completed on discord:TH1 {"partId":"part-1","kind":"text","phase":"reply","value":"Here's the answer: roll back to v42."}
   → DELETE /channels/C1/messages/M1/reactions/👀/@me ⇒ 204

@@ -44,13 +44,14 @@ registerModelPricing({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
 type _EveSession = ReturnType<AttachSessionFn>;
 const _eveLookupShapePin: (attach: AttachSessionFn) => {
   byDurableId: (id: string) => _EveSession;
-  replay: (s: _EveSession) => Promise<ReadableStream<unknown>>;
-  probe: (s: _EveSession) => Promise<number>;
+  replay: (s: _EveSession) => AsyncIterable<unknown>;
 } = (attach) => ({
   byDurableId: (id: string) => attach(id),
-  replay: async (s) => await s.getEventStream({ startIndex: 0 }),
-  probe: async (s) => await s.getStreamTailIndex(),
+  replay: (s) => s.stream({ startIndex: 0, follow: false, signal: AbortSignal.timeout(1) }),
 });
+// eve's public Session type no longer declares getStreamTailIndex (it moved to the internal handle
+// type), so the probe has no compile-time pin. probeSessionExists treats a missing method as
+// "unknown", never "missing", and the drain backstop below covers that path.
 void _eveLookupShapePin;
 
 const SECRET = "control-read-test-token";
@@ -455,32 +456,50 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
-  const makeStream = (events: unknown[], park = false): ReadableStream<unknown> => {
-    let i = 0;
-    return new ReadableStream<unknown>({
-      pull(controller) {
-        if (i < events.length) {
-          controller.enqueue(events[i++]);
-          return;
-        }
-        if (!park) controller.close();
-      },
-    });
+  type FixtureEvent = { type: string; data: unknown; scope?: { turnId?: string; runId?: string }; meta: { at: string; position: { line: number; index: number }; endOfLine: boolean } };
+  let lastSignal: AbortSignal | undefined;
+  const makeStream = (events: readonly FixtureEvent[], park: boolean, startIndex: number, signal: AbortSignal | undefined, failFirst = false): AsyncIterable<unknown> => {
+    lastSignal = signal;
+    return (async function* () {
+      if (failFirst) throw new Error("no such session");
+      for (const e of events) if (e.meta.position.line >= startIndex) yield e;
+      if (park) {
+        await new Promise<void>((resolve) => {
+          if (signal === undefined) return;
+          if (signal.aborted) resolve();
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
+    })();
   };
-  const ev = (type: string, data: unknown, at = "2026-03-07T16:10:00.000Z") => ({ type, data, meta: { at } });
+  const lineOf = (line: number, ...events: [string, unknown][]): FixtureEvent[] =>
+    events.map(([type, data], index) => ({
+      type,
+      data,
+      meta: { at: "2026-03-07T16:10:00.000Z", position: { line, index }, endOfLine: index === events.length - 1 },
+    }));
   const completedEvents = [
-    ev("session.started", {}),
-    ev("turn.started", { turnId: "t1", sequence: 1 }),
-    ev("message.received", { message: "hi", turnId: "t1", sequence: 1 }),
-    ev("reasoning.completed", { reasoning: "thinking about it" }),
-    ev("actions.requested", { actions: [{ callId: "c1", toolName: "memory_read", input: {} }], turnId: "t1" }),
-    ev("action.result", { status: "completed", result: { callId: "c1", toolName: "memory_read", output: "recalled X" } }),
-    ev("message.completed", { message: "the answer", finishReason: "stop" }),
-    ev("step.completed", { usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.01 }, generationId: "gen_1" }),
-    ev("session.completed", {}),
+    ...lineOf(0, ["session.started", {}]),
+    ...lineOf(1, ["delivery.admitted", { deliveryId: "d1" }], ["turn.started", { turnId: "t1" }], ["delivery.consumed", { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: "hi" }] }]),
+    ...lineOf(2, ["content.completed", { partId: "p1", kind: "reasoning", value: "thinking about it", phase: "narration" }]),
+    ...lineOf(3, ["call.requested", { callId: "c1", owner: { turnId: "t1" }, capability: { kind: "tool", name: "memory_read" }, input: {} }]),
+    ...lineOf(4, ["call.settled", { callId: "c1", outcome: "completed", output: "recalled X" }]),
+    ...lineOf(
+      5,
+      ["content.completed", { partId: "p2", kind: "text", value: "the answer", phase: "reply" }],
+      ["model.settled", { runId: "r1", outcome: "completed", finishReason: "stop", generationId: "gen_1" }],
+      ["usage.recorded", { kind: "model", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.01 } }],
+    ),
+    ...lineOf(6, ["turn.settled", { turnId: "t1", outcome: "completed" }], ["delivery.settled", { deliveryId: "d1", outcome: "handled" }], ["session.ended", { outcome: "completed" }]),
   ];
-  const parkedEvents = [ev("session.started", {}), ev("turn.started", { turnId: "t1" }), ev("message.received", { message: "parked" })];
+  const COMPLETED_LINES = 7;
+  const parkedEvents = [
+    ...lineOf(0, ["session.started", {}]),
+    ...lineOf(1, ["turn.started", { turnId: "t1" }], ["delivery.consumed", { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: "parked" }] }]),
+  ];
+  const partialEvents = [...parkedEvents, { ...lineOf(2, ["call.requested", {}], ["call.started", {}])[0]! }];
   let lastStartIndex = -1;
+  let lastFollow: boolean | undefined;
   let probeCalls = 0;
   const tailFor = (id: string): number => (id === "wrun_parked" ? parkedEvents.length - 1 : completedEvents.length - 1);
   const getSession = ((id: string) => ({
@@ -490,19 +509,23 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
       if (id === "wrun_gone" || id.includes("oe-sup:g")) return -1;
       return tailFor(id);
     },
-    getEventStream: async (o?: { startIndex?: number }) => {
+    stream: (o?: { startIndex?: number; follow?: boolean; signal?: AbortSignal }) => {
       lastStartIndex = o?.startIndex ?? 0;
-      if (id === "wrun_missing") throw new Error("no such session");
-      if (id === "wrun_gone" || id.includes("oe-sup:g")) return makeStream([], true);
-      if (id === "wrun_parked") return makeStream(parkedEvents, true);
-      return makeStream(completedEvents, false);
+      lastFollow = o?.follow;
+      if (id === "wrun_tail") return makeStream(parkedEvents, false, lastStartIndex, o?.signal);
+      if (id === "wrun_scoped") return makeStream([{ ...lineOf(0, ["model.settled", { runId: "r1", outcome: "completed" }])[0]!, scope: { turnId: "t1", runId: "r1" } } as FixtureEvent], false, 0, o?.signal);
+      if (id === "wrun_missing") return makeStream([], false, 0, o?.signal, true);
+      if (id === "wrun_gone" || id.includes("oe-sup:g")) return makeStream([], true, 0, o?.signal);
+      if (id === "wrun_parked") return makeStream(parkedEvents, true, lastStartIndex, o?.signal);
+      if (id === "wrun_partial") return makeStream(partialEvents, true, lastStartIndex, o?.signal);
+      return makeStream(completedEvents, false, lastStartIndex, o?.signal);
     },
   })) as unknown as Parameters<typeof handleSessionTranscriptRead>[1];
   const getSessionNoProbe = ((id: string) => ({
-    getEventStream: async (o?: { startIndex?: number }) => {
+    stream: (o?: { startIndex?: number; signal?: AbortSignal }) => {
       lastStartIndex = o?.startIndex ?? 0;
-      if (id === "wrun_gone") return makeStream([], true);
-      return makeStream(completedEvents, false);
+      if (id === "wrun_gone") return makeStream([], true, 0, o?.signal);
+      return makeStream(completedEvents, false, lastStartIndex, o?.signal);
     },
   })) as unknown as Parameters<typeof handleSessionTranscriptRead>[1];
 
@@ -544,23 +567,48 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   };
   ok(body.sessionId === "wrun_done" && body.startIndex === 0, "transcript: body echoes sessionId + startIndex");
   ok(body.count === completedEvents.length && body.events.length === completedEvents.length, "transcript: replays every recorded event");
-  ok(body.complete === true && body.nextIndex === completedEvents.length, "transcript: a terminal session.completed sets complete:true + nextIndex");
-  ok(body.events[0]!.type === "session.started" && body.events[0]!.index === 0, "transcript: events keep stream order + carry a 0-based index");
-  ok(body.events.every((e, i) => e.index === i), "transcript: indices are contiguous from startIndex");
+  ok(body.complete === true && body.nextIndex === COMPLETED_LINES, "transcript: a terminal session.ended sets complete:true, and nextIndex counts stored LINES, not events");
+  ok(body.events[0]!.type === "session.started" && body.events[0]!.index === 0, "transcript: events keep stream order + carry their 0-based line");
+  ok(
+    body.events.every((e, i) => e.index === completedEvents[i]!.meta.position.line),
+    "transcript: each event's index is its stored line, so the events of one line share it",
+  );
   ok(body.events[0]!.at === "2026-03-07T16:10:00.000Z", "transcript: each event hoists its meta.at timestamp");
-  const actionResult = body.events.find((e) => e.type === "action.result");
-  ok((actionResult?.data as { status?: string } | undefined)?.status === "completed", "transcript: tool-result data (status/output) is preserved unmodified");
-  const stepDone = body.events.find((e) => e.type === "step.completed");
-  ok((stepDone?.data as { generationId?: string } | undefined)?.generationId === "gen_1", "transcript: step.completed usage/generationId is preserved");
+  const callSettled = body.events.find((e) => e.type === "call.settled");
+  ok((callSettled?.data as { outcome?: string } | undefined)?.outcome === "completed", "transcript: tool-result data (outcome/output) is preserved unmodified");
+  const usage = body.events.find((e) => e.type === "usage.recorded");
+  const scoped = (await (await getTranscript("wrun_scoped", "", SECRET)).json()) as { events: { type: string; scope?: { turnId?: string; runId?: string } }[] };
+  ok(scoped.events[0]?.scope?.turnId === "t1" && scoped.events[0]?.scope?.runId === "r1", "🔴 transcript: each event keeps eve's scope (its turn and run) — on v27 most events name their turn only there");
+  ok(body.events.every((e) => !("scope" in e)), "…and an event with no scope gets no scope key");
+  ok((usage?.data as { usage?: { costUsd?: number } } | undefined)?.usage?.costUsd === 0.01, "transcript: usage.recorded data is preserved");
 
-  const capped = (await (await getTranscript("wrun_done", "?limit=2", SECRET)).json()) as { count: number; complete: boolean; nextIndex: number };
-  ok(capped.count === 2 && capped.complete === false && capped.nextIndex === 2, "transcript: ?limit caps the page (complete:false, nextIndex=cursor)");
+  const capped = (await (await getTranscript("wrun_done", "?limit=2", SECRET)).json()) as { count: number; complete: boolean; nextIndex: number; events: { index: number }[] };
+  ok(
+    capped.count === 4 && capped.complete === false && capped.nextIndex === 2 && capped.events.every((e) => e.index < 2),
+    "transcript: ?limit stops at a LINE boundary — a page never splits a stored line (complete:false, nextIndex=next line)",
+  );
 
-  const paged = (await (await getTranscript("wrun_done", "?startIndex=5", SECRET)).json()) as { startIndex: number; nextIndex: number; count: number };
-  ok(lastStartIndex === 5 && paged.startIndex === 5 && paged.nextIndex === 5 + paged.count, "transcript: ?startIndex is passed to getEventStream + drives nextIndex");
+  const paged = (await (await getTranscript("wrun_done", "?startIndex=5", SECRET)).json()) as { startIndex: number; nextIndex: number; count: number; complete: boolean };
+  ok(
+    lastStartIndex === 5 && paged.startIndex === 5 && paged.count === 6 && paged.nextIndex === COMPLETED_LINES && paged.complete === true,
+    "transcript: ?startIndex is a line position, passed to session.stream, and drives nextIndex",
+  );
 
-  const parked = (await (await getTranscript("wrun_parked", "?idleMs=50", SECRET)).json()) as { count: number; complete: boolean };
-  ok(parked.count === parkedEvents.length && parked.complete === false, "transcript: a parked session returns recorded events with complete:false (idle-stop, no hang)");
+  const parked = (await (await getTranscript("wrun_parked", "?idleMs=50", SECRET)).json()) as { count: number; complete: boolean; nextIndex: number };
+  ok(parked.count === parkedEvents.length && parked.complete === false && parked.nextIndex === 2, "transcript: a parked session returns recorded events with complete:false (idle-stop, no hang)");
+  ok(lastFollow === false, "transcript: the route reads recorded history (follow:false), so a stranded session's history still reads instead of throwing");
+  const tail = (await (await getTranscript("wrun_tail", "", SECRET)).json()) as { count: number; complete: boolean; nextIndex: number };
+  ok(
+    tail.count === parkedEvents.length && tail.complete === false && tail.nextIndex === 2,
+    "🔴 transcript: a stream that ends at the durable tail with no session.ended is NOT complete — only session.ended ends a run",
+  );
+  ok(lastSignal?.aborted === true, "transcript: the drain aborts the stream's signal when it stops, so a pending read is released");
+
+  const partial = (await (await getTranscript("wrun_partial", "?idleMs=50", SECRET)).json()) as { count: number; nextIndex: number; events: { type: string }[] };
+  ok(
+    partial.count === parkedEvents.length && partial.nextIndex === 2 && !partial.events.some((e) => e.type === "call.requested"),
+    "transcript: a line read only in part is not committed — the next page reads it again whole",
+  );
 
   ok((await getTranscript("wrun_done", "?startIndex=-1", SECRET)).status === 400, "transcript: negative startIndex → 400");
   ok((await getTranscript("wrun_done", "?limit=0", SECRET)).status === 400, "transcript: limit=0 → 400");

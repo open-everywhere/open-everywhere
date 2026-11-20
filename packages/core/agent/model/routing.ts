@@ -5,7 +5,7 @@ import { getSettings } from "../settings/settings.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { currentWorkerWake } from "../access/worker-seat-state.js";
-import { noteWakeAttachments } from "../access/worker-continuation.js";
+import { noteWakeAttachmentsFrom } from "../access/worker-continuation.js";
 import { stampModelCall } from "./model-stamp.js";
 import { noteTurnStep, reportStepBoundary, withWrapUpNotice, turnBackstopModel, wrapUpNotice, boundaryStopReply, isTurnEndingTier } from "./step-boundary.js";
 import type { ModelPolicy } from "./policy.js";
@@ -15,6 +15,10 @@ import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/wind
 import { routineModelRoleStamped } from "../routines/routine.js";
 import { captureArmed, captureSiteFrom, noteUncalledModelStep, withCapture } from "./call-capture.js";
 import { withStreamDropRetry } from "./stream-drop-retry.js";
+import { withEmptyStopReissueDeps } from "./empty-stop-reissue.js";
+import { evidenceSessionIdOf, withWorkerToolsetEvidence } from "./worker-toolset-evidence.js";
+import { withSeatToolCut } from "./seat-tool-cut.js";
+import { withWorkSessionCancelFence } from "../access/work-cancel-fence.js";
 import {
   abBucketKey,
   abThreadKey,
@@ -309,17 +313,35 @@ async function resolveRoutedPrimaryModel<TModel extends RoutableModel>(
   return makeRoutedModel(() => route, defaults.primary, deps.backend);
 }
 
+/**
+ * Resolves the primary model for one model call, whichever route, backstop or wrap-up model the call
+ * ends up on. Every call of the result offers only the tools the seat holds (`seat-tool-cut.ts`, on
+ * the call's input), and a work session's `eve__task_cancel` call is fenced
+ * (`access/work-cancel-fence.ts`, on the call's output). The two wrappers act on different sides of
+ * the call, so their order does not change either one.
+ */
 export async function resolvePrimaryModel<TModel extends RoutableModel>(
   ctx: BindableContext,
   defaults: { readonly primary: { readonly id: string } },
   deps: RoutingDeps<TModel>,
   event?: unknown,
 ): Promise<TModel> {
-  noteWakeAttachments((ctx as { messages?: unknown }).messages);
+  return withSeatToolCut(withWorkSessionCancelFence(await resolveUnwrappedPrimaryModel(ctx, defaults, deps, event)));
+}
+
+async function resolveUnwrappedPrimaryModel<TModel extends RoutableModel>(
+  ctx: BindableContext,
+  defaults: { readonly primary: { readonly id: string } },
+  deps: RoutingDeps<TModel>,
+  event?: unknown,
+): Promise<TModel> {
+  await noteWakeAttachmentsFrom(ctx);
   const boundary = await noteTurnStep(ctx, event);
   const captureSite = captureArmed() ? captureSiteFrom(ctx, event) : undefined;
-  const capturingDeps = withCapture(deps, captureSite);
-  const retryingDeps = withStreamDropRetry(capturingDeps, currentWorkerWake());
+  const worker = currentWorkerWake();
+  const evidenceDeps = worker ? withWorkerToolsetEvidence(deps, evidenceSessionIdOf(ctx)) : deps;
+  const capturingDeps = withCapture(evidenceDeps, captureSite);
+  const retryingDeps = withEmptyStopReissueDeps(withStreamDropRetry(capturingDeps, worker));
   if (isTurnEndingTier(boundary.tier)) {
     reportStepBoundary(ctx, boundary);
     noteUncalledModelStep(captureSite);

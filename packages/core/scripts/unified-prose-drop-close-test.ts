@@ -5,6 +5,23 @@ import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+// eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+// projection. A direct call carries an empty view.
+const v27Completed = (adapter: object) => async (event: unknown, ctx: unknown): Promise<void> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (adapter as Record<string, (e: unknown, c: unknown) => Promise<unknown>>)["content.completed"]!;
+  await handler(event, { ...(ctx as object), view: fold.emptySessionView() });
+};
+// eve 1.x delivers a final message as `content.completed` (a text part in the "reply" phase).
+const asV27Content = (f: { readonly finishReason: string; readonly message: string | null; readonly turnId?: string }) => ({
+  type: "content.completed" as const,
+  ...(f.turnId !== undefined ? { scope: { turnId: f.turnId } } : {}),
+  data: { partId: "part-1", kind: "text", phase: f.finishReason === "stop" ? "reply" : "narration", value: f.message ?? "" },
+});
+
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-prose-drop-close-")), "ops.sqlite3");
 
@@ -57,8 +74,16 @@ const registerClosingArm = (): void =>
   });
 registerClosingArm();
 
-const onCompleted = unified.adapter["message.completed"]!;
-const onTurnCompleted = unified.adapter["turn.completed"]!;
+const onCompleted = v27Completed(unified.adapter);
+// eve 1.x settles a turn with `turn.settled`; a completed turn carries outcome "completed".
+const onTurnCompleted = async (e: { readonly turnId: string; readonly sequence: number }, ctx: unknown): Promise<unknown> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (unified.adapter as Record<string, (ev: unknown, c: unknown) => Promise<unknown>>)["turn.settled"]!;
+  return await handler({ type: "turn.settled", scope: { turnId: e.turnId }, data: { outcome: "completed" } }, { ...(ctx as object), view: fold.emptySessionView() });
+};
 const windowChannel = { continuation: { token: WINDOW_TOKEN }, state: {} };
 
 const inWindowTurn = (sessionId: string, wakeId: string, turnId: string) => {
@@ -83,7 +108,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await openWake("wake-prose-close-1", "C_CLOSE_1");
   await inWindowTurn("wrun_close", "wake-prose-close-1", "turn-close")(async () => {
     const before = (await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).length;
-    await onCompleted({ finishReason: "stop", message: "Here is what I found about the release." }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "Here is what I found about the release." }), windowChannel);
     const rows = await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" });
     ok(rows.length - before === 1, "(precondition) the prose was DROPPED and audited — without the drop this branch is never reached");
   });
@@ -99,7 +124,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await inWindowTurn("wrun_replied", "wake-prose-close-2", "turn-replied")(async () => {
     markRepliedThisTurn("turn-replied");
     markWakeRepliedThisTurn("turn-replied", "wake-prose-close-2");
-    await onCompleted({ finishReason: "stop", message: "…and that is the summary." }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "…and that is the summary." }), windowChannel);
   });
   ok(closes.length === before, "🔴 NEGATIVE CONTROL: a turn whose `reply` tool answered THIS wake closes nothing here — the post owns the session's ending");
 }
@@ -110,7 +135,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await inWindowTurn("wrun_sibling", "wake-prose-close-2b", "turn-sibling")(async () => {
     markRepliedThisTurn("turn-sibling");
     markWakeRepliedThisTurn("turn-sibling", "wake-some-other-conversation");
-    await onCompleted({ finishReason: "stop", message: "…and here is the other half." }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "…and here is the other half." }), windowChannel);
   });
   ok(closes.length === before + 1, `🔴 a turn that answered a SIBLING wake still closes THIS wake's session — got ${closes.length - before} closes`);
   ok(closes[closes.length - 1]?.channelId === "C_CLOSE_2B", "…on the wake that went unanswered, never on the sibling's");
@@ -120,7 +145,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await openWake("wake-prose-close-3", "C_CLOSE_3");
   const before = closes.length;
   await inWindowTurn("wrun_silent", "wake-prose-close-3", "turn-silent")(async () => {
-    await onCompleted({ finishReason: "stop", message: "NO_REPLY" }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "NO_REPLY" }), windowChannel);
   });
   ok(closes.length === before + 1, `🔴 a silent turn still closes the session EXACTLY ONCE — got ${closes.length - before}`);
   ok(closes[closes.length - 1]?.channelId === "C_CLOSE_3", "…on that wake's own origin");
@@ -131,7 +156,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await openWake("wake-prose-close-4", "C_CLOSE_4");
   const before = closes.length;
   await inWindowTurn("wrun_noclose", "wake-prose-close-4", "turn-noclose")(async () => {
-    await onCompleted({ finishReason: "stop", message: "thinking out loud" }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "thinking out loud" }), windowChannel);
   });
   ok(closes.length === before, "NEGATIVE CONTROL: an arm without the member is unchanged by this ticket — nothing is closed");
   ok(posts.length === 0, "…and still nothing of the model's text reached the room");
@@ -166,7 +191,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await openWake("wake-ends-turn-6c", "C_CLOSE_6C");
   const before = closes.length;
   await inWindowTurn("wrun_ends_c", "wake-ends-turn-6c", "turn-ends-6c")(async () => {
-    await onCompleted({ finishReason: "stop", message: "NO_REPLY", turnId: "turn-ends-6c" }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "NO_REPLY", turnId: "turn-ends-6c" }), windowChannel);
     await onTurnCompleted({ turnId: "turn-ends-6c", sequence: 1 }, windowChannel);
   });
   ok(closes.length === before + 1, `NEGATIVE CONTROL: message.completed decided the turn, so turn.completed adds no second close — got ${closes.length - before}`);
@@ -179,7 +204,7 @@ ok(isUnifiedWakeOrigin(originFor("C_ANY")), "(fixture sanity) the origin codec i
   await inWindowTurn("wrun_prewait", "wake-prewait-7", "turn-prewait-7")(async () => {
     const drops = (await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).length;
     notePendingDelegation("turn-prewait-7", "agent-prewait7", "wake-prewait-7");
-    await onCompleted({ finishReason: "stop", message: "let me check with a worker", turnId: "turn-prewait-7" }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "let me check with a worker", turnId: "turn-prewait-7" }), windowChannel);
     ok((await readAudit({ org: ORG, action: "turn.supervisor_prose_dropped" })).length === drops, "🔴 pre-wait text while a worker owes the wake is NOT dropped as an ending");
     ok(closes.length === before, "🔴 …and closes no session under the answer still coming");
     noteDelegationSettled("turn-prewait-7", "agent-prewait7");

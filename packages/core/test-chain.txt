@@ -51,6 +51,7 @@ test:work-search
 test:member-grant
 test:member-plane
 test:settings
+test:session-usage-limit
 test:policy-pages
 test:capabilities
 test:resolver
@@ -69,6 +70,7 @@ test:instructions
 test:seat-prompt
 test:attachment-hydration-hazard
 test:auth-attribute-provenance
+test:eve-auth-writers
 test:credential-isolation
 test:connector-scope
 test:connector-scope-internals
@@ -85,6 +87,7 @@ test:credential-grant-never-tier
 test:connector-op-arm
 test:connector-op-hint
 test:connector-op-audit
+test:connector-attempt-audit
 test:provider
 test:memory-resolve
 test:memory-write-fence
@@ -164,6 +167,7 @@ test:eve-patch-probe
 test:eve-patch-refusal-mechanism
 test:zod-seam
 test:step-boundary
+test:empty-stop-reissue
 test:model-call-capture
 test:operational
 test:audit-chain-serialisation
@@ -201,6 +205,7 @@ test:control
 test:control-http
 test:control-auth
 test:control-oauth
+test:eve-info-access
 test:control-read
 test:control-write
 test:control-mcp-store
@@ -236,8 +241,7 @@ test:requester-identity
 test:wake-delta
 test:session-tail
 test:untrusted
-test:untrusted-projection
-test:untrusted-projection-patch
+test:authored-projection
 test:response-behaviour-scoring
 test:compound-ask-scoring
 test:eve-compaction-anchor
@@ -296,6 +300,7 @@ test:github-credential
 test:react
 test:no-reply
 test:stand-down-ack
+test:stand-down-hold-guard
 test:stand-down-trailing-prose
 test:supervisor-reanchor
 test:rotation-trigger
@@ -316,6 +321,10 @@ test:session-id-codec
 test:subagent-session
 test:native-subagent
 test:background-task-settlement
+test:task-call-edges
+test:work-settlement-edges
+test:shared-sandbox-lane
+test:just-bash-exec-lane
 test:task-tool-names
 test:task-call-link
 test:parked-child-lifecycle
@@ -359,6 +368,10 @@ test:approval-preview
 test:worker-capabilities
 test:worker-continuation
 test:work-forward
+test:work-files-merge-race
+test:work-files-repoint-race
+test:work-result-carry
+test:work-fresh-carry-forward
 test:forwarded-asks
 test:fire-work
 test:no-native-hitl
@@ -368,7 +381,6 @@ test:work-generation
 test:nullable-optional-fields
 test:subagent-output-nullable
 test:eve-approval-response
-test:dynamic-replay
 test:dynamic-entry-collision
 test:dynamic-native-heal
 test:window-gate-lint
@@ -433,6 +445,7 @@ test:egress-denial-log
 test:web-fetch-reach
 test:host-egress-proxy
 test:lean-seat
+test:seat-cut
 test:worker-toolset
 test:seat-read-recovery
 test:chat-read-container
@@ -465,6 +478,7 @@ test:credential-grant-borrow
 test:credential-grant-approve
 test:grant-mcp-transport
 test:credential-grant-borrow-mount
+test:credential-grant-schema-fence
 test:credential-grant-ask
 test:credential-grant-mount
 test:credential-grant-conversation-scope
@@ -492,6 +506,9 @@ test:own-account-ask-audit
 test:own-account-egress
 test:github-acting-identity
 test:stand-down-door
+test:stand-down-verbs
+test:stand-down-writers
+test:stand-down-gate-lint
 test:standing-seat
 test:seat-catch-up
 test:wake-timing
@@ -509,9 +526,8 @@ test:boot-notices
 test:reserved-refs
 test:deploy-contract
 test:oe-status
-test:connection-execute-fence
+test:connector-fence-taint
 test:eve-authored-boundary
-test:browser-durable-schema
 test:surface-evidence
 test:temp-dir
 test:postgres-wiring-boot
@@ -555,6 +571,12 @@ test:discord-dm-card
 test:list-fixture
 test:secret-adopt-route
 test:outbound-filter
+test:connector-tools
+test:connector-mount
 test:cross-room-send
 test:result-controls
 test:requester-capture-fence
+test:seat-toolset-stub
+test:fire-reach-hook-order
+test:turn-join-fence
+test:unified-send-prefix

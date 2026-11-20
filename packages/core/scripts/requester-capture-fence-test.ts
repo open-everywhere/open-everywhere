@@ -33,7 +33,7 @@ registerSlackFixtureMapper();
 registerSlackFixtureCodec();
 
 const requesterHook = (await import("../agent/hooks/requester-messages.js")).default as unknown as {
-  events: { "message.received": (event: unknown, ctx: unknown) => void };
+  events: { "delivery.consumed": (event: unknown, ctx: unknown) => void };
 };
 const { captureEligible } = await import("../agent/hooks/requester-messages.js");
 
@@ -96,7 +96,7 @@ function deliver(attributes: Record<string, unknown>, shape: CtxShape = {}, text
   return contextStorage.run(new ContextContainer(), () => {
     const ctx = ctxOf(attributes, shape);
     noteContinuationTurn(ctx as never);
-    requesterHook.events["message.received"]({ data: { message: text, turnId: "turn_0" } }, ctx);
+    requesterHook.events["delivery.consumed"]({ data: { deliveryId: "d1", parts: [{ kind: "text", text: text }], turnId: "turn_0" } }, ctx);
     const judge = judgeContextOf({ tool: "create_routine", args: {}, unattended: false } as never, { registryVerdict: "ask" } as never);
     return {
       eligible: captureEligible(ctx as never),
@@ -117,7 +117,7 @@ function refusedByStamp(label: string, bag: Record<string, unknown>, stamp: stri
   ok(bag[stamp] !== undefined, `${label}: precondition — the builder's bag carries ${stamp}`);
   const r = deliver(bag, shape);
   eq(r.eligible, false, `🔴 ${label}: the delivery is NOT capture-eligible`);
-  eq(r.messages, [], `🔴 ${label}: the delivery reaches message.received and the requester slot stays EMPTY`);
+  eq(r.messages, [], `🔴 ${label}: the delivery reaches delivery.consumed and the requester slot stays EMPTY`);
   eq(r.asks, [], `${label}: …and no ask is recorded`);
   eq(r.judgeMessages, [], `${label}: …so the judge context carries no requester message`);
   const stripped = deliver(without(bag, stamp), shape);
@@ -239,7 +239,7 @@ function runMatrix(mode: string): void {
     const boundary = (ctx: BindableContext) => noteTurnBoundary(currentTurnId(ctx), deliveryStampOf(ctx));
     const receive = (ctx: BindableContext) => {
       noteContinuationTurn(ctx as never);
-      requesterHook.events["message.received"]({ data: { message: memberEnvelope("wake_rcf"), turnId: currentTurnId(ctx) } }, ctx);
+      requesterHook.events["delivery.consumed"]({ data: { deliveryId: "d1", parts: [{ kind: "text", text: memberEnvelope("wake_rcf") }], turnId: currentTurnId(ctx) } }, ctx);
       return requesterMessagesThisTurn();
     };
     const settle = (turn1Nonce: string, liveNonce: string) =>

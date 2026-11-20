@@ -9,6 +9,8 @@ import { inheritedDeliveryThisTurn } from "../access/task-wake-signal.js";
 import { currentTurnId, deliveryStampOf, FIRE_UNATTENDED_ATTR, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import { OE_CHAT_NONMEMBER_ATTR } from "../identity/non-member.js";
 import { carriesNonRequesterStamp } from "../identity/non-requester.js";
+import { optional } from "./control-refusal.js";
+import { deliveredText } from "./event-reads.js";
 
 function currentAttrs(ctx: HookContext): Record<string, unknown> | undefined {
   return (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;
@@ -33,10 +35,11 @@ export function captureEligible(ctx: HookContext): boolean {
   return true;
 }
 
-function captureReceivedMessage(event: HookEvent<"message.received">, ctx: HookContext): void {
+function captureReceivedMessage(event: HookEvent<"delivery.consumed">, ctx: HookContext): void {
   try {
     if (!captureEligible(ctx)) return;
-    const { message, turnId } = event.data;
+    const { turnId } = event.data;
+    const message = deliveredText(event.data);
     if (typeof message !== "string") return;
     const turn = typeof turnId === "string" ? turnId : undefined;
     recordRequesterMessage(turn, message);
@@ -60,12 +63,9 @@ export function requesterAskOf(text: string): RequesterAsk | undefined {
 
 export default defineHook({
   events: {
-    "message.received": (event, ctx) => captureReceivedMessage(event, ctx),
-    "turn.started": async (_event, ctx) => {
-      try {
-        await adoptForwardedRequesterAsks(ctx as unknown as BindableContext);
-      } catch {
-      }
-    },
+    "delivery.consumed": optional("requester-messages", (event, ctx) => captureReceivedMessage(event, ctx)),
+    "turn.started": optional("requester-messages", async (_event, ctx) => {
+      await adoptForwardedRequesterAsks(ctx as unknown as BindableContext);
+    }),
   },
 });

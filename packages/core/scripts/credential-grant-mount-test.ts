@@ -28,7 +28,7 @@ import { grantMcpTransport } from "../agent/connections/grant-mcp-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
 import { GRANT_STANDING_MAX_MS } from "../agent/access/credential-grant.js";
-import { _resetDynamicVariantsForTest, mountedEntryCollisions, preRegisterDynamicEntry, registerDynamicVariant, type ReplayableToolEntry } from "../agent/access/window-gated.js";
+import { _resetMountedVariantsForTest, authoredModelProjectionFor, registeredMountedEntries, registerMountedVariant, type MountedToolEntry, evaluateDynamic } from "../agent/access/window-gated.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { resolvePartition } from "../agent/memory/partition.js";
@@ -41,6 +41,9 @@ import { connectorReadsThisTurn } from "../agent/channels/reply-provenance.js";
 import { BORROWED_READ_OP, BORROWED_RECORD_KIND } from "../agent/channels/read-reach.js";
 import { windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -78,7 +81,7 @@ registerPostArm({
 
 _resetGrantBorrowTransportsForTest();
 _resetGrantRoomNoticeForTest();
-_resetDynamicVariantsForTest();
+_resetMountedVariantsForTest();
 
 const MCP_URL = "https://mcp.notion.com/mcp";
 const VENDOR_TOOL = "notion-fetch";
@@ -174,7 +177,7 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
 }
 
 async function inSession<T>(session: FakeSession, fn: () => T | Promise<T>): Promise<T> {
-  return eveContextStorage().run(session, fn);
+  return eveContextStorage().run(asEveStore(session), fn);
 }
 
 console.log("1. ask -> owner card -> approve -> mount -> compose -> audit:");
@@ -199,12 +202,31 @@ for (const mode of ["once", "session"] as const) {
   eq(grant?.tier, "read", `[${mode}] the tier is the connector-op classifier answer for this vendor tool, pinned at mint`);
   grantIds[mode] = grant?.id ?? "";
 
-  const mounted = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["session.started"](
-    { type: "session.started" },
-    seatCtx(scopeKey),
-  )) as Record<string, ReplayableToolEntry> | null;
+  const mounted = (await evaluateDynamic(grantTools, seatCtx(scopeKey))) as Record<string, MountedToolEntry> | null;
   ok(mounted !== null && Object.keys(mounted).length === 1, `[${mode}] the resolver mounts exactly one tool for this chat`);
   eq(Object.keys(mounted ?? {}), [GRANT_NAME], `[${mode}] mounted under the name the ASK pinned -- owner, connector, tool slug and target label`);
+  {
+    const saved = new Map<string, unknown>();
+    const memo = async (key: unknown, fn: () => unknown) => {
+      const k = JSON.stringify(key);
+      if (!saved.has(k)) saved.set(k, JSON.parse(JSON.stringify(await fn())));
+      return saved.get(k);
+    };
+    const inTurn = { ...(seatCtx(scopeKey) as Record<string, unknown>), turn: { id: `turn-span-${mode}` }, memo };
+    const describe = async (): Promise<string | undefined> =>
+      ((await evaluateDynamic(grantTools, inTurn)) as Record<string, { description?: string }> | null)?.[GRANT_NAME]?.description;
+    const early = await describe();
+    const realNow = Date.now;
+    Date.now = () => realNow() + 10 * 60_000;
+    let late: string | undefined;
+    try {
+      late = await describe();
+    } finally {
+      Date.now = realNow;
+    }
+    ok(early !== undefined, `[${mode}] the grant mounts on a memoized turn`);
+    eq(late, early, `🔴 [${mode}] a later model call in the SAME turn offers the same description: the grant's time is fixed once per turn, so the prompt cache and the name registry stay stable`);
+  }
 
   const throughMount = (await mounted![GRANT_NAME].execute({ page_size: 10 }, seatCtx(scopeKey))) as { ok: boolean; refused?: string };
   eq(throughMount.ok ? "OK" : throughMount.refused, "unverified_requester", `[${mode}] the mounted entry reaches the broker and FAILS CLOSED with no verified requester`);
@@ -330,58 +352,16 @@ console.log("2b. the mounted description names the pin and points elsewhere for 
   ok(unreviewed.description.includes("no reviewed description for the exact Notion tool"), "…and the unreviewed marker still fires, which is the honest thing it CAN say");
 }
 
-console.log("3. two sessions, one mounted name, the installed eve:");
-const require2 = createRequire(import.meta.url);
-const eveRoot = dirname(require2.resolve("eve/package.json"));
-const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
-const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
-  validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): { execute: { closure: Record<string, unknown> } };
-};
-const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
-};
-const ownerFor = (name: string): Record<string, unknown> => ({ sessionId: "sess-credential-grant-mount", scope: "session", resolverSlug: name, entryKey: "_single", name });
-
+console.log("3. two grants under one mounted name: the name registry (the per-chat run is credential-grant-borrow-mount §6):");
 {
   const NAME = "grant__pat__read_page";
-  const alpha: ReplayableToolEntry = { execute: () => "GRANT-ALPHA" };
-  const beta: ReplayableToolEntry = { execute: () => "GRANT-BETA" };
-  registerDynamicVariant(NAME, "grant-alpha", alpha);
-  const variantOwner = ownerFor(NAME);
-  const alphaClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, alpha, variantOwner).execute.closure;
-  registerDynamicVariant(NAME, "grant-beta", beta);
-  lifecycle.validateDurableDynamicToolCallbacks(NAME, beta, variantOwner);
-  eq(alphaClosure, { entryKey: "grant-alpha" }, "eve persists the GRANT ID in session A's durable closure");
-  const bound = durable.lookupDurableDynamicCallback(variantOwner, "execute");
-  ok(typeof bound === "function", "eve bound one callback under the mounted name's owner scope");
-  eq(bound!(alphaClosure), "GRANT-ALPHA", "a replay driven from session A's closure runs session A's GRANT, though session B registered LAST");
-  eq(bound!({ entryKey: "grant-beta" }), "GRANT-BETA", "…and session B's closure still runs session B's grant");
-  assert.throws(() => bound!({}), /no variant key in its durable closure/u, "a closure with no grant id FAILS CLOSED — guessing which credential to spend is the defect this exists for");
+  const alpha: MountedToolEntry = { execute: () => "GRANT-ALPHA", toModelOutput: (o: unknown) => o };
+  const beta: MountedToolEntry = { execute: () => "GRANT-BETA", toModelOutput: (o: unknown) => o };
+  registerMountedVariant(NAME, "grant-alpha", alpha);
+  registerMountedVariant(NAME, "grant-beta", beta);
+  ok(registeredMountedEntries().get(NAME)?.size === 2, "both grants claim the mounted name in the registry");
+  assert.throws(() => authoredModelProjectionFor(NAME), /variant family has no single projection/u, "…and a variant family has no single projection to return, so the projection registry cannot vouch for one grant's fence");
   n++;
-}
-
-{
-  const NAME = "grant__pat__collided_read";
-  const alpha: ReplayableToolEntry = { execute: () => "GRANT-ALPHA" };
-  const beta: ReplayableToolEntry = { execute: () => "GRANT-BETA" };
-  preRegisterDynamicEntry(NAME, NAME, alpha);
-  preRegisterDynamicEntry(NAME, NAME, beta);
-  const collidedOwner = ownerFor(NAME);
-  const alphaClosure = lifecycle.validateDurableDynamicToolCallbacks(NAME, alpha, collidedOwner).execute.closure;
-  lifecycle.validateDurableDynamicToolCallbacks(NAME, beta, collidedOwner);
-  const bound = durable.lookupDurableDynamicCallback(collidedOwner, "execute");
-  eq(bound!(alphaClosure), "GRANT-BETA", "the pre-fix shape runs the WRONG grant from session A's closure — the measured defect, reproduced with a credential behind it");
-}
-
-console.log("4. mountedEntryCollisions over the grant names:");
-{
-  const collisions = mountedEntryCollisions();
-  const managed = collisions.find((c) => c.name === "grant__pat__read_page");
-  ok(managed !== undefined, "the grant name with two variants is reported as a multi-entry name");
-  ok(managed!.variantManaged, "…and it is VARIANT-MANAGED, which is what the offline gate requires");
-  eq(managed!.distinctExecuteCallbacks, 1, "…resolving to exactly ONE execute callback — a second would mean a descriptor was not overwritten");
-  const unmanaged = collisions.filter((c) => !c.variantManaged).map((c) => c.name);
-  eq(unmanaged, ["grant__pat__collided_read"], "the ONLY unmanaged collision is the deliberate negative control above");
 }
 
 console.log("5. once-mode under concurrency, through the broker:");
@@ -408,10 +388,7 @@ console.log("6. revoke, out-of-scope, no transport, unverified requester:");
   eq(refused.ok ? "OK" : refused.refused, "revoked", "the granted call now refuses `revoked`");
   ok(!refused.ok && refused.message.includes("revoked this grant") && refused.message.includes("Do not retry"), "…with copy that names WHO ended it and tells the model not to retry");
 
-  const mounted = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["session.started"](
-    { type: "session.started" },
-    seatCtx("session-session"),
-  )) as Record<string, ReplayableToolEntry> | null;
+  const mounted = (await evaluateDynamic(grantTools, seatCtx("session-session"))) as Record<string, MountedToolEntry> | null;
   eq(Object.keys(mounted ?? {}), [GRANT_NAME], "the REVOKED grant's tool is still mounted — mount on existence, refuse on state");
 }
 
@@ -754,9 +731,9 @@ console.log("10. a granted call records its pinned target on the turn's provenan
   ok(approved.approved, "the owner approves a session grant scoped to the lent conversation");
 
   const resolve = async (c: unknown): Promise<readonly string[]> => {
-    const out = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["turn.started"]({ type: "turn.started" }, c)) as Record<
+    const out = (await evaluateDynamic(grantTools, c)) as Record<
       string,
-      ReplayableToolEntry
+      MountedToolEntry
     > | null;
     return Object.keys(out ?? {});
   };

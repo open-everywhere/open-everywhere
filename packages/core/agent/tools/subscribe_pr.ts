@@ -1,8 +1,8 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, principalIdOf, resolveAccessFor } from "../access/request.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { addRoutine, getRoutine, newRoutineId } from "../routines/store.js";
@@ -205,10 +205,5 @@ export const subscribePrEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("subscribe_pr", "_single", subscribePrEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? subscribePrEntry : null),
-  },
-});
+export default sessionMountedTool("subscribe_pr", subscribePrEntry, (ctx) => githubWorkMount(ctx));

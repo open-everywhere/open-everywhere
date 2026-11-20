@@ -1,5 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { TurnAnchorRow, TurnAnchorWrite } from "../operational/store.js";
+import { UNIFIED_SEND_PREFIX } from "./window-key.js";
 
 export const TURN_ANCHOR_TTL_MS = 45 * 60_000;
 
@@ -50,12 +51,10 @@ export interface TurnAnchorQuery {
   readonly channelKey?: string;
 }
 
-const UNIFIED_TOKEN_PREFIX = "unified:";
-
 function windowKeySpellings(windowKey: string): readonly string[] {
-  return windowKey.startsWith(UNIFIED_TOKEN_PREFIX)
-    ? [windowKey, windowKey.slice(UNIFIED_TOKEN_PREFIX.length)]
-    : [windowKey, `${UNIFIED_TOKEN_PREFIX}${windowKey}`];
+  return windowKey.startsWith(UNIFIED_SEND_PREFIX)
+    ? [windowKey, windowKey.slice(UNIFIED_SEND_PREFIX.length)]
+    : [windowKey, `${UNIFIED_SEND_PREFIX}${windowKey}`];
 }
 
 export async function resolveTurnAnchor(org: string, q: TurnAnchorQuery): Promise<TurnAnchorRow | null> {

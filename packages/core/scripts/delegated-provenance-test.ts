@@ -141,7 +141,7 @@ function workerCtx(callId: string, turnId: string): BindableContext {
   } as unknown as BindableContext;
 }
 
-const hook = (connectorAudit.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> })["events"]!["action.result"]!;
+const hook = (await import("./_hook-view.js")).callSettledHandler(connectorAudit.default) as unknown as (e: unknown, c: unknown) => Promise<void>;
 
 const opResult = (toolName: string) => ({ data: { result: { callId: `call_${toolName}`, kind: "tool-result", toolName, output: {} }, status: "ok" } });
 

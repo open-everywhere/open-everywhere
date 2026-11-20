@@ -1,5 +1,6 @@
 import { isSessionLimitContinuationRequest } from "./session-park.js";
 import { WAKE_TARGET_TTL_MS } from "./unified-window.js";
+import type { InteractionOpenedData } from "eve/events";
 
 export const QUESTION_DROPPED_AUDIT_ACTION = "turn.question_dropped";
 
@@ -41,6 +42,20 @@ export function detectBridgeableInputRequest(requests: unknown): BridgeableQuest
     };
   }
   return undefined;
+}
+
+export function bridgeableQuestionOf(data: InteractionOpenedData): BridgeableQuestion | undefined {
+  const request = data.request;
+  if (request.kind === "sign-in" || request.kind === "budget") return undefined;
+  return detectBridgeableInputRequest([
+    {
+      requestId: data.interactionId,
+      kind: request.kind,
+      prompt: request.prompt,
+      options: request.options ?? [],
+      action: { toolName: data.origin?.call?.name },
+    },
+  ]);
 }
 
 export function renderQuestionForSurface(question: BridgeableQuestion): string {

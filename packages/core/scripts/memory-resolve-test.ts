@@ -228,7 +228,7 @@ const multiIndex = renderMemoryIndex(multi.reads);
 ok(multiIndex.includes("# Memory index") && multiIndex.includes("not** in your context"), "index: header + not-in-context note");
 ok(multiIndex.includes("memory/txn/") && multiIndex.includes("EDITING"), "index: writable silo listed with its dir + the edit-is-the-save hint");
 
-for (const route of ["file-tools", "agent", "none"] as const) {
+for (const route of ["file-tools", "agent", "work", "none"] as const) {
   const idx = renderMemoryIndex(multi.reads, [], route);
   ok(!idx.includes("remember"), `🔴 index/${route}: names NO \`remember\` tool — the verb was deleted, and a dead verb is how a save becomes prose`);
 }
@@ -311,10 +311,20 @@ ok(!renderMemoryIndex(multi.reads).includes("Unavailable"), "index: no failures 
 
 ok(renderMemoryIndex(multi.reads, [], "file-tools") === multiIndex, "recall: the default IS 'file-tools' — the on-disk copy is byte-identical");
 ok(multiIndex.includes("Read the relevant silo with your tools") && multiIndex.includes("read with file tools"), "recall/file-tools: the pre-OPE-121 wording is preserved verbatim");
+const HELD_LINE = "A fact this conversation already holds is not a lookup: something a person said earlier here, or your own earlier reply. Answer from it directly.";
 const delegIndex = renderMemoryIndex(multi.reads, [], "agent");
 ok(!delegIndex.includes("Read the relevant silo with your tools"), "recall/agent: a seat with no file tools is NOT told to use file tools");
 ok(delegIndex.includes("NO file tools") && delegIndex.includes("`agent`") && delegIndex.includes("mode: \"sync\""), "recall/agent: names the delegation verb + the mode, at the point of need");
 ok(delegIndex.includes("memory/txn/") && delegIndex.includes("delegating a lookup"), "recall/agent: still lists every silo path — they are what goes in the brief");
+{
+  const workIndex = renderMemoryIndex(multi.reads, [], "work");
+  ok(!workIndex.includes("`agent`") && !workIndex.includes("mode: \"sync\""), "🔴 recall/work: a forwarding seat is never told to call `agent`, which its per-wake verdict refuses (OPE-2795)");
+  ok(workIndex.includes("hand off a lookup: `work` with a `message`") && workIndex.includes(HELD_LINE), "🔴 recall/work: the lookup names `work`, after the held-in-conversation carve-out (OPE-2795)");
+  ok(workIndex.includes("hand it off THIS turn — `work` with a `message` of exactly this shape") && workIndex.includes("Open memory/txn/MEMORY.md with your file tools"), "🔴 recall/work: the save names `work` and carries the same brief a worker writes from (OPE-2795)");
+  ok(workIndex.includes("Only after the worker reports the line it WROTE") && workIndex.includes("arrives as the job's result on a later message"), "🔴 recall/work: …and the seat says Saved only after the job's result, which `work` returns on a later message");
+  ok(workIndex.includes("CHANGE that line to the new value instead of adding a second one") && workIndex.includes("the one with the LATER date is the current value"), "recall/work: the rewrite and newest-wins rules ride the `work` route as they ride `agent`");
+  ok(delegIndex.includes("`agent` with `mode: \"sync\"`"), "recall/agent/CONTROL: the work session's own route still names `agent`, which its verdict admits");
+}
 const noneIndex = renderMemoryIndex(multi.reads, [], "none");
 ok(noneIndex.includes("CANNOT read these files") && noneIndex.includes("can't check memory"), "recall/none: a seat with neither file tools nor delegation is told to SAY SO, not to bluff");
 ok(!noneIndex.includes("`agent`"), "recall/none: names no delegation verb it doesn't hold");

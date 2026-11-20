@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -14,7 +14,7 @@ import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import type { ChatDmArgs } from "../approvals/chat-dm.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -151,13 +151,8 @@ const dmPersonEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("dm_person", "_single", dmPersonEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!chatDmMount(ctx as BindableContext, safeDomains)) return null;
-      return dmPersonEntry;
-    },
-  },
+export default sessionMountedTool("dm_person", dmPersonEntry, (ctx) => {
+  if (!chatDmMount(ctx, safeDomains)) return false;
+  return true;
 });

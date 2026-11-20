@@ -15,4 +15,4 @@ IN  relay message M41 · guild G4 channel C4 (type 0) · from U_TALK4 · plain
       | </wake>
   ⇠ 200 ok
 EVT turn.started on discord:C4
-EVT message.completed on discord:C4 {"finishReason":"stop","message":"NO_REPLY"}
+EVT content.completed on discord:C4 {"partId":"part-1","kind":"text","phase":"reply","value":"NO_REPLY"}

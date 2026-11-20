@@ -1,3 +1,4 @@
+import { TOOL_CONSEQUENCE } from "../access/consequence.js";
 import { QUOTE_MAX, plainQuote } from "./plain-text.js";
 import { requesterWords } from "../channels/friendly-ids.js";
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
@@ -67,10 +68,17 @@ export function requireMcpServerProposeConfig(override?: AccessRequestsConfig): 
 }
 
 export function validateMcpServerProposal(declaration: McpServerDeclaration, declared: readonly McpServerDeclaration[]): void {
-  const mounted: readonly string[] = CONTRIBUTIONS.contributions.filter((c) => c.kind === "connection").map((c) => c.name);
+  const mounted: readonly string[] = CONTRIBUTIONS.contributions
+    .filter((c) => (c.kind as string) === "connection" || c.kind === "tool")
+    .map((c) => c.name);
   if (mounted.includes(declaration.name)) {
     throw new Error(
-      `a connection named "${declaration.name}" is already mounted by @open-everywhere/core, so \`oe build\` would refuse this entry. Pick another name (for example "${declaration.name}-mcp").`,
+      `a connection or tool named "${declaration.name}" is already mounted by @open-everywhere/core, so \`oe build\` would refuse this entry. Pick another name (for example "${declaration.name}-mcp").`,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(TOOL_CONSEQUENCE, declaration.name)) {
+    throw new Error(
+      `a tool named "${declaration.name}" already exists (a built-in tool of this deployment or of eve), and the server would mount at agent/tools/${declaration.name}.ts in its place. Pick another name (for example "${declaration.name}-mcp").`,
     );
   }
   validateMcpServers([...declared, declaration]);

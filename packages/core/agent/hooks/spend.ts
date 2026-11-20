@@ -13,6 +13,7 @@ import type { SurfaceMode } from "../operational/store.js";
 import { isSupervisorToken, standingSeatRegistryKey, unifiedWindowFromToken } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
 import { delegationDepthOf, stampSubagentRun } from "../spend/subagent-runs.js";
+import { optional } from "./control-refusal.js";
 
 export function routineIdOf(ctx: BindableContext): string | undefined {
   try {
@@ -178,25 +179,46 @@ export async function recordModelCall(ctx: SpendAttributionContext, call: Attrib
   }
 }
 
+const GENERATION_IDS_KEPT = 256;
+const generationIdByRun = new Map<string, string>();
+
+/** `model.settled` carries the gateway generation id; `usage.recorded` names the same model run by `owner.runId`. */
+export function noteRunGenerationId(runId: unknown, generationId: unknown): void {
+  if (typeof runId !== "string" || runId.length === 0 || typeof generationId !== "string" || generationId.length === 0) return;
+  generationIdByRun.delete(runId);
+  generationIdByRun.set(runId, generationId);
+  if (generationIdByRun.size > GENERATION_IDS_KEPT) generationIdByRun.delete(generationIdByRun.keys().next().value!);
+}
+
+export function runGenerationId(owner: unknown): string | undefined {
+  const runId = (owner as { runId?: unknown } | undefined)?.runId;
+  return typeof runId === "string" ? generationIdByRun.get(runId) : undefined;
+}
+
 export default defineHook({
   events: {
-    "step.started": (event) => {
+    "model.started": optional("spend", (event) => {
       try {
         noteHostStepModel(event.data.modelId);
       } catch (err) {
         console.warn(`[open-everywhere:spend] host model reference not recorded: ${String(err)}`);
       }
-    },
-    "step.completed": async (event, ctx: HookContext) => {
-      noteCompletedModelStep(ctx.session?.id, (event.data as { turnId?: string } | undefined)?.turnId, ctx);
-      const usage = event.data?.usage as Usage | undefined;
+    }),
+    "model.settled": optional("spend", (event, ctx) => {
+      noteRunGenerationId(event.data.runId, event.data.generationId);
+      // A run owned by a context change (a compaction) is no turn step, even when eve scopes it to a turn.
+      if (event.data.outcome === "completed" && event.scope?.changeId === undefined) noteCompletedModelStep(ctx.session?.id, event.scope?.turnId, ctx);
+    }),
+    "usage.recorded": optional("spend", async (event, ctx) => {
+      // Only this session's own model runs. eve also records a delegated task's usage here, owned by
+      // its `callId`; the child session runs this hook itself and files those rows already.
+      const owner = event.data.owner as { readonly runId?: unknown } | undefined;
+      if (event.data.kind !== "model" || typeof owner?.runId !== "string") return;
+      const usage = event.data.usage as Usage | undefined;
       if (!usage || (usage.inputTokens == null && usage.outputTokens == null && usage.costUsd == null)) return;
       const token = turnWindowToken(ctx);
 
-      const generationId = ((): string | undefined => {
-        const raw = (event.data as { providerMetadata?: { gateway?: { generationId?: unknown } } } | undefined)?.providerMetadata?.gateway?.generationId;
-        return typeof raw === "string" && raw.length > 0 ? raw : undefined;
-      })();
+      const generationId = runGenerationId(event.data.owner);
 
       const stampedModel = readModelStamp() ?? readHostStepModel() ?? undefined;
       const stampedArm = readModelArm() ?? undefined;
@@ -240,6 +262,6 @@ export default defineHook({
           console.warn(`[open-everywhere:spend] dm-seat token counter bump skipped: ${String(err)}`);
         }
       }
-    },
+    }),
   },
 });

@@ -6,6 +6,7 @@ import { partitionOfBinding } from "../memory/partition.js";
 import { offerFirstDayBrief, type FirstDayBriefDeps, type FirstDayBriefOutcome } from "../onboarding/first-day-brief.js";
 import { proposeFirstDayBriefCard } from "../personal-watch/propose.js";
 import { personAddress, readDmAudience } from "../channels/dm-audience.js";
+import { optional } from "./control-refusal.js";
 
 const SEEN = new Set<string>();
 
@@ -50,6 +51,6 @@ async function onTurn(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": (_event, ctx) => onTurn(ctx),
+    "turn.started": optional("personal-watch-enroll", (_event, ctx) => onTurn(ctx)),
   },
 });

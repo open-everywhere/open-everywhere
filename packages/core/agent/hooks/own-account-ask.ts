@@ -14,6 +14,8 @@ import { auditSurfaceModeFrom, currentTurnId, type BindableContext } from "../id
 import { resolvePartition } from "../memory/partition.js";
 import type { AuditInput } from "../operational/store.js";
 import { captureEligible } from "./requester-messages.js";
+import { optional } from "./control-refusal.js";
+import { deliveredText } from "./event-reads.js";
 
 function writableAuthAttrs(ctx: HookContext): Record<string, unknown> | null {
   try {
@@ -49,10 +51,10 @@ export interface OwnAccountAskRecognition {
   readonly stamped: boolean;
 }
 
-export function stampOwnAccountAsk(event: HookEvent<"message.received">, ctx: HookContext): OwnAccountAskRecognition | undefined {
+export function stampOwnAccountAsk(event: HookEvent<"delivery.consumed">, ctx: HookContext): OwnAccountAskRecognition | undefined {
   try {
     if (!captureEligible(ctx)) return undefined;
-    const { message } = event.data;
+    const message = deliveredText(event.data);
     if (typeof message !== "string") return undefined;
     const body = askBodyOf(message);
     if (body === undefined) return undefined;
@@ -99,7 +101,7 @@ export function ownAccountAskAuditEntry(recognition: OwnAccountAskRecognition, c
 }
 
 export async function auditOwnAccountAsk(
-  event: HookEvent<"message.received">,
+  event: HookEvent<"delivery.consumed">,
   ctx: HookContext,
   write: (entry: AuditInput) => Promise<void> = appendAudit,
 ): Promise<OwnAccountAskRecognition | undefined> {
@@ -112,6 +114,6 @@ export async function auditOwnAccountAsk(
 
 export default defineHook({
   events: {
-    "message.received": (event, ctx) => void auditOwnAccountAsk(event, ctx).catch(() => undefined),
+    "delivery.consumed": optional("own-account-ask", async (event, ctx) => void (await auditOwnAccountAsk(event, ctx))),
   },
 });

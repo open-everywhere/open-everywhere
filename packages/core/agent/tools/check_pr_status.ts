@@ -1,7 +1,7 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
@@ -48,10 +48,5 @@ export const checkPrStatusEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("check_pr_status", "_single", checkPrStatusEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? checkPrStatusEntry : null),
-  },
-});
+export default sessionMountedTool("check_pr_status", checkPrStatusEntry, (ctx) => githubWorkMount(ctx));

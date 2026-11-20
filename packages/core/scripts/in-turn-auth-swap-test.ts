@@ -74,10 +74,10 @@ const settlementHook = (await import("../agent/hooks/delegation-settlement.js"))
 };
 function turnStarted(ctx: never, _turnId: string): void {
   settlementHook.events["turn.started"]!({}, ctx);
-  settlementHook.events["step.started"]!({}, ctx);
+  settlementHook.events["model.requested"]!({}, ctx);
 }
 function stepStarted(ctx: never, _turnId: string): void {
-  settlementHook.events["step.started"]!({}, ctx);
+  settlementHook.events["model.requested"]!({}, ctx);
 }
 
 const A = { principal: "U_A", wakeId: "wake-A-0001", deliveryId: "dlv-A-0001" };

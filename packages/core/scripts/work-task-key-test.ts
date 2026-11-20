@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { asSchema } from "ai";
+import { installedEveRoot, readEveSchemaHelpers } from "./eve-tool-schema.js";
 import type { WorkRequestRow, WorkRowStore } from "../agent/channels/work.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-work-task-key-")), "ops.sqlite3");
@@ -94,8 +95,8 @@ eq(key.liveWorkRequestStamp(), undefined, "no eve context ⇒ no stamp (and the 
 console.log("§3 W's `agent` validate refuses a job under another step's stamp, before any child starts:");
 {
   const taskIdInput = (await import(eveUrl("dist/src/execution/tasks/task-id-input.js"))) as { withTaskIdSchema(schema: unknown): unknown };
-  const agentContract = (await import(eveUrl("dist/src/tools/framework/agent-contract.js"))) as { SUBAGENT_TOOL_INPUT_SCHEMA: unknown };
-  const toolSchema = (await import(eveUrl("dist/src/tools/schema.js"))) as { serializeInputSchema(s: unknown): unknown; toInputSchema(s: unknown): unknown };
+  const agentContract = { SUBAGENT_TOOL_INPUT_SCHEMA: (await import("eve/tools/agent")).default.inputSchema as unknown };
+  const toolSchema = await readEveSchemaHelpers(installedEveRoot(import.meta.url));
   const agentSchema = () => toolSchema.toInputSchema(toolSchema.serializeInputSchema(taskIdInput.withTaskIdSchema(agentContract.SUBAGENT_TOOL_INPUT_SCHEMA)));
   const at = "2026-10-06T00:00:00.000Z";
   const render = (requestId: string, brief: string) => work.renderWorkRequest({ requestId, brief, origin: ORIGIN, nowIso: at });
@@ -178,8 +179,8 @@ console.log("§3 W's `agent` validate refuses a job under another step's stamp, 
   const at = "2026-10-06T00:00:00.000Z";
   const render = (requestId: string, brief: string) => work.renderWorkRequest({ requestId, brief, origin: ORIGIN, nowIso: at });
   const taskIdInput = (await import(eveUrl("dist/src/execution/tasks/task-id-input.js"))) as { withTaskIdSchema(schema: unknown): unknown };
-  const agentContract = (await import(eveUrl("dist/src/tools/framework/agent-contract.js"))) as { SUBAGENT_TOOL_INPUT_SCHEMA: unknown };
-  const toolSchema = (await import(eveUrl("dist/src/tools/schema.js"))) as { serializeInputSchema(s: unknown): unknown; toInputSchema(s: unknown): unknown };
+  const agentContract = { SUBAGENT_TOOL_INPUT_SCHEMA: (await import("eve/tools/agent")).default.inputSchema as unknown };
+  const toolSchema = await readEveSchemaHelpers(installedEveRoot(import.meta.url));
   const c = new ContextContainer();
   const step = (stamp: string, message: string | undefined, deliver?: [string, string]) =>
     contextStorage.run(c, async () => {
@@ -198,6 +199,58 @@ console.log("§3 W's `agent` validate refuses a job under another step's stamp, 
   eq(await step("req-x", "brief X", ["req-x", "brief X"]), "ok", "🔴 the host's RE-DELIVERY of job X (the same request) reaches a step carrying its own stamp and starts there");
 }
 
+console.log("§3b eve 1.x: the root approval policy runs the same-step gate before an `agent` call starts a worker (OPE-2783):");
+{
+  const { taskContinuationApproval } = await import("../agent/access/worker-continuation.js");
+  const { setNativeDelegationSeat } = await import("../agent/access/native-delegation-state.js");
+  const { claimWorkCall } = await import("../agent/access/work-request-turn.js");
+  const at = "2026-10-06T00:00:00.000Z";
+  const render = (requestId: string, brief: string) => work.renderWorkRequest({ requestId, brief, origin: ORIGIN, nowIso: at });
+  const reissued: { requestId: string; reason: string; stamped?: string }[] = [];
+  key.registerWorkReissuer(async (i) => (reissued.push({ requestId: i.requestId, reason: i.reason, ...(i.stamped !== undefined ? { stamped: i.stamped } : {}) }), "redelivered"));
+  const c = new ContextContainer();
+  const call = (turn: string, stamp: string | undefined, message: string, deliver: readonly [string, string][] = [], toolName = "agent") =>
+    contextStorage.run(c, async () => {
+      c.set(AuthKey, stamp === undefined ? { attributes: {} } : { attributes: { [work.OE_WORK_REQUEST_ATTR]: stamp } });
+      setNativeDelegationSeat("allow");
+      noteContinuationTurn({ session: { id: "sess-W", turn: { id: turn } } } as never);
+      for (const [id, brief] of deliver) recordWorkRequestsThisTurn(turn, render(id, brief));
+      claimWorkCall(turn, message, stamp);
+      return await taskContinuationApproval({ toolName, toolInput: { message } });
+    });
+  eq(
+    await call("turn-1x", "req-a", "brief B", [["req-a", "brief A"], ["req-b", "brief B"]]),
+    { type: "denied", reason: key.WORK_CALL_NEEDS_REISSUE_MESSAGE },
+    "🔴 two forwards joined one step: job B's call, on job A's stamp, is DENIED before its worker starts",
+  );
+  eq(reissued, [{ requestId: "req-b", reason: "stamp-names-another-request", stamped: "req-a" }], "🔴 …and job B is re-sent once, so it starts under its own stamp");
+  eq(await call("turn-1x", "req-a", "brief A"), undefined, "job A's call, on job A's stamp, is admitted");
+  eq(await call("turn-1x", "req-b", "brief B", [["req-b", "brief B"]]), undefined, "🔴 the RE-DELIVERY of job B reaches a step with its own stamp, and starts there");
+  eq(reissued.length, 1, "…and nothing else is re-sent");
+  eq(
+    await call("turn-1x-absent", undefined, "a paraphrase", [["req-c", "brief C"]]),
+    { type: "denied", reason: key.WORK_CALL_NEEDS_REISSUE_MESSAGE },
+    "🔴 a single open job on a step with NO stamp is denied too (fail-closed), as at eve 0.x's validate",
+  );
+  eq(await call("turn-1x-seat", undefined, "a seat's own brief"), undefined, "NEGATIVE CONTROL: a turn that holds no forwarded job (a seat, not W) is untouched by the gate");
+  eq(await call("turn-1x-tool", "req-a", "brief B", [["req-a", "brief A"], ["req-b", "brief B"]], "fresh_eyes_review"), undefined, "NEGATIVE CONTROL: a call to another tool is not judged by the stamp gate");
+  eq(reissued.length, 2, "…and neither control re-sent anything");
+  const { WORK_REQUEST_UNJOINABLE_MESSAGE: UNJOINABLE, WORK_REQUEST_ALREADY_STARTED_MESSAGE: STARTED, noteWorkRequestStarted } = await import("../agent/access/work-request-turn.js");
+  eq(
+    await call("turn-1x-retry", "req-d", "brief E", [["req-d", "brief D"], ["req-e", "brief E"]]),
+    { type: "denied", reason: key.WORK_CALL_NEEDS_REISSUE_MESSAGE },
+    "precondition: job E on job D's step is denied and retired",
+  );
+  eq(await call("turn-1x-retry", "req-d", "brief E"), { type: "denied", reason: UNJOINABLE }, "🔴 a RETRY of the retired job E in the same step is denied as unjoinable — it never starts unkeyed");
+  eq(await call("turn-1x-para", "req-f", "a paraphrase", [["req-f", "brief F"], ["req-g", "brief G"]]), { type: "denied", reason: UNJOINABLE }, "🔴 a paraphrase in a turn with two jobs joins none, and is denied");
+  eq(reissued.length, 3, "…and neither unjoinable call re-sent anything (only job E's denial did)");
+  eq(await call("turn-1x-started", "req-h", "brief H", [["req-h", "brief H"]]), undefined, "job H starts on its own step");
+  contextStorage.run(c, () => noteWorkRequestStarted("turn-1x-started", "req-h"));
+  eq(await call("turn-1x-started", "req-i", "brief H", [["req-i", "brief I"]]), { type: "denied", reason: STARTED }, "🔴 a duplicate call for job H, once its task started, is denied as already started, on any step");
+  eq(reissued.length, 3, "🔴 …and the started job is NOT re-sent");
+  key.registerWorkReissuer(key.reissueWorkRequest);
+}
+
 console.log("§4 task.started keys each task on its own job, with its own requester:");
 {
   const store = memStore();
@@ -207,7 +260,7 @@ console.log("§4 task.started keys each task on its own job, with its own reques
   const deps = { org: () => "default", store: () => store, audit: async (r: unknown) => void audits.push(r as Record<string, unknown>) };
   eq(await key.keyWorkTask({ taskId: "agent-1", callId: "c1", workSessionId: "sess-W", joined: "req-alice", stamped: "req-alice" }, deps), { kind: "keyed", requestId: "req-alice" }, "alice's task, on alice's step, is keyed");
   eq(await key.keyWorkTask({ taskId: "agent-2", callId: "c2", workSessionId: "sess-W", joined: "req-bob", stamped: "req-bob" }, deps), { kind: "keyed", requestId: "req-bob" }, "bob's task, on bob's step, is keyed");
-  eq(await key.readWorkTaskKey(store, "default", "agent-1"), { requestId: "req-alice", verdict: "keyed" }, "the key row round-trips");
+  eq(await key.readWorkTaskKey(store, "default", "agent-1", "c1"), { requestId: "req-alice", verdict: "keyed" }, "the key row round-trips");
   eq(
     audits.map((a) => [a.action, a.principalId, (a.detail as { taskId?: unknown }).taskId, (a.detail as { requester?: unknown }).requester, (a.detail as { tier?: unknown }).tier]),
     [
@@ -221,8 +274,20 @@ console.log("§4 task.started keys each task on its own job, with its own reques
     { kind: "needs-reissue", requestId: "req-alice", reason: "stamp-names-another-request", stamped: "req-bob" },
     "🔴 the tripwire: a task whose bag names another job is keyed needs-reissue",
   );
-  eq(await key.readWorkTaskKey(store, "default", "agent-3"), { requestId: "req-alice", verdict: "needs-reissue", reason: "stamp-names-another-request" }, "…and its row says so, for the settlement to read");
+  eq(await key.readWorkTaskKey(store, "default", "agent-3", "c3"), { requestId: "req-alice", verdict: "needs-reissue", reason: "stamp-names-another-request" }, "…and its row says so, for the settlement to read");
   eq(await key.readWorkTaskKey(store, "default", "agent-none"), undefined, "no row ⇒ undefined (the settlement treats it as needs-reissue)");
+  eq(
+    await key.keyWorkTask({ taskId: "agent-1", callId: "c1-next", workSessionId: "sess-W", joined: "req-bob", stamped: "req-alice" }, deps),
+    { kind: "needs-reissue", requestId: "req-bob", reason: "stamp-names-another-request", stamped: "req-alice" },
+    "a continuation of alice's task, joined to bob's job on alice's step, is keyed needs-reissue",
+  );
+  eq(await key.readWorkTaskKey(store, "default", "agent-1", "c1"), { requestId: "req-alice", verdict: "keyed" }, "🔴 OPE-2777: …and it does NOT overwrite the verdict of the call before it — each call a task serves keeps its own key");
+  eq(await key.readWorkTaskKey(store, "default", "agent-1", "c1-next"), { requestId: "req-bob", verdict: "needs-reissue", reason: "stamp-names-another-request" }, "…while the continuation's own row says needs-reissue");
+  eq(await key.readWorkTaskKey(store, "default", "agent-1"), undefined, "NEGATIVE CONTROL — the key is per call: no task-wide row is written");
+  await key.rememberWorkTaskKey(store, "default", "agent-old", { requestId: "req-alice", verdict: "keyed" }, new Date().toISOString());
+  eq(await key.readWorkTaskKey(store, "default", "agent-old", "c-old"), { requestId: "req-alice", verdict: "keyed" }, "a task keyed by an earlier release (one task-wide row) still reads, for any of its calls");
+  store.rows.set(key.workTaskKeyKey("agent-old", "c-bad"), "{not json");
+  eq(await key.readWorkTaskKey(store, "default", "agent-old", "c-bad"), undefined, "…but a malformed per-call row fails closed, and never falls back to the task-wide row");
   store.rows.set(key.workTaskKeyKey("agent-bad"), "{not json");
   eq(await key.readWorkTaskKey(store, "default", "agent-bad"), undefined, "a malformed row ⇒ undefined, never a throw");
 }

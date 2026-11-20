@@ -4,6 +4,7 @@ import { auditFireAttrsSeen } from "../routines/fire-carriage.js";
 import { routineMarker } from "../routines/routine.js";
 import { isWorkSessionContext } from "../access/work-session.js";
 import { isScheduleOriginatedAuth, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { optional } from "./control-refusal.js";
 
 interface AuthSlotContext {
   readonly session?: {
@@ -40,8 +41,8 @@ async function auditCarriage(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": async (_event, ctx) => {
+    "turn.started": optional("fire-carriage", async (_event, ctx) => {
       await auditCarriage(ctx);
-    },
+    }),
   },
 });

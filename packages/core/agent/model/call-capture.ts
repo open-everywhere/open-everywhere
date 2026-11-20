@@ -3,7 +3,7 @@ import { gzipSync } from "node:zlib";
 import { getSettings } from "../settings/settings.js";
 import { appendAudit } from "../audit/audit.js";
 import { resolvePartition, domainKeyOf } from "../memory/partition.js";
-import { auditSurfaceModeFrom, currentSessionId, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeFrom, currentSessionId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { ModelCallCaptureWrite } from "../operational/store.js";
@@ -111,7 +111,7 @@ export function captureSiteFrom(ctx: BindableContext, event?: unknown): CaptureS
     const surfaceKey = domainKeyOf(p);
     if (!captureCoversSurface(surfaceKey)) return undefined;
     const sessionId = currentSessionId(ctx) ?? "";
-    const turnId = eventTurnId(event) ?? "";
+    const turnId = currentTurnId(ctx) ?? eventTurnId(event) ?? "";
     return { org: p.org, surfaceKey, sessionId, turnId };
   } catch {
     return undefined;

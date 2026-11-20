@@ -859,9 +859,9 @@ block**. It exists because a fire that mis-reads its own reach reports a refusal
 nobody is there to ask "did you look?".
 
 For an ordinary fire the block says: *a tool you cannot see is not a tool you do not have.* A
-connector operation is not a static tool. The agent mounts two fixed connector tools:
-`connection_search` lists a connection's operations, and `connection_execute` runs one by its
-`connection` and `tool` names. So no operation appears by name in the session's opening tool list.
+connector operation is not a static tool. Each one is a deferred connector tool named
+`<connection>__<operation>`: `eve__search` finds it, and `eve__tool` calls it by that name. So no
+operation appears by name in the session's opening tool list.
 The block therefore tells the fire to search for the operation, then call it, and to do both
 **before** reporting that a connector is unavailable.
 
@@ -869,9 +869,10 @@ The block therefore tells the fire to search for the operation, then call it, an
 [declared permission](#what-a-routine-may-do-on-its-own) names one — `tool:notion__notion-create-pages`
 — the fire resolves that operation when each turn starts. The resolution reads the connection's
 catalogue and confirms that exactly one connection advertises the operation. The turn's instructions
-then carry a second reach block. It names the operation as the `connection` and `tool` that
-`connection_execute` takes (connection `notion`, tool `notion-create-pages`), and it tells the fire to
-call `connection_execute` directly, with no `connection_search` first. The reason is measured: in
+then carry a second reach block. It names the operation's connector tool (`notion__notion-create-pages`),
+and it tells the fire to call `eve__tool` with that name directly, with no `eve__search` first. eve
+calls a deferred tool by name without a prior search. An operation whose connector tool name eve
+cannot mount resolves to nothing. The reason is measured: in
 a live run a fire searched, was handed the operation it had declared, and then reported that it had
 not made the call. Every extra hop is a place a model stops.
 
@@ -879,7 +880,7 @@ This is not a widening. The declaration **is** the permission: a human read it o
 and clicked it, on the creation card or on a later permission card. The block names only declared operations, and only while their permission rows are
 live, so a revoked permission drops out of the next turn's block. Every gate a call meets — the
 connector hard gate, the unattended connector fence, the effective tier, the egress firewall —
-decides exactly as it did before. The framework re-keys a `connection_execute` call to its
+decides exactly as it did before. Each gate reads the call under its
 `<connection>__<op>` name. On an unattended fire, the unattended fence refuses a write or
 destructive operation that the routine did not declare. A read-tier operation stays open, as it
 is on every turn: the block does not confine a fire to its declared reads. The block carries names
@@ -891,16 +892,16 @@ catalogue does not answer within three seconds resolves to nothing. That fire se
 ordinary fire does. A fire with a surface is forwarded into the conversation's work session, and
 the work session only relays the job to a child. So there the CHILD that runs the routine resolves
 the declared operations and carries the block, because it is the turn that calls
-`connection_execute`. The work session itself resolves nothing. Any other delegated worker and a
+the connector tool. The work session itself resolves nothing. Any other delegated worker and a
 durable job's fire resolve nothing either. The
 `routine.declared_ops_resolved` audit row names, per fire, which declared operations resolved and
 which resolved to nothing. It replaces `routine.declared_ops_mounted`, which claimed a mounted tool
 that the current framework (eve 0.69 and later) never mounts.
 
 **A durable job's fire is told the opposite, and that is deliberate.** A job fires on a
-[restricted wake](#durable-jobs-persistent-multi-step-work): it holds no `connection_search` and no
-connector operation above a read, because the job runs for weeks with nobody attending it. There,
-absence *is* the control. So the job arm of the block states the narrowing plainly, tells the fire
+[restricted wake](#durable-jobs-persistent-multi-step-work): it holds `eve__search` and the connector
+read operations, but no connector operation above a read, because the job runs for weeks with nobody
+attending it. There, the absence of every write *is* the control. So the job arm of the block states the narrowing plainly, tells the fire
 not to go looking, and points at `report_run_failed` — name the tool you needed and the fact that
 this wake does not carry it.
 
@@ -1122,7 +1123,7 @@ send by its continuation token; a fire with no thread gets a fresh random token,
 why ordinary fires are stateless. A durable job instead **pins a stable thread anchor**: on the
 first fire the dispatcher posts a kickoff message to open the job's thread and stores its
 timestamp; every later fire reuses that anchor, so the continuation token
-(`slackContinuationToken(channel, anchor)`) is **identical across fires** and Eve resumes the *same*
+(`slackContinuationToken({ channelId, threadTs: anchor })`) is **identical across fires** and Eve resumes the *same*
 durable session. This introduces **no new token shape** — a job session is a plain surface-native
 token with a stable anchor, the same principle the per-user DM seat uses to give a long-lived DM one
 durable session.
@@ -3168,12 +3169,13 @@ stamps: `open_everywhere_routine_test` (the test id), `open_everywhere_routine_t
 
 - `hooks/routine-test-run.ts` marks the session at `turn.started`. The mark is sticky, so a later reply
   in the test thread stays fenced. A mark that cannot be written cancels the turn.
-- `access/test-run-fence.ts` runs at the toolset projection before every model call. It replaces
-  `execute` on every tool outside `TEST_RUN_OPEN_TOOLS` (`routines/test-run.ts`) with a stub that
-  writes a `routine.test_blocked` row and throws. The list is default-deny: a tool it does not name is
-  blocked. `connection_execute` is decided per call, by the tier of the operation it names, and a
-  reserved `grant__…` name is always blocked. A blocked tool with no `execute` (a workflow tool) is
-  removed from the toolset.
+- The test-run fence runs in the seat cut, on every tool a roster tool shim resolves
+  (`access/authored-tool-transforms.ts`), and in each connector tool (`connections/connector-tools.ts`).
+  A call to a tool outside `TEST_RUN_OPEN_TOOLS` (`routines/test-run.ts`) never reaches its real
+  `execute`: the fence writes a `routine.test_blocked` row (`access/test-run-fence.ts`) and throws.
+  The list is default-deny: a tool it does not name is blocked. A connector op
+  (`<connection>__<operation>`) is decided by the tier of its name, and a reserved `grant__…` name is
+  always blocked. A blocked tool with no `execute` (a workflow tool) is withheld from the seat.
 - The connector fence (`connections/connector-auth.ts`) refuses a connector write or delete from a
   test fire before a declared permission can lift it or a permission card can post.
 - `hooks/routine-outcome.ts` folds no outcome for a test fire, and `spend/checkpoint.ts` records no
@@ -3276,7 +3278,7 @@ carries the routine marker that `routines/fire-auth.ts` stamps (`identity/bindin
 `fireOwnRoutine`), so `replyAuditFor` names the routine and `postReply` records the post's threads. The
 surface's post arm turns its reply target into a wake origin (`PostArm.originOfTarget`), and the threads
 come from that origin and the codec's `replyThreadUnder`, as on the unified door. A test run names no
-routine. On the inbound side, `hooks/routine-report-reply.ts` reads each `message.received` of a session
+routine. On the inbound side, `hooks/routine-report-reply.ts` reads each `delivery.consumed` of a session
 that is not a window: requester capture's fence (no fire, no delegation child, no work session, no
 non-member stamp), an acting principal whose auth type is a person's (`<surface>-user`), and the wake
 trust tier `principal` or `peer`. The same post-arm member places the turn, so the record and the count

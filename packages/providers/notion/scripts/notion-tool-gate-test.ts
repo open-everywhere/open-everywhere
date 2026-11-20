@@ -1,7 +1,7 @@
 import readNotionPage from "../agent/tools/read_notion_page.js";
 import readNotionComments from "../agent/tools/read_notion_comments.js";
 import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
-import { registerConfig } from "@open-everywhere/core/agent/adapter-api.js";
+import { evaluateDynamic, registerConfig } from "@open-everywhere/core/agent/adapter-api.js";
 
 delete process.env.OE_PLATFORM;
 
@@ -35,10 +35,6 @@ function workerCtxFor(platform: string): BindableContext {
   } as unknown as BindableContext;
 }
 
-interface DynamicLike {
-  readonly kind?: unknown;
-  readonly events?: Record<string, ((event: unknown, ctx: BindableContext) => unknown) | undefined>;
-}
 
 function isToolEntry(v: unknown): v is { execute: unknown; description: unknown } {
   return typeof v === "object" && v !== null && typeof (v as { execute?: unknown }).execute === "function";
@@ -51,15 +47,10 @@ const SEAT_KINDS = ["notion", "channel:notion"];
 const HIDDEN_KINDS = ["slack", "channel:slack", "discord", "teams", "linear", "local", "channel:discord"];
 
 async function assertGate(name: string, def: unknown, descNeedle: string): Promise<void> {
-  const d = def as DynamicLike;
-  ok(d.kind === "eve:dynamic", `${name} default export is a dynamic (defineDynamic) sentinel`);
-  ok(!!d.events, `${name} exposes an events map`);
-  ok(typeof d.events?.["turn.started"] !== "function", `${name} does NOT register a turn.started resolver (platform is session-immutable)`);
+  ok(typeof def === "object" && def !== null && Symbol.for("eve.dynamic") in def, `${name} default export is a dynamic (defineDynamic) sentinel`);
 
   for (const ev of EVENTS) {
-    const handler = d.events?.[ev];
-    ok(typeof handler === "function", `${name} has a ${ev} resolver`);
-    if (typeof handler !== "function") return;
+    const handler = (_event: unknown, ctx: unknown) => evaluateDynamic(def, ctx);
 
     for (const platform of ARMED_WORKER_PLATFORMS) {
       const armed = await handler({}, workerCtxFor(platform));

@@ -1,7 +1,7 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { repoAllowed } from "../scm/provider.js";
 import { githubWorkMount } from "../scm/github-work.js";
@@ -63,10 +63,5 @@ export const getPrFeedbackEntry = defineTool({
     return { type: "text" as const, value: renderPrFeedbackForModel(output as unknown as PrFeedbackDigest) };
   },
 });
-preRegisterDynamicEntry("get_pr_feedback", "_single", getPrFeedbackEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? getPrFeedbackEntry : null),
-  },
-});
+export default sessionMountedTool("get_pr_feedback", getPrFeedbackEntry, (ctx) => githubWorkMount(ctx));

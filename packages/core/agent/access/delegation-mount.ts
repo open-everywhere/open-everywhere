@@ -1,10 +1,10 @@
 import { currentWindowToken, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
-import { parseWindowToken } from "../channels/window-key.js";
+import { parseWindowToken, stripUnifiedSendPrefix } from "../channels/window-key.js";
 
 export function resolveOwnWindowToken(ctx: BindableContext): string | undefined {
   const raw = ctx.channel?.continuationToken;
   if (typeof raw === "string" && raw.length > 0) {
-    const stripped = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
+    const stripped = stripUnifiedSendPrefix(raw);
     if (parseWindowToken(stripped)) return stripped;
   }
   const stamped = currentWindowToken(ctx);

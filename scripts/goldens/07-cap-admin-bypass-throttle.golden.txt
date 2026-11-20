@@ -12,7 +12,7 @@ IN  relay message M71 · guild G7 channel C7 (type 0) · from U_ADMIN7 · mentio
   ⇠ 200 ok
 EVT turn.started on discord:TH1
   → POST /channels/TH1/typing ⇒ 204
-EVT message.completed on discord:TH1 {"finishReason":"stop","message":"Checklist started — 6 items queued."}
+EVT content.completed on discord:TH1 {"partId":"part-1","kind":"text","phase":"reply","value":"Checklist started — 6 items queued."}
   → DELETE /channels/C7/messages/M71/reactions/👀/@me ⇒ 204
 IN  relay message M72 · guild G7 channel C7 (type 0) · from U_ADMIN7 · mention
       | <@BOT> also page the on-call
@@ -25,5 +25,5 @@ IN  relay message M72 · guild G7 channel C7 (type 0) · from U_ADMIN7 · mentio
   ⇠ 200 ok
 EVT turn.started on discord:TH2
   → POST /channels/TH2/typing ⇒ 204
-EVT message.completed on discord:TH2 {"finishReason":"stop","message":"Paged. They ack'd."}
+EVT content.completed on discord:TH2 {"partId":"part-1","kind":"text","phase":"reply","value":"Paged. They ack'd."}
   → DELETE /channels/C7/messages/M72/reactions/👀/@me ⇒ 204

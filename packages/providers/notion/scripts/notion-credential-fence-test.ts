@@ -1,3 +1,4 @@
+import { SessionNotActiveError } from "eve/sessions";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -60,7 +61,7 @@ async function deliver(rules: CredentialEndpointRules | undefined): Promise<{ ac
     fetch: fetchImpl,
     dispatch: async () => {},
     engagement: { markEventSeen: async () => true },
-    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+    attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
   });
   return { action: out.action, detail: out.detail, fetchCalls };
 }

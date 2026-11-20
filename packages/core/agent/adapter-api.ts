@@ -391,8 +391,8 @@ export { nonRequesterAttrsIf, OE_NON_REQUESTER_ATTR } from "./identity/non-reque
 
 export { sourceScopedMount, workerChatArmMount } from "./access/source-scoped-mount.js";
 
-export { preRegisterDynamicEntry, replayStepNames } from "./access/window-gated.js";
-export type { ReplayableToolEntry } from "./access/window-gated.js";
+export { evaluateDynamic, sessionMountedTool } from "./access/window-gated.js";
+export type { MountedToolEntry } from "./access/window-gated.js";
 
 export { markRepliedThisTurn } from "./channels/reply-signal.js";
 export { markNoReplyThisTurn } from "./channels/no-reply-signal.js";
@@ -902,8 +902,6 @@ export {
 export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
 export { classifyEmoji } from "./channels/reaction-ingest.js";
 
-export { registeredProjectionNames } from "./access/untrusted-projection.js";
-export { projectToolSet } from "./access/untrusted-projection.js";
 
 export type { Check } from "./ops/quickstart.js";
 export { registerSurfaceAppManifest, DEPLOY_HOST_PLACEHOLDER } from "./ops/surface-manifest.js";

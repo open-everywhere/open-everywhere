@@ -28,6 +28,7 @@ import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "../_sl
 import { registerCapabilityManifest } from "../../agent/identity/capabilities.js";
 import type { BindableContext } from "../../agent/identity/binding.js";
 import { LEAN_SEAT_TOOLS } from "../../agent/access/lean-seat.js";
+import { evaluateDynamic } from "../../agent/access/window-gated.js";
 
 export const DOMAIN = "payments";
 export const SLACK_CHANNEL = "C_PAY";
@@ -146,9 +147,7 @@ export function createRecorder(calls: ToolCall[], resultFor: ResultFor) {
 }
 
 export async function resolveDynamicEntry(mod: unknown, ctx: BindableContext): Promise<MountableEntry | null> {
-  const started = (mod as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
-  if (started === undefined) return null;
-  const resolved = await started({}, ctx);
+  const resolved = await evaluateDynamic(mod, ctx);
   return resolved === null || resolved === undefined ? null : (resolved as MountableEntry);
 }
 
@@ -249,14 +248,14 @@ export async function buildLeanSeatToolset(opts: {
   }
   set.agent = rec("agent", await evePublicTool("eve/tools/agent"));
   set.ask_question = rec("ask_question", askQuestionTool as MountableEntry);
-  set.task_cancel = rec("task_cancel", await eveNamedTool("tools/provided/task-cancel.js", "taskCancelTool"));
-  set.task_wait = rec("task_wait", await eveNamedTool("tools/provided/task-wait.js", "taskWaitTool"));
+  set.eve__task_cancel = rec("eve__task_cancel", await eveNamedTool("tools/provided/task-cancel.js", "taskCancelTool"));
+  set.eve__task_wait = rec("eve__task_wait", await eveNamedTool("tools/provided/task-wait.js", "taskWaitTool"));
   if (set.work !== undefined) {
-    for (const name of ["agent", "task_cancel"] as const) {
+    for (const name of ["agent", "eve__task_cancel"] as const) {
       delete set[name];
       skip(name);
     }
-    delete set.task_wait;
+    delete set.eve__task_wait;
   }
   const accountedFor = new Set([...Object.keys(set), ...skipped]);
   const unaccounted = [...LEAN_SEAT_TOOLS].filter((name) => !accountedFor.has(name));

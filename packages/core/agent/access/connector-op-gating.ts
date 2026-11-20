@@ -9,6 +9,7 @@ import {
   type ConnectorOpToolHints,
   type OpTierBasis,
 } from "./consequence.js";
+import { canonicalConnectorOpName } from "./connector-op-alias.js";
 import { getConfig } from "./config.js";
 
 const TIER_RANK: Readonly<Record<ConnectorOpTier, number>> = { read: 0, write: 1, destructive: 2 };
@@ -27,7 +28,8 @@ function opKey(op: string): string {
   return op.trim().toLowerCase().replace(/-/gu, "_");
 }
 
-function opKeysOf(toolName: string): readonly string[] {
+function opKeysOf(rawToolName: string): readonly string[] {
+  const toolName = canonicalConnectorOpName(rawToolName);
   const sep = toolName.indexOf("__");
   const conn = sep > 0 ? toolName.slice(0, sep).toLowerCase() : "";
   const op = opKey(connectorOpName(toolName));
@@ -36,7 +38,8 @@ function opKeysOf(toolName: string): readonly string[] {
   return [...keys];
 }
 
-function connectorKeyOf(toolName: string): string {
+function connectorKeyOf(rawToolName: string): string {
+  const toolName = canonicalConnectorOpName(rawToolName);
   const sep = toolName.indexOf("__");
   return sep > 0 ? opKey(toolName.slice(0, sep)) : "";
 }
@@ -134,7 +137,7 @@ function consultTieringFunction(toolName: string, hints: ConnectorOpToolHints | 
   if (parsed?.connection === undefined) return { replaced };
   let answer: unknown;
   try {
-    answer = arm({ connection: parsed.connection, verb: parsed.verb, toolName, ...(hints !== undefined ? { hints } : {}) });
+    answer = arm({ connection: parsed.connection, verb: parsed.verb, toolName: canonicalConnectorOpName(toolName), ...(hints !== undefined ? { hints } : {}) });
   } catch (err) {
     console.warn(`[open-everywhere:access] connectorOpTier arm threw for ${toolName}; kept the built-in verdict: ${String(err)}`);
     return { replaced };

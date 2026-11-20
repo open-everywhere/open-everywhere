@@ -24,7 +24,7 @@ const { tierSandboxDir } = await import("../agent/memory/sandbox-sync.js");
 const { resolvePartition, domainKeyOf } = await import("../agent/memory/partition.js");
 const { resolveWindowGated } = await import("../agent/access/window-gated.js");
 const { formatWindowToken, taskWindowId } = await import("../agent/channels/window-key.js");
-const { absoluteSandboxSegments, memoryWriteTarget, memoryWriteRefusal, withMemoryWriteFence } = await import(
+const { absoluteSandboxSegments, editFileFencePath, memoryWriteTarget, memoryWriteRefusal, withMemoryWriteFence } = await import(
   "../agent/memory/write-fence.js"
 );
 
@@ -193,6 +193,46 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
   const accepts = async (v: unknown): Promise<boolean> => ((await std.validate(v)).issues ?? []).length === 0;
   ok(await accepts({ filePath: "/workspace/a.md", content: "x" }), "🔴 eve's write_file still takes `filePath` — the field the fence reads. A rename here disarms the fence silently.");
   ok(!(await accepts({ path: "/workspace/a.md", content: "x" })), "…and the schema is strict, so the field name above is the ONLY one a validated call can carry");
+
+  const editDeny = spyTool();
+  const editMsg = await refusal(() =>
+    withMemoryWriteFence("edit_file", editDeny, "path").execute(
+      { path: "/workspace/memory/it-memory-brain/notes.md", edits: [{ oldText: "a", newText: "b" }] },
+      {} as ToolContext,
+    ),
+  );
+  ok(editMsg.startsWith("edit_file:") && editMsg.includes("it-memory-brain"), "🔴 edit_file: an edit into a silo this session does not own is refused on its `path` field");
+  ok(editDeny.calls.length === 0, "🔴 …and the wrapped edit is NEVER reached");
+  const editOk = spyTool();
+  await withMemoryWriteFence("edit_file", editOk, "path").execute(
+    { path: "/workspace/memory/payments-brain/notes.md", edits: [{ oldText: "a", newText: "b" }] },
+    {} as ToolContext,
+  );
+  ok(editOk.calls.length === 1, "edit_file: an edit into the plan's own writable silo reaches the framework's execute");
+
+  for (const form of [
+    "@/workspace/memory/it-memory-brain/notes.md",
+    "file:///workspace/memory/it-memory-brain/notes.md",
+    "file:///workspace/memory/it%2Dmemory%2Dbrain/notes.md",
+    "~/memory/it-memory-brain/notes.md",
+    "$HOME/memory/it-memory-brain/notes.md",
+    "/workspace/memory/it-memory-brain/notes copy.md",
+    "@/workspace/memory/MEMORY.md",
+  ]) {
+    const t = spyTool();
+    const m = await refusal(() => withMemoryWriteFence("edit_file", t, "path").execute({ path: form, edits: [{ oldText: "a", newText: "b" }] }, {} as ToolContext));
+    ok(m.startsWith("edit_file:") && t.calls.length === 0, `🔴 edit_file: eve's path form ${JSON.stringify(form)} is normalised the way eve normalises it, so the fence refuses it before the edit runs`);
+  }
+  ok(editFileFencePath("@file.md") === "file.md", "editFileFencePath strips eve's leading `@`");
+  ok(editFileFencePath("file:///workspace/a%20b.md") === "/workspace/a b.md", "…decodes a `file://` URL");
+  ok(editFileFencePath("~/memory/x.md") === "/workspace/memory/x.md", "…reads a home-relative path as if home were /workspace, the strict direction for the fence");
+  ok(editFileFencePath("/workspace/repo/a.ts") === "/workspace/repo/a.ts", "…and leaves a plain path unchanged");
+
+  const { editFile } = await import("eve/tools/edit_file");
+  const editStd = (editFile as unknown as { inputSchema: { "~standard": { validate(v: unknown): Validated | Promise<Validated> } } }).inputSchema["~standard"];
+  const editAccepts = async (v: unknown): Promise<boolean> => ((await editStd.validate(v)).issues ?? []).length === 0;
+  ok(await editAccepts({ path: "/workspace/a.md", edits: [{ oldText: "a", newText: "b" }] }), "🔴 eve's edit_file takes `path` — the field sandbox_tools.ts tells the fence to read. A rename here disarms the fence silently.");
+  ok(!(await editAccepts({ filePath: "/workspace/a.md", edits: [{ oldText: "a", newText: "b" }] })), "…and it does not take `filePath`, so the default field would read nothing on this tool");
 }
 
 {
@@ -229,8 +269,17 @@ function planWith(silos: readonly MemorySilo[], memory: readonly string[]): Memo
   const m = await refusal(() => kit!.write_file.execute({ filePath: "/workspace/memory/it-memory-brain/notes.md", content: "x" }, seat as unknown as ToolContext));
   ok(m.includes("write_file:"), "🔴 THE WIRING: the tool the agent actually holds refuses the unowned-silo write");
   ok(m.includes("it-memory-brain") && m.includes(`${tierSandboxDir(siloTier(ownedSilo.name))}/`), "…naming the refused silo and the one this seat can persist");
+
+  // edit_file has the same reach as write_file, but eve names its path field `path`. The kit must
+  // wrap it in the fence AND tell the fence to read `path`; either slip lets the edit through.
+  ok(typeof kit?.edit_file?.execute === "function", "the task-worker grain mounts an edit_file");
+  for (const path of ["/workspace/memory/it-memory-brain/notes.md", "@/workspace/memory/it-memory-brain/notes.md"]) {
+    const e = await refusal(() => kit!.edit_file.execute({ path, edits: [{ oldText: "a", newText: "b" }] }, seat as unknown as ToolContext));
+    ok(e.startsWith("edit_file:") && e.includes("it-memory-brain"), `🔴 THE WIRING: the edit_file the agent actually holds refuses the unowned-silo edit at ${JSON.stringify(path)} (got ${JSON.stringify(e.slice(0, 120))})`);
+  }
 }
 
 console.log(`\n✓ memory-write-fence: ${n} assertions passed (path resolution + plan decision + wrapper + fail-closed + real mounted wiring)\n`);
 
 // proves: TOOL-write_file
+// proves: TOOL-edit_file

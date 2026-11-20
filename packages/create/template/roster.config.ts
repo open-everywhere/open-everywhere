@@ -7,6 +7,7 @@ export default defineRoster({
       read_file: "re-provided per session grain by core (tools/sandbox_tools.ts)",
       web_fetch: "re-provided per session grain by core (tools/sandbox_tools.ts)",
       write_file: "re-provided per session grain by core (tools/sandbox_tools.ts)",
+      edit_file: "re-provided per session grain by core (tools/sandbox_tools.ts)",
     },
   },
 

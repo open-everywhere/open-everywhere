@@ -14,8 +14,8 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 
 {
   const taskTools = readEveDist("protocol/task-tools.js");
-  ok(/TASK_WAIT_TOOL_NAME=`task_wait`/.test(taskTools), "🔴 TOOL NAMES: eve still names the wait tool `task_wait`");
-  ok(/TASK_CANCEL_TOOL_NAME=`task_cancel`/.test(taskTools), "🔴 TOOL NAMES: eve still names the cancel tool `task_cancel`");
+  ok(/TASK_WAIT_TOOL_NAME=`eve__task_wait`/.test(taskTools), "🔴 TOOL NAMES: eve still names the wait tool `eve__task_wait`");
+  ok(/TASK_CANCEL_TOOL_NAME=`eve__task_cancel`/.test(taskTools), "🔴 TOOL NAMES: eve still names the cancel tool `eve__task_cancel`");
   ok(
     /TASK_TOOL_NAMES=\[TASK_WAIT_TOOL_NAME,TASK_CANCEL_TOOL_NAME\]/.test(taskTools),
     "🔴 TOOL NAMES: eve's own `TASK_TOOL_NAMES` is exactly those two, in that order. A THIRD task tool added upstream reds HERE — and it must, because `access/untrusted-projection.ts` subtracts this list from a seat that may not delegate, and a name missing from it is a tool that survives the cut",
@@ -24,13 +24,19 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
 
   const modelStep = readEveDist("execution/tasks/model-step.js");
   ok(
-    /withTaskTools\(e\)\{return offersTasks\(e\)\?new Map\(\[\.\.\.e,\[TASK_WAIT_TOOL_NAME,taskWaitTool\],\[TASK_CANCEL_TOOL_NAME,taskCancelTool\]\]\):e\}/.test(modelStep),
-    "🔴 TOOL NAMES THE PARENT SET: eve mounts BOTH task tools together, keyed on whether any tool starts tasks — not on a root-only narrowing. This is why TASK_PARENT_TOOL_NAMES equals TASK_TOOL_NAMES at 0.70",
+    /function withTaskTools\(e\)\{return new Map\(\[\.\.\.e,\[TASK_WAIT_TOOL_NAME,taskWaitTool\],\[TASK_CANCEL_TOOL_NAME,taskCancelTool\]\]\)\}/.test(modelStep),
+    "🔴 TOOL NAMES THE PARENT SET: eve adds BOTH task tools together, in one map, with no root-only narrowing. This is why TASK_PARENT_TOOL_NAMES equals TASK_TOOL_NAMES",
   );
-  const advertised = readEveDist("harness/advertised-tools.js");
+  const builtins = readEveDist("definitions/builtins.js");
   ok(
-    /shouldHideTool\(e,t\)\{let n=t\.rootSessionId!==void 0;return e\.rootOnly===!0\|\|e\.availableInSubagents===!1\|\|e\.behavior\?\.availability\.includes\(`root-session`\)===!0\?n:!1\}/.test(advertised),
-    "🔴 TOOL NAMES: `shouldHideTool` reads exactly three fields — `rootOnly`, `availableInSubagents` and a `root-session` availability. Those are the only ways eve hides a tool from a child",
+    /let r=once\(async\(\)=>t!==void 0&&\(hasRunningTask\(t\)\|\|sessionOffersTasks\(/.test(builtins) &&
+      /tools:async\(\)=>\{let e=await n\.tools\(\);if\(!await r\(\)\)return e;[^}]*?withTaskTools\(/.test(builtins),
+    "🔴 TOOL NAMES THE PARENT SET: eve calls `withTaskTools` only when the session offers tasks or has one running — keyed on the session, not on a root-only narrowing",
+  );
+  const advertised = readEveDist("execution/catalog/step-catalog.js");
+  ok(
+    /function isVisible\(e,t\)\{return e\.rootOnly!==!0&&e\.availableInSubagents!==!1&&e\.behavior\?\.availability\.includes\(`root-session`\)!==!0\|\|t\.rootSessionId===void 0\}/.test(advertised),
+    "🔴 TOOL NAMES: `isVisible` reads exactly three fields — `rootOnly`, `availableInSubagents` and a `root-session` availability. Those are the only ways eve hides a tool from a child",
   );
   for (const [file, tool] of [
     ["tools/provided/task-wait.js", "taskWaitTool"],
@@ -39,10 +45,10 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
     const body = readEveDist(file);
     ok(
       !/rootOnly/.test(body) && !/availableInSubagents/.test(body) && !/availability/.test(body),
-      `🔴 TOOL NAMES: ${tool} declares NONE of the three fields \`shouldHideTool\` reads, so eve never hides it from a child. The 0.54 parent/child SUBSET distinction has no bytes left behind it`,
+      `🔴 TOOL NAMES: ${tool} declares NONE of the three fields \`isVisible\` reads, so eve never hides it from a child. The 0.54 parent/child SUBSET distinction has no bytes left behind it`,
     );
 
-  const evesNames = /TASK_TOOL_NAMES=\[TASK_WAIT_TOOL_NAME,TASK_CANCEL_TOOL_NAME\]/.test(taskTools) ? ["task_wait", "task_cancel"] : null;
+  const evesNames = /TASK_TOOL_NAMES=\[TASK_WAIT_TOOL_NAME,TASK_CANCEL_TOOL_NAME\]/.test(taskTools) ? ["eve__task_wait", "eve__task_cancel"] : null;
   eq(
     [...TASK_PARENT_TOOL_NAMES],
     evesNames,
@@ -52,7 +58,7 @@ const eq = (actual: unknown, expected: unknown, label: string) => {
   const render = readEveDist("execution/tasks/render.js");
   ok(
     /function renderTaskCancelResult\(e,t\)\{return t\.status===`already_finished`\?`\$\{e\} had no work to stop\.`/.test(render),
-    "🔴 TOOL NAMES: `task_cancel` answers a rendered SENTENCE at 0.70. The 0.54 reader accepted cancel results because cancelling an already-terminal task returned `lastOutput`; this is the byte that says it no longer does",
+    "🔴 TOOL NAMES: `eve__task_cancel` answers a rendered SENTENCE at 0.70. The 0.54 reader accepted cancel results because cancelling an already-terminal task returned `lastOutput`; this is the byte that says it no longer does",
   );
   const session = readEveDist("execution/tasks/session.js");
   ok(

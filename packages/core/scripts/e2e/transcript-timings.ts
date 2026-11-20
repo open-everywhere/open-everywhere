@@ -24,10 +24,6 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function bool(v: unknown): boolean | null {
-  return typeof v === "boolean" ? v : null;
-}
-
 function sumKnown(values: readonly (number | null)[]): number | null {
   const known = values.filter((v): v is number => v !== null);
   return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
@@ -138,22 +134,8 @@ interface TurnAccum {
   calls: Map<string, CallAccum>;
 }
 
-function requestedActions(e: TranscriptWireEvent): { callId: string; kind: string; name: string | null }[] {
-  const raw = field(e, "actions");
-  if (!Array.isArray(raw)) return [];
-  const out: { callId: string; kind: string; name: string | null }[] = [];
-  for (const a of raw) {
-    if (!a || typeof a !== "object") continue;
-    const rec = a as Record<string, unknown>;
-    const callId = str(rec["callId"]);
-    if (!callId) continue;
-    out.push({
-      callId,
-      kind: str(rec["kind"]) ?? "unknown",
-      name: str(rec["toolName"]) ?? str(rec["subagentName"]) ?? str(rec["remoteAgentName"]) ?? str(rec["name"]),
-    });
-  }
-  return out;
+function scopeOf(e: TranscriptWireEvent, key: "turnId" | "runId"): string | null {
+  return str(e.scope?.[key]);
 }
 
 function stepKey(turnId: string | null, stepIndex: number | null): string {
@@ -163,7 +145,7 @@ function stepKey(turnId: string | null, stepIndex: number | null): string {
 export function decomposeSession(events: readonly TranscriptWireEvent[]): SessionTiming {
   const turns = new Map<string, TurnAccum>();
   const order: string[] = [];
-  let sessionId: string | null = null;
+  const sessionId: string | null = null;
   let sessionStartedAt: string | null = null;
   let firstTurnStartedAt: string | null = null;
   let firstAt: string | null = null;
@@ -171,8 +153,8 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
   let withAt = 0;
   let compactionRequested = 0;
   let compactionCompleted = 0;
-  let compactionReduced = 0;
-  let compactionNoOp = 0;
+  const compactionReduced = 0;
+  const compactionNoOp = 0;
   let compactionUnstamped = 0;
 
   const turnOf = (turnId: string | null): TurnAccum | null => {
@@ -199,33 +181,46 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
     return s;
   };
 
+  const runs = new Map<string, { turnId: string | null; stepIndex: number }>();
+  const runsInTurn = new Map<string, number>();
+  // A model run owned by a context change (a compaction) is no turn step, even when eve scopes it to a turn.
+  const runStep = (runId: string | null, turnId: string | null, changeId: string | null = null): { t: TurnAccum; s: StepAccum } | null => {
+    if (!runId || changeId) return null;
+    let run = runs.get(runId);
+    if (!run) {
+      if (!turnId) return null;
+      const stepIndex = runsInTurn.get(turnId) ?? 0;
+      runsInTurn.set(turnId, stepIndex + 1);
+      run = { turnId, stepIndex };
+      runs.set(runId, run);
+    }
+    const t = turnOf(run.turnId);
+    return t ? { t, s: stepOf(t, run.stepIndex) } : null;
+  };
+
   for (const e of events) {
     if (ms(e.at) !== null) {
       withAt++;
       if (firstAt === null) firstAt = e.at;
       lastAt = e.at;
     }
-    const turnId = str(field(e, "turnId"));
-    const stepIndex = num(field(e, "stepIndex"));
+    const turnId = str(field(e, "turnId")) ?? scopeOf(e, "turnId");
+    const runId = str(field(e, "runId")) ?? scopeOf(e, "runId");
+    const changeId = str(e.scope?.changeId);
 
     switch (e.type) {
       case "session.started":
         sessionStartedAt = e.at;
         break;
-      case "session.failed":
-        sessionId = sessionId ?? str(field(e, "sessionId"));
+      case "context.started":
+        if (str(field(e, "kind")) === "compaction") compactionRequested++;
         break;
-      case "compaction.requested":
-        sessionId = sessionId ?? str(field(e, "sessionId"));
-        compactionRequested++;
-        break;
-      case "compaction.completed": {
-        sessionId = sessionId ?? str(field(e, "sessionId"));
+      case "context.settled": {
+        // eve v1's context.settled says a pass completed, not whether it shrank the context, so a
+        // completed pass is counted and left undecided between real work and a no-op.
+        if (str(field(e, "kind")) !== "compaction" || str(field(e, "outcome")) !== "completed") break;
         compactionCompleted++;
-        const reduced = bool(field(e, "reduced"));
-        if (reduced === true) compactionReduced++;
-        else if (reduced === false) compactionNoOp++;
-        else compactionUnstamped++;
+        compactionUnstamped++;
         break;
       }
       case "turn.started": {
@@ -234,84 +229,76 @@ export function decomposeSession(events: readonly TranscriptWireEvent[]): Sessio
         if (firstTurnStartedAt === null) firstTurnStartedAt = e.at;
         break;
       }
-      case "turn.completed":
-      case "turn.failed":
-      case "turn.cancelled": {
+      case "turn.settled": {
         const t = turnOf(turnId);
         if (t) {
           t.endedAt = e.at;
-          t.outcome = e.type === "turn.completed" ? "completed" : e.type === "turn.failed" ? "failed" : "cancelled";
+          const outcome = str(field(e, "outcome"));
+          t.outcome = outcome === "failed" ? "failed" : outcome === "cancelled" ? "cancelled" : "completed";
         }
         break;
       }
-      case "step.started": {
-        const t = turnOf(turnId);
-        if (t) stepOf(t, stepIndex).startedAt = e.at;
+      case "model.started": {
+        const r = runStep(runId, turnId, changeId);
+        if (r) r.s.startedAt = r.s.startedAt ?? e.at;
         break;
       }
-      case "reasoning.appended":
-      case "message.appended": {
-        const t = turnOf(turnId);
-        if (t) {
-          const s = stepOf(t, stepIndex);
-          if (s.firstDeltaAt === null) s.firstDeltaAt = e.at;
-        }
+      // No time to first token on v27: a content.delta is a progress record, and eve stamps its
+      // meta.at with the time of the event line BEFORE it, not with the delta's own arrival.
+      case "model.settled": {
+        const r = runStep(runId, turnId, changeId);
+        if (!r) break;
+        r.s.endedAt = e.at;
+        r.s.finishReason = str(field(e, "finishReason"));
+        r.s.generationId = str(field(e, "generationId")) ?? r.s.generationId;
+        if (str(field(e, "outcome")) !== "completed") r.s.failed = true;
         break;
       }
-      case "step.completed": {
-        const t = turnOf(turnId);
-        if (!t) break;
-        const s = stepOf(t, stepIndex);
-        s.endedAt = e.at;
-        s.finishReason = str(field(e, "finishReason"));
+      case "usage.recorded": {
+        // Only this session's own model runs: eve also records a delegated task's usage, owned by its
+        // callId and scoped to the run that delegated; the worker's own transcript carries that usage.
+        const owner = field(e, "owner");
+        const ownerRun = owner && typeof owner === "object" ? str((owner as Record<string, unknown>)["runId"]) : null;
+        if (str(field(e, "kind")) !== "model" || !ownerRun) break;
+        const r = runStep(ownerRun, turnId, changeId);
+        if (!r) break;
         const usage = field(e, "usage");
         if (usage && typeof usage === "object") {
           const u = usage as Record<string, unknown>;
-          const tok = sumKnown([num(u["inputTokens"]), num(u["outputTokens"]), num(u["cacheReadTokens"]), num(u["cacheWriteTokens"])]);
-          s.tokens = tok;
-          s.costUsd = num(u["costUsd"]);
-        }
-        const pm = field(e, "providerMetadata");
-        if (pm && typeof pm === "object") {
-          const gw = (pm as Record<string, unknown>)["gateway"];
-          if (gw && typeof gw === "object") s.generationId = str((gw as Record<string, unknown>)["generationId"]);
+          r.s.tokens = sumKnown([r.s.tokens, num(u["inputTokens"]), num(u["outputTokens"]), num(u["cacheReadTokens"]), num(u["cacheWriteTokens"])]);
+          const cost = num(u["costUsd"]);
+          if (cost !== null) r.s.costUsd = (r.s.costUsd ?? 0) + cost;
         }
         break;
       }
-      case "step.failed": {
-        const t = turnOf(turnId);
-        if (!t) break;
-        const s = stepOf(t, stepIndex);
-        s.endedAt = e.at;
-        s.failed = true;
+      case "call.requested": {
+        const owner = field(e, "owner");
+        const ownerTurn = owner && typeof owner === "object" ? str((owner as Record<string, unknown>)["turnId"]) : null;
+        const t = turnOf(turnId ?? ownerTurn);
+        const callId = str(field(e, "callId"));
+        if (!t || !callId || t.calls.has(callId)) break;
+        const capability = field(e, "capability");
+        const cap = capability && typeof capability === "object" ? (capability as Record<string, unknown>) : {};
+        const run = runId ? runs.get(runId) : undefined;
+        t.calls.set(callId, {
+          callId, kind: str(cap["kind"]) ?? "unknown", name: str(cap["name"]), stepIndex: run?.stepIndex ?? null, turnId: t.turnId,
+          requestedAt: e.at, resolvedAt: null, status: null,
+        });
         break;
       }
-      case "actions.requested": {
-        const t = turnOf(turnId);
-        if (!t) break;
-        for (const a of requestedActions(e)) {
-          if (t.calls.has(a.callId)) continue;
-          t.calls.set(a.callId, {
-            callId: a.callId, kind: a.kind, name: a.name, stepIndex, turnId: t.turnId,
-            requestedAt: e.at, resolvedAt: null, status: null,
-          });
-        }
-        break;
-      }
-      case "action.result": {
-        const t = turnOf(turnId);
-        if (!t) break;
-        const result = field(e, "result");
-        const callId = result && typeof result === "object" ? str((result as Record<string, unknown>)["callId"]) : null;
+      case "call.settled": {
+        const callId = str(field(e, "callId"));
         if (!callId) break;
-        const c = t.calls.get(callId);
+        const owning = [...turns.values()].find((t) => t.calls.has(callId)) ?? turnOf(turnId);
+        if (!owning) break;
+        const c = owning.calls.get(callId);
         if (c) {
           c.resolvedAt = e.at;
-          c.status = str(field(e, "status"));
+          c.status = str(field(e, "outcome"));
         } else {
-          t.calls.set(callId, {
-            callId, kind: "unknown", name: null, stepIndex, turnId: t.turnId,
-            requestedAt: null, resolvedAt: e.at, status: str(field(e, "status")),
+          owning.calls.set(callId, {
+            callId, kind: "unknown", name: null, stepIndex: null, turnId: owning.turnId,
+            requestedAt: null, resolvedAt: e.at, status: str(field(e, "outcome")),
           });
         }
         break;
@@ -663,7 +650,7 @@ export function renderCompaction(c: CompactionTiming): string | null {
   const parts = [c.requested === c.completed ? `${c.completed} pass(es)` : `${c.completed} pass(es) of ${c.requested} requested`];
   if (c.reduced > 0) parts.push(`${c.reduced} did compaction work`);
   if (c.noOp > 0) parts.push(`${c.noOp} NO-OP — the compaction work step returned its input UNCHANGED (the OPE-689 shape: the trigger fired and the session did not shrink)`);
-  if (c.unstamped > 0) parts.push(`${c.unstamped} with no \`reduced\` stamp — UNDECIDABLE (pre-OPE-697 transcript, or eve's event factory rather than maybeCompact)`);
+  if (c.unstamped > 0) parts.push(`${c.unstamped} not reported as work or as a no-op (eve v1's context.settled does not say whether a pass shrank the context)`);
   return `${c.noOp > 0 ? "⚠ " : ""}compaction: ${parts.join(", ")}`;
 }
 

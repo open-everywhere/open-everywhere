@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import type { ToolModelOutput } from "eve/tools";
+import { bash, type BashToolOutput } from "eve/tools/bash";
+import { ingestUntrusted } from "./untrusted.js";
 
 export const SKILL_ENVELOPE_OPEN_PREFIX = "<<<OE-UNTRUSTED ";
 export const SKILL_ENVELOPE_CLOSE_PREFIX = "<<<END-OE-UNTRUSTED ";
@@ -71,4 +74,35 @@ export function extractSkillEnvelopes(stdout: string): SkillEnvelopeSegment[] {
   }
 
   return segments;
+}
+
+type BashOutput = BashToolOutput;
+
+function eveBashModelOutput(output: BashOutput): ToolModelOutput {
+  const render = bash.toModelOutput;
+  if (render === undefined) {
+    throw new Error("skill-envelope: eve's bash definition carries no toModelOutput, so a bash result has no model rendering to keep. Read eve's bash tool again.");
+  }
+  const rendered = render(output);
+  if (rendered instanceof Promise) {
+    throw new Error("skill-envelope: eve's bash toModelOutput returned a promise. This wrapper renders synchronously. Read eve's bash tool again.");
+  }
+  return rendered;
+}
+
+export function bashModelOutput(output: unknown): ToolModelOutput {
+  const o = output as BashOutput;
+  const stdout = typeof o?.stdout === "string" ? o.stdout : "";
+  const segments = extractSkillEnvelopes(stdout);
+  if (!segments.some((s) => s.untrusted)) {
+    return eveBashModelOutput(o);
+  }
+  const rebuiltStdout = segments
+    .map((s) => {
+      if (!s.untrusted) return s.text;
+      const label = sanitizeSkillEnvelopeSource(s.source);
+      return ingestUntrusted(s.content, { source: `skill-declared ${label}` });
+    })
+    .join("");
+  return eveBashModelOutput({ ...o, stdout: rebuiltStdout });
 }

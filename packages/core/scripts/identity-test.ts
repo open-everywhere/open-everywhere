@@ -12,7 +12,7 @@ import {
 } from "../agent/identity/principal-key.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { adoptDelegatedAuthority } from "../agent/identity/delegated-binding.js";
-import { carriesPlatformIdentity, healDeliveryIdentity, refreshBindingStamp, subagentBindingLost } from "../agent/identity/binding.js";
+import { carriesPlatformIdentity, currentTurnId, healDeliveryIdentity, refreshBindingStamp, subagentBindingLost } from "../agent/identity/binding.js";
 import bindingBridgeHook from "../agent/hooks/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -26,6 +26,19 @@ function ok(cond: boolean, label: string): void {
     process.exit(1);
   }
   passed++;
+}
+
+{
+  const hookCtx = { session: { id: "s1", turn: { id: "turn_hook", sequence: 1 } } } as unknown as BindableContext;
+  ok(currentTurnId(hookCtx) === "turn_hook", "currentTurnId: a hook or tool context reads session.turn.id");
+  const frame = { session: { id: "s1" }, turn: { id: "turn_frame", status: "running", input: [] } } as unknown as BindableContext;
+  ok(currentTurnId(frame) === "turn_frame", "currentTurnId: a dynamic context (eve's SessionFrame, the model function's ctx) reads turn.id");
+  const both = { session: { id: "s1", turn: { id: "turn_hook" } }, turn: { id: "turn_frame" } } as unknown as BindableContext;
+  ok(currentTurnId(both) === "turn_hook", "currentTurnId: session.turn wins where a context carries both");
+  ok(currentTurnId({ session: { id: "s1" }, turn: null } as unknown as BindableContext) === undefined, "currentTurnId: a frame before the first turn has no turn id");
+  ok(currentTurnId({ session: { id: "s1" }, turn: { id: "" } } as unknown as BindableContext) === undefined, "currentTurnId: an empty id is no id");
+  ok(currentTurnId({ session: { id: "s1" }, turn: { id: "turn_old", status: "settled", input: [] } } as unknown as BindableContext) === undefined, "🔴 currentTurnId: the frame's latest turn, once SETTLED, is no running turn — a hook between turns never files under the previous turn");
+  ok(currentTurnId({ session: { id: "s1" }, turn: { id: "turn_paused", status: "paused", input: [] } } as unknown as BindableContext) === "turn_paused", "currentTurnId: a PAUSED turn is still the running turn");
 }
 
 _resetDeploymentIdentityForTest();
@@ -283,7 +296,10 @@ ok(
   const storageKey = Symbol.for("eve.context-storage");
   g[storageKey] ??= new AsyncLocalStorage();
   const storage = g[storageKey] as AsyncLocalStorage<unknown>;
-  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => {
+    const session = new FakeSession();
+    return Promise.resolve(storage.run(Object.assign(session, { context: session, values: new Map<unknown, unknown>() }), fn));
+  };
 
   const hookEvents = (bindingBridgeHook as { events: Record<string, (e: unknown, ctx: unknown) => Promise<void>> }).events;
   const sessionStarted = (ctx: BindableContext): Promise<void> => hookEvents["session.started"]!({}, ctx);

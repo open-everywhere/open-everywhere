@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import {
   BUILD_STAMP_FILE,
@@ -48,6 +48,8 @@ import {
 import { PREPARED_PGLITE_TEMPLATE_PARENT } from "../tests/integration/global-setup-contract.js";
 import { unpreparedTreeRefusal } from "../tests/integration/global-setup.js";
 import { loadFastPathSymbols } from "../tests/integration/prewarm.js";
+import { loadPrewarmAppSandboxes } from "./eve-deep-reads/prewarm.js";
+import { assertRuntimeSessionOnGlobalSymbol } from "./eve-deep-reads/runtime-session.js";
 import { runBuildStamp } from "./eve-build-stamp.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -691,16 +693,11 @@ await test("🔴 EVE CANARY: the fast prewarm's own symbol loader still finds ev
     loaded.ok,
     `the fast prewarm path cannot be taken on this tree: ${loaded.ok ? "" : loaded.missing} is gone. ` +
       "The prewarm would fall back to eve's authored-source path (147.7 s against 13.0 s). Find its new home " +
-      "and update tests/integration/prewarm.ts.",
+      "and update its module in scripts/eve-deep-reads/.",
   );
-  const prewarmModule = (await import(pathToFileURL(join(repoRoot, "node_modules", "eve", "dist", "src", "execution", "sandbox", "prewarm.js")).href)) as Record<
-    string,
-    unknown
-  >;
-  assert.equal(typeof prewarmModule.prewarmAppSandboxes, "function", "eve still exports prewarmAppSandboxes, the only prewarm road either path can take");
-  const session = readFileSync(join(repoRoot, "node_modules", "eve", "dist", "src", "runtime", "sessions", "runtime-session.js"), "utf8");
-  assert.ok(
-    session.includes("Symbol.for(`eve.runtime-session-storage`)") || session.includes('Symbol.for("eve.runtime-session-storage")'),
+  assert.equal(typeof (await loadPrewarmAppSandboxes(repoRoot)), "function", "eve still exports prewarmAppSandboxes, the only prewarm road either path can take");
+  assert.doesNotThrow(
+    () => assertRuntimeSessionOnGlobalSymbol(repoRoot),
     "eve no longer keeps its runtime session on a globalThis symbol, so the built bundle and node_modules/eve no longer " +
       "share one — tests/integration/prewarm.ts's fast path cannot read the bundle's compiled artifacts any more.",
   );

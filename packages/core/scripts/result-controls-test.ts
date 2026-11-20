@@ -156,7 +156,7 @@ const inSession = <T>(fn: () => Promise<T>): Promise<T> => inEveContext(new Fake
   }
   eq(
     fenceFunnels.sort(),
-    ["hostAuthoredModelOutput", "ingestUntrusted", "ingestUntrustedModelOutput", "untrustedModelOutput", "wrapUntrusted"],
+    ["fenceCatalogText", "hostAuthoredModelOutput", "ingestUntrusted", "ingestUntrustedModelOutput", "untrustedModelOutput", "wrapUntrusted"],
     "funnels: the export enumeration found every fencing funnel",
   );
 

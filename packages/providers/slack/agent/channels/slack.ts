@@ -492,12 +492,13 @@ const slackMentionChannel = slackChannel({
   turnPolicy: "queue",
   onAppMention: (ctx, message) => admitInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),
-  onInputResponse: (ctx, submission) => admitSlackInputResponse(ctx, submission),
+  onAnswers: (ctx, submission) => admitSlackInputResponse(ctx, submission),
   renderers: [
     taskCardConfidentiality,
     {
       events: {
-        "turn.started": async (_data, channel, ctx) => {
+        "turn.started": async (_event, ctx) => {
+          const channel = ctx.channel;
           if (isSupervisorReplyTurn(channel.state)) {
             const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
             const channelId = typeof attrs?.channel_id === "string" ? attrs.channel_id : undefined;
@@ -506,7 +507,7 @@ const slackMentionChannel = slackChannel({
               ? ({ channelId, threadTs } satisfies SupervisorReplyTarget)
               : undefined;
           }
-          (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+          (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId({ session: ctx.session });
           {
             const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
             if (attrs?.channel_type === "im") {
@@ -522,24 +523,38 @@ const slackMentionChannel = slackChannel({
             if (typeof stamp === "string" && stamp.length > 0) st.oeEyesStampTs = stamp;
           }
           if (eyesDrawnThisTurn(channel.state)) await setStatusReaction(channel.slack, "working", dmWakeThreadOverride(channel.state));
-          channel.state.pendingTaskResults = null;
-          channel.state.pendingToolCallMessage = null;
+          (channel.state as unknown as Record<string, unknown>).pendingTaskResults = null;
+          (channel.state as unknown as Record<string, unknown>).pendingToolCallMessage = null;
         },
-        "reasoning.appended": async () => {},
-        "reasoning.completed": async () => {},
-        "actions.requested": async () => {},
-        "action.partial": async () => {},
-        "action.result": async () => {},
-        "message.completed": async (data, channel, ctx) => {
+        "content.delta": async (event, _ctx, next) => {
+          if (event.data.kind === "reasoning") return;
+          await next();
+        },
+        "call.requested": async () => {},
+        "call.progress": async () => {},
+        "call.settled": async (event, _ctx, next) => {
+          if (event.scope?.taskId !== undefined) await next();
+        },
+        "content.completed": async (event, ctx, next) => {
+          switch (event.data.kind) {
+            case "reasoning":
+              return;
+            case "text":
+              break;
+            default:
+              await next();
+              return;
+          }
+          const channel = ctx.channel;
           const sessionId = ctx?.session?.id;
-          const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
-          const action = finalMessageActionForTurn(data.finishReason, data.message, turnId);
+          const turnId = event.scope?.turnId ?? ctx.session.turn?.id;
+          const action = finalMessageActionForTurn(event.data, turnId);
           if (action.kind === "buffer-tool-status") {
             return;
           }
           const cardPostedThisTurn = consumeCardPostedThisTurn();
           const reactedThisTurn = consumeReactedThisTurn();
-          const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+          const repliedThisTurn = consumeRepliedThisTurn(turnId);
           if (action.kind === "silent") {
             (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
             if (eyesDrawnThisTurn(channel.state)) {
@@ -724,38 +739,57 @@ const slackMentionChannel = slackChannel({
           } catch {
           }
         },
-        "session.completed": async (_data, channel) => {
+        "delivery.settled": async (event, ctx, next) => {
+          switch (event.data.outcome) {
+            case "handled":
+            case "awaiting-input":
+            case "failed":
+              break;
+            default:
+              await next();
+              return;
+          }
+          const channel = ctx.channel;
           if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn !== true) {
             await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
           }
           await syncPinnedStatus(channel);
+          await next();
         },
-        "session.waiting": async (_data, channel) => {
-          if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn === true) return;
-          await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
-        },
-        "turn.failed": async (data, channel) => {
+        "turn.settled": async (event, ctx, next) => {
+          if (event.data.outcome !== "failed") {
+            await next();
+            return;
+          }
+          const channel = ctx.channel;
+          const message = event.data.error?.message ?? "";
           if (isUninvited(channel.state)) {
             if (eyesDrawnThisTurn(channel.state)) await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
-            await recordQuietFailure(channel.state, "turn.failed", data.message);
+            await recordQuietFailure(channel.state, "turn.failed", message);
             return;
           }
           await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
           try {
-            console.warn(`[open-everywhere:slack] turn failed: ${data.message}`);
+            console.warn(`[open-everywhere:slack] turn failed: ${message}`);
             await postWakeText(channel, `:octagonal_sign: ${TURN_FAILED_TEXT}`);
           } catch {
           }
         },
-        "session.failed": async (data, channel) => {
+        "session.ended": async (event, ctx, next) => {
+          if (event.data.outcome !== "failed") {
+            await next();
+            return;
+          }
+          const channel = ctx.channel;
+          const message = event.data.error?.message ?? "";
           if (isUninvited(channel.state)) {
             if (eyesDrawnThisTurn(channel.state)) await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
-            await recordQuietFailure(channel.state, "session.failed", data.message);
+            await recordQuietFailure(channel.state, "session.failed", message);
             return;
           }
           await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
           try {
-            console.warn(`[open-everywhere:slack] session failed: ${data.message}`);
+            console.warn(`[open-everywhere:slack] session failed: ${message}`);
             await postWakeText(channel, `:octagonal_sign: ${TURN_FAILED_TEXT}`);
           } catch {
           }

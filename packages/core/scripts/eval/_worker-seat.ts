@@ -41,10 +41,8 @@ export function workerSeatRoster(): readonly string[] {
 }
 
 const EVE_FRAMEWORK_MODULES: Readonly<Record<string, { readonly subpath?: string; readonly dist?: string; readonly named?: string }>> = {
-  task_cancel: { dist: "tools/provided/task-cancel.js", named: "taskCancelTool" },
-  task_wait: { dist: "tools/provided/task-wait.js", named: "taskWaitTool" },
-  load_skill: { subpath: "eve/tools/load_skill" },
-  web_search: { subpath: "eve/tools/web_search" },
+  eve__task_cancel: { dist: "tools/provided/task-cancel.js", named: "taskCancelTool" },
+  eve__task_wait: { dist: "tools/provided/task-wait.js", named: "taskWaitTool" },
 };
 
 export const WORKER_SEAT_UNREACHABLE: Readonly<Record<string, string>> = {
@@ -54,12 +52,20 @@ export const WORKER_SEAT_UNREACHABLE: Readonly<Record<string, string>> = {
   read_linear_issue: "defined in packages/providers/linear — packages/core may not import a provider bundle (boundary lock rule 1)",
   extend_workspace_time: "defined in @open-everywhere/adapters — packages/core may not import the adapters package (boundary lock rule 1)",
   fresh_eyes_review: "a declared subagent directory (agent/subagents/fresh_eyes_review) — eve lowers it into a tool at build time, so no importable definition exists",
-  connection_tools:
-    "eve RESERVES the slot (0.69.0 CONNECTION_TOOL_SLOTS) and ships it as a DynamicSentinel on no public subpath; it provides the two verbs below rather than mounting under its own name, so there is no entry to mount here",
-  connection_search:
-    "eve 0.69.0 provides it from the dynamic `tools/connection_tools` source, only while the agent has connections — `tools/framework/connection-search.js` is gone. This synthetic world registers no connection registry, so the resolver would answer null; there is no module whose default export is this verb",
-  connection_execute:
-    "same seam as connection_search — provided by the dynamic `tools/connection_tools` source while the agent has connections, with no module of its own to import",
+  eve__skill:
+    "eve provides it as a catalog route, only while the session's catalog holds a skill, and reserves the name; no public subpath exports a module whose default export is this verb",
+  eve__search:
+    "eve provides it as a catalog route, only while the session has connections or deferred entries; this synthetic world registers neither, and no module exports it",
+  eve__tool:
+    "same seam as eve__search — a catalog route eve provides while the session has connections or deferred entries, with no module of its own to import",
+  eve__reply:
+    "eve provides it only on a session that carries a structured output schema; a worker seat carries none, and no module exports it",
+  notion:
+    "a connector mount: its ops list only against a live server, so this offline seat does not run its resolver (a listing would reach the network or offer names outside the worker roster)",
+  "slack-as-you":
+    "an app-declared MCP server stub (agent/tools/slack-as-you.ts, which `oe build` writes from agent/access/mcp-servers.ts) — packages/core cannot import the app, and its connector ops list only against a live server",
+  web_search:
+    "eve 1.x ships it as a provider-executed tool: `eve/tools/web_search` exports only the `webSearch({ provider })` configuration, which the model provider runs, so no module exports a verb an offline seat can execute",
 };
 
 const CORE_TOOL_MODULES: ReadonlyMap<string, string> = new Map(
@@ -91,8 +97,7 @@ async function mountCoreTool(
       `buildWorkerSeatToolset: agent/${modulePath} default-exports nothing, so "${name}" would mount as undefined and every assertion over it would be vacuous`,
     );
   }
-  const asDynamic = definition as { readonly events?: Record<string, unknown> };
-  if (asDynamic.events?.["session.started"] !== undefined) {
+  if (typeof definition === "object" && definition !== null && Symbol.for("eve.dynamic") in definition) {
     const resolved = await resolveDynamicEntry(definition, ctx);
     if (resolved === null) return [];
     if (isSingleEntry(resolved)) {
@@ -130,7 +135,7 @@ export async function buildWorkerSeatToolset(opts: {
 
   const attempt = [...new Set([...roster, ...WORKER_UNMOUNTED_TOOLS])];
 
-  for (const name of attempt.filter((n) => WORKER_INDEX_MACHINERY.has(n))) {
+  for (const name of attempt.filter((n) => WORKER_INDEX_MACHINERY.has(n) && CORE_TOOL_MODULES.has(n) && WORKER_SEAT_UNREACHABLE[n] === undefined)) {
     const provided = await mountCoreTool(name, opts.ctx, rec, set);
     skip(
       name,
@@ -142,6 +147,11 @@ export async function buildWorkerSeatToolset(opts: {
 
   for (const name of attempt) {
     if (set[name] !== undefined || skipped.has(name)) continue;
+    const unreachable = WORKER_SEAT_UNREACHABLE[name];
+    if (unreachable !== undefined) {
+      skip(name, unreachable);
+      continue;
+    }
     if (CORE_TOOL_MODULES.has(name)) {
       const mounted = await mountCoreTool(name, opts.ctx, rec, set);
       if (mounted.length === 0) skip(name, "its own shipped `session.started` resolver mounts nothing on this seat");
@@ -157,11 +167,6 @@ export async function buildWorkerSeatToolset(opts: {
             ? await eveNamedTool(eveSeam.dist!, eveSeam.named)
             : await eveFrameworkToolDefinition(eveSeam.dist!),
       );
-      continue;
-    }
-    const unreachable = WORKER_SEAT_UNREACHABLE[name];
-    if (unreachable !== undefined) {
-      skip(name, unreachable);
       continue;
     }
     throw new Error(

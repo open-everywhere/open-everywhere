@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-eve-schema-strip-")), "ops.sqlite3");
 
 import describeImage from "../agent/tools/describe_image.js";
+import { installedEveRoot, readEveSchemaHelpers, readResolveToolInputFork, RESOLVE_TOOL_PATH } from "./eve-tool-schema.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -16,31 +15,41 @@ const ok = (cond: boolean, label: string): void => {
   n++;
 };
 
-interface EveSchemaHelpers {
-  isToolSchema: (schema: unknown) => boolean;
-  toInputSchema: (schema: unknown) => unknown;
-  serializeInputSchema: (schema: unknown) => unknown;
-}
+const eveRoot = installedEveRoot();
+const eve = await readEveSchemaHelpers(eveRoot);
 
-const require = createRequire(import.meta.url);
-const eveRoot = dirname(require.resolve("eve/package.json"));
-const helperPath = join(eveRoot, "dist/src/tools/schema.js");
-
-let eve: EveSchemaHelpers;
-try {
-  eve = (await import(pathToFileURL(helperPath).href)) as EveSchemaHelpers;
-} catch (err) {
-  throw new Error(
-    `eve's tool-schema helpers are no longer at ${helperPath} (${err instanceof Error ? err.message : String(err)}). ` +
-      "This tripwire exists for exactly this: re-read `dist/src/runtime/resolve-tool.js`, find where the input schema " +
-      "is resolved now, and re-point the cases below at it. Do NOT delete the gate — describe_image's stale-call " +
-      "acceptance rides that seam (OPE-1186).",
+{
+  const { fork, conversion } = readResolveToolInputFork(eveRoot);
+  ok(
+    /^isToolSchema\(\w+\.inputSchema\)\?\w+\.inputSchema:toInputSchema\(\w+\.inputSchema\)$/u.test(fork),
+    `🔴 anchor: eve resolves an executable tool's input schema through exactly ONE two-arm fork (read: ${fork}). The live-arm and other-arm cases below drive those arms`,
   );
-}
-for (const name of ["isToolSchema", "toInputSchema", "serializeInputSchema"] as const) {
-  if (typeof eve[name] !== "function") {
-    throw new Error(`eve's schema module no longer exports \`${name}\` — the resolve-tool fork has changed shape; re-derive it (OPE-1186).`);
-  }
+  ok(
+    /^inputSchema:toInputSchema\(\w+\.inputSchema\)$/u.test(conversion),
+    `🔴 anchor: a tool with no execute function takes the conversion alone (read: ${conversion}) — the other-arm case below drives that route too, and a third route would escape both`,
+  );
+  const dir = mkdtempSync(join(tmpdir(), "oe-eve-resolve-tool-"));
+  const write = (body: string): string => {
+    mkdirSync(join(dir, "dist/src/runtime"), { recursive: true });
+    writeFileSync(join(dir, RESOLVE_TOOL_PATH), body);
+    return dir;
+  };
+  const refuses = (body: string, label: string): void => {
+    let threw = false;
+    try {
+      readResolveToolInputFork(write(body));
+    } catch {
+      threw = true;
+    }
+    ok(threw, label);
+  };
+  const forkOf = "let s=isToolSchema(a.inputSchema)?a.inputSchema:toInputSchema(e.inputSchema);";
+  const bareOf = "let t={inputSchema:toInputSchema(e.inputSchema)};";
+  ok(readResolveToolInputFork(write(bareOf + forkOf)).fork.startsWith("isToolSchema("), "control: the rc's shape (one bare conversion, one fork) reads clean from a fixture");
+  refuses(bareOf + "let s=toInputSchema(e.inputSchema);", "🔴 a resolver with NO fork (always converts) is refused — the live-arm case would then test a route eve never takes");
+  refuses(bareOf + forkOf + "let u=toInputSchema(serializeInputSchema(e.inputSchema));", "🔴 a THIRD conversion beside the two routes is refused — a third route escapes both arm cases");
+  refuses(bareOf + forkOf + forkOf, "🔴 two fork sites are refused — eve then resolves input schemas in more places than the arms cover");
+  refuses(forkOf, "🔴 a resolver that dropped the no-execute route is refused too — the counts are the re-derivation, in both directions");
 }
 
 type Validated = { value?: unknown; issues?: readonly unknown[] };

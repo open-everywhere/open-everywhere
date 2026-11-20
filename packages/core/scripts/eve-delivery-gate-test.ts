@@ -16,7 +16,19 @@ const workflowCore = join(eveRoot, "dist/src/compiled/@workflow/core");
 const read = (p: string): string => readFileSync(p, "utf8");
 
 const privateJs = read(join(workflowCore, "private.js"));
-const runtimeJs = read(join(workflowCore, "runtime.js"));
+// eve 1.x moves the events-consumer construction out of runtime.js into a bundled chunk. The wiring
+// module is the one that passes the `isDeliveryIdle` option: runtime.js when it does, else that chunk.
+const runtimeJs = ((): string => {
+  const entry = read(join(workflowCore, "runtime.js"));
+  if (entry.includes("isDeliveryIdle:")) return entry;
+  const chunks = join(eveRoot, "dist/src/compiled/_chunks/workflow");
+  const carriers = readdirSync(chunks)
+    .filter((f) => f.endsWith(".js"))
+    .map((f) => read(join(chunks, f)))
+    .filter((text) => text.includes("isDeliveryIdle:()=>"));
+  assert.equal(carriers.length, 1, "exactly one compiled workflow module wires the events consumer's isDeliveryIdle option");
+  return carriers[0]!;
+})();
 const consumerDts = read(join(workflowCore, "events-consumer.d.ts"));
 
 const KNOB = "WORKFLOW_DEFERRED_CHECK_DELAY_MS";
@@ -52,6 +64,9 @@ const chunkExportName = (shimText: string, publicName: string): string | undefin
   if (shimLocal === undefined) return undefined;
   const viaChunk = sourceNameOf(importClause(shimText, "private"), shimLocal);
   if (viaChunk !== undefined) return viaChunk;
+  // eve 1.x: the shim is one `export{i as isDeliveryIdle,…}from"…/private-<hash>.js"` statement, so
+  // the name on the left of `as` is the chunk's own export name.
+  if (new RegExp(`^export\\{[^}]*\\b${shimLocal}\\s+as\\s+${publicName}\\b[^}]*\\}from"[^"]*private[^"]*"`).test(shimText.trim())) return shimLocal;
   return declaresLocal(shimText, shimLocal) ? publicName : undefined;
 };
 

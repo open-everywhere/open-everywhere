@@ -1,9 +1,9 @@
 // proves: SEAT-68, SEAT-69
 
-import { readFileSync, mkdtempSync } from "node:fs";
-import { createRequire } from "node:module";
+import { mkdtempSync } from "node:fs";
+import { eveWorldVercelSource } from "./_eve-world-source.js";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-stranded-seat-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
@@ -203,10 +203,7 @@ const NATIVE_TOKEN = "C0123456:oe-sup:g1";
 }
 
 {
-  const require = createRequire(import.meta.url);
-  const evePkg = require.resolve("eve/package.json");
-  const world = `${dirname(evePkg)}/dist/src/compiled/@workflow/world-vercel/index.js`;
-  const haystack = readFileSync(world, "utf8");
+  const haystack = eveWorldVercelSource();
   ok(
     haystack.includes(RUN_KEY_FETCH_MARKER),
     "pin: RUN_KEY_FETCH_MARKER is still present in the installed eve runtime — if this is RED, eve re-worded the message and isPrunedDeploymentWakeError no longer matches it",

@@ -33,7 +33,7 @@ try {
   snapshot = raw;
   passed++;
 } catch (e) {
-  reds.push(`${SNAPSHOT_PATH} does not satisfy eve's cache-v2 shape: ${(e as Error).message}`);
+  reds.push(`${SNAPSHOT_PATH} does not satisfy this repo's copy of eve's cache-v2 shape: ${(e as Error).message}`);
   snapshot = raw as CompiledRuntimeModelCatalogCache;
 }
 
@@ -84,6 +84,6 @@ if (reds.length > 0) {
 
 console.log(
   `✓ model-catalog-snapshot: ${passed} assertion(s) passed — every registry id (${ids.length}: ${ids.join(", ")}) ` +
-    `resolves limits from the committed snapshot, the snapshot satisfies eve's cache-v2 shape, and the ` +
+    `resolves limits from the committed snapshot, the snapshot satisfies this repo's copy of eve's cache-v2 shape (eve's own reader: test:eve-deep-reads), and the ` +
     `negative control confirms the check can fail.`,
 );

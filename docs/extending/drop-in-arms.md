@@ -360,7 +360,7 @@ pre-cap is gone. The download's own 5 MB byte cap is what bounds the output obje
 funnel is the one place this route meets a context bound.
 
 What DOES reach the arm with a whole body: connector and MCP results
-(`access/untrusted-projection.ts`), a BORROWED grant's result (`tools/grant_tools.ts`, a separate
+(`access/connector-result-fence.ts`), a BORROWED grant's result (`tools/grant_tools.ts`, a separate
 composition entry), the `browser_*` family, `read_routine_transcript`, `read_webhook_history`,
 `list_recent_events`, `read_file_upload`, and the two work-surface readers `read_linear_issue` and
 `read_notion_comments` — which bound a comment COUNT, not a character budget, so a few long comments

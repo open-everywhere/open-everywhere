@@ -1007,7 +1007,7 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     async wake({ channelId, threadTs, auth, message, state }) {
       await dispatchNativeWakeWithRetry(
-        () => send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state }),
+        () => send({ message }, { auth, continuationToken: slackContinuationToken({ channelId, threadTs }), state }),
         slackNativeWakeAttribution(auth, channelId),
       );
     },
@@ -1889,7 +1889,7 @@ export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
     backscroll: (input) => fetchWakeBackscrollLines(input),
     async wake({ channelId, threadTs, auth, message, context, state }) {
       await dispatchNativeWakeWithRetry(
-        () => send({ message, context }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state }),
+        () => send({ message, context }, { auth, continuationToken: slackContinuationToken({ channelId, threadTs }), state }),
         slackNativeWakeAttribution(auth, channelId),
       );
     },
@@ -1901,7 +1901,7 @@ export function supervisorSentinel(generation: number): string {
 }
 
 export function supervisorToken(channelId: string, generation: number): string {
-  return slackContinuationToken(channelId, supervisorSentinel(generation));
+  return slackContinuationToken({ channelId, threadTs: supervisorSentinel(generation) });
 }
 
 export function supervisorFifoKey(channelId: string): string {
@@ -2701,7 +2701,7 @@ export function liveChannelJoinDeps(send: WakeSend): ChannelJoinRouteDeps {
       await slackForm("chat.postMessage", `channel=${encodeURIComponent(channelId)}&thread_ts=${encodeURIComponent(threadTs)}&text=${encodeURIComponent(text)}`);
     },
     async wake({ channelId, threadTs, auth, message, state }) {
-      await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
+      await send({ message }, { auth, continuationToken: slackContinuationToken({ channelId, threadTs }), state });
     },
   };
 }

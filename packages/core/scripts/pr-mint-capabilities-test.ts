@@ -5,6 +5,7 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { withPatchedFetch } from "./_fetch-test-utils.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -71,7 +72,7 @@ interface Entry {
   execute: (input: unknown, ctx: unknown) => Promise<unknown>;
 }
 await withPatchedFetch(fakeFetch, async () => {
-  const handler = (openPullRequestTool as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
+  const handler = _dynamicResolverForTest(openPullRequestTool);
   const entry = (handler ? await handler({}, ctx) : openPullRequestTool) as Entry;
   ok(typeof entry?.execute === "function", "open_pull_request is MOUNTED on this surface (a null resolver would make every assertion below vacuous)");
 

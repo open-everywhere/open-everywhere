@@ -1,6 +1,6 @@
 import { __setTestValveForTest } from "@open-everywhere/core/agent/testing/test-valves.js";
 import { createHash, createHmac, generateKeyPairSync, randomBytes, sign as signEd25519 } from "node:crypto";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -8,6 +8,7 @@ import { afterEach, expect } from "vitest";
 import type { AgentSettingsOverrides } from "@open-everywhere/core/agent/settings/settings.js";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
+import { findScheduleHandler, scheduleTaskName } from "./schedule-handler";
 import { AUDIT_DUMP_LIMIT, formatAuditTimeoutDump, type AuditDumpRow, type AuditDumpPendingRow } from "./audit-timeout-dump";
 import {
   AUDIT_CURSOR_LOOKBACK_MS,
@@ -26,8 +27,8 @@ import { copyPgliteTemplateInto } from "./pglite-template";
 import { createStateDir } from "./state-dir";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
-import "@open-everywhere/core/agent/access/untrusted-projection.js";
 import "@open-everywhere/core/agent/access/worker-continuation.js";
+import { stubToolExecuteForTest } from "@open-everywhere/core/agent/access/seat-cut.js";
 
 import {
   ANY_SESSION,
@@ -48,6 +49,7 @@ import {
   type SeatScript,
 } from "../../agent/model/scripted-model";
 export {
+  compactionSummariesServed,
   registerScript,
   WAKE_FROM_ENVELOPE,
   WAKE_FROM_REPORT,
@@ -677,29 +679,47 @@ export const SETTLEMENT_DRAIN_CLOSING_SCRIPT: SeatScript = {
   ],
 };
 
-type ToolsetTool = { execute?: (...args: unknown[]) => unknown };
-
+/**
+ * Replaces one tool's `execute` with `stub` for every seat that holds the tool, until the returned
+ * restore runs. It is the seat cut's stub seam (`stubToolExecuteForTest` in `access/seat-cut.ts`),
+ * which `bootAgent` enables when it arms the `scripted-model` valve. The seam reaches a tool that a
+ * seat-cut slot mounts: not a static slot (`ask_question`), not eve's own built-ins (`eve__*`), and
+ * not a tool the seat's cut withholds. Restore in reverse order.
+ */
 export function wrapToolExecute(toolName: string, stub: (...args: unknown[]) => unknown): () => void {
-  if (booted === undefined) {
-    throw new Error("integration harness: wrapToolExecute before bootAgent — the boot overwrites the hook and would clobber this wrap.");
+  return stubToolExecuteForTest(toolName, stub);
+}
+
+export interface BashToolResult {
+  readonly exitCode: number;
+  /** The text the model read: stdout, then `[stderr]` and stderr, then the `[exit code: N]` trailer. */
+  readonly text: string;
+}
+
+const BASH_EXIT_TRAILER = /\n?\[exit code: (-?\d+)\]$/;
+const BASH_STILL_RUNNING = "The command is still running after";
+
+/**
+ * Reads a recorded `bash` tool result in eve 1.x's shape. The scripted model records what the model
+ * read, not the tool's `{ status, exitCode, stdout, stderr }` object: eve's `bashModelOutput`
+ * (`tools/provided/bash.js`) turns exit 0 into plain text and any other exit into error text that ends
+ * with `[exit code: N]`. The reader throws on any other shape, on a command still running, and on an
+ * error flag that disagrees with the trailer, so a changed shape fails the spec instead of reading as
+ * a pass.
+ */
+export function bashToolResult(result: { readonly name: string; readonly isError: boolean; readonly output: unknown }): BashToolResult {
+  const shown = `bash result (isError=${String(result.isError)}): ${JSON.stringify(result.output).slice(0, 400)}`;
+  if (result.name !== "bash") throw new Error(`integration harness: bashToolResult read a "${result.name}" result`);
+  if (typeof result.output !== "string") throw new Error(`integration harness: not eve 1.x's bash model output — ${shown}`);
+  if (result.output.includes(BASH_STILL_RUNNING)) throw new Error(`integration harness: the bash command did not complete — ${shown}`);
+  const trailer = BASH_EXIT_TRAILER.exec(result.output);
+  if (trailer === null) {
+    if (result.isError) throw new Error(`integration harness: an error bash result with no exit-code trailer — ${shown}`);
+    return { exitCode: 0, text: result.output };
   }
-  const g = globalThis as { __oeToolResultProjection?: (toolset: Record<string, ToolsetTool>) => unknown };
-  const original = g.__oeToolResultProjection;
-  if (typeof original !== "function") {
-    throw new Error("integration harness: globalThis.__oeToolResultProjection is not installed — did the agent really boot from a patched eve?");
-  }
-  g.__oeToolResultProjection = (toolset: Record<string, ToolsetTool>) => {
-    const out = original(toolset);
-    try {
-      const tool = toolset[toolName];
-      if (tool !== undefined && typeof tool.execute === "function") tool.execute = stub;
-    } catch {
-    }
-    return out;
-  };
-  return () => {
-    g.__oeToolResultProjection = original;
-  };
+  const exitCode = Number(trailer[1]);
+  if (!result.isError || exitCode === 0) throw new Error(`integration harness: the error flag and the exit-code trailer disagree — ${shown}`);
+  return { exitCode, text: result.output.slice(0, trailer.index) };
 }
 
 const EVE_CONTEXT_STORAGE_SYMBOL = Symbol.for("eve.context-storage");
@@ -722,13 +742,15 @@ interface EveContextContainer {
   get(key: { readonly name: string }): unknown;
 }
 
+// eve 1.x keeps `{ context, values }` in this storage (eve's `context/container.js`), so the
+// container is the store's `context` field, never the store itself.
 function eveContextContainer(): EveContextContainer | undefined {
   const als = (globalThis as Record<PropertyKey, unknown>)[EVE_CONTEXT_STORAGE_SYMBOL] as
-    | { getStore?: () => EveContextContainer | undefined }
+    | { getStore?: () => { context?: EveContextContainer } | undefined }
     | undefined;
   if (als === undefined || typeof als.getStore !== "function") return undefined;
-  const store = als.getStore();
-  return store !== undefined && typeof store.get === "function" ? store : undefined;
+  const container = als.getStore()?.context;
+  return container !== undefined && typeof container.get === "function" ? container : undefined;
 }
 
 export function toolSessionIdentity(): ToolSessionIdentity | undefined {
@@ -1261,12 +1283,29 @@ function base64url(input: Buffer | string): string {
   return (Buffer.isBuffer(input) ? input : Buffer.from(input, "utf8")).toString("base64url");
 }
 
-export function signTeamsJwt(overrides: { readonly aud?: string; readonly iss?: string; readonly expiresInSec?: number } = {}): string {
+/** The service URL the Teams fixtures name. A token signed with no other service URL carries this one. */
+export const TEAMS_FIXTURE_SERVICE_URL = "https://smba.trafficmanager.net/amer/";
+
+/**
+ * Signs a Bot Connector token the way the Bot Connector service does. The token carries the
+ * `serviceurl` claim: the Teams front refuses a token without it, and refuses an activity whose
+ * `serviceUrl` differs from it. `serviceUrl: null` leaves the claim out.
+ */
+export function signTeamsJwt(
+  overrides: {
+    readonly aud?: string;
+    readonly iss?: string;
+    readonly expiresInSec?: number;
+    readonly serviceUrl?: string | null;
+  } = {},
+): string {
   const header = { alg: "RS256", typ: "JWT", kid: TEAMS_JWT_KEYS.kid };
   const now = Math.floor(Date.now() / 1000);
+  const serviceUrl = overrides.serviceUrl === undefined ? TEAMS_FIXTURE_SERVICE_URL : overrides.serviceUrl;
   const payload = {
     iss: overrides.iss ?? "https://api.botframework.com",
     aud: overrides.aud ?? MICROSOFT_APP_ID,
+    ...(serviceUrl === null ? {} : { serviceurl: serviceUrl }),
     iat: now - 5,
     nbf: now - 5,
     exp: now + (overrides.expiresInSec ?? 300),
@@ -1283,7 +1322,9 @@ export async function teamsActivityPost(input: {
 }): Promise<{ status: number; body: string }> {
   if (booted === undefined) throw new Error("integration harness: teamsActivityPost before bootAgent.");
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (input.bearer !== null) headers.authorization = `Bearer ${input.bearer ?? signTeamsJwt()}`;
+  // The default token names the activity's own service URL, as the Bot Connector service signs it.
+  const activityServiceUrl = typeof input.activity.serviceUrl === "string" ? input.activity.serviceUrl : undefined;
+  if (input.bearer !== null) headers.authorization = `Bearer ${input.bearer ?? signTeamsJwt({ serviceUrl: activityServiceUrl })}`;
   const res = await fetch(`${booted.base}/eve/v1/teams`, {
     method: "POST",
     headers,
@@ -1480,9 +1521,6 @@ export async function readUsageWindow(input: {
   return (await res.json()) as { rows: UsageWindowRow[]; totalUsd: number; unpricedModels: readonly string[] };
 }
 
-function scheduleTaskName(logicalPath: string): string {
-  return `eve.schedule.${Buffer.from(logicalPath, "utf8").toString("base64url")}`;
-}
 
 export async function seedDueRoutine(input: {
   readonly surfaceKey: string;
@@ -1534,9 +1572,8 @@ export async function runRoutineDispatchTick(): Promise<readonly string[]> {
   if (booted === undefined) throw new Error("integration harness: runRoutineDispatchTick before bootAgent.");
   const taskName = scheduleTaskName("schedules/dispatch.ts");
   const dir = join(bootedBuildDir(), "server", "_virtual");
-  const candidates = readdirSync(dir).filter((f) => f.endsWith(".schedule.mjs"));
-  for (const file of candidates) {
-    if (!readFileSync(join(dir, file), "utf8").includes(taskName)) continue;
+  const { file, candidates } = findScheduleHandler(dir, taskName);
+  if (file !== undefined) {
     const mod = (await import(pathToFileURL(join(dir, file)).href)) as {
       default: { run(e: { name: string }): Promise<{ result?: { sessionIds?: readonly string[] } }> };
     };
@@ -1554,9 +1591,8 @@ export async function runScheduleTask(logicalPath: string): Promise<unknown> {
   if (booted === undefined) throw new Error("integration harness: runScheduleTask before bootAgent.");
   const taskName = scheduleTaskName(logicalPath);
   const dir = join(bootedBuildDir(), "server", "_virtual");
-  const candidates = readdirSync(dir).filter((f) => f.endsWith(".schedule.mjs"));
-  for (const file of candidates) {
-    if (!readFileSync(join(dir, file), "utf8").includes(taskName)) continue;
+  const { file, candidates } = findScheduleHandler(dir, taskName);
+  if (file !== undefined) {
     const mod = (await import(pathToFileURL(join(dir, file)).href)) as { default: { run(e: { name: string }): Promise<unknown> } };
     return await mod.default.run({ name: taskName });
   }

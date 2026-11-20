@@ -15,7 +15,7 @@ asserts that **every** one of them is absent from `packages/core/agent`. For Sla
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-slack eve@0.71.0
+npm i @open-everywhere/core @open-everywhere/provider-slack eve@1.0.0-rc.18
 npx oe-eve-patch
 ```
 

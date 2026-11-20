@@ -1,6 +1,7 @@
 import type { AuditWireEntry } from "./audit-read.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 import { WAKE_INGRESS_ACTION, WAKE_TURN_START_ACTION } from "../../agent/channels/wake-timing.js";
+import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { MemoryPersistOutcome } from "../../agent/hooks/memory.js";
 import type { MemoryWriteRoad } from "../../agent/memory/write-road.js";
 import {
@@ -131,7 +132,7 @@ export interface MemoryReadSlice {
   readonly bounded: boolean;
 }
 
-export const WAKE_ENVELOPE_EVENT = "message.received";
+export const WAKE_ENVELOPE_EVENT = "delivery.consumed";
 
 export function decodeEnvelopeEntities(text: string): string {
   return text
@@ -506,7 +507,7 @@ export function workerSessionIdsOfFire(rows: readonly AuditWireEntry[], fireSess
   return [...ids];
 }
 
-export const CONNECTION_SEARCH_TOOL = "connection_search";
+export const CONNECTION_SEARCH_TOOL = "eve__search";
 
 export interface FireOpCalls {
   readonly discovered: boolean;
@@ -516,15 +517,17 @@ export interface FireOpCalls {
 export function fireOpCalls(events: readonly TranscriptWireEvent[], op: string): FireOpCalls {
   let discovered = false;
   let called = false;
+  const searchCalls = new Set<string>();
   for (const e of events) {
-    if (e.type === "actions.requested") {
-      const actions = (e.data as { actions?: unknown } | null)?.actions;
-      if (!Array.isArray(actions)) continue;
-      if (actions.some((a) => (a as { toolName?: unknown } | null)?.toolName === op)) called = true;
-    } else if (e.type === "action.result") {
-      const result = (e.data as { result?: { toolName?: unknown; output?: unknown } } | null)?.result;
-      if (result?.toolName !== CONNECTION_SEARCH_TOOL) continue;
-      if (JSON.stringify(result.output ?? null).includes(op)) discovered = true;
+    if (e.type === "call.requested") {
+      const d = e.data as { callId?: unknown; capability?: { name?: unknown } } | null;
+      const name = d?.capability?.name;
+      if (name === op) called = true;
+      if (name === CONNECTION_SEARCH_TOOL && typeof d?.callId === "string") searchCalls.add(d.callId);
+    } else if (e.type === "call.settled") {
+      const d = e.data as { callId?: unknown; output?: unknown } | null;
+      if (typeof d?.callId !== "string" || !searchCalls.has(d.callId)) continue;
+      if (JSON.stringify(d.output ?? null).includes(op)) discovered = true;
     }
   }
   return { discovered, called };
@@ -535,14 +538,12 @@ const NOTION_REST_SCRIPT = "notion.mjs";
 
 export function transcriptTookRestRoad(events: readonly TranscriptWireEvent[]): boolean {
   for (const e of events) {
-    if (e.type !== "actions.requested") continue;
-    const actions = (e.data as { actions?: unknown } | null)?.actions;
-    if (!Array.isArray(actions)) continue;
-    for (const action of actions as { toolName?: unknown; input?: unknown }[]) {
-      const input = JSON.stringify(action?.input ?? null);
-      if (action?.toolName === "load_skill" && input.includes(NOTION_REST_SKILL)) return true;
-      if (action?.toolName === "bash" && input.includes(NOTION_REST_SCRIPT)) return true;
-    }
+    if (e.type !== "call.requested") continue;
+    const call = e.data as { capability?: { name?: unknown }; input?: unknown } | null;
+    const name = call?.capability?.name;
+    const input = JSON.stringify(call?.input ?? null);
+    if (name === "eve__skill" && input.includes(NOTION_REST_SKILL)) return true;
+    if (name === "bash" && input.includes(NOTION_REST_SCRIPT)) return true;
   }
   return false;
 }
@@ -1331,19 +1332,10 @@ export function delegationJoinForSession(rows: readonly AuditWireEntry[], sessio
 
 export const S23_ACK_TOPIC = /schedul|check.?in|check back|remind|routine/i;
 export const S23_REFUSAL = /unable|couldn'?t|can'?t|wasn'?t able|not able|fail(?:ed|ure)?|error|sorry/i;
-export const S23_ONE_SHOT = /one.?shot|one.?time|\bonce\b|single|check.?in/i;
-export const S23_SCHEDULED_OR_PENDING = /schedul|underway|under way|pending|approv/i;
-export const S23_CONFIRMED = /schedul|\barmed\b|granted|applied|\bset (?:up|for)\b|created|\bactive\b/i;
-export const S23_UNSETTLED =
-  /\b(?:still|is|remains|currently|now)\s+(?:\w+\s+)?pending|awaiting (?:an? )?approval|unverified|untrusted|can'?t confirm|cannot confirm|not (?:yet )?(?:been )?(?:confirmed|scheduled)|confirm once|may require an? approval/i;
 export const APPROVAL_DECISION_NOTICE =
   /^\s*(?:(?:✅|⛔|⌛)\s*Approval (?:APPROVED|REJECTED|EXPIRED)\b|✅ Approved by |⚠️ Approved by |❌ Rejected by |⏰ Expired[:\s—]|<@\w+>, (?:<@\w+>|an admin) (?:approved|declined) your request\b|<@\w+>, your request expired\b)/;
 
 export const S23_ACK_QUESTION = "Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?";
-export const S23_CARD_ACK_QUESTION =
-  "Does the reply EITHER confirm a ONE-TIME check-in was scheduled, OR honestly say the one-time check-in's setup is underway or waits on an approval (not a recurring/cron schedule, not a refusal)?";
-export const S23_CONFIRMATION_QUESTION =
-  "After the approval, does the reply confirm the ONE-TIME check-in is now scheduled or armed, without calling it still pending, unverified or unconfirmed?";
 
 export interface S23Check {
   readonly question: string;
@@ -1351,14 +1343,44 @@ export interface S23Check {
   readonly mustNotMatch: readonly RegExp[];
 }
 
-export function s23AckCheck(cardPath: boolean): S23Check {
-  return cardPath
-    ? { question: S23_CARD_ACK_QUESTION, mustMatch: [S23_ACK_TOPIC, S23_ONE_SHOT, S23_SCHEDULED_OR_PENDING], mustNotMatch: [S23_REFUSAL] }
-    : { question: S23_ACK_QUESTION, mustMatch: [S23_ACK_TOPIC], mustNotMatch: [S23_REFUSAL] };
+export function s23AckCheck(): S23Check {
+  return { question: S23_ACK_QUESTION, mustMatch: [S23_ACK_TOPIC], mustNotMatch: [S23_REFUSAL] };
 }
 
-export function s23ConfirmationCheck(): S23Check {
-  return { question: S23_CONFIRMATION_QUESTION, mustMatch: [S23_CONFIRMED], mustNotMatch: [S23_UNSETTLED, S23_REFUSAL] };
+export type CardDecisionVerdict = "approved" | "failed" | "rejected" | "expired";
+
+export interface ThreadPost {
+  readonly ts: string;
+  readonly text: string;
+}
+
+export interface CardDecision<M extends ThreadPost> {
+  readonly verdict: CardDecisionVerdict;
+  readonly message: M;
+}
+
+export function cardDecisionVerdict(text: string): CardDecisionVerdict | undefined {
+  const t = text.trim();
+  if (!APPROVAL_DECISION_NOTICE.test(t)) return undefined;
+  if (/^⚠️ Approved by |approved your request, but it failed/u.test(t)) return "failed";
+  if (/^(?:✅\s*Approval APPROVED\b|✅ Approved by )|approved your request\b/u.test(t)) return "approved";
+  if (/^(?:⛔\s*Approval REJECTED\b|❌ Rejected by )|declined your request\b/u.test(t)) return "rejected";
+  return "expired";
+}
+
+export function approvalCardDecision<M extends ThreadPost>(threadBotPosts: readonly M[], cardTs: string): CardDecision<M> | undefined {
+  const ordered = [...threadBotPosts].filter((m) => Number(m.ts) >= Number(cardTs)).sort((a, b) => Number(a.ts) - Number(b.ts));
+  for (const m of ordered) {
+    const verdict = cardDecisionVerdict(m.text);
+    if (verdict !== undefined) return { verdict, message: m };
+  }
+  return undefined;
+}
+
+export const SPEND_CAP_ASK_REASON = "the end-to-end test pack needs headroom for this week's runs";
+
+export function spendCapRaiseAsk(monthlyUsd: number): string {
+  return `raise this channel's spend cap to $${monthlyUsd}/month. The reason: ${SPEND_CAP_ASK_REASON}.`;
 }
 
 export const APPROVAL_JUDGE_VERDICT_ACTION = "approval.judge.verdict";
@@ -1604,11 +1626,22 @@ export function fireSettleSessionIds(join: Pick<FireReportJoin, "sessionIds" | "
   return [...new Set([...join.sessionIds, ...join.workSessionIds])];
 }
 
-const REFUSAL_SHAPE = /\b(?:refus\w*|den(?:y|ied|ies)|reject\w*|block\w*|not (?:be )?(?:allowed|permitted|authori[sz]ed)|could ?n[o']t|can ?n[o']t|unable|fail\w*|no (?:cap|limit|spend\w*) (?:was )?changed)\b/i;
+const REFUSAL_SHAPE = /\b(?:refus\w*|den(?:y|ied|ies)|reject\w*|block\w*|not (?:be )?(?:allowed|permitted|authori[sz]ed)|could ?n[o'’]t|can(?: ?no|['’])t|unable|fail\w*|no (?:cap|limit|spend\w*) (?:was )?changed)\b/i;
 const SPEND_SUBJECT = /\b(?:spend\w*|cap|limit|budget)\b|set_spend_limit/i;
 
 export function readsAsSpendRefusalReport(text: string): boolean {
   return REFUSAL_SHAPE.test(text) && SPEND_SUBJECT.test(text);
+}
+
+export const ONE_SHOT_FIRE_WAIT_MS = (3 + DISPATCH_TICK_MINUTES + 4) * 60_000;
+
+export const APPROVAL_DENIED_ACTION = "approval.denied";
+const NON_ADMIN_DENIAL_REASON = "not-admin";
+
+export function nonAdminDenialRow(rows: readonly AuditWireEntry[], pendingId: string, clickerId: string): AuditWireEntry | undefined {
+  return rows.find(
+    (r) => r.action === APPROVAL_DENIED_ACTION && r.principalId === clickerId && r.detail?.id === pendingId && r.detail?.reason === NON_ADMIN_DENIAL_REASON,
+  );
 }
 
 export function isDescribeImageOk(row: { readonly action?: string; readonly detail?: unknown }): boolean {

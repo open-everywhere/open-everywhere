@@ -10,6 +10,7 @@ import { registerCardPoster, cardPosterFor } from "../agent/approvals/flow.js";
 import { PROPOSER_DECISION_NOTE, cardPostedTail, proposerTail } from "../agent/approvals/card-venue.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { execTool } from "./_tool-exec.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -301,7 +302,7 @@ ok(rosterStanding([], "eng") === false, "rosterStanding: FAIL-CLOSED on no roles
   let scanned = 0;
   for (const f of readdirSync(toolsDir).filter((f) => f.endsWith(".ts"))) {
     const src = readFileSync(join(toolsDir, f), "utf8");
-    if (!src.includes("defineDynamic")) continue;
+    if (!/\b(?:defineDynamic|sessionMountedTool|sessionVariantTool)\s*\(/.test(src)) continue;
     scanned++;
     ok(
       !/^\s*approval:/m.test(src),
@@ -313,7 +314,7 @@ ok(rosterStanding([], "eng") === false, "rosterStanding: FAIL-CLOSED on no roles
 
 type ResolvedEntry = { description: string; execute(input: unknown, ctx: unknown): Promise<{ pendingId: string }> };
 async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | null> {
-  const handler = (clearSpendLimitDynamic as unknown as { events: Record<string, (event: unknown, ctx: unknown) => unknown> }).events["session.started"];
+  const handler = _dynamicResolverForTest(clearSpendLimitDynamic);
   return (await handler({}, ctx)) as ResolvedEntry | null;
 }
 

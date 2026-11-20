@@ -63,11 +63,17 @@ const subagentChildCtx = (sessionId: string): BindableContext => {
 
 const ORG = resolvePartition(nativeCtx("probe")).org;
 
-const fireHook = (requests: unknown, ctx: BindableContext): Promise<void> =>
-  (nativeInputAuditHook as unknown as { events: Record<string, (event: unknown, c: unknown) => Promise<void>> }).events["input.requested"](
-    { data: { requests } },
-    ctx,
+const { callView } = await import("./_hook-view.js");
+const fireHook = (requests: readonly { kind?: string; prompt?: string; requestId: string; action?: { toolName?: string } }[], ctx: BindableContext): Promise<void> => {
+  const r = requests[0]!;
+  const kind = r.kind === "tool-approval" ? "approval" : (r.kind ?? "budget");
+  const toolName = r.action?.toolName;
+  const view = callView({ callId: "c-asked", name: toolName ?? "none" });
+  return (nativeInputAuditHook as unknown as { events: Record<string, (event: unknown, c: unknown) => Promise<void>> }).events["interaction.opened"](
+    { data: { interactionId: r.requestId, subject: kind === "approval" ? { callId: "c-asked" } : { turnId: "t1" }, request: { kind, prompt: r.prompt ?? "" } } },
+    { ...(ctx as object), view } as unknown as BindableContext,
   );
+};
 
 const APPROVAL_BATCH = [
   { action: { toolName: "notion__notion-create-pages" }, kind: "tool-approval", prompt: "Approve tool call?", requestId: "approval-1" },
@@ -78,6 +84,24 @@ const PARK_BATCH = [{ action: { toolName: "session_limit_continuation" }, reques
 const rowsFor = async (): Promise<{ action: string; detail?: Record<string, unknown> }[]> =>
   (await readAudit({ org: ORG })).filter((r) => r.action === NATIVE_INPUT_REQUESTED_AUDIT_ACTION) as { action: string; detail?: Record<string, unknown> }[];
 
+{
+  const { approvalCallOf } = await import("../agent/hooks/approval-raised.js");
+  const relayedView = callView({ callId: "c-parent-agent", name: "worker", kind: "agent" });
+  const relayed = approvalCallOf(
+    {
+      interactionId: "i-relayed",
+      subject: { callId: "c-parent-agent" },
+      request: { kind: "approval", prompt: "?" },
+      origin: { sessionId: "child", interactionId: "i-child", call: { callId: "c-child", name: "linear__delete_issue", input: { id: "X" } } },
+    },
+    relayedView,
+  );
+  eq(relayed?.toolName, "linear__delete_issue", "0. a relayed child approval names the CHILD's tool from origin.call, not the parent's agent call");
+  eq(JSON.stringify(relayed?.input), JSON.stringify({ id: "X" }), "0. …and carries the child call's input");
+  const local = approvalCallOf({ interactionId: "i-local", subject: { callId: "c-parent-agent" }, request: { kind: "approval", prompt: "?" } }, relayedView);
+  eq(local?.toolName, "worker", "0. a local approval still reads its own call off the view (negative control)");
+}
+
 console.log("1. a tool-approval on a native (slack) surface writes ONE audit row:");
 {
   const before = (await rowsFor()).length;
@@ -86,7 +110,7 @@ console.log("1. a tool-approval on a native (slack) surface writes ONE audit row
   eq(rows.length, before + 1, "exactly one row was written for this batch");
   const detail = rows[rows.length - 1].detail;
   eq(detail?.platform, "slack", "…naming the resolved native platform");
-  eq(detail?.kind, "tool-approval", "…and the request's kind — a parked approval reads differently from a parked question");
+  eq(detail?.kind, "approval", "…and the request's kind — a parked approval reads differently from a parked question");
   eq(detail?.requestId, "approval-1", "…and eve's own request id, for the join");
   eq(detail?.toolName, "notion__notion-create-pages", "…and the tool the approval is for");
 }

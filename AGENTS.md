@@ -228,7 +228,7 @@ must land atomically.
 |---|---|
 | `npm run dev` | `eve dev` — local agent (needs a Gateway key or `eve link`) |
 | `npm run build` | `eve build` — production build. **Must pass before any deploy.** Chains `postbuild` (below) automatically. |
-| *(`postbuild`, chained after `npm run build`)* | Two gates that read the just-built `.output/server/index.mjs`, because no `tsx`-tier test can see what the bundler does. `agent-version-seam-bundle-test.ts` (OPE-1041) asserts the eve pin and app version resolve with no runtime filesystem read, and both baked literals survive bundling. `dynamic-callback-closure-bundle-test.ts` (OPE-1063, also `npm run test:dynamic-closure-bundle`) asserts no `defineTool` callback carries an undeclared capture into eve's durable descriptor — a capture that does not serialize makes eve drop the whole resolver's result, so the tools vanish from the seat with no red. Both run wherever `npm run build` runs, including a proof run's `build` suite — no separate deploy-checklist step |
+| *(`postbuild`, chained after `npm run build`)* | One gate that reads the just-built `.output/server/index.mjs`, because no `tsx`-tier test can see what the bundler does. `agent-version-seam-bundle-test.ts` (OPE-1041) asserts the eve pin and app version resolve with no runtime filesystem read, and both baked literals survive bundling. It runs wherever `npm run build` runs, including a proof run's `build` suite — no separate deploy-checklist step. (eve 1.x keeps no durable callback descriptor, so the former closure-bundle gate is gone.) |
 | `npm run typecheck` | `tsc --noEmit` on the root app |
 | `npm run typecheck:all` | root + `@open-everywhere/core` + `@open-everywhere/adapters` + every `@open-everywhere/provider-*` + the scaffolder |
 | `npm test` | full deterministic suite: `lint:script-chain` (fail-fast, serial), the provider-discord echo, then `test:suites` — every package's script-test chain PLUS the root package's own chain (the root `test-chain.txt`) (config lints, roster, boot, deploy-ops, …), batched together (no live model, no secrets). ~97 s on a 4-core box (OPE-709; was ~166 s after OPE-703, ~619 s before it) |
@@ -490,7 +490,7 @@ specific guide:
 
 - **One word, one meaning — use [`docs/glossary.md`](./docs/glossary.md).** The **seat** is the
   narrow conversational session (18 tools); the **work session** is the one session per
-  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 98, including
+  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 99, including
   `bash` and `write_file`). A conversation seat does its real work by forwarding it with `work`. Never
   write a bare "agent" for a running session. The glossary cites the code for every term — read
   that code before you assert what a run can do.

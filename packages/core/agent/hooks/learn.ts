@@ -13,6 +13,8 @@ import { appendAudit } from "../audit/audit.js";
 import { auditPersonOptOutRefusal } from "../identity/person-opt-out.js";
 import { turnPersonOptOut } from "../memory/opt-out-turn.js";
 import { triggerMessageBody } from "../channels/wake-envelope.js";
+import { optional } from "./control-refusal.js";
+import { deliveredText } from "./event-reads.js";
 
 const MAX_MESSAGES = 10;
 const MAX_MESSAGE_CHARS = 300;
@@ -156,44 +158,32 @@ async function consolidate(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": (_event, _ctx) => {
-      try {
-        learnLog.update((s) => ({ ...s, turn: [] }));
-      } catch {
-      }
-    },
+    "turn.started": optional("learn", () => {
+      learnLog.update((s) => ({ ...s, turn: [] }));
+    }),
 
-    "message.received": (event, _ctx) => {
-      const text = authoredBody(event.data?.message);
+    "delivery.consumed": optional("learn", (event) => {
+      const text = authoredBody(deliveredText(event.data));
       if (text === undefined) return;
       learnLog.update((s) => ({
         session: s.session.length < MAX_MESSAGES ? [...s.session, text] : s.session,
         turn: s.turn.length < MAX_MESSAGES ? [...s.turn, text] : s.turn,
       }));
-    },
+    }),
 
-    "turn.completed": async (_event, ctx) => {
-      try {
-        await consolidate(ctx);
-      } catch (err) {
-        log(`turn.completed learn skipped: ${String(err)}`);
+    "turn.settled": optional("learn", async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+        case "failed":
+          await consolidate(ctx);
+          return;
+        default:
+          return;
       }
-    },
+    }),
 
-    "turn.failed": async (_event, ctx) => {
-      try {
-        await consolidate(ctx);
-      } catch (err) {
-        log(`turn.failed learn skipped: ${String(err)}`);
-      }
-    },
-
-    "session.failed": async (_event, ctx) => {
-      try {
-        await consolidate(ctx);
-      } catch (err) {
-        log(`session.failed learn skipped: ${String(err)}`);
-      }
-    },
+    "session.ended": optional("learn", async (event, ctx) => {
+      if (event.data.outcome === "failed") await consolidate(ctx);
+    }),
   },
 });

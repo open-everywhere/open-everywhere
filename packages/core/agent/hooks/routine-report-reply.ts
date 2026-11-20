@@ -14,6 +14,7 @@ import { isThreadScopedWakeOrigin, unifiedThreadRef } from "../channels/unified-
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { checkInFromReportReply, MEMBER_TIERS, originOfReplyTarget, type ReportReplyOutcome } from "../routines/report-thread.js";
 import { captureEligible } from "./requester-messages.js";
+import { optional } from "./control-refusal.js";
 
 const REPORT_REPLY_DEDUPE_TTL_MS = 24 * 60 * 60_000;
 
@@ -53,9 +54,8 @@ export async function checkInFromNativeTurn(ctx: BindableContext, turnId?: strin
 
 export default defineHook({
   events: {
-    "message.received": async (event, ctx) => {
-      const turnId = (event.data as { turnId?: unknown } | undefined)?.turnId;
-      await checkInFromNativeTurn(ctx as unknown as BindableContext, typeof turnId === "string" ? turnId : undefined);
-    },
+    "delivery.consumed": optional("routine-report-reply", async (event, ctx) => {
+      await checkInFromNativeTurn(ctx as unknown as BindableContext, event.data.turnId);
+    }),
   },
 });

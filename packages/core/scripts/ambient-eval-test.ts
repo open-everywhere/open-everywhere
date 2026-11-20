@@ -265,7 +265,7 @@ const SILENT: Expected = "SILENT_OK";
 
 {
   const received = (turnId: string, message: string, index: number): TranscriptWireEvent => ({
-    index, at: new Date(clock += 1000).toISOString(), type: "message.received", data: { message, sequence: index, turnId },
+    index, at: new Date(clock += 1000).toISOString(), type: "delivery.consumed", data: { deliveryId: `d${index}`, turnId, parts: [{ kind: "text", text: message }] },
   });
   const envelope = (wakeId: string): string => `<${"wake"} wake-id="${wakeId}" addressing="direct-mention">hello</${"wake"}>`;
 
@@ -299,10 +299,10 @@ const SILENT: Expected = "SILENT_OK";
 
   const p6 = proveSiblingWakes([
     received("turn-A", envelope("ADDR-6"), 0),
-    { index: 1, at: null, type: "message.completed", data: { message: `replying to ${envelope("AMB-6")}`, turnId: "turn-A" } },
-    { index: 2, at: null, type: "message.received", data: { message: envelope("AMB-6") } },
+    { index: 1, at: null, type: "content.completed", data: { partId: "p1", kind: "text", phase: "reply", value: `replying to ${envelope("AMB-6")}` }, scope: { turnId: "turn-A" } },
+    { index: 2, at: null, type: "delivery.consumed", data: { deliveryId: "d2", parts: [{ kind: "text", text: envelope("AMB-6") }] } },
   ], "ADDR-6", "AMB-6");
-  ok(p6.proven === false, "proveSiblingWakes: a wake id appearing only in a message.completed (model output) or in a turnId-less event does NOT prove coalescing");
+  ok(p6.proven === false, "proveSiblingWakes: a wake id appearing only in a content.completed (model output) or in a turnId-less event does NOT prove coalescing");
 
   const p7 = proveSiblingWakes([
     received("turn-A", `<${"wake"} wake-id="ADDR-7">both ids here: AMB-7</${"wake"}>`, 0),

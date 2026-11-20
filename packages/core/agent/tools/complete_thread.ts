@@ -11,6 +11,7 @@ import { repliedWakesThisTurn } from "../channels/reply-signal.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { isThreadSeatWindowToken } from "../channels/window-key.js";
+import { STAND_DOWN_ACK_STILL_OWED, withholdIfStoodDown } from "../channels/stand-down-gate.js";
 
 export function isOwnTokenThreadSeat(ctx: BindableContext): boolean {
   return isThreadSeatWindowToken(resolveOwnWindowToken(ctx));
@@ -23,11 +24,35 @@ export function completionPostFor(repliedThisTurn: boolean, report: string | und
   return report !== undefined && report.length > 0 ? report : THREAD_DONE_LINE;
 }
 
+export type CompletionPost = "seat" | "host" | "failed" | "withheld";
+
+export const THREAD_STOOD_DOWN_NOTE =
+  " This thread stood down, so complete_thread posted nothing in it and placed no done reaction. Post nothing more there.";
+
 export function completeThreadNote(
   out: { readonly recorded: boolean; readonly closedNow: boolean; readonly foreign: boolean; readonly cleared: boolean; readonly handedBack: boolean; readonly reaction: string; readonly priorState?: string },
-  posted: "seat" | "host" | "failed",
+  posted: CompletionPost,
+  holdsAck = false,
 ): string {
-  const post = posted === "host" ? " Your completion is posted in the thread." : posted === "failed" ? " The completion could not be posted in the thread, so say it there with `reply`." : "";
+  const post =
+    posted === "host"
+      ? " Your completion is posted in the thread."
+      : posted === "failed"
+        ? " The completion could not be posted in the thread, so say it there with `reply`."
+        : posted === "withheld"
+          ? THREAD_STOOD_DOWN_NOTE + (holdsAck ? STAND_DOWN_ACK_STILL_OWED : "")
+          : "";
+  if (posted === "withheld") {
+    const state = out.foreign
+      ? "A newer thread seat holds this thread now, so nothing was closed or handed back."
+      : out.recorded && !out.closedNow && out.priorState === "completed"
+        ? "This thread is already complete and handed back."
+        : out.recorded && !out.closedNow
+          ? "The host had already closed this thread before you finished, so nothing more was recorded."
+          : (out.cleared ? "Thread released." : "Thread marked done (no active ownership row to release).") +
+            (out.handedBack ? " The standing seat has been told." : "");
+    return state + post;
+  }
   if (out.foreign) {
     return `A newer thread seat holds this thread now, so nothing was closed or handed back, and your summary was not delivered.${post} Say anything the people here need in the thread with \`reply\`.`;
   }
@@ -76,8 +101,9 @@ export default windowGated("complete_thread", defineTool({
     const ref = unifiedThreadRef(origin);
     const report = input.summary?.trim() || undefined;
     const text = completionPostFor(repliedWakesThisTurn(currentTurnId(c)).length > 0, report);
-    let posted: "seat" | "host" | "failed" = "seat";
-    if (text !== undefined) {
+    const standDown = await withholdIfStoodDown(c, "complete_thread");
+    let posted: CompletionPost = standDown.stopped ? "withheld" : "seat";
+    if (text !== undefined && !standDown.stopped) {
       posted = await postUnifiedReply(origin, text, {}, replyAuditFor(c, "tool", wakeId ?? undefined), undefined, undefined, { host: true })
         .then(() => "host" as const)
         .catch(() => "failed" as const);
@@ -90,10 +116,11 @@ export default windowGated("complete_thread", defineTool({
         ...(report !== undefined ? { report } : {}),
         origin,
         seatToken: resolveOwnWindowToken(c) as string,
+        threadStoodDown: standDown.stopped,
         auditDetail: { posted, wakeId: wakeId ?? null, sessionId: (c.session as { id?: string })?.id ?? null },
       },
       liveThreadSeatCloseDeps(),
     );
-    return { completed: true, note: completeThreadNote(out, posted) };
+    return { completed: true, note: completeThreadNote(out, posted, standDown.holdsAck) };
   },
 }));

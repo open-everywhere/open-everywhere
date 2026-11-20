@@ -332,7 +332,7 @@ for (const [label, err] of [
   const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
   const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
   const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
-  const { SessionKey } = await import(abs("dist/src/context/keys.js"));
+  const { SessionKey, SandboxKey } = await import(abs("dist/src/context/keys.js"));
 
   const inSession = <T>(fn: () => Promise<T>, attributes?: Record<string, string>): Promise<T> => {
     const c = new ContextContainer();
@@ -346,12 +346,79 @@ for (const [label, err] of [
   };
 
   const { shouldSuppressNativeMention } = await import("../agent/channels/github.js");
+
   ok(shouldSuppressNativeMention(true, true) === true, "single-window VOUCHED repo -> native mention SUPPRESSED (the unified window answers it instead)");
   ok(shouldSuppressNativeMention(true, false) === false, "single-window UN-VOUCHED repo -> native KEPT (ambient drops mentions there — no gap, no reply lost; fail-closed)");
   ok(shouldSuppressNativeMention(false, true) === false, "NON-single-window repo -> native KEPT (byte-identical: the native mention session engages exactly as today)");
-  const turnStarted = (ctx: unknown) => githubChannelModule.adapter["turn.started"]!({}, ctx);
+  const { emptySessionView: rawEmptyView } = await import(abs("dist/src/protocol/session-projection/fold.js"));
+  const adapterCtx = (ctx: unknown) => ({ ...(ctx as object), view: rawEmptyView() });
+  const turnStarted = (ctx: unknown) => githubChannelModule.adapter["turn.started"]!({ type: "turn.started", data: { turnId: "t1" } }, adapterCtx(ctx));
   const completed = (message: string | null, ctx: unknown) =>
-    githubChannelModule.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
+    githubChannelModule.adapter["content.completed"]!(
+      { type: "content.completed", scope: { turnId: "t1" }, data: { partId: "p1", kind: "text", phase: "reply", value: message ?? "" } },
+      adapterCtx(ctx),
+    );
+
+  {
+    const reactions: string[] = [];
+    const nativeState = {
+      baseRef: null, baseSha: null, checkoutPath: null, conversationKind: "issue", defaultBranch: null,
+      headRef: null, headSha: null, installationId: 4242, issueNumber: 9, owner: OWNER,
+      pullRequestNumber: null, repo: REPO, repositoryId: 555, reviewCommentId: null,
+      reviewThreadRootCommentId: null, triggeringCommentId: null, triggeringUserLogin: null,
+    };
+    const thread = { react: async (emoji: string) => void reactions.push(emoji), post: async () => ({}) };
+    // A spy on the session's sandbox runtime: eve's ctx.getSandbox() reads it through SandboxKey, the same slot the
+    // model's tools read. Any checkout must pass through get(); setNetworkPolicy records any policy it installs.
+    const spyRuntime = () => {
+      const spy = { gets: 0, policies: [] as unknown[] };
+      const sandbox = {
+        resolvePath: (p: string) => `/workspace/${p}`,
+        run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        setNetworkPolicy: async (policy: unknown) => void spy.policies.push(policy),
+      };
+      const runtime = { environment: undefined, get: async () => (spy.gets++, sandbox), stop: async () => {}, delete: async () => {} };
+      return { spy, runtime };
+    };
+    const inSandboxSession = <T>(runtime: unknown, fn: () => Promise<T>): Promise<T> => {
+      const c = new ContextContainer();
+      c.set(SessionKey, { sessionId: "github-supervisor-test", auth: null, turn: 1, parent: undefined });
+      c.set(SandboxKey, runtime);
+      return contextStorage.run(c, fn);
+    };
+    const checkoutState = () => ({
+      ...nativeState,
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      defaultBranch: "main",
+    });
+
+    // Positive control: eve's OWN default turn.started, run against the same spy, does reach the session sandbox.
+    const { githubChannel } = await import("eve/channels/github");
+    const evesDefault = githubChannel({ ...GITHUB_CHANNEL_APP }) as unknown as { adapter: Record<string, (e: unknown, c: unknown) => Promise<void>> };
+    const control = spyRuntime();
+    await inSandboxSession(control.runtime, () =>
+      evesDefault.adapter["turn.started"]!({ type: "turn.started", data: { turnId: "t1" } }, adapterCtx({ state: checkoutState(), thread })),
+    ).catch(() => undefined);
+    ok(control.spy.gets > 0, `positive control: eve's default turn.started DOES take the session sandbox for its checkout (gets ${control.spy.gets})`);
+
+    reactions.length = 0;
+    const native = spyRuntime();
+    let threw: unknown;
+    try {
+      await inSandboxSession(native.runtime, () => turnStarted({ state: checkoutState(), thread }));
+    } catch (err) {
+      threw = err;
+    }
+    ok(
+      reactions.includes("eyes"),
+      `🔴 a NATIVE turn.started still reacts 👀 (reactions ${JSON.stringify(reactions)}; threw ${String(threw)})`,
+    );
+    ok(threw === undefined, `the native turn.started does not throw (threw ${String(threw)})`);
+    ok(
+      native.spy.gets === 0 && native.spy.policies.length === 0,
+      `🔴 a NATIVE turn.started never takes the session sandbox, so eve's checkout cannot install its allow-all, installation-token git broker policy (gets ${native.spy.gets}; policies ${native.spy.policies.length})`,
+    );
+  }
 
   const supervisorState = () => ({
     baseRef: null, baseSha: null, checkoutPath: null, conversationKind: "issue", defaultBranch: null,
@@ -658,7 +725,12 @@ for (const [label, err] of [
     const state = supervisorState();
     const posts: unknown[] = [];
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
-    await inSession(() => githubChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state, github }));
+    await inSession(() =>
+      githubChannelModule.adapter["turn.settled"]!(
+        { type: "turn.settled", scope: { turnId: "t1" }, data: { turnId: "t1", outcome: "failed", error: { code: "test", message: "boom" } } },
+        adapterCtx({ state, github }),
+      ),
+    );
     ok(posts.length === 0, "a failed supervisor turn posts NO error comment (reserved posture)");
     const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
     const fails = await readAudit({ org: deploymentOrg(), action: "github.supervisor_turn_failed" });

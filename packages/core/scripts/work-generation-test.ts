@@ -298,7 +298,7 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
 
 {
   const parkHook = (await import("../agent/hooks/session-park.js")).default;
-  const onInput = (parkHook.events ?? {})["input.requested"] as (e: unknown, c: unknown) => Promise<void>;
+  const onInput = (parkHook.events ?? {})["interaction.opened"] as (e: unknown, c: unknown) => Promise<void>;
   const W = "oe-dom:e2e-unified:win:w/hook-park-probe:oe-sup:g1";
   const org = deploymentOrg();
   await rememberWorkRequest(store, org, {
@@ -313,9 +313,9 @@ const det = (runtimeChanged = false) => ({ claimRuntime: async () => runtimeChan
     atIso: at(0),
   });
   await noteGenerationDelegation(org, W, workSessionLedgerId("req-hook-park"), store);
-  const park = { requests: [{ requestId: "sess-w:limit:input:30000001", action: { toolName: "session_limit_continuation", input: { kind: "input", limit: 30_000_000, usedTokens: 30_000_001 } } }] };
+  const park = { interactionId: "sess-w:0:limit:usage:0", subject: { turnId: "t1" }, request: { kind: "budget", prompt: "This session has hit its usage limit." } };
   const ctx = { channel: { kind: "unified", continuationToken: `unified:${W}` }, session: { id: "sess-w-hook" } };
-  await onInput({ type: "input.requested", data: park }, ctx);
+  await onInput({ type: "interaction.opened", data: park }, ctx);
   ok(await workSessionMarkedDead(org, W, store), "🔴 a W park whose remedy is NOT rotate_on_next_wake (no registry row) still marks W dead");
   const lostRows = (await readAudit({ org })).filter((r) => r.action === WORK_REQUEST_LOST_ACTION && r.detail?.["requestId"] === "req-hook-park");
   ok(lostRows.length === 1, "🔴 …and its owed job gets exactly one lost-job attempt (delivery itself needs a live dispatch, which this process has none of)");

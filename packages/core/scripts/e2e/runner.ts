@@ -864,9 +864,8 @@ async function main(): Promise<void> {
     );
     if (s.compaction.passes > 0) {
       console.log(
-        `e2e compaction: ${s.compaction.passes} pass(es) — ${s.compaction.reduced} did compaction work,` +
-          ` ${s.compaction.noOp} NO-OP, ${s.compaction.unstamped} unstamped` +
-          `${s.compaction.noOp > 0 ? " ⚠ a NO-OP pass means the trigger fired and the session did not shrink (OPE-689)" : ""}`,
+        `e2e compaction: ${s.compaction.passes} pass(es) — ${s.compaction.unstamped} not reported as work or as a no-op` +
+          ` (eve v1's context.settled does not say whether a pass shrank the context)`,
       );
     }
     try {

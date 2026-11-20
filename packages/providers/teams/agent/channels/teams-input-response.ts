@@ -1,4 +1,4 @@
-import type { TeamsContext, TeamsInputResponseResult, TeamsInvokeActivity, TeamsMessageActivity } from "eve/channels/teams";
+import type { TeamsContext, TeamsAnswerResult, TeamsInvokeActivity, TeamsMessageActivity } from "eve/channels/teams";
 import {
   admitInputResponse,
   ingressSpendGate,
@@ -23,7 +23,7 @@ export async function admitTeamsInputResponse(
   ctx: TeamsContext,
   activity: TeamsInvokeActivity | TeamsMessageActivity,
   deps: TeamsInputResponseDeps = {},
-): Promise<TeamsInputResponseResult> {
+): Promise<TeamsAnswerResult> {
   const probe = deps.userType ?? ((a) => resolveTeamsUserType(teamsHandleRosterProbe(ctx.teams), a.conversation.id, a.from.id));
   let auth: ReturnType<typeof buildTeamsAuth> | undefined;
   try {

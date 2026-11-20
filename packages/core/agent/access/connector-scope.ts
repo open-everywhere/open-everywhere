@@ -29,6 +29,7 @@ interface EveInternals {
   ChannelKey: unknown;
 }
 
+const EVE_CHANNEL_INSTRUMENTATION_KEY = { name: "eve.channelInstrumentation" } as const;
 const EVE_INTERNAL_CONTAINER_REL = "dist/src/context/container.js";
 const EVE_INTERNAL_RUNTIME_KEYS_REL = "dist/src/runtime/sessions/runtime-context-keys.js";
 
@@ -115,6 +116,11 @@ async function readChannelKind(): Promise<string | undefined> {
     logOnce("channel kind unresolvable: no ALS store — outside an eve session scope (expected on a hosted build)");
     return undefined;
   }
+  // eve 1.x keeps the channel ADAPTER under ChannelKey, and an adapter's kind is its type
+  // ("defineChannel", "http"), not the channel. The channel's name is the instrumentation kind,
+  // `channel:<name>`, which platformFromKind reads.
+  const instrumented = store.get(EVE_CHANNEL_INSTRUMENTATION_KEY) as { kind?: unknown } | undefined;
+  if (typeof instrumented?.kind === "string" && instrumented.kind.startsWith("channel:")) return instrumented.kind;
   const channel = store.get(eve.ChannelKey) as { kind?: string } | undefined;
   return channel?.kind;
 }
@@ -214,23 +220,58 @@ async function auditConnectorGate(
   await appendAudit({ org, platform, workspace, surface, ...(surfaceMode === undefined ? {} : { surfaceMode }), principalId, action, detail });
 }
 
-export async function assertConnectorGranted(connectionName: string, auth: SessionAuth): Promise<void> {
+/**
+ * The evidence of an ATTEMPT on a connection this surface does not hold. On eve 1.x a connector
+ * mount's listing is a probe (`audit: false` below), so a surface without the grant is offered no
+ * op and the model never calls one. An `eve__search` that names the connection is where the model
+ * still asks for it (`hooks/connector-audit.ts`). This writes the same
+ * `connector.refused` row with reason `ungranted` that the call-time gate writes, which is the
+ * evidence the permission-proposal digest reads (`permission-evidence.ts`).
+ *
+ * It decides nothing: it grants nothing and refuses nothing, and it throws nothing. It writes the
+ * row only when the gate's grant check is the refusal: a halted or unresolved surface, or a surface
+ * that holds the grant, writes no row. Returns true when it wrote the row.
+ */
+export async function auditUngrantedConnectorAttempt(
+  connectionName: string,
+  auth: SessionAuth,
+  attempt: { readonly via: string },
+): Promise<boolean> {
+  const ctx = await surfaceContextFromAuth(auth);
+  if (!ctx) return false;
+  if ((await resolveHalt(haltScopeForCtx(ctx))).halted) return false;
+  const granted = await grantedForCtx(ctx);
+  if (granted === null || granted.includes(connectionName)) return false;
+  await auditConnectorGate(ctx, "connector.refused", {
+    connection: connectionName,
+    reason: "ungranted",
+    via: attempt.via,
+  });
+  return true;
+}
+
+/**
+ * The per-surface hard gate. `audit: false` is the listing probe of a connector mount
+ * (`connections/connector-listing.ts`): the same checks, and no audit row, because no op runs.
+ */
+export async function assertConnectorGranted(connectionName: string, auth: SessionAuth, opts: { readonly audit?: boolean } = {}): Promise<void> {
+  const audit = opts.audit !== false;
   const ctx = await surfaceContextFromAuth(auth);
   const haltState = ctx ? await resolveHalt(haltScopeForCtx(ctx)) : await resolveHalt({ org: deploymentOrg() });
   if (haltState.halted) {
-    await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "halted", ...haltAuditDetail(haltState) });
+    if (audit) await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "halted", ...haltAuditDetail(haltState) });
     throw new ConnectorScopeError(haltRefusalMessage(haltState, `connection "${connectionName}"`));
   }
   const granted = ctx ? await grantedForCtx(ctx) : null;
   if (granted === null) {
-    await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "unresolved_surface" });
+    if (audit) await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "unresolved_surface" });
     throw new ConnectorScopeError(
       `connection "${connectionName}": refusing — could not resolve the calling surface ` +
         `(no auth identity on the resolver ctx). Fail closed.`,
     );
   }
   if (!granted.includes(connectionName)) {
-    await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "ungranted" });
+    if (audit) await auditConnectorGate(ctx, "connector.refused", { connection: connectionName, reason: "ungranted" });
     throw new ConnectorScopeError(
       `connection "${connectionName}" is not granted to this surface. ` +
         `Grant it with \`connectors: [{ name: "${connectionName}", credential: "<id>" }]\` ` +
@@ -246,7 +287,7 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
   }
   const workSurfaceTierArmed = connectorOpTieringEnabled();
   if (connectorDmOnlyEnabled() && mode !== "dm" && !workSurfaceTierArmed) {
-    await auditConnectorGate(ctx, "connector.refused", {
+    if (audit) await auditConnectorGate(ctx, "connector.refused", {
       connection: connectionName,
       reason: "dm_only",
       mode: mode ?? "unresolved",
@@ -259,9 +300,9 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
         `rule enforced at the credential layer, not a permission that can be requested in-chat.`,
     );
   }
-  await assertConnectorDisclosure(connectionName, ctx as BindableContext);
+  await assertConnectorDisclosure(connectionName, ctx as BindableContext, { audit });
 
-  await auditConnectorGate(ctx, "connector.use", {
+  if (audit) await auditConnectorGate(ctx, "connector.use", {
     connection: connectionName,
     ...(mode !== undefined ? { mode } : {}),
     ...(mode !== undefined && mode !== "dm" ? { grant: "work-surface" } : {}),

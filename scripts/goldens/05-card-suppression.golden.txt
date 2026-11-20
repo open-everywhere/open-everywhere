@@ -9,9 +9,9 @@ IN  relay message M51 · guild G5 channel C5T (type 11) · from U_DEV5 · mentio
   ⇠ 200 ok
 EVT turn.started on discord:C5T
   → POST /channels/C5T/typing ⇒ 204
-EVT actions.requested on discord:C5T
+EVT call.requested on discord:C5T
   → POST /channels/C5T/typing ⇒ 204
 ACT propose tool posts an approval card on discord:C5T (card-signal armed)
-EVT action.result on discord:C5T
-EVT message.appended on discord:C5T
-EVT message.completed on discord:C5T {"finishReason":"stop","message":"I've posted an approval card proposing a $5/month cap — an admin needs to approve it."}
+EVT call.settled on discord:C5T
+EVT content.delta on discord:C5T {"partId":"part-1","kind":"text","delta":""}
+EVT content.completed on discord:C5T {"partId":"part-1","kind":"text","phase":"reply","value":"I've posted an approval card proposing a $5/month cap — an admin needs to approve it."}

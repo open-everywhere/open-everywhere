@@ -61,7 +61,6 @@
     "channel/unified",
     "channel/webhook-reveal-page",
     "channel/webhooks",
-    "connection/notion",
     "hook/approval-raised",
     "hook/approval-settlement",
     "hook/binding-bridge",

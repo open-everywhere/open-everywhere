@@ -113,7 +113,7 @@ export function checkPackedEvePatchDir(input: {
 }): string[] {
   const problems: string[] = [];
   const { pin, rootPatchFiles, packedPatchFiles, rootBody, packedBody } = input;
-  if (pin === undefined || !/^\d+\.\d+\.\d+$/.test(pin)) {
+  if (pin === undefined || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(pin)) {
     problems.push(
       `the eve peer pin is ${pin === undefined ? "missing" : `"${pin}"`}, so the packed patch filename cannot be checked — ` +
         `a publishable manifest pins eve as an exact peer`,

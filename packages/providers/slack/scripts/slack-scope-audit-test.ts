@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -110,7 +111,7 @@ const stripComments = (text: string): string =>
     .split("\n")
     .filter((line) => !/^\s*\/\//.test(line))
     .join("\n");
-const EVE_SLACK_DIR = join(REPO_ROOT, "node_modules/eve/dist/src/public/channels/slack");
+const EVE_SLACK_DIR = join(dirname(createRequire(import.meta.url).resolve("eve/package.json")), "dist", "src", "public", "channels", "slack");
 const eveSlackFiles = readdirSync(EVE_SLACK_DIR).filter((f) => f.endsWith(".js")).map((f) => join(EVE_SLACK_DIR, f));
 ok(eveSlackFiles.length >= 10, `scan sanity: eve's Slack channel has at least 10 .js files at ${EVE_SLACK_DIR} (found ${eveSlackFiles.length})`);
 const wideFiles = [

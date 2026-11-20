@@ -820,7 +820,7 @@ to the turn's single origin platform, and to the empty list when even that is un
 naming the kinds of work a worker can take on and the verbs a worker holds there that this seat does
 not. Everything but the grouping is derived from the window-gate manifest, so the block cannot claim a
 verb the manifest does not mount. It renders nothing at all for a seat whose memory recall route is not
-the agent route, and nothing when no group has a present verb. The block also tells the seat not to
+a delegating route (`agent` or `work`), and nothing when no group has a present verb. The block also tells the seat not to
 pre-empt a gate it does not hold. The seat must not refuse an ask on its own judgement of the person's
 standing, or on its own forecast of what a gated act will do. The verb's gate and the approval plane
 decide.

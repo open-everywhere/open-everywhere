@@ -4,8 +4,8 @@ How the agent reaches an external service — Notion, Linear, GitHub — and how
 integration can be scoped to many teams with many keys, all enforced rather than
 trusted.
 
-A **connector** is the unit you connect: one host-side MCP connection
-(`agent/connections/<slug>.ts`), with a **credential catalogue** listing the identities you
+A **connector** is the unit you connect: one host-side MCP connection, mounted as a connector
+mount (`agent/tools/<slug>.ts`), with a **credential catalogue** listing the identities you
 have configured against it. A **bundle** grants
 `connectors: [{ name, credential }]` to a scope. The resolver binds the named
 credential to each surface, **narrowest-wins**, so ten domains can reach one connector with ten
@@ -173,7 +173,7 @@ Three rules, and they differ from the plumbing credentials above:
   split — it makes the split legible, per domain, in a reviewed diff. Mint the second integration
   and share it narrowly.
 - **A work grant is not a connection grant.** They are two planes. A connection is what
-  `connection_search` finds and what the channel's connector allowlist governs. A work grant runs on
+  `eve__search` finds and what the channel's connector allowlist governs. A work grant runs on
   the provider's own tools and no connection allowlist covers it. The session prompt states both
   together, so an empty connection list never reads as a withdrawal of a work grant.
 
@@ -268,7 +268,7 @@ For any integration, three ways to wire it, in default order:
 ## A reply names what it read
 
 **A reply that drew on a connector records what it read, and the host writes that record — not
-the model.** Every connector op emits an `action.result` event, and the same hook that writes the
+the model.** Every connector op settles with a `call.settled` event, and the same hook that writes the
 `connector.op` audit row records READ ops on a turn-local ledger. The reply choke point reads that
 ledger and writes one compact **sources line** onto the reply's `reply.provenance` audit row, as
 `detail.sources`:
@@ -504,12 +504,10 @@ surface of its declared domain. See [A2A agents](../extending/a2a-agents.md).
 
 Two tools bracket the connector plane, and neither of them is the connector itself.
 
-`connection_search` is how the agent finds a connector's *operations* — a read of the
-connected catalogues, nothing more. `connection_execute` runs one operation, named by its
-`connection` and `tool` (for example connection `notion` and tool `search`). The operations are
-not tools of their own, so they never appear as a fixed list anywhere. The framework re-keys each
-call to its `<connection>__<op>` name (`notion__search`, `linear__create_issue`, …), and every OE
-gate reads that name. Each operation is tiered by its verb when it is called (reads run, writes
+`eve__search` is how the agent finds a connector's *operations* — a read of the
+catalog, nothing more. `eve__tool` runs one operation by its name. Each operation is an OE-owned
+deferred tool named `<connection>__<op>` (`notion__search`, `linear__create_issue`, …), so it never
+appears in the opening tool list, and every OE gate reads that name. Each operation is tiered by its verb when it is called (reads run, writes
 draw an approval) under `connectors.opTiering`, which ships on — see the note below — and each call is
 audited individually.
 
@@ -615,7 +613,11 @@ not. OPE-2724 removes the field at the next breaking core release; see
 `packages/core/UPGRADING.md`.
 
 **What a connector result gets instead, whoever wrote it:** the untrusted-content envelope fences
-every result, on every connection and every tool. The approval chain, the egress firewall and the outbound sensitive-data filter decide
+every result, on every connection and every tool. On eve 1.x every connector op is an OE-owned
+connector tool (`agent/connections/connector-tools.ts`), mounted through the connector mount
+(`agent/connections/connector-mount.ts`), whose `toModelOutput` applies the fence. No connection
+mounts as an eve MCP connection, whose runtime would return the result unfenced (see the eve 1.x
+note in [the agent loop](../how-it-works/agent-and-loop.md)). The approval chain, the egress firewall and the outbound sensitive-data filter decide
 what the turn may then do. The declaration never granted anything, so its removal widens no access.
 
 ### The `connector` tool
@@ -643,9 +645,16 @@ Granting a connector is enforced at eight layers:
    terminal and fail-closed, if that surface wasn't granted this connector. An ungranted
    or unresolvable surface never reaches a credential. This is built into the credential
    builders, so an author can't forget it.
-4. **DM-only context wall (v1, shipped off).** The framework gives *every* session that
-   has connections `connection_search` and `connection_execute`, and each call names one
-   operation (`notion` / `search`, …) — standing channel watchers included — so the same `getToken` gate also requires the calling
+   The connector mount's listing runs the same gate before each model call and writes no row, so
+   an ungranted surface is offered no op. An `eve__search` whose query names the connection
+   writes one `connector.refused` row with reason `ungranted`. That row grants nothing and refuses
+   nothing: it is the evidence the [permission proposal](../security/permission-homeostasis.md)
+   reads. A personal-surface connection off its platform's DM is fenced, not ungranted, and writes
+   no such row. eve offers `eve__search` only while the step's catalogue holds a deferred tool, and
+   only a connector mount offers one. So a surface whose step offers no connector op or sign-in
+   tool (it holds no connector, or every listing it holds is refused) writes no such row.
+4. **DM-only context wall (v1, shipped off).** Every session that
+   mounts a connection is offered its ops as deferred `<connection>__<op>` connector tools — standing channel watchers included — so the same `getToken` gate also requires the calling
    surface to resolve a *positively-DM* context when it is armed. Armed, connector operations outside a DM seat
    (or a task worker spawned from one) are refused fail-closed before any token exists,
    and every verdict is audited (`connector.use` / `connector.refused`). **The shipped posture
@@ -763,17 +772,28 @@ What the grant buys, and what it does not:
   carve-in is gone (`packages/core/agent/access/lean-seat.ts`). Everything else about the borrow is
   unchanged: the schema is still baked, the tier still rides the grant row, the broker still
   re-checks the row on every call, and the room still gets its notice.
-- The mount runs at `session.started` **and at `turn.started`**, so an approved grant is
+- The mount re-reads the grant rows **once per turn** (a `ctx.memo` keyed on the turn), so an approved grant is
   callable by the **next worker** that the chat that asked for it hands work to. The seat itself
   never holds the tool (OPE-2023). No deploy, no rotation and no new session. The cost is one grant read per turn on a delegated worker — two where the worker's
   root seat resolves a domain-grained key, because the standing rows bound to that room are a second
   read. A conversational seat pays neither: the resolver refuses it before any store call.
 - Every argument the grant fixed is **pinned and visible** in the tool's input schema — the
-  vendor's own schema, with that argument narrowed to its one allowed value (JSON Schema
-  `const`) and required. `read_page(id: "12345")`. The model supplies it; an **MCP-layer
+  vendor's schema reduced to its shape, with that argument narrowed to its one allowed value (JSON
+  Schema `const`) and required. `read_page(id: "12345")`. The model supplies the pinned value; an **MCP-layer
   fence** validates the outgoing call against the grant row and refuses anything else before
   the call reaches the vendor. The definition therefore says what the tool does rather than
   hiding it, and nothing between the model and the fence rewrites the arguments.
+- **The vendor's schema text reaches the model only fenced.** The vendor wrote the schema's free
+  text (property descriptions, phrase enums, defaults, patterns, the root id), and the model reads
+  a listed tool's whole schema, so that text can carry an injected instruction. The borrowed tool
+  offers the schema through the connector catalog's reduction
+  (`packages/core/agent/access/grant-schema-pin.ts#grantOfferSchema`). When the reduction drops
+  vendor text, the snapshot follows the host-authored description inside the untrusted envelope.
+  The property names, the `$defs` keys, local `$ref` pointers and a bounded set of short-token
+  literals still reach the model bare. A snapshot that names a property or a `$defs` entry with a
+  phrase leaves the tool unmounted, with a warning. The frozen arguments are not vendor text: the
+  requester proposed them and the owner approved them on the grant card. The reduction never
+  removes or loosens a pin. `npm run test:credential-grant-schema-fence` proves it.
 - **A pinned tool's description SAYS what it is pinned to, and names the other road.** The `const`
   above tells the model which value the fence admits. It does not say that this tool answers about
   that one target and no other, and on its own it names nowhere else to go — so a seat holding one

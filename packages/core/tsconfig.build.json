@@ -32,6 +32,8 @@
     "scripts/exit-after-flush.ts",
     "scripts/code-fingerprint.ts",
     "scripts/eve-framework-tools.ts",
+    "scripts/openapi-connection-refusal.ts",
+    "scripts/kit-sentinel-refusal.ts",
     "scripts/oe-wrap-untrusted.ts",
     "scripts/oe-secret.ts",
     "scripts/oe-exit.ts",

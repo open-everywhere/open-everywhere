@@ -1,6 +1,7 @@
-import { defineDynamic } from "eve/tools";
+import { defineDynamic, type DynamicToolResult } from "eve/tools";
 import { windowGrainOf, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { resolveBrowserKit } from "../access/browser-toolkit.js";
+import { memoized, seatMemoKey } from "../access/window-gated.js";
 
 function grainOf(ctx: BindableContext): WindowGrain {
   try {
@@ -10,10 +11,7 @@ function grainOf(ctx: BindableContext): WindowGrain {
   }
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": async (_event, ctx) => {
-      return resolveBrowserKit(grainOf(ctx as BindableContext));
-    },
-  },
+export default defineDynamic(async (ctx) => {
+  const grain = await memoized(ctx, seatMemoKey(ctx), () => grainOf(ctx as unknown as BindableContext));
+  return resolveBrowserKit(grain) as unknown as DynamicToolResult;
 });

@@ -1,6 +1,6 @@
 // proves: AP-MOD-core-connections-notion
 
-import notion from "../agent/connections/notion.js";
+import mount, { NOTION_MOUNT as notion } from "../agent/connections/notion.js";
 
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("connections");
@@ -14,9 +14,10 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
+ok(typeof (mount as unknown as Record<symbol, unknown>)[Symbol.for("eve.dynamic")] === "function", "the notion module mounts as a defineDynamic connector mount, not an eve connection");
 ok(typeof notion.url === "string" && notion.url.startsWith("https://"), "notion connection declares an https MCP url");
 ok(typeof notion.description === "string" && notion.description.length > 0, "notion connection has a model-facing description");
-ok(typeof notion.approval === "function", "notion connection carries a bare approval POLICY — the only shape eve's connection resolver keeps");
+ok(typeof notion.approval === "function", "notion connection carries a bare approval POLICY — the connector tools wrap it with the outbound filter");
 ok(typeof (notion.approval as { response?: unknown }).response !== "function", "…and carries no response half — a shape eve would drop");
 
 ok(typeof notion.auth === "function", "notion auth is the resolver form (a function of SessionContext), not a static provider");

@@ -3,6 +3,7 @@
   "generator": 1,
   "framework": {
     "bash": "disabled",
+    "edit_file": "disabled",
     "read_file": "disabled",
     "web_fetch": "disabled",
     "write_file": "disabled"
@@ -33,7 +34,6 @@
         "channel/unified": "mounted",
         "channel/webhook-reveal-page": "mounted",
         "channel/webhooks": "mounted",
-        "connection/notion": "mounted",
         "hook/approval-raised": "mounted",
         "hook/approval-settlement": "mounted",
         "hook/binding-bridge": "mounted",
@@ -136,6 +136,7 @@
         "tool/my_browser": "mounted",
         "tool/my_browser_handoff": "mounted",
         "tool/no_reply": "mounted",
+        "tool/notion": "mounted",
         "tool/open_pull_request": "mounted",
         "tool/permission_fit_report": "mounted",
         "tool/post_file": "mounted",

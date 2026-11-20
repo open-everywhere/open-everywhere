@@ -101,8 +101,8 @@ function seatCtx(sessionId: string, deliveryId: string): never {
 async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: never, message: string): Promise<void> {
   await inEveContext(container, async () => {
     await learnHook.events!["turn.started"]!({} as never, ctx);
-    await learnHook.events!["message.received"]!({ data: { message: wake(message) } } as never, ctx);
-    await learnHook.events!["turn.completed"]!({} as never, ctx);
+    await learnHook.events!["delivery.consumed"]!({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: wake(message) }] } } as never, ctx);
+    await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
 }
 

@@ -17,7 +17,6 @@ import {
   ASK_UNATTENDED_SENTENCE,
   TAINTED_ASK_UNATTENDED_SENTENCE,
   connectorApprovalPolicy,
-  connectorOpApproval,
   unattendedConnectorRefusalMessage,
   withUnattendedConnectorFence,
 } from "../agent/connections/connector-auth.js";
@@ -100,18 +99,17 @@ const WRITE_DECLARATION = `tool:${WRITE_OP}`;
 const SHARE_OP = "notion__share_page";
 const INVITE_OP = "notion__invite_user";
 
-function approvalCtx(auth: unknown, toolName: string, approvedTools: ReadonlySet<string> = new Set<string>()): never {
+function approvalCtx(auth: unknown, toolName: string): never {
   return {
     toolName,
-    approvedTools,
     callId: `call-${toolName}`,
     toolInput: { title: "x" },
     session: { id: `sess-${toolName}`, auth },
   } as never;
 }
 
-async function ask(policy: ApprovalPolicy, auth: unknown, toolName: string, approvedTools?: ReadonlySet<string>): Promise<ApprovalStatus> {
-  return await policy(approvalCtx(auth, toolName, approvedTools));
+async function ask(policy: ApprovalPolicy, auth: unknown, toolName: string): Promise<ApprovalStatus> {
+  return await policy(approvalCtx(auth, toolName));
 }
 
 function isDeniedRaw(decision: ApprovalStatus): decision is { readonly type: "denied"; readonly reason?: string } {
@@ -122,6 +120,18 @@ const CARD_PROBE_ID = "card-probe";
 function cardProbePolicy(): ApprovalPolicy {
   return connectorApprovalPolicy({
     store: { getSessionApproval: async () => null, markEventSeen: async () => true } as never,
+    grantScope: () => ({ key: "oe-grant:slack/T1/C1:thread:probe", reach: "thread" }),
+    offer: async () => ({ outcome: "carded", pendingId: CARD_PROBE_ID, where: "in this conversation" }),
+  });
+}
+function memoProbePolicy(): ApprovalPolicy {
+  return connectorApprovalPolicy({
+    store: {
+      getSessionApproval: async (org: string, sessionId: string, kind: string) =>
+        ({ org, sessionId, kind, grantedBy: "U0HUMAN", createdAt: "2026-01-01T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" }) as never,
+      markEventSeen: async () => true,
+      hasEventSeen: async () => false,
+    } as never,
     grantScope: () => ({ key: "oe-grant:slack/T1/C1:thread:probe", reach: "thread" }),
     offer: async () => ({ outcome: "carded", pendingId: CARD_PROBE_ID, where: "in this conversation" }),
   });
@@ -235,8 +245,8 @@ console.log("§4 an attended human still gets the card:");
   ok(carded(await ask(cardProbePolicy(), HUMAN_AUTH, WRITE_OP)), "an attended WRITE still raises the card (an OE card, OPE-2340)");
   ok(carded(await ask(cardProbePolicy(), HUMAN_AUTH, DESTRUCTIVE_OP)), "an attended DESTRUCTIVE op still raises the card (an OE card, OPE-2340)");
   ok(
-    (await ask(cardProbePolicy(), HUMAN_AUTH, WRITE_OP, new Set([WRITE_OP]))) === "not-applicable",
-    "an attended write already approved this session is still silenced by the once-per-op memo",
+    (await ask(memoProbePolicy(), HUMAN_AUTH, WRITE_OP)) === "not-applicable",
+    "an attended write whose card was approved runs on the card plane's one-call memo",
   );
 }
 
@@ -303,7 +313,7 @@ console.log("§8 the row read is keyed, not merely present:");
 console.log("§9 an unreadable bag stands the fence down:");
 {
   const fenced = withUnattendedConnectorFence(fixedPolicy("user-approval"));
-  ok((await fenced({ toolName: WRITE_OP, approvedTools: new Set<string>(), callId: "c", toolInput: {} } as never)) === "user-approval", "no session at all → the wrapped decision stands (the card is still raised)");
+  ok((await fenced({ toolName: WRITE_OP, callId: "c", toolInput: {} } as never)) === "user-approval", "no session at all → the wrapped decision stands (the card is still raised)");
   ok((await ask(fenced, null, WRITE_OP)) === "user-approval", "a null auth → the wrapped decision stands");
   const unbindable = withUnattendedConnectorFence(fixedPolicy("user-approval"), { surfaceContext: async () => null });
   ok((await ask(unbindable, fireAuth(), WRITE_OP)) === "user-approval", "a surface that will not bind → the wrapped decision stands, and nothing is lifted");
@@ -474,26 +484,14 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
   ok(effectiveConnectorOpTier(UNKNOWN_OP) === "write", "the arm lowered the unrecognised op to `write` — floored, not opened");
   ok(effectiveConnectorOpTier(NOUN_COLLISION_OP) === "write", "…and lowered the RECOGNISED destructive to `write` too");
 
-  const memo = new Set([NOUN_COLLISION_OP]);
-  ok(
-    (await ask(cardProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)) === "not-applicable",
-    "🔴 an attended human who already approved the arm-lowered op for the session is not asked again",
-  );
-  registerConfig(armed(undefined));
-  ok(
-    carded(await ask(cardProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)),
-    "🔴 NEGATIVE CONTROL: with no arm the SAME memo does not cover it — destructive prompts per call, so the leg above measured the arm",
-  );
-  registerConfig(armed("read"));
-
-  const memoedFire = await ask(cardProbePolicy(), fireAuth(), NOUN_COLLISION_OP, memo);
+  const memoedFire = await ask(memoProbePolicy(), fireAuth(), NOUN_COLLISION_OP);
   ok(isDenied(memoedFire), "🔴 an unattended fire holding the session memo for an arm-lowered DELETE is REFUSED, not executed");
   ok(isDenied(memoedFire) && (memoedFire.reason ?? "").includes(ASK_UNATTENDED_SENTENCE), "…with the plane's own ask-unattended sentence");
   ok(isDenied(memoedFire) && (memoedFire.reason ?? "").includes("destructive-tier"), "…naming the BUILT-IN's tier, which is the tier the arm could not lower");
   registerConfig(armed(undefined));
   ok(
-    carded(await ask(cardProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP, memo)),
-    "control: the refusal above is the FIRE and not the memo — the same memo on a human turn is unaffected with no arm",
+    (await ask(memoProbePolicy(), HUMAN_AUTH, NOUN_COLLISION_OP)) === "not-applicable",
+    "control: the refusal above is the FIRE and not the memo — the same memo on a human turn still runs the op with no arm",
   );
   registerConfig(armed("read"));
 
@@ -533,8 +531,8 @@ console.log("§18 an arm cannot lift an op on an unattended fire:");
   const openedPolicy = (deps: Parameters<typeof withUnattendedConnectorFence>[1] = {}) =>
     withUnattendedConnectorFence(fixedPolicy("not-applicable"), deps);
   ok(
-    (await connectorOpApproval()(approvalCtx(fireAuth(), NOUN_COLLISION_OP, memo))) === "not-applicable",
-    "🔴 precondition: the WRAPPED policy raises no card for a memo'd arm-lowered op — so a stand-down would return `not-applicable`, which RUNS it",
+    (await memoProbePolicy()(approvalCtx(HUMAN_AUTH, NOUN_COLLISION_OP))) === "not-applicable",
+    "🔴 precondition: the card plane raises no card for a memo'd arm-lowered op — so a stand-down would return `not-applicable`, which RUNS it",
   );
   const noAuth = await ask(openedPolicy(), undefined, NOUN_COLLISION_OP);
   ok(isDenied(noAuth), "🔴 an unattended fire with NO `session.auth` is REFUSED on the arm-lowered path, not executed");

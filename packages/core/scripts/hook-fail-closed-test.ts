@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { refuseTurn, HOOK_CANCELLABLE_EDGES, type RefusableContext } from "../agent/hooks/control-refusal.js";
+import { _faultOptionalHookForTest, _optionalHookFaultsThrownForTest, optional, refuseTurn, HOOK_CANCELLABLE_EDGES, type RefusableContext } from "../agent/hooks/control-refusal.js";
 import { EVE_PATCH_PARTS, _resetEvePatchTurnCheckForTest } from "../agent/access/eve-patch-probe.js";
 import evePatchGate from "../agent/hooks/eve-patch-gate.js";
 import egressHook, { enforceEgress } from "../agent/hooks/egress.js";
@@ -91,8 +91,8 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
   }
 
   ok(
-    HOOK_CANCELLABLE_EDGES.length === 3 && HOOK_CANCELLABLE_EDGES.every((e) => ["session.started", "turn.started", "step.started"].includes(e)),
-    "§1: HOOK_CANCELLABLE_EDGES is exactly the three edges that cancel BEFORE the step's model call — a tool event can never be a gate",
+    HOOK_CANCELLABLE_EDGES.length === 3 && HOOK_CANCELLABLE_EDGES.every((e) => ["session.started", "turn.started", "model.requested"].includes(e)),
+    "§1: HOOK_CANCELLABLE_EDGES is exactly the three edges that cancel BEFORE the model call — a tool event can never be a gate",
   );
 }
 
@@ -124,18 +124,23 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
       } catch {
         threw = true;
       }
-      ok(!threw, `§2 part ${part.part}: the gate does NOT throw — eve 0.68+ swallows a hook throw, so a throw would refuse nothing`);
+      ok(!threw, `§2 part ${part.part}: the gate does NOT throw — on eve 1.x a throw FAILS the turn with an error instead of refusing it`);
       ok(ctx.cancels === 1, `🔴 §2 part ${part.part}: a missing ${part.marker} CANCELS the turn at turn.started`);
     }
 
-    for (const p of EVE_PATCH_PARTS) bag[p.marker] = true;
-    delete bag[EVE_PATCH_PARTS[0]!.marker];
-    _resetEvePatchTurnCheckForTest();
-    const first = spyCtx();
-    const second = spyCtx();
-    await turnStarted({}, first);
-    await turnStarted({}, second);
-    ok(first.cancels === 1 && second.cancels === 1, "🔴 §2: a FAILURE is never memoised as a pass — the second turn is refused too");
+    const firstPart = EVE_PATCH_PARTS[0];
+    if (firstPart === undefined) {
+      console.log("  §2: the installed eve carries no live patch part, so the gate has no marker to miss — only the negative control above applies");
+    } else {
+      for (const p of EVE_PATCH_PARTS) bag[p.marker] = true;
+      delete bag[firstPart.marker];
+      _resetEvePatchTurnCheckForTest();
+      const first = spyCtx();
+      const second = spyCtx();
+      await turnStarted({}, first);
+      await turnStarted({}, second);
+      ok(first.cancels === 1 && second.cancels === 1, "🔴 §2: a FAILURE is never memoised as a pass — the second turn is refused too");
+    }
   } finally {
     restore();
     _resetEvePatchTurnCheckForTest();
@@ -275,7 +280,10 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
   const storageKey = Symbol.for("eve.context-storage");
   g[storageKey] ??= new AsyncLocalStorage();
   const storage = g[storageKey] as AsyncLocalStorage<unknown>;
-  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => Promise.resolve(storage.run(new FakeSession(), fn));
+  const inSession = <T>(fn: () => T | Promise<T>): Promise<T> => {
+    const session = new FakeSession();
+    return Promise.resolve(storage.run(Object.assign(session, { context: session, values: new Map<unknown, unknown>() }), fn));
+  };
 
   for (const edge of ["session.started", "turn.started"] as const) {
     await inSession(async () => {
@@ -286,7 +294,7 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
       } catch (err) {
         threw = err instanceof Error ? err.message : String(err);
       }
-      ok(threw === undefined, `🔴 §4a ${edge}: the egress hook does NOT throw (threw: ${threw ?? "nothing"}) — a throw is logged and swallowed by eve 0.68+, which is the P0`);
+      ok(threw === undefined, `🔴 §4a ${edge}: the egress hook does NOT throw (threw: ${threw ?? "nothing"}) — on eve 1.x a throw fails the turn with no \`hook.refused\` row naming why`);
       ok(ctx.cancels === 1, `🔴 §4a ${edge}: the egress hook CANCELS the turn when the firewall cannot be applied — the turn never runs on eve's allow-all default`);
     });
   }
@@ -324,30 +332,26 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
   const req = createRequire(import.meta.url);
   const distOf = (rel: string): string => {
     const root = req.resolve("eve/package.json").replace(/package\.json$/, "");
-    const path = `${root}dist/src/${rel}`;
-    return readFileSync(path, "utf8");
+    return readFileSync(`${root}dist/src/${rel}`, "utf8");
   };
 
-  const lifecycle = distOf("context/hook-lifecycle.js");
-  ok(/await a\.handler\(/.test(lifecycle), "🔴 §5a: eve still awaits the authored handler in `dispatchStreamEventHooks` — if this moved, re-read the whole file before trusting any comment in this ticket");
-  const caught = lifecycle.slice(lifecycle.indexOf("await a.handler("));
+  const runner = distOf("definitions/hooks.js");
+  ok(/await e\.handler\(e\.event,p\)/.test(runner), "🔴 §5a: eve still awaits the authored handler in `runHandler` (definitions/hooks.js) — if this moved, re-read the hook runner before trusting any row below");
+  const afterAwait = runner.slice(runner.indexOf("await e.handler(e.event,p)"));
   ok(
-    /catch\([^)]*\)\{logError\(log,`stream event hook failed`/.test(caught),
-    "🔴 §5a: eve STILL swallows an authored hook's throw — it logs `stream event hook failed` and does not rethrow. If this row ever reds, a throw may stop a turn again and `refuseTurn`'s whole premise needs re-deriving (it would NOT be a reason to go back to throwing without measuring)",
+    /catch\(n\)\{[^}]*reportEffectFailure\(t,e\.definition,n,c\)/.test(afterAwait),
+    "🔴 §5a: eve hands an authored hook's throw to `reportEffectFailure` — it does not swallow it. If this row reds, a throw may be silent again and `optional`'s whole premise needs re-deriving",
   );
 
-  const handler = distOf("execution/session/turn-event-handler.js");
-  const start = handler.indexOf("const HOOK_CANCELLABLE_EVENTS=");
-  ok(start !== -1, "🔴 §5b: eve still declares HOOK_CANCELLABLE_EVENTS — a rename means the cancel contract moved");
-  const table = handler.slice(start, handler.indexOf("};", start) + 1);
-  for (const edge of HOOK_CANCELLABLE_EDGES) {
-    ok(
-      new RegExp(`"${edge}":!0`).test(table),
-      `🔴 §5b: eve still answers TRUE for "${edge}", so a hook may cancel there. A false here means this product gates on an edge eve ignores, and eve only warns — the refusal would be silent`,
-    );
-  }
-  ok(/"turn\.waiting":!1/.test(table), "§5b negative control: eve answers FALSE for `turn.waiting`, so the table really discriminates");
-  ok(/"task\.settled":!1/.test(table), "§5b negative control: …and for `task.settled`");
+  const intents = distOf("definitions/intents.js");
+  const report = intents.slice(intents.indexOf("function reportEffectFailure("), intents.indexOf("function takeTurnFailure("));
+  ok(report.length > 0, "🔴 §5b: eve still declares `reportEffectFailure` before `takeTurnFailure` in definitions/intents.js");
+  ok(/type:`fail`/.test(report), "🔴 §5b: `reportEffectFailure` writes a `fail` intent for the active turn — an unhandled hook error FAILS the turn (eve 0.84.0), so an OPTIONAL path must catch");
+  ok(/if\(log\.error\([^)]*\),i===void 0\)return/.test(report), "§5b negative control: …and between turns (no active turn) it only logs, so the rows above discriminate");
+
+  const queue = intents.slice(intents.indexOf("function queueCommands("), intents.indexOf("function takeIntents("));
+  ok(/s!==void 0&&i\.cancelledTurnId!==s/.test(queue), "🔴 §5c: a hook's ctx.cancel() queues a cancel intent only while a turn is active — the refusal edges are the ones whose commit carries the active turn");
+  ok(/takeTurnFailure\(/.test(distOf("harness/step/context.js")), "§5c: the step loop still reads the queued failure back through `takeTurnFailure`, so the `fail` intent ends the turn");
 }
 
 {
@@ -369,7 +373,7 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
     } catch (err) {
       threw = err instanceof Error ? err.message : String(err);
     }
-    ok(threw === undefined, `🔴 §6a ${edge}: binding-bridge does NOT let a spine failure escape (threw: ${threw ?? "nothing"}) — eve would log and drop it, and the lost-binding guard would never run`);
+    ok(threw === undefined, `🔴 §6a ${edge}: binding-bridge does NOT let a spine failure escape (threw: ${threw ?? "nothing"}) — eve would fail the turn with an error, and the lost-binding guard would never write its refusal`);
     ok((ctx as unknown as { cancels: number }).cancels === 1, `🔴 §6a ${edge}: …it CANCELS instead, so an unreadable context cannot put a child on whatever surface the standing seat holds`);
     void rows;
   }
@@ -387,4 +391,117 @@ const handlerOf = (hook: unknown, event: string): ((e: unknown, ctx: unknown) =>
   }
 }
 
-console.log(`\n✓ hook-fail-closed: ${n} assertions passed (refusal helper, eve-patch gate, egress abort reasons incl. the cross-turn arm, both egress hook edges with their negative control, eve's own dispatch bytes, and no escape from either handler's spine)\n`);
+{
+  const logs: string[] = [];
+  const log = (m: string): void => void logs.push(m);
+  const syncThrow = optional<unknown, unknown>("probe", () => {
+    throw new Error("metric sink down");
+  }, log);
+  const asyncThrow = optional<unknown, unknown>("probe", async () => {
+    await Promise.resolve();
+    throw new Error("audit store down");
+  }, log);
+  let threw: unknown;
+  try {
+    await syncThrow({}, {});
+    await asyncThrow({}, {});
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw === undefined, "🔴 §7: an OPTIONAL handler's sync throw AND its rejected await never reach eve — eve 1.x would fail the turn on either");
+  ok(logs.length === 2 && logs.every((l) => l.includes("the turn continues")), "§7: …and each failure is logged once, so a dropped metric is not silent");
+  let ran = 0;
+  await optional<unknown, unknown>("probe", () => void ran++, log)({}, {});
+  ok(ran === 1 && logs.length === 2, "§7 negative control: a healthy handler runs once and logs nothing");
+  const hostileLog = optional<unknown, unknown>("probe", () => {
+    throw new Error("x");
+  }, () => {
+    throw new Error("log sink down too");
+  });
+  let threw2: unknown;
+  try {
+    await hostileLog({}, {});
+  } catch (err) {
+    threw2 = err;
+  }
+  ok(threw2 === undefined, "🔴 §7: a log sink that throws as well cannot turn an OPTIONAL failure into a failed turn");
+
+  const probe = optional<unknown, unknown>("probe-fault", () => void ran++, log);
+  const thrownBefore = _optionalHookFaultsThrownForTest();
+  _faultOptionalHookForTest("probe-fault", "caught");
+  let caughtThrew: unknown;
+  try {
+    await probe({}, {});
+  } catch (err) {
+    caughtThrew = err;
+  }
+  _faultOptionalHookForTest("probe-fault", "escaped");
+  let escapedThrew: unknown;
+  try {
+    await probe({}, {});
+  } catch (err) {
+    escapedThrew = err;
+  } finally {
+    _faultOptionalHookForTest(undefined);
+  }
+  ok(caughtThrew === undefined, "§7: the integration seam's `caught` fault is caught by the wrapper, as a real optional failure is");
+  ok(escapedThrew instanceof Error, "§7: …and its `escaped` fault reaches the caller, so the integration test's negative control can fail a real turn");
+  ok(ran === 1, "§7: neither fault ran the handler body");
+  ok(_optionalHookFaultsThrownForTest() === thrownBefore + 2, "§7: each injected fault is counted, so an integration test can wait for proof the fault fired");
+}
+
+{
+  const { readdirSync } = await import("node:fs");
+  const { fileURLToPath } = await import("node:url");
+  const { join } = await import("node:path");
+  const { hookPathFindings, readHookFiles } = await import("../../../scripts/hook-throw-lint.js");
+  ok(hookPathFindings(readHookFiles()).length === 0, "§8: lint:hook-throw classifies every handler in the real tree (wrapped OPTIONAL, or marked REFUSAL)");
+
+  const dir = fileURLToPath(new URL("../agent/hooks/", import.meta.url));
+  const hostile = (): Record<string, unknown> & { cancels: number } => {
+    const state = { cancels: 0 };
+    return new Proxy(state as Record<string, unknown> & { cancels: number }, {
+      get(target, key) {
+        if (key === "cancels") return target.cancels;
+        if (key === "cancel") return () => void target.cancels++;
+        if (key === "then") return undefined;
+        throw new Error(`hostile context: ${String(key)} is unreadable`);
+      },
+    });
+  };
+  const hostileEvent = new Proxy({}, { get: (_t, key) => (key === "then" ? undefined : (() => { throw new Error(`hostile event: ${String(key)}`); })()) });
+  let handlers = 0;
+  const escaped: string[] = [];
+  const KNOWN_UNIMPORTABLE: Readonly<Record<string, string>> = {};
+  const unimportable: string[] = [];
+  for (const entry of readdirSync(dir).filter((f) => f.endsWith(".ts")).sort()) {
+    let mod: { default?: { events?: Record<string, (e: unknown, c: unknown) => unknown> } };
+    try {
+      mod = (await import(join(dir, entry.replace(/\.ts$/, ".js")))) as typeof mod;
+    } catch (err) {
+      unimportable.push(`${entry} (${err instanceof Error ? err.message.slice(0, 120) : String(err)})`);
+      continue;
+    }
+    const events = mod.default?.events;
+    if (events === undefined) continue;
+    for (const [key, handler] of Object.entries(events)) {
+      handlers++;
+      try {
+        await Promise.race([
+          Promise.resolve(handler(hostileEvent, hostile())),
+          new Promise((_r, reject) => setTimeout(() => reject(new Error("did not settle in 15s")), 15_000).unref()),
+        ]);
+      } catch (err) {
+        escaped.push(`${entry} ${key}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  const unknown = unimportable.filter((u) => KNOWN_UNIMPORTABLE[u.split(" ")[0]!] === undefined);
+  const stale = Object.keys(KNOWN_UNIMPORTABLE).filter((file) => !unimportable.some((u) => u.startsWith(`${file} `)));
+  ok(unknown.length === 0, `🔴 §8: every hook module imports, except a named row in KNOWN_UNIMPORTABLE — a skipped module is a handler nobody drove. Unexpected: ${unknown.join("; ")}`);
+  ok(stale.length === 0, `§8: KNOWN_UNIMPORTABLE holds no stale row — delete a row once its module imports: ${stale.join(", ")}`);
+  ok(handlers >= 40, `§8: the scan reached ${handlers} real handlers — a broken scan would otherwise pass vacuously`);
+  ok(escaped.length === 0, `🔴 §8: no hook handler lets an error reach eve on a hostile context and event — on eve 1.x that error would FAIL the turn. Escaped: ${escaped.join(" | ")}`);
+}
+
+console.log(`\n✓ hook-fail-closed: ${n} assertions passed (refusal helper, eve-patch gate, egress abort reasons incl. the cross-turn arm, both egress hook edges with their negative control, eve's own hook-failure bytes, no escape from either handler's spine, the OPTIONAL wrapper, and every real handler under a hostile context)\n`);

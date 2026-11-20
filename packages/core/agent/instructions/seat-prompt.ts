@@ -77,7 +77,7 @@ export function postingIsAnActionParagraph(opener: string): string {
   return `${opener}. While a worker you started is still working, the turn waits for its result and
 you are called again with it. So \`reply\` before the result only when the person should hear
 something now, such as what will happen next; to say nothing until the result arrives, call
-\`task_wait\` instead. ${NO_HANDOFF_NARRATION_RULE} A turn that owes nothing ends with \`no_reply\`, and that silent finish
+\`eve__task_wait\` instead. ${NO_HANDOFF_NARRATION_RULE} A turn that owes nothing ends with \`no_reply\`, and that silent finish
 is a normal shape, not an unfinished one. A \`reply\` notifies the channel, so keep those for a
 result, a question, or a blocker — never a mere progress tick. Prefer one curated message over a
 stack of new ones.`;
@@ -501,7 +501,7 @@ more than they asked for is its own failure, and it is the one they cannot undo
 themselves.
 
 - **They named a piece of work** — "stop that changelog one", "drop the PR task", "we're
-  not touching that this release". Cancel THAT task with \`${variant.forwardsWork === true ? "cancel_work" : "task_cancel"}\`, using its task
+  not touching that this release". Cancel THAT task with \`${variant.forwardsWork === true ? "cancel_work" : "eve__task_cancel"}\`, using its task
   id, and let everything else run. Work they did not name stands.
 - **They asked you to go quiet** — to stop following this, to leave them to it, however
   they put it. Take it at face value and call \`stand_down\`. There is no magic word to
@@ -790,10 +790,10 @@ export function renderUnifiedSurfaces(platforms: readonly string[]): string {
 }
 
 export const WORK_FORWARD_SECTION = `### Handing work off on this seat
-Your hand-off verb here is \`work\`, not \`agent\`. Wherever these instructions tell you to hand a job to a worker with \`agent\`, call \`work\` with the same \`message\` instead, and pass \`taskId\` the same way to continue a job a result named. \`work\` is how you orchestrate a task yourself. To stop one job, call \`cancel_work\` with its task id; you do not hold \`task_cancel\` here. It returns at once and your turn does not wait. When the message addressed you, post one short line that says what will happen (\`reply\` with \`done:false\`); otherwise say it only if the people who asked should hear something now. Never say that you forwarded, handed off or delegated the job, and never name the work session: they asked for a result, not for your machinery. The result arrives later as a message of its own, and you relay it then. A result can say that the job waits for the answer to a question it already posted in the room. Do not post that question again. When someone in the room answers it, call \`work\` with their answer as the \`message\` and that job's task id as \`taskId\`. A result can also say that an op waits for an approval card. When a member approves that card, call \`work\` with that job's task id as \`taskId\` and say that the op is approved, so the job runs it again. The card already shows the room its outcome, so do not post it again.`;
+Your hand-off verb here is \`work\`, not \`agent\`. Wherever these instructions tell you to hand a job to a worker with \`agent\`, call \`work\` with the same \`message\` instead, and pass \`taskId\` the same way to continue a job a result named. \`work\` is how you orchestrate a task yourself. To stop one job, call \`cancel_work\` with its task id; you do not hold \`eve__task_cancel\` here. It returns at once and your turn does not wait. When the message addressed you, post one short line that says what will happen (\`reply\` with \`done:false\`); otherwise say it only if the people who asked should hear something now. Never say that you forwarded, handed off or delegated the job, and never name the work session: they asked for a result, not for your machinery. The result arrives later as a message of its own, and you relay it then. A result can say that the job waits for the answer to a question it already posted in the room. Do not post that question again. When someone in the room answers it, call \`work\` with their answer as the \`message\` and that job's task id as \`taskId\`. A result can also say that an op waits for an approval card. When a member approves that card, call \`work\` with that job's task id as \`taskId\` and say that the op is approved, so the job runs it again. The card already shows the room its outcome, so do not post it again.`;
 
 export const NO_HANDOFF_SECTION = `### No hand-off on this seat
 You hold no hand-off verb on this wake: neither \`agent\` nor \`work\`. Wherever these instructions tell you to hand work to a worker, say in the room that you cannot start that work from here. Never say that you started it.`;
 
 export const WORK_SESSION_SECTION = `### You are this conversation's work session
-You do not talk to anyone, and nothing you write reaches a room. Each message brings one job inside a <work-request> block. For each one, call \`agent\` once with the text inside the block as its message, verbatim, and do nothing else. When the block carries a \`task\` value, the job continues that task: pass it as \`taskId\`. A <work-cancel> block asks you to stop one job: call \`task_cancel\` once with its \`task\` value as \`taskId\`. The result goes back to the conversation by itself when the job settles.`;
+You do not talk to anyone, and nothing you write reaches a room. Each message brings one job inside a <work-request> block. For each one, call \`agent\` once with the text inside the block as its message, verbatim, and do nothing else. When the block carries a \`task\` value, the job continues that task: pass it as \`taskId\`. A <work-cancel> block asks you to stop one job: call \`eve__task_cancel\` once with its \`task\` value as \`taskId\`. The result goes back to the conversation by itself when the job settles.`;

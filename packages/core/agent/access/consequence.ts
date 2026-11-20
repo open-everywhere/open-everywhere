@@ -1,4 +1,5 @@
 import { personalBrowserJudgeMode } from "../personal-browser/policy.js";
+import { canonicalConnectorOpName, isUnresolvedConnectorOpAlias } from "./connector-op-alias.js";
 
 export type ConsequenceTier = "open" | "gate:member" | "gate:admin";
 
@@ -7,13 +8,24 @@ export const CONNECTOR_READ_VERBS: readonly string[] = [
   "view", "retrieve", "show", "lookup", "count", "check", "browse", "download",
 ];
 
+/**
+ * The op part of a `<connection>__<tool>` name. A mounted short name (`connector-op-alias.ts`)
+ * resolves to its qualified name first, so the op part is the server's whole tool name.
+ */
 export function connectorOpName(toolName: string): string {
-  const i = toolName.indexOf("__");
-  return i >= 0 ? toolName.slice(i + 2) : toolName;
+  const name = canonicalConnectorOpName(toolName);
+  const i = name.indexOf("__");
+  return i >= 0 ? name.slice(i + 2) : name;
+}
+
+export const EVE_FRAMEWORK_TOOL_PREFIX = "eve__";
+
+export function isEveFrameworkTool(toolName: string): boolean {
+  return toolName.startsWith(EVE_FRAMEWORK_TOOL_PREFIX);
 }
 
 export function isConnectorOpTool(toolName: string): boolean {
-  return toolName.includes("__");
+  return toolName.includes("__") && !isEveFrameworkTool(toolName);
 }
 
 const RESERVED_TOOL_NAMESPACES: ReadonlySet<string> = new Set(["grant"]);
@@ -30,7 +42,10 @@ export interface QualifiedToolName {
   readonly verb: string;
 }
 
-export function parseQualifiedToolName(toolName: string): QualifiedToolName | undefined {
+/** Split a qualified tool name. A mounted short name resolves to its qualified name first. */
+export function parseQualifiedToolName(rawToolName: string): QualifiedToolName | undefined {
+  const toolName = canonicalConnectorOpName(rawToolName);
+  if (isEveFrameworkTool(toolName)) return undefined;
   const segments = toolName.split("__");
   if (segments.length < 2) return undefined;
   const verb = segments[segments.length - 1] ?? "";
@@ -114,7 +129,13 @@ export function connectorOpHintTier(hints: ConnectorOpToolHints | undefined): Co
 
 const HINT_TIER_RANK: Readonly<Record<ConnectorOpTier, number>> = { read: 0, write: 1, destructive: 2 };
 
-export function classifyConnectorOpTierVerdict(toolName: string, hints?: ConnectorOpToolHints): ConnectorOpTierVerdict {
+/**
+ * A mounted short name classifies by its qualified name. A name in the short-name shape that this
+ * process has not registered classifies as destructive: its cut-off part could hold the verb.
+ */
+export function classifyConnectorOpTierVerdict(rawToolName: string, hints?: ConnectorOpToolHints): ConnectorOpTierVerdict {
+  if (isUnresolvedConnectorOpAlias(rawToolName)) return { tier: "destructive", basis: "unrecognised", hintDecided: false };
+  const toolName = canonicalConnectorOpName(rawToolName);
   const plain = classifyByName(toolName, undefined);
   const hint = isReservedNamespaceTool(toolName) ? undefined : connectorOpHintTier(hints);
   if (hint === undefined) return { ...plain, hintDecided: false };
@@ -241,26 +262,33 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   grep: open("sandbox-local file search"),
   read_file: open("sandbox-local read"),
   write_file: open("sandbox-local write — durable effects leave only via gated verbs"),
+  edit_file: open(
+    "sandbox-local targeted edit of an existing file — the same reach as write_file, and durable effects leave only via gated verbs. eve mounts it by default, so the roster declines it with a sentinel and tools/sandbox_tools.ts re-provides it per grain behind the same memory write fence",
+  ),
   sandbox_tools: open(
-    "the resolver FILE that re-provides the six disabled framework sandbox tools per session grain (access/window-gated.ts windowGatedKit); mounts nothing beyond the six names above, each at its own open tier",
+    "the resolver FILE that re-provides the seven disabled framework sandbox tools per session grain (access/window-gated.ts windowGatedKit); mounts nothing beyond the seven names above, each at its own open tier",
   ),
 
   web_search: open("read of the public web via eve's provider; a read, escapes nothing"),
-  ask_room: open("posts ONE code-framed question into the room that asked for the job, and returns at once — the same audience as a reply, and nothing waits on it. Held ONLY by a child of the work session (access/untrusted-projection.ts), in place of eve's ask_question, whose native wait would hold the work session's turn (OPE-2340, ruling D5)"),
+  ask_room: open("posts ONE code-framed question into the room that asked for the job, and returns at once — the same audience as a reply, and nothing waits on it. Held ONLY by a child of the work session (access/seat-cut.ts), in place of eve's ask_question, whose native wait would hold the work session's turn (OPE-2340, ruling D5)"),
   ask_question: open("asks the ROOM a clarifying question — stays in the asking conversation. OPT-IN since eve 0.65, mounted by packages/core/agent/tools/ask_question.ts; each call parks the asking turn until a person answers or the room moves on, which is why the lean cut keeps it off a conversational seat"),
-  load_skill: open("loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill"),
-  connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
-  connection_tools: open(
-    "the dynamic source FILE eve registers for every local node, which provides `connection_search` and `connection_execute` while the agent has connections; mounts nothing under its own name. Reserved by eve — an authored module here fails `eve build`",
+  eve__skill: open(
+    "eve's catalog route that loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill. eve mounts it only while the session's catalog holds a skill. Reserved by eve — an authored module here fails `eve build`",
   ),
-  connection_execute: open(
-    "runs ONE operation on one connector eve's registry resolved for this session. Open is the tier of the DISPATCH, not of the operation: eve resolves the target and hands the QUALIFIED `<connection>__<op>` name to that connection's own approval policy, which for every OE connection is connectorApprovalPolicy() — so the per-verb classification and the config-declared raises (access/connector-op-gating.ts) card a write through that seam, not through this row",
+  eve__search: open(
+    "eve's catalog route that lists WHICH connections and deferred entries exist for this session — a read. eve mounts it only while the session has connections, deferred tools or deferred skills. Reserved by eve — an authored module here fails `eve build`",
+  ),
+  eve__tool: open(
+    "eve's catalog route that runs ONE named entry eve's catalog resolved for this session. OE authors those entries: each connector operation is a deferred tool named `<connection>__<op>` (connections/connector-tools.ts), mounted in place of eve's MCP connections (connections/connector-mount.ts). The route only redirects: eve runs the named entry as a direct call under the entry's own name, so that entry's own approval policy (connections/connector-auth.ts connectorApprovalPolicy, behind the outbound filter), its seat cut and its result fence apply. It also runs any other callable entry in the session's tool table by name, under that entry's own gates, and an eve connection's op where an app mounts an eve connection (no shipped connection is one, and such an op gets no OE result fence). Open is the tier of the DISPATCH, not of the entry. Reserved by eve — an authored module here fails `eve build`",
+  ),
+  eve__reply: open(
+    "eve's structured-output return: it hands this session's final result back to the session that started it, and that session's sinks are filtered. It starts nothing and reaches nothing. Harness-internal (access/job-posture.ts HARNESS_INTERNAL_TOOLS). Reserved by eve",
   ),
 
-  task_cancel: open(
+  eve__task_cancel: open(
     "stops delegated work this session itself spawned — de-escalation only, the same posture as revoke_routine_permissions and stand_down. After it runs the agent can do strictly LESS, so a card here would put a confirmation in front of the brake pedal. It cannot reach another session's task: eve validates the ids against this session's own receipts",
   ),
-  task_wait: open(
+  eve__task_wait: open(
     "parks THIS turn until one of this session's own tasks settles — it starts nothing, reaches nothing and spends nothing beyond the turn that was already running. eve's own task system block instructs it by name on every session that can start a task, which is why the per-wake filters must not strip it (access/job-posture.ts HARNESS_INTERNAL_TOOLS)",
   ),
 
@@ -471,7 +499,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "delegation, three-tier (OPE-2338): the seat FORWARDS a self-contained job to its conversation's work session, which starts one eve-native child for it. It returns a request receipt at once, holds no turn open, and widens HANDS, never CONSEQUENCE: the child re-gates every L2 consequence itself under the asking room's frozen authority. The result comes back as a wake of its own. Audited via work.forwarded / delegation.task_started / work.result_wake",
   ),
   cancel_work: open(
-    "the three-tier seat's STOP (OPE-2338, ruling D15): it relays a cancel by task id into the conversation's work session, which calls `task_cancel` on that one job. It REMOVES hands and starts nothing. Only the job's own requester or an org/domain admin may cancel (D10, the approval card's rule), and only a job this seat forwarded. Nothing for an approver to weigh: a card in front of \"stop that\" would delay the stop it asks about. Audited via work.cancel_relayed",
+    "the three-tier seat's STOP (OPE-2338, ruling D15): it relays a cancel by task id into the conversation's work session, which calls `eve__task_cancel` on that one job. It REMOVES hands and starts nothing. Only the job's own requester or an org/domain admin may cancel (D10, the approval card's rule), and only a job this seat forwarded. Nothing for an approver to weigh: a card in front of \"stop that\" would delay the stop it asks about. Audited via work.cancel_relayed",
   ),
   grant_tools: open(
     "the resolver FILE that projects a chat's live CREDENTIAL GRANTS into per-grant `grant__<owner>_<connector>__<tool>_<target>` tools (OPE-1060, the sandbox_tools shape). It mounts nothing under its own name and grants nothing: it reads grant rows an OWNER already approved in their own DM and returns one tool per row. It mounts them on the DELEGATED WORKERS of the conversation the grant was lent to and nowhere else (OPE-2023) — a seat reaches a lent page by delegating, exactly as it reaches the org connector. Its own tier is open because resolving is a read of rows that already exist. Each MOUNTED name is classified on the RESERVED-NAMESPACE path instead of by a static row here — a runtime-minted name cannot have one — and its authoritative tier is the one pinned on the GRANT ROW at mint, from `classifyConnectorOpTier`'s answer for the vendor's own tool name, never re-derived from the mounted name (the false-open arm S0 closed)",
@@ -543,7 +571,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   revoke_connector: admin("connector.revoke", "kills a live capability for a scope — an org-level control change"),
   clear_connector_override: admin("connector.clear", "re-arms a revoked capability — same bar as the revoke"),
   halt: open(
-    "THE BRAKE PEDAL (OPE-1602): stops every consequential act at an address, at once, with no card. `open` for the reason `task_cancel`, `set_dm_delivery` and `stand_down` are open, at deployment scale — a card needs an approver who is present and clicking, which during an incident is exactly what is not guaranteed, so a carded brake is a brake that works only when you do not need it. After it runs the agent can do strictly LESS: it takes no address from the model (a two-value enum; the key is derived host-side from the seat's own binding), spends nothing, sends nothing, and reads no memory. The accepted cost, stated rather than hidden: an `open` verb is one a poisoned turn can call, so a halt is a denial of service the model can trigger — loud (every seat says it is halted), visible (one `admin.halt.set` row) and reversible by an admin. The reverse direction is `resume`, which widens and is therefore carded",
+    "THE BRAKE PEDAL (OPE-1602): stops every consequential act at an address, at once, with no card. `open` for the reason `eve__task_cancel`, `set_dm_delivery` and `stand_down` are open, at deployment scale — a card needs an approver who is present and clicking, which during an incident is exactly what is not guaranteed, so a carded brake is a brake that works only when you do not need it. After it runs the agent can do strictly LESS: it takes no address from the model (a two-value enum; the key is derived host-side from the seat's own binding), spends nothing, sends nothing, and reads no memory. The accepted cost, stated rather than hidden: an `open` verb is one a poisoned turn can call, so a halt is a denial of service the model can trigger — loud (every seat says it is halted), visible (one `admin.halt.set` row) and reversible by an admin. The reverse direction is `resume`, which widens and is therefore carded",
   ),
   [RESUME_TOOL]: admin("halt.resume",
     "lifts the break-glass halt — the WIDENING half of the pair, so it is carded where `halt` is not (WIDEN-SLOW / NARROW-FAST). 🔴 It is the one verb the halt arrow in access/approver-chain.ts EXEMPTS by name: it routes through the chain, which is the place the halt denies, so without the exemption a halt would deny its own lift and no chat door could reopen the deployment. The control MCP's own `resume` is the independent second door and never touches the chain",
@@ -731,11 +759,11 @@ export function checkActionKindCoverage(
 
 export const NON_TOOL_APPROVAL_SITES: Readonly<Record<string, string>> = {
   "packages/core/agent/connections/mcp-server-connection.ts":
-    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. It is the ONE builder every MCP connection goes through — the shipped Notion connection and every server an app declares in agent/access/mcp-servers.ts (OPE-2414) — so this one line is the approval of each of them. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is used as an OE GATE that never prompts (OPE-2340, ruling Q4): it answers `not-applicable` or `denied` only. An op that needs a person is DENIED with \"a card is posted\", and the OE `op.connector` card (approvals/connector-op.ts) carries the approval, so no turn holds on it; scripts/no-native-hitl-test.ts §3 pins that it never prompts. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. The value is a BARE request policy and must stay one (OPE-1218): eve's connection resolver keeps `approval` only when it is a function",
+    "REAL, and deliberate: `connectorApprovalPolicy()` on an OE CONNECTOR MOUNT (connections/connector-mount.ts), not on one authored tool. It is the ONE builder every MCP connection goes through — the shipped Notion connection and every server an app declares in agent/access/mcp-servers.ts (OPE-2414) — so this one line is the approval of each of them. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the `approval:` policy that the mount puts on each deferred connector tool is the pre-execution seam for each op. It is used as an OE GATE that never prompts (OPE-2340, ruling Q4): it answers `not-applicable` or `denied` only. An op that needs a person is DENIED with \"a card is posted\", and the OE `op.connector` card (approvals/connector-op.ts) carries the approval, so no turn holds on it; scripts/no-native-hitl-test.ts §3 pins that it never prompts. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself. The value is a BARE request policy and must stay one (OPE-1218): the connector tools wrap it with the outbound filter, and eve keeps a tool's `approval` only when it is a function",
+  "packages/core/agent/connections/connector-mount.ts":
+    "REAL, and the same policy as the mcp-server-connection.ts entry: `spec.approval ?? connectorApprovalPolicy()` is the connector mount's DEFAULT for a spec that names no policy. Every shipped mount (the Notion connection and each declared MCP server) builds its spec with mcpConnectionMountSpec, which passes `connectorApprovalPolicy()` itself, so the default is the same bare request policy. It never prompts (scripts/no-native-hitl-test.ts §3), and connector-tools.ts puts the outbound filter in front of it on each deferred connector tool",
   "packages/core/agent/plugins/extract.ts":
-    "NOT a live policy: the match is inside a TEMPLATE LITERAL — the `approval: connectorApprovalPolicy()` line that the plugin extractor GENERATES into a scaffolded `agent/connections/<slug>.ts`. It is reviewed where it lands, by whoever reads the generated file, and the header of that generated file says so",
-  "packages/core/agent/access/window-gated.ts":
-    "NOT a policy: `replayStepNames` returns `{ execute, approval, approvalResponse }` — eve's deterministic replay STEP NAMES for a dynamic tool entry. Each value is a string identifier, and the properties are named after what eve calls the steps",
+    "NOT a live policy: the match is inside a TEMPLATE LITERAL — the `approval: connectorApprovalPolicy()` line that the plugin extractor GENERATES into a scaffolded `agent/tools/<slug>.ts` connector mount. It is reviewed where it lands, by whoever reads the generated file, and the header of that generated file says so",
 };
 
 export interface ApprovalSite {

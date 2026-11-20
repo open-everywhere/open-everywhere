@@ -8,7 +8,14 @@ export function connectorCardContext(surface: BindableContext, session: unknown)
 
 export interface ConnectorOpCardOffer {
   readonly org: string;
+  /** The name the model called: the mounted name, which can be a short name. */
   readonly tool: string;
+  /**
+   * The op's whole `<connection>__<tool>` name, when `tool` is a short name. The card shows it, so
+   * the person who approves sees the whole op, verb included. It is stored on the card because the
+   * process that renders the card may have no short name registered.
+   */
+  readonly op?: string;
   readonly connection: string;
   readonly grain: "destructive" | "call";
   readonly opTier?: "write" | "destructive";
@@ -57,9 +64,21 @@ export const CONNECTOR_OP_CARD_KIND = "op.connector";
 
 export const CONNECTOR_REPLAY_INPUT_KEY = "oe_approved_card";
 
+export const CONNECTOR_REPLAY_CALL_TOOL = "eve__tool";
+
+export function connectorReplayCall(connection: string, op: string, cardId: string): string {
+  return (
+    `call \`${CONNECTOR_REPLAY_CALL_TOOL}\` with \`name\` set to \`${connection}__${op}\`, and \`input\` set to an object whose ONLY key is ` +
+    `\`${CONNECTOR_REPLAY_INPUT_KEY}\`, with the card id \`${cardId}\` as its value`
+  );
+}
+
 export const CONNECTOR_REPLAY_INPUT_CAP = 32_768;
 
-const CARD_ID = /^[A-Za-z0-9-]{8,64}$/u;
+/** A card id's shape. The connector op's input schema checks the replay form against it too (`connector-tools.ts`). */
+export const CONNECTOR_REPLAY_CARD_ID_PATTERN = "^[A-Za-z0-9-]{8,64}$";
+
+const CARD_ID = new RegExp(CONNECTOR_REPLAY_CARD_ID_PATTERN, "u");
 
 export function readConnectorReplayCardId(input: unknown): string | undefined {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return undefined;

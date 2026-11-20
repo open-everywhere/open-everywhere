@@ -177,7 +177,7 @@ test("stop on one request id cancels that job's task only, and the other job set
   expect(relayed.map((r) => detailOf(r).taskId), "🔴 the stop relayed a cancel for a task other than A's").toEqual([taskA]);
   await waitFor(
     async () => ((await rowsSinceCursor(cursor, ["work.cancel_redeemed"], { limit: 50 })).some((r) => detailOf(r).taskId === taskA && detailOf(r).outcome === "admitted") ? true : undefined),
-    "the work session's fenced task_cancel to be ADMITTED for A's task",
+    "the work session's fenced eve__task_cancel to be ADMITTED for A's task",
   );
 
   await waitFor(() => (forA.holdsCancelDelivered() === 1 ? true : undefined), "🔴 A's child's model call to see its abort — the cancel stopped the running child");

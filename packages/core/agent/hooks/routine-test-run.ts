@@ -18,7 +18,7 @@ import {
   type BlockedCall,
   type TestRunStamp,
 } from "../routines/test-run.js";
-import { refuseTurn, type RefusableContext } from "./control-refusal.js";
+import { optional, refuseTurn, type RefusableContext } from "./control-refusal.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
 
@@ -176,14 +176,21 @@ async function onTurnEnded(ctx: HookContext, failed: boolean): Promise<void> {
 
 export default defineHook({
   events: {
+    // hook-path: REFUSAL — an unwritable test-run slot would let a test fire run unfenced, so the turn is cancelled
     "turn.started": async (_event, ctx) => {
       await onTurnStarted(ctx);
     },
-    "turn.completed": async (_event, ctx) => {
-      await onTurnEnded(ctx, false);
-    },
-    "turn.failed": async (_event, ctx) => {
-      await onTurnEnded(ctx, true);
-    },
+    "turn.settled": optional("routine-test-run", async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+          await onTurnEnded(ctx, false);
+          return;
+        case "failed":
+          await onTurnEnded(ctx, true);
+          return;
+        default:
+          return;
+      }
+    }),
   },
 });

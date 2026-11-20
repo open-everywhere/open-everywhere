@@ -59,9 +59,9 @@ card is on the surface.
   model call's tokens, and `est_usd` prices the share at the model the call used. The per-tool totals
   therefore never exceed the `usage` dataset's total. A model call that chose no tool (a final answer)
   is attributed to no tool.
-- **One call, one row.** eve reports a connector op twice — its nested op result and its
-  `connection_execute` wrapper. The hook keeps the op and drops the wrapper, so a connector call counts
-  once. A wrapper whose op never ran (an unknown tool, a sign-in prompt) counts as `connection_execute`.
+- **One call, one row.** A connector op is its own tool, `<connection>__<op>`, so a connector call
+  counts once, under that name. The hook still drops a nested op result's wrapper row, the shape
+  eve 0.x wrote.
 - **Card rows carry no conversation mode.** `requestApproval` holds no binding, so a card row's
   `surface` is the room the card was posted to and its mode is unstamped. Grouped by `surface`, card
   rows therefore mask as `(unclassified)`; grouped by `connector`/`tool`, they count normally.

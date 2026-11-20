@@ -25,7 +25,7 @@ type Submission = Parameters<typeof admitSlackInputResponse>[1];
 const ctx = { defaultAuth, thread: {}, slack: {} } as unknown as Ctx;
 const submission = {
   type: "block_actions",
-  inputResponses: [{ requestId: "r1" }, { requestId: "r2" }],
+  answers: [{ requestId: "r1" }, { requestId: "r2" }],
   actions: [],
   user: { id: "U_ANSWERER", username: "answerer" },
 } as unknown as Submission;
@@ -218,8 +218,8 @@ console.log("admitSlackInputResponse:");
 {
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/slack.ts", import.meta.url)), "utf8");
   ok(
-    /onInputResponse:[^\n]*admitSlackInputResponse/.test(src),
-    "🔴 slack.ts's slackChannel() WIRES onInputResponse to admitSlackInputResponse — deleting the hook silently restores eve's accept-any-clicker default",
+    /onAnswers:[^\n]*admitSlackInputResponse/.test(src),
+    "🔴 slack.ts's slackChannel() WIRES onAnswers to admitSlackInputResponse — deleting the hook silently restores eve's accept-any-clicker default",
   );
 }
 

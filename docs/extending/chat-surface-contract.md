@@ -242,12 +242,24 @@ asks for `participating`, and the row is already stopped.
 whose `participating` is exactly `true` and whose `stopped` is not `true`. No anchor, no row, or an
 unreadable store all answer false.
 
-**On an enrolled conversation the silence verb loses exactly one reason.** `no_reply` refuses
-`addressed_to_other` there, and the refusal text
-(`NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL`, `engaged-wake.ts`) states the enrolment and names the two
-endings that remain: answer the message, or call `no_reply` again with `nothing_to_add`. It also
-points at `stand_down` for a conversation the people asked the agent to leave. `nothing_to_add` and
-`stand_down` stay available on every wake.
+**On an enrolled conversation the silence verb loses `addressed_to_other`.** `no_reply` refuses
+that reason there, and the refusal text
+(`NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL`, `engaged-wake.ts`) states the enrolment and names the
+endings that remain: answer the message, or, when it asks nothing, call `no_reply` again with
+`nothing_to_add`. It also points at `stand_down` for a conversation the people asked the agent to
+leave. `stand_down` stays available on every wake.
+
+**On an engaged follow-up that asks a question, the silence verb also loses three reasons.** The
+`delivery.consumed` hook marks the turn when its only delivery is ONE `follow-up="thread-engaged"`
+wake whose trigger holds a question mark (`engagedQuestionWake`, `engaged-wake.ts`). The question
+mark test is a heuristic, and its known gaps are stated beside it. On a marked turn that has not
+posted a reply yet, `no_reply` refuses `nothing_to_add`, `not_relevant` and `awaiting_context`, and
+writes `reply.no_reply_engaged_question_refused`. The refusal text says the question is for the
+agent unless it is put to someone else. Other exits stay open: `other` with an explanation (for a
+question put to another person), `duplicate`, `user_requested_silence`, `reacted_instead`, the bare
+`NO_REPLY` sentinel, and `stand_down`. A second distinct delivery in the same turn, or one message that
+holds more than one wake, leaves every reason open. A re-run of the hook for the same delivery id
+counts once.
 
 ### 2.5.2 How certain the agent is that a wake was meant for it
 
@@ -1090,8 +1102,14 @@ refused attempt belongs in the trail. See §7.6.
 
 ### 4.11 What an UNATTENDED wake holds
 
-A durable job fire with no human present is narrowed at the model-call seam to one allow-list
-(`JOB_WAKE_TOOLS` in `access/window-gate-manifest.ts`, applied by `access/job-posture.ts`). The
+A durable job fire with no human present is narrowed in the seat cut to one allow-list
+(`JOB_WAKE_TOOLS` in `access/window-gate-manifest.ts`, applied by `access/job-posture.ts`).
+On eve 1.x the seat cut (`access/seat-cut.ts`) applies this allow-list to the roster tool shims it
+wraps, and the model-call cut applies it to the names eve mounts itself: a restricted job wake is
+offered no `agent`, `ask_question` or `web_search`. It keeps `eve__skill` (a kit row) and the
+`eve__tool` route. Every connector op mounts through a shim, so the allow-list removes each write op
+from the step's catalog, and `eve__tool` reaches only the read ops (see the **seat cut** in the
+glossary). The
 posture is `restricted` or `unrestricted`, and the **fire stamp is read first**: a stamped job fire
 is narrowed unconditionally, because a human signal on a scheduler-built delivery is a bug or a
 forge. A positively present principal escalates only a job SESSION's later, unstamped wake.
@@ -1327,12 +1345,195 @@ It loads at most **20** newer wakes (`MAX_NEWER_WAKES`); past that cap the refus
 so the gate refuses a given wake at most once and the model can then re-send. Past the cap the gate
 stops recording and keeps refusing, rather than going quiet.
 
-**The durable stopped flag is re-read on every post.** `standDownState`
-(`packages/core/agent/tools/reply.ts`) reads the flag per call rather than once at wake time, so a
-stand-down stored mid-turn reaches the turn already running. It allows **exactly one** post after the
-stop — the acknowledgement — by consulting both a per-turn mark and a durable per-(session, turn) row,
-and it **fails open in every unknown direction**: a clear flag, a post that does not name the bound
-conversation, and any thrown error all answer "not stopped".
+**The durable stopped flag is re-read on every NEW tool call.** `standDownState`
+(`packages/core/agent/channels/stand-down-gate.ts`) reads the flag per call rather than once at wake time, so a
+stand-down stored mid-turn reaches the turn already running. A RETRIED call keeps the verdict of its
+first run (below), so a call that was allowed before the stop can run again after it. It allows
+**exactly one** new post after the stop, **per stopped conversation** — the acknowledgement — and only
+the turn that stood down may make it.
+
+**A retried tool call decides as its first run did (OPE-2814).** eve runs a tool body again when its
+step retries, and the call keeps its `callId` (eve's `ToolContext.callId`) across the retry. So the
+gate's first evaluation for a call writes its verdict under the session id, the turn id and that
+`callId` (`stand-down-verdict:` rows, `putTaskResultIfAbsent`, `STAND_DOWN_ACK_TTL_MS`). The turn id
+is in the key because a model can reuse a tool-call id in a later turn of the same session; eve's
+mock model, for one, names every call `call_<tool>`. A run of the same
+call reads the recorded verdict, not the live store. A retry after a stop therefore never refuses a
+verb whose first run was allowed, and never says "nothing was posted" for a post that landed. A retry
+after a re-invitation never allows a verb whose first run was refused. A NEW call has a new `callId`,
+so it reads the live state. A context with no `callId`, no turn id or no session id records nothing
+and reads the live state. When the record cannot be read or written, the gate falls back to the live state. eve's
+own `ctx.memo` serves definitions and hook handlers only, not a tool body, so the gate keeps its own
+record. The record fixes the gate's verdict only. An allowed verb that runs again re-runs its platform
+call. `postOnce` de-duplicates an identical body for `OUTBOUND_DEDUPE_TTL_MS` (60 seconds) only:
+the unified `reply` arm keys on the wake, the per-surface `reply` arm keys on the conversation,
+and `post_file` and `ask_room` key on the `callId`. `edit_reply`, `react` and the `connector` card
+carry no de-duplication. So a retry of an allowed call can repeat its platform effect after a stop:
+for any verb when the retry comes more than 60 seconds after the first run, and at once for the
+verbs with no de-duplication.
+
+When `stand_down` marks a conversation stopped, it claims a durable per-conversation acknowledgement
+row (`holdStandDownAck`, `channels/engagement.ts`). The row names the holder turn by its (session,
+turn) key. The claim is a conditional write (`putTaskResultIfAbsent`), so two claims that race give
+one holder. The holder's first post spends the acknowledgement (`spendStandDownAck`). The spend
+is a second conditional write at a key that names the holder and the hold's claim id, so it never
+overwrites the hold. Every
+other post into the stopped conversation is refused under reason `stopped`: a later turn, a delegated
+worker whose job was forwarded before or after the stop, and a turn of another session. A turn that
+cannot name its session holds nothing unless it stood down itself, and then its per-turn mark carries
+the hold. Any other sessionless turn is refused. The acknowledgement row answers for the conversation,
+so a missing turn identity is not an unknown. An absent row also refuses, unless this turn's own
+per-turn mark says it stood down. That covers a holder whose row write failed.
+
+**Two concurrent stand-downs give one acknowledgement (OPE-2807).** Two turns can stop the same
+conversation at the same moment, and each can read it as not stopped. Only one claim lands. The other
+`stand_down` reads the row, finds another holder, and returns `ALREADY_ACKNOWLEDGED_NOTE`, which sets
+no acknowledgement debt and tells the model to post nothing. Its later post is refused. The same note
+answers a replayed `stand_down` after the spend, and a `stand_down` by another turn into a
+conversation that already stood down. A replayed `stand_down` whose own hold is still unspent keeps
+the debt. Within `STAND_DOWN_ACK_TTL_MS` a replay never re-opens a spent acknowledgement. After the
+row expires, a `stand_down` into the still-stopped conversation claims a fresh hold. The holder's
+durable per-(session, turn) row still refuses a second post when the spend write was lost. An expired
+row is absent, so it refuses as well.
+
+**A re-invitation deletes the acknowledgement rows.** `markThreadEngaged` and `disengageThread` delete
+the hold and its spend when they clear the stop, so the next `stand_down` claims a fresh hold.
+`markThreadEngaged` deletes only when it reads the row back and the flag is clear. A failed read
+deletes nothing, so a stop that stands keeps its spent row. The delete is best-effort. If it fails,
+the next stop finds the old holder, and that stop posts no acknowledgement. That failure errs toward
+silence, which is the safe direction for a stop (OPE-2801, OPE-2807).
+
+**The hold delete is conditional on the hold it read (OPE-2809).** The clear reads the hold row, then
+deletes it with a single store statement that deletes the row only while it
+still holds the value that the clear read (now `deleteTaskResultIfUnstopped`, below). Each hold carries a fresh claim id, so two holds never
+share a value. The spend row is keyed by the holder AND that claim id, so a new hold never shares a
+spend row with an old one, even when both have the same holder (or none). When the spend cannot
+read its own hold (two failed reads, or no hold of its own), it writes the spend under the
+holder-only key and logs a warning. The reader also checks that key, so a lost read errs toward
+"spent", which is silence. That holder-only row is not deleted by a clear, so it can keep a later
+stop with the same holder silent until its TTL ends. Only the clear whose hold
+delete lands removes the old hold's spend row. So when two
+re-invitations clear one stop at the same moment and a new stop claims its hold between their
+deletes, the later delete finds a different value and removes nothing. The new stop keeps its one
+acknowledgement, and a later `stand_down` into that conversation finds the hold and owes nothing.
+
+**A clear that races a new stop keeps the new hold (OPE-2813).** A re-invitation reads the flag back
+as clear and then reads the hold. A new stop can mark the flag and claim its hold between those two
+reads, so the clear can read the NEW hold. The delete is therefore `deleteTaskResultIfUnstopped`: ONE
+store statement that deletes the hold only while it still holds the value the clear read AND the
+conversation's engagement row is not stopped. A new stop sets the flag before it claims its hold, so a
+clear that can see the new hold also sees the flag, and deletes nothing. The new stop keeps its hold
+and its one acknowledgement. A missing engagement row counts as not stopped, so `disengageThread`
+still deletes the hold of the row it removed. One edge stays: a hold that a new stop's flag now
+guards, but that an OLDER stop claimed, is kept too. That older hold then answers for the new stop,
+which posts no acknowledgement. That edge errs toward silence, the safe direction for a stop.
+
+**The gate reads the room grain too (OPE-2806).** Where the binding publishes `roomEngagementKey`
+(§4.10, Teams today), `standDownState` reads the room row when the conversation grain is not stopped.
+On a room-grain stop `stand_down` claims the hold at the room address, and the gate reads and spends
+it there. So a post into a room that stood down at room grain is refused like a conversation-grain
+stop, and only the turn that stood down posts its one acknowledgement. A room that did not stand down
+is not affected. Slack and Discord publish no room key, so their gate reads the conversation grain
+only.
+
+**Five more verbs read the same gate (OPE-2808).** `refuseVerbIfStoodDown`
+(`stand-down-gate.ts`) runs `standDownState` for `edit_reply`, `post_file`, `react`, `ask_room` and
+`connector` (its connect card),
+before the verb touches the platform. It reads the same grains as `reply`, and like `reply` it
+reads the stop of the turn's BOUND conversation: the conversation grain, the room grain where the
+binding publishes a room key, and, for the unified `edit_reply`, only a wake that names the bound
+conversation. It does not read the conversation a verb's explicit target sits in. The one exception
+is `react` with an explicit `ts` on Slack: `refuseTargetIfStopped` also refuses a `ts` that is the
+root of a stopped thread. That refusal names the target thread, says the turn's own conversation is
+not affected, and does not arm the closeout, so a turn in an open conversation still answers there. None of these verbs is ever the acknowledgement. The
+acknowledgement is one `reply`. So in a stopped conversation each verb is refused under reason
+`stopped`, whoever calls it. Only a turn that holds the unspent acknowledgement (`holdsAck`) gets a
+steer that names `reply`, and only that refusal leaves the closeout unarmed, so the turn can still
+post the acknowledgement. Where the hold row is unreadable, `holdsAck` is true only for the turn whose
+own per-turn mark says it stood down. Every other caller, a worker included, gets the `reply` refusal
+text, and its refusal arms the closeout.
+`edit_reply` writes its refusal on `reply.edit.refused`. The other four (`post_file`, `react`, `ask_room` and `connector`) write
+`stand_down.verb_refused` with the verb name. A conversation that did not stand down is not
+affected.
+
+**Four more writers read the gate (OPE-2812).** These paths make something visible in a thread
+seat's thread or in the bound conversation, and each reads the stand-down gate before it writes
+(`standDownState`, or `isThreadStopped` on a named thread):
+
+- `complete_thread` runs `withholdIfStoodDown` on the seat's own conversation. In a thread that
+  stood down it posts no summary (and no `THREAD_DONE_LINE`), and `closeThreadSeat` places no done
+  reaction (`reaction: "withheld"`). The seat is still recorded as completed, released and handed
+  back, because none of that is visible in the thread. The hand-back tells the parent that the thread
+  stood down. The note tells the seat that nothing was posted, and names `reply` only for the turn
+  that holds the acknowledgement. `closeThreadSeat` takes a required `threadStoodDown`, so a new
+  caller must state the stop. The host closes (`expired`, `closed`) place no reaction and post
+  nothing in the thread.
+- A `message_thread_seat` mirror (`mirror: true`) into the turn's own thread runs
+  `refuseVerbIfStoodDown`. That refusal is the bound-conversation refusal of every gated verb: it
+  arms the closeout unless the turn holds the acknowledgement. A mirror that names ANOTHER thread
+  runs `refuseTargetIfStopped` on that thread key in the bound partition. That refusal arms nothing,
+  so the supervisor can send again with `mirror: false`. The thread key is the stop anchor on Slack
+  and Discord only. Either refusal throws before the seat is messaged, so nothing is sent.
+- `open_pull_request` under a session approval memo still opens the pull request, but
+  `postSessionNoteUnlessStoodDown` withholds its outcome note when the bound conversation stood
+  down.
+- `halt` still sets the halt, but `announceHalt` withholds the host's confirmation post when the
+  bound conversation stood down. The model is told not to post the confirmation itself.
+
+A withheld write (`complete_thread`, `open_pull_request`, `halt`) is not a refusal: the tool still does its
+non-visible work. It writes `stand_down.verb_refused` with `withheld: true`.
+
+**A lint keeps a new posting tool behind the gate.** `lint:stand-down-gate`
+(`scripts/stand-down-gate-lint.ts`, rules in `channels/stand-down-gate-manifest.ts`) scans every
+tool file under `packages/core/agent/tools`, `agent/tools` and `packages/providers/*/agent/tools`.
+A file that calls a posting primitive (`postUnifiedReply`, `postReply`, `postHostNotice`, `postText`, `postSurfaceTextStrict`,
+`postFiles`, `editMessage`, `setReaction`, `chat.postMessage`, `chat.update`, `reactions.add` and
+the others the manifest lists) must also call a gate function, or carry a reviewed
+`STAND_DOWN_UNGATED` entry that says why no stop can apply. A file that raises an approval card
+(`requestApproval`) must carry an entry, because `requestApproval` reads no gate. A stale entry is a
+problem too. A direct-message delivery (`deliverDirectMessage`) is not on the list: it lands in a
+DM, which never stands down, and the proactive-DM road governs it. The lint reads tool files only. A host path under `channels/` is not scanned, and the
+lint proves that a gate is called in the file, not that it runs before every post. The lint matches
+primitive names in the file text. It does not see a post made through a helper in another module, an
+entity action or a connector mount op.
+
+**Paths that stay ungated by design.** Each one posts where no stop can apply:
+
+- `answer_domain_question`, `confirm_link`, `link_identity`, `my_browser` and `my_browser_handoff`
+  post only into a 1:1 DM. `stand_down` refuses a DM, so a DM never stands down.
+- `post_pr_walkthrough` posts a top-level Slack message into the governance admin channel. Slack
+  has no room grain, and a top-level post sits in no thread.
+- The `update_status` board is mirrored to a pinned top-level Slack message in the channel by the
+  Slack channel's own turn hook (`syncPinnedStatus`, `packages/providers/slack/agent/channels/slack.ts`),
+  for the same reason. The tool itself posts nothing.
+
+🔴 **Paths that do not read the gate yet.** These paths still write into a stood-down conversation:
+
+- any approval card that `requestApproval` places in the same room, from any tool that raises one
+  (for example `post_message`, `assign`, `set_state`, `write_canvas` or `create_ticket`), and the
+  card path of `open_pull_request`;
+- an `assign`, `set_state` or `post_message` that the approver chain auto-approves, and `add_label`
+  on the turn's own ticket, which needs no approval: each one changes a stopped room or a stopped
+  ticket's timeline. OPE-2816 tracks the approvals plane;
+- `ask_question`, eve's native input-request tool, which a worker holds. OPE-2818 tracks it;
+- an `edit_reply` from a turn bound to an open conversation that names, by `message_id`, its own
+  post in a stopped thread of the same channel (Slack, Discord) or repository (GitHub): the edit
+  locus and the own-post ledger carry no thread;
+- a Slack `react` whose explicit `ts` names a message inside a stopped thread, not its root;
+- a unified `reply` or `edit_reply` under a wake from ANOTHER conversation than the bound one, when
+  that other conversation stood down;
+- a `message_thread_seat` mirror into a thread other than the turn's own, on a surface whose stop
+  anchor is not the thread key (GitHub, Linear, Notion, Teams): the gate reads the thread key, which
+  is the stop anchor on Slack and Discord only. OPE-2817 tracks this and the three cross-conversation paths
+  above;
+- a write op of a mounted connector connection (the `notion` connection, a declared MCP server):
+  `connector-tools.ts` reads no gate. OPE-2820 tracks it.
+
+No other path is claimed to read the gate.
+
+The gate still **fails open where it cannot read**: a clear flag, a post that does not name the bound
+conversation, and any thrown error all answer "not stopped". An unreadable acknowledgement row falls
+back to the per-turn mark and the durable per-(session, turn) row, which allow one post per turn.
 
 **The acknowledgement is a debt the turn owes.** `standDownAckOwedThisTurn` (`reply-signal.ts`) holds
 the debt until either the stopped valve is spent or a post lands **after** the stand-down snapshot —
@@ -1372,44 +1573,103 @@ best-effort.
 
 ### 4.15 How a turn ends
 
-**A successful `reply` or `no_reply` ends the turn natively.** Both set eve's `endsTurn: true`
-(OPE-2252). When every call in a model step is one of them and every call succeeded, eve ends the turn
-with **no further model call** and no final message. A refused call throws, so eve reads it as a
-failed call and the turn continues: a refusal never closes the obligation it names. eve ignores
-`endsTurn` in a delegated session, so a worker always returns a result to its caller. If a worker the
-seat started is still working, the turn waits for it (`turn.waiting`) and the model is called again
-with its `task.result`.
+**A successful `reply` or `no_reply` ends the turn natively, except an interim part (below).** `no_reply` sets eve's `endsTurn: true`
+(OPE-2252). The unified `reply` sets `endsTurn` to a function of its output. The per-surface `reply`
+has no `done` input and keeps `endsTurn: true`. On eve 1.x, one successful ending call in a model step is enough: the other
+calls in that step still run, and eve ends the turn once they all settle, with **no further model
+call** and no final message. A refused call throws, so eve reads it as a failed call. A step whose
+only ending call was refused continues: a refusal never closes the obligation it names. eve ignores
+`endsTurn` in a delegated session, so a worker always returns a result to its caller. If an `agent` or
+subagent worker the seat started is still working, the turn waits for it (`turn.waiting`) and the
+model is called again with its `task.result`. A `work` result arrives later as a new wake.
 
-`reply` takes `true`, not a function of its output, because it is a **dynamic** tool and eve 0.70
-refuses an `endsTurn` function on a dynamic tool. So a hand-off note (`done: false`) ends the turn too.
+**An interim part (`done: false`) usually leaves the turn open.** The `reply` output carries
+`continuesTurn: true` for a `done: false` part, and the `endsTurn` function then returns `false`. The
+turn goes on, so the full answer posts in the same turn. eve 1.x ends a step on any successful
+ending call, where eve 0.x needed every call in the step to end it. So without the flag, the
+interim part ends the turn and the full answer never posts. eve 1.x keeps an `endsTurn` function on
+a live dynamic tool (OPE-2793).
 
-**A turn that ends on `endsTurn` emits no final message.** eve emits `message.completed` only for
-streamed text, so the unified seat decides such a turn at `turn.completed` instead
-(`onUnifiedTurnCompleted`, `channels/unified.ts`). It runs the same decision with an empty `stop`
-message, once per turn: it consumes the `no_reply` reason, writes the sentinel and bare-stop rows,
+The part carries no `continuesTurn`, and so ends the turn, in four cases:
+
+- The seat requested a worker (`work`, `agent` or a subagent call) in this turn, the same step
+  included. The `delegation-settlement` hook notes the request at `call.requested`, before any call
+  of the step runs. The note then ends the turn. An `agent` or subagent worker holds the turn at
+  `turn.waiting`. A `work` result arrives later as a new wake. A request that fails to dispatch, or
+  that an approval refuses, still ends the turn, so the model does not see that failure in this
+  turn. A call with invalid input is not noted.
+- A worker the seat started in this turn is still pending.
+- The seat stopped a job (`cancel_work`) earlier in this turn, and the job had not settled: its
+  status row says `working`, names another task, or cannot be read. `cancel_work` notes the stop after it
+  relays the cancel to the work session. The stopped job's result wake arrives later as a new turn,
+  so a further model call in the stop turn has nothing to add. A refused cancel and a cancel of a
+  job that already settled note nothing, because no wake follows them. eve runs the calls of one
+  step at the same time, so a `done: false` part in the same step as the stop can finish before
+  the note. Then the turn goes on, and the model reads the cancel's outcome. Put the stop in a step
+  before the `done: false` part, and call every tool the wake needs (a `work` for a replacement job
+  included) before that part.
+- The conversation was stopped (`stand_down`), so the part is the one acknowledgement.
+
+A worker from an earlier turn does not count. A `done: false` part in a step that holds another
+ending call (`no_reply`, or a `done: true` reply) ends the turn too, because that call ends it.
+
+**A turn that ends on `endsTurn` emits no final message.** eve emits a text `content.completed` only
+for streamed text, so the unified seat decides such a turn at a completed `turn.settled` instead
+(`onUnifiedTurnSettled`, `channels/unified.ts`). It runs the same decision with an empty `reply`
+part, once per turn: it consumes the `no_reply` reason, writes the sentinel and bare-stop rows,
 and closes an open agent session on a silent turn. A turn whose text completion already ran the
 decision is skipped. The wake-accounting hook also clears the `no_reply` and `react` signals at
 `turn.started`, so a signal that no handler consumed never reaches the next turn.
 
 **Text written before a wait is not the turn's ending.** On a root session eve completes such text as
-an ordinary `stop` message while the turn waits on a working task. When a worker this turn dispatched
+an ordinary `reply` part while the turn waits on a working task. When a worker this turn dispatched
 still owes the wake, the unified seat posts nothing, drops nothing, re-drives nothing, and leaves the
-turn undecided; the turn's real final message or `turn.completed` decides it. `turn.completed` always
-decides, because the turn has ended. Every other chat channel gets the same `turn.completed` decision
-from core's `withEndsTurnFinalChannel` (`channels/ends-turn-final.ts`), which each provider applies to
-its exported channel.
+turn undecided; the turn's real final message or a completed `turn.settled` decides it. A completed
+`turn.settled` always decides, because the turn has ended. A failed or cancelled `turn.settled` decides
+nothing. Every other chat channel gets the same `turn.settled` decision from core's
+`withEndsTurnFinalChannel` (`channels/ends-turn-final.ts`), which each provider applies to its exported
+channel. A `narration` part (text before a tool call) and a non-text part (reasoning, a result, a file)
+never decide a turn.
 
 `no_reply` still returns a **non-empty** terminal note (`NO_REPLY_NOTE`,
-`packages/core/agent/tools/no_reply.ts`). The model reads it only when the same step also carried a
-call that does not end the turn. eve reads an empty step as a failure and reissues it once with "Your
-previous reply was empty and was not delivered. Continue the current user request" — a note that
-would command a reply on a turn that correctly chose silence. Naming the terminal output makes that
-step non-empty, so the recovery path is never reached. The `reply` result note names the same
-sentinel for the same reason.
+`packages/core/agent/tools/no_reply.ts`). A root session reads it only on a held turn: when a task
+the turn started is still working, eve holds the turn and calls the model again with the task's
+result, and the `no_reply` result is in that step's history. A delegated worker never reads it,
+because a worker does not mount `no_reply` (`WORKER_WITHHELD_TOOLS`, `access/worker-seat.ts`). The
+`reply` result note
+names the same sentinel for the same reason.
 
-One silence row is logged per turn. A **second** `no_reply` in the same turn ends the turn under the
-closeout reason `no-reply-redundant` (`NO_REPLY_REDUNDANT_CLOSEOUT_REASON`), which is countable apart
-from a turn ended by a refused reply.
+**An empty step is reissued once, then the turn fails.** On a root session, eve 1.x accepts an empty
+step that ends with finish reason `stop` as a finished turn. OE does not accept a silent turn that
+made no judgement, so the primary model (`withEmptyStopReissue`,
+`packages/core/agent/model/empty-stop-reissue.ts`) gives such a step a non-`stop` finish reason. eve
+then takes its own empty-response recovery: it reissues the step once with "Your previous reply was
+empty and was not delivered. Continue the current user request". An empty reissue fails the turn
+(`turn.failed`), and the unified seat writes `unified.supervisor_turn_failed`. A step with text,
+a tool call or a provider tool result keeps its finish reason.
+
+One silence row is logged per turn. A **second** `no_reply` in the same turn arms the closeout under
+the reason `no-reply-redundant` (`NO_REPLY_REDUNDANT_CLOSEOUT_REASON`), which is countable apart from
+a turn ended by a refused reply. On a root session the first `no_reply` already ends the turn at its
+step, unless a task the turn started is still working. Then eve holds the turn and calls the model
+again with the task's result, in the same turn. On that held turn any closeout reason can arm the
+closeout while the turn keeps stepping: a refused `reply` (`declined-this-turn`, `stopped`), a second
+`no_reply` (`no-reply-redundant`) or a repeated forced override (`forced-override-repeat`). The last
+two are armed by a successful ending call, so they keep the turn stepping only while another task
+still works, and the closeout boundary ends the turn at its next step
+(`tests/integration/step-boundary.test.ts`). The boundary also acts in a delegated worker, where eve
+ignores `endsTurn`, so a successful `reply` does not end the worker's turn. A worker mounts the
+per-surface `reply`, which takes no `wake`, `done` or `force`, and it has no `no_reply` or
+`stand_down`. So in a worker the one reason that arms is `stopped`. The stand-down acknowledgement
+is spent per stopped conversation, and it belongs to the turn that stood down (§4.14). In a room that stood down, the
+worker's first `reply` is refused, whether its job was forwarded before or after the stop. The
+closeout boundary then ends the worker's turn at its next step. A worker cannot arm `forced-override-repeat`. The worker mounts `reply` only
+where the platform allows a mid-turn post. This holds for a worker that the work session starts for
+a `work` job, because its model comes from the primary model resolver
+(`packages/core/scripts/turn-closeout-test.ts` covers that resolver's closeout branch). A declared subagent (`agent/subagents/*/agent.ts`, for example
+`fresh_eyes_review`) takes the root agent's model (`model: root.model`), so the same resolver runs
+for its turns, and the step budget and the closeout boundary act on them too.
+`scripts/subagents-lint.ts` refuses a declared subagent that names any other model.
 
 `finalMessageActionForTurn` (`turn-delivery.ts`) **consumes both silence signals first**, so neither
 leaks into a later turn, and then ranks them: a silent routine wins, then a stand-down silence, then
@@ -1601,6 +1861,16 @@ cannot confirm reds, and a seventh surface cannot leave the question unanswered 
 convert the next collision into a lint failure — a surface that starts writing an unpromoted row
 while its cell honestly says `unsupported` passes both arms, and reds its journey live. That gap is
 stated in `packages/core/scripts/e2e/engaged-rows.ts`, which is where a journey author reads it.
+A promoted `thread-follow` row proves admission only, not an answer. On the engaged follow-up leg,
+the journey logs `diagnoseEngagedFollowUp` BEFORE the gates that can throw. It joins the row's wake
+id to a `reply.post` or `reply.no_reply_observed` row. A seat that was admitted and then chose
+silence then reads as a seat-judgement red, not as an admission red. The line never names a
+product defect itself. Read it as one only when all five of the §2.5.1 fence's conditions held: the
+trigger holds a question mark, the delivered message held one wake, the turn had no other delivery,
+the turn posted no reply, and the reason is `nothing_to_add`, `not_relevant` or `awaiting_context`. Then the fence should have
+refused that silence. Any other silence is the seat's own judgement. The join needs a wake id on
+the dispatch row, and Notion writes one only on a unified-window grain. Without it, the line reads
+`admitted-unjoined` and cannot tell silence from an answer.
 
 The **owned-thread ingress divert** is the §2.6 wiring, and it is measured by which bundles call
 `divertInboundToUnifiedWindow` at all. All six do. Two cells carry a caveat rather than a bare ✅,

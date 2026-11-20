@@ -4,6 +4,7 @@ import { markJobSession, setJobWakeEscalated, isJobSession } from "../access/job
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { currentTurnAddressing, currentWakeId, deploymentOrg, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
+import { optional } from "./control-refusal.js";
 
 function attrsOf(ctx: HookContext): Readonly<Record<string, string | readonly string[]>> | undefined {
   const c = ctx as unknown as BindableContext;
@@ -61,10 +62,9 @@ async function classifyWake(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": async (_event, ctx) => {
+    "turn.started": optional("job-posture", async (_event, ctx) => {
       await classifyWake(ctx);
-    },
-    "turn.completed": () => setJobWakeEscalated(false),
-    "turn.failed": () => setJobWakeEscalated(false),
+    }),
+    "turn.settled": optional("job-posture", () => setJobWakeEscalated(false)),
   },
 });

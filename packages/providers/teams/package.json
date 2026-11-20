@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-teams",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Open Everywhere Microsoft Teams provider — Teams channel and chat surfaces via Microsoft Graph.",
   "keywords": [
     "agent",
@@ -77,6 +77,10 @@
       "types": "./dist/agent/channels/teams-conversation-ref.d.ts",
       "default": "./dist/agent/channels/teams-conversation-ref.js"
     },
+    "./agent/channels/teams-credentials.js": {
+      "types": "./dist/agent/channels/teams-credentials.d.ts",
+      "default": "./dist/agent/channels/teams-credentials.js"
+    },
     "./agent/channels/teams-declared-target.js": {
       "types": "./dist/agent/channels/teams-declared-target.d.ts",
       "default": "./dist/agent/channels/teams-declared-target.js"
@@ -109,6 +113,10 @@
       "types": "./dist/agent/channels/teams-graph-team-id.d.ts",
       "default": "./dist/agent/channels/teams-graph-team-id.js"
     },
+    "./agent/channels/teams-html-markdown.js": {
+      "types": "./dist/agent/channels/teams-html-markdown.d.ts",
+      "default": "./dist/agent/channels/teams-html-markdown.js"
+    },
     "./agent/channels/teams-id-restore.js": {
       "types": "./dist/agent/channels/teams-id-restore.d.ts",
       "default": "./dist/agent/channels/teams-id-restore.js"
@@ -116,6 +124,10 @@
     "./agent/channels/teams-identity.js": {
       "types": "./dist/agent/channels/teams-identity.d.ts",
       "default": "./dist/agent/channels/teams-identity.js"
+    },
+    "./agent/channels/teams-inbound.js": {
+      "types": "./dist/agent/channels/teams-inbound.d.ts",
+      "default": "./dist/agent/channels/teams-inbound.js"
     },
     "./agent/channels/teams-input-response.js": {
       "types": "./dist/agent/channels/teams-input-response.d.ts",
@@ -128,6 +140,10 @@
     "./agent/channels/teams-message-ops.js": {
       "types": "./dist/agent/channels/teams-message-ops.d.ts",
       "default": "./dist/agent/channels/teams-message-ops.js"
+    },
+    "./agent/channels/teams-message-text.js": {
+      "types": "./dist/agent/channels/teams-message-text.d.ts",
+      "default": "./dist/agent/channels/teams-message-text.js"
     },
     "./agent/channels/teams-name-drop.js": {
       "types": "./dist/agent/channels/teams-name-drop.d.ts",
@@ -168,6 +184,10 @@
     "./agent/channels/teams-test-run.js": {
       "types": "./dist/agent/channels/teams-test-run.d.ts",
       "default": "./dist/agent/channels/teams-test-run.js"
+    },
+    "./agent/channels/teams-verify.js": {
+      "types": "./dist/agent/channels/teams-verify.d.ts",
+      "default": "./dist/agent/channels/teams-verify.js"
     },
     "./agent/channels/teams.js": {
       "types": "./dist/agent/channels/teams.d.ts",
@@ -216,6 +236,7 @@
     "test:teams-reaction-feedback": "NODE_NO_WARNINGS=1 tsx scripts/teams-reaction-feedback-test.ts",
     "test:teams-reply-feedback": "NODE_NO_WARNINGS=1 tsx scripts/teams-reply-feedback-test.ts",
     "test:teams-engagement": "NODE_NO_WARNINGS=1 tsx scripts/teams-engagement-test.ts",
+    "test:teams-inbound": "NODE_NO_WARNINGS=1 tsx scripts/teams-inbound-test.ts",
     "test:teams-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/teams-message-ops-test.ts",
     "test:teams-id-restore": "NODE_NO_WARNINGS=1 tsx scripts/teams-id-restore-test.ts",
     "test:teams-declared-target": "NODE_NO_WARNINGS=1 tsx scripts/teams-declared-target-test.ts",
@@ -223,11 +244,12 @@
     "test:teams-app-package": "NODE_NO_WARNINGS=1 tsx scripts/teams-app-package-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.10.0",
+    "@open-everywhere/core": "0.11.0",
+    "jose": "6.2.3",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.71.0"
+    "eve": "1.0.0-rc.18"
   },
   "devDependencies": {
     "@types/node": "latest",

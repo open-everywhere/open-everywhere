@@ -2,6 +2,7 @@ import { fetchGithubIssue, renderGithubIssueForModel, MAX_ISSUE_COMMENTS, MAX_CO
 import { wrapUntrusted, normalizeFenceNonce, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import type { PrFetchFn } from "../agent/scm/pr.js";
 import { getSettings, overrideSettingsForTest } from "../agent/settings/settings.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -144,7 +145,7 @@ const ISSUE = { title: "Scratch app drops frames", state: "open", body: "The app
   });
   const ctx = ctxIn("CROOM");
   const mod = await import("../agent/tools/read_github_issue.js");
-  const resolve = (mod.default as unknown as { events: Record<string, (e: unknown, c: unknown) => unknown> }).events["session.started"]!;
+  const resolve = _dynamicResolverForTest(mod.default);
   ok(resolve({}, ctx) !== null, "§6 the tool MOUNTS for a session whose scope grants a repo — the same grant the search arm reads");
   ok(resolve({}, ctxIn("COTHER")) === null, "§6 NEGATIVE CONTROL: a session with no repo grant does not mount it");
   const savedFetch = globalThis.fetch;

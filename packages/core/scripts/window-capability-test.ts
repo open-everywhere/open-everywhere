@@ -58,7 +58,7 @@ const gatedModules: Record<string, unknown> = {
   spawn_thread_session: (await import("../agent/tools/spawn_thread_session.js")).default,
 };
 const sandboxKit = (await import("../agent/tools/sandbox_tools.js")).default;
-const SANDBOX_SIX = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"] as const;
+const SANDBOX_SEVEN = ["bash", "glob", "grep", "read_file", "write_file", "edit_file", "web_fetch"] as const;
 
 const grainCtxOf = (grain: "standing" | "task" | "native"): BindableContext => {
   const token =
@@ -98,12 +98,12 @@ async function mountedGatedNames(grain: "standing" | "task" | "native"): Promise
   eq([...standing].sort(), [], "[P0-a] delegation disarmed, the standing seat's gated-kit residue is EMPTY — no wide hands, and no delegation verb either");
   eq(
     [...task].sort(),
-    [...SANDBOX_SIX, "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
+    [...SANDBOX_SEVEN, "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
     "[P0-a] the task worker mounts the FULL wide-hands kit",
   );
   eq(
     [...native].sort(),
-    [...SANDBOX_SIX, "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
+    [...SANDBOX_SEVEN, "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
     "[P0-a] the native mention keeps the FULL wide-hands kit (over-narrowing a native seat is the F8 failure mode)",
   );
   eq(TOOL_CONSEQUENCE.checkout_repo?.tier, "open", "[P0-a] checkout_repo stays `open` in the registry — the narrowing is the GRAIN gate, not a tier change");
@@ -398,7 +398,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
     "list_repos", "list_routines", "list_skills", "session_cost", "spend_report", "usage_report",
   ] as const;
   const STANDING_WITHHELD = [
-    "checkout_repo", "bash", "glob", "grep", "read_file", "write_file",
+    "checkout_repo", "bash", "glob", "grep", "read_file", "write_file", "edit_file",
     "web_fetch", "open_pull_request", "post_file",
     "create_skill", "delete_skill",
   ] as const;
@@ -413,7 +413,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   for (const name of STANDING_WITHHELD) {
     eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `[P0-f] withheld tool "${name}" is grain-gated to task+native (absent on standing)`);
   }
-  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_thread"].sort(), "[P0-f] a standing seat withholds EXACTLY the 11 wide-hands tools + complete_thread (thread-lifecycle, thread-only) — `return_result` is gone with the roll-own regime, OPE-1145 item 2");
+  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_thread"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_thread (thread-lifecycle, thread-only) — `return_result` is gone with the roll-own regime, OPE-1145 item 2");
 
   ok(TOOL_CONSEQUENCE.spawn_thread_session?.tier === "open", "[P0-f] spawn_thread_session stays `open` — minting a seat is the standing seat's job");
   eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "[P0-f] spawn_thread_session is grain-gated STANDING-only (window-only mint; no recursive thread trees)");

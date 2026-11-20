@@ -12,11 +12,11 @@ points INTO those; it does not replace them.
 
 ## The count
 
-**729 rows: 726 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
+**730 rows: 727 documented, 3 RETIRED, 0 UNDOCUMENTED.** Those three counts partition the rows by the
 value in the **`Documented by`** column, which is the only thing counted here: `RETIRED — …` marks a
 row whose sole record is the commit that removed its write site, and a row that names a manual page
 counts as documented whatever else is true of it. Section membership is a different question and
-gives a different number: 721 rows are live behaviours and the other five are the retired action
+gives a different number: 722 rows are live behaviours and the other five are the retired action
 names of § 15 — and two of those five are documented by a manual page, so they count under
 `documented` rather than under `RETIRED`. The `Tested by` column declares only an exemption; the coverage answer comes from `npm run coverage-board` (see [the coverage matrix](../dev/coverage-matrix.md)).
 
@@ -25,7 +25,7 @@ names of § 15 — and two of those five are documented by a manual page, so the
 | 1. The audit log — mechanism | 29 | 0 |
 | 2. The audit log — storage and the append-only posture | 31 | 0 |
 | 3. Reading the log — the control-plane routes | 11 | 0 |
-| 4. The audit action vocabulary | 366 | 0 |
+| 4. The audit action vocabulary | 367 | 0 |
 | 5. Spend — mechanism | 27 | 0 |
 | 6. Spend — gates and refusals | 34 | 0 |
 | 7. Spend — the ledger and the usage rows | 38 | 0 |
@@ -256,8 +256,8 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `approval.chain` | `packages/core/agent/approvals/flow.ts:305` | core/approvals | One approval decision records its whole approver chain — the join an auditor reads. | `docs/security/security-model.md#what-counts-as-external-content` (+2) | ? |
 | `approval.decision_wake` | `packages/core/agent/approvals/flow.ts:1421` | core/approvals | An approval decision wakes the asking session; the row carries ids only. | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
 | `approval.denied` | `packages/core/agent/approvals/flow.ts:484` | core/approvals | An approval is denied, and the row carries the kind, the scope and the reason. | `docs/security/control-plane.md#in-slack-approvals` (+1) | ? |
-| `approval.eve_candidate` | `packages/core/agent/hooks/approval-settlement.ts:7` | core/hooks | A terminal eve approval-candidate event lands as a row carrying eve's responder id. | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
-| `approval.eve_settled` | `packages/core/agent/hooks/approval-settlement.ts:6` | core/hooks | A settled eve approval event lands as a row carrying eve's responder id and outcome. | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
+| `approval.eve_candidate` | `packages/core/agent/hooks/approval-settlement.ts:7` | core/hooks | A response to an eve approval that settles without applying lands as a row, with the responder id when the session saw it submitted. | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
+| `approval.eve_settled` | `packages/core/agent/hooks/approval-settlement.ts:6` | core/hooks | A settled eve approval interaction lands as a row carrying its outcome, and the responder id when the session saw it. | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
 | `approval.expired` | `packages/core/agent/approvals/flow.ts:569` | core/approvals | An approval expires, either on a failed post or on the TTL sweep, and the row says which. | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
 | `approval.claim_withheld` | `packages/core/agent/channels/approval-claim-guard.ts:148` | core/channels | A reply's "no approval was required" claim is removed because the host can name what stood behind the turn — an approval gate that ran, a gated connector write, or a named standing write grant; the row carries the claim's shape and the cause, never the sentence. | `docs/security/audit-and-provenance.md#a-reply-may-not-say-an-act-was-ungated` | ? |
 | `approval.failed` | `packages/core/agent/approvals/flow.ts:1124` | core/approvals | An approval's execution throws, or a durable decline throws (`phase: "decline"`). The row carries the error through `auditErrorDetail` (OPE-2545, OPE-2549). | `docs/security/audit-and-provenance.md#the-approvals-planes-own-rows` | ? |
@@ -333,7 +333,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `delegation.task_failed` | `packages/core/agent/hooks/delegation-settlement.ts:79` | core/hooks | A background delegation dies; the row carries eve's error class and scrubbed text. | `docs/security/audit-and-provenance.md#whats-logged` | n/a: unannotated — lane F |
 | `delegation.task_settled` | `packages/core/agent/hooks/delegation-settlement.ts:73` | core/hooks | A delegated task reaches a terminal state, and the row doubles as the parked-worker census. One row per settled task; an event OE's reader refused writes `delegation.task_unreadable` instead. | `docs/security/audit-and-provenance.md#whats-logged` (+3) | ? |
 | `delegation.task_unreadable` | `packages/core/agent/hooks/delegation-settlement.ts:75` | core/hooks | eve sent an event on a task edge that OE's reader REFUSED, so it reached no edge and nothing settled. Makes a too-strict reader countable rather than silent (OPE-2250). NOT deduplicated across redeliveries, so a count is of deliveries. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
-| `delegation.dispatch_unauthorized` | `packages/core/agent/hooks/delegation-settlement.ts:194` | core/hooks | A delegated dispatch reached NO exact dispatch authority, so no task wake is minted and its settlement installs no reply address — the reply fence refuses it under `task-wake-unread`. Replaced five throws that stopped nothing at eve 0.70 (OPE-2250 step 4). Five `reason` values across two edges (`actions.requested`, `task.started`); NOT deduplicated, so a count is of refused dispatches. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
+| `delegation.dispatch_unauthorized` | `packages/core/agent/hooks/delegation-settlement.ts:194` | core/hooks | A delegated dispatch reached NO exact dispatch authority, so no task wake is minted and its settlement installs no reply address — the reply fence refuses it under `task-wake-unread`. Replaced five throws that stopped nothing at eve 0.70 (OPE-2250 step 4). Five `reason` values across two edges (`call.requested`, `task.started`); NOT deduplicated, so a count is of refused dispatches. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `delegation.continuation_admitted` | `packages/core/agent/channels/task-provenance.ts:232` | core/channels | A seat continues an idle worker by `taskId` from the room that opened the task, and the worker's authority row is re-pointed. | `docs/how-it-works/agent-and-loop.md` | ? |
 | `delegation.continuation_refused` | `packages/core/agent/channels/task-provenance.ts:233` | core/channels | The provenance fence refuses a `taskId` continuation; the row names the reason (`cross-room`, `task-working`, `tool-mismatch`, …). | `docs/how-it-works/agent-and-loop.md` | ? |
 | `delegation.task_started` | `packages/core/agent/hooks/delegation-settlement.ts:71` | core/hooks | A seat dispatches a background worker. | `docs/security/audit-and-provenance.md#whats-logged` (+3) | ? |
@@ -478,6 +478,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `reply.no_reply_addressed_to_other_refused` | `packages/core/agent/channels/engaged-wake.ts:28` | core/channels | A no_reply is refused because the wake addressed somebody else. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_after_stand_down` | `packages/core/agent/channels/reply-signal.ts:206` | core/channels | A `no_reply` is REFUSED because the turn still owes a stand-down acknowledgement; the call throws and no silence is recorded. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_duplicate_refused` | `packages/core/agent/tools/no_reply.ts:45` | core/tools | A `no_reply` with reason `duplicate` is REFUSED on an addressed wake whose window holds no answered earlier copy of the message; the call throws and no silence is recorded. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
+| `reply.no_reply_engaged_question_refused` | `packages/core/agent/channels/engaged-wake.ts:60` | core/channels | A `no_reply` with reason `nothing_to_add`, `not_relevant` or `awaiting_context` is REFUSED when the turn's only delivery is an engaged follow-up whose trigger asks a question and the turn has posted no reply; the call throws and no silence is recorded. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
 | `reply.no_reply_observed` | `packages/core/agent/channels/chat-turn-audit.ts:12` | core/channels | The no_reply tool or the bare sentinel always writes this minimal row. | `docs/security/audit-and-provenance.md#whats-logged` | ? |
 | `reply.no_reply_redundant` | `packages/core/agent/tools/no_reply.ts:153` | core/tools | A second no_reply for the same wake is recorded as redundant. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | ? |
 | `reply.post` | `packages/core/agent/channels/reply-post.ts:67` | core/channels | One reply leaves the choke point; the platform column names the surface it landed on. | `docs/security/audit-and-provenance.md#whats-logged` (+5) | ? |
@@ -590,7 +591,7 @@ One row per distinct `action` string the code writes. The Id is that string. `<p
 | `webhook.rotated` | `packages/core/agent/approvals/webhook.ts:142` | core/approvals | A webhook secret is rotated, and the row names who asked and who was shown it. | `docs/extending/webhook-ingress.md#issuing-and-rotating-the-secret` | n/a: unannotated — lane F |
 | `webhook.secret_revealed` | `packages/core/agent/webhooks/reveal-page.ts:183` | core/webhooks | A webhook secret is revealed through the reveal page, under a grant. | `docs/extending/webhook-ingress.md#issuing-and-rotating-the-secret` | ? |
 | `window.routing_degraded` | `packages/core/agent/access/window-routing.ts:14` | core/access | Window routing degrades to a narrower path. | `docs/security/audit-and-provenance.md#turn-reply-and-window-rows` | n/a: unannotated — lane F |
-| `worker.toolset` | `packages/core/agent/audit/worker-toolset.ts:3` | core/audit | A worker's assembled toolset is recorded after every subtraction the seam applies. | `docs/how-it-works/agent-and-loop.md#a-turn-ends-when-its-wake-closes` | ? |
+| `worker.toolset` | `packages/core/agent/audit/worker-toolset.ts:3` | core/audit | The tool names a worker's model call offers are recorded, eve-mounted tools included, with the names the worker subtraction and the tool transforms withheld, the offered names outside the seat cut, the names a call-time gate refuses, and the deferred entries (connector operations) the worker reaches only through `eve__tool`. | `docs/how-it-works/agent-and-loop.md#a-turn-ends-when-its-wake-closes` | ? |
 | `write.refused` | `packages/providers/linear/agent/channels/linear-scope.ts:182` | providers/linear | Linear's scope fence refuses a cross-domain mutation. | `docs/deploy/surfaces/linear.md#ticket-actions` (+1) | ? |
 
 ## 5. Spend — mechanism

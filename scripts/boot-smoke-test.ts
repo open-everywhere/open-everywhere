@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join, relative, sep } from "node:path";
@@ -66,18 +66,15 @@ for (const [rel, mod] of loaded) {
 }
 
 {
-  const agent = loaded.get("agent/agent.ts")?.default as
-    | { model?: { kind?: string; events?: Record<string, unknown> } }
-    | undefined;
+  const agent = loaded.get("agent/agent.ts")?.default as { model?: unknown } | undefined;
   if (!agent) {
     problems.push("SHAPE: agent/agent.ts exported no default agent definition.");
-  } else if (agent.model && typeof agent.model === "object" && agent.model.kind === "eve:dynamic") {
-    const events = Object.keys(agent.model.events ?? {});
-    if (!events.includes("step.started")) {
+  } else {
+    const model = agent.model as Record<symbol, unknown> | undefined;
+    if (!model || typeof model !== "object" || typeof model[Symbol.for("eve.dynamic")] !== "function") {
       problems.push(
-        `MODEL SCOPE: agent/agent.ts binds its dynamic model to [${events.join(", ") || "nothing"}] — it MUST include ` +
-          `"step.started". Eve accepts a model INSTANCE only at step scope; at session/turn scope it silently discards ` +
-          `the wrapper and runs the static fallback, killing per-domain routing and per-row cost attribution with no error.`,
+        "MODEL SCOPE: agent/agent.ts does not define its model with eve's defineDynamic(ctx => …). eve runs that " +
+          "function before every model call; a static model loses per-domain routing and per-row cost attribution.",
       );
     }
   }
@@ -173,12 +170,10 @@ for (const [rel, mod] of loaded) {
       if (priorVercel === undefined) delete process.env.VERCEL;
       else process.env.VERCEL = priorVercel;
     }
-    const agent = loaded.get("agent/agent.ts")?.default as
-      | { model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> } }
-      | undefined;
-    const resolver = agent?.model?.events?.["step.started"];
+    const agent = loaded.get("agent/agent.ts")?.default as { model?: Record<symbol, ((ctx: unknown) => unknown) | undefined> } | undefined;
+    const resolver = agent?.model?.[Symbol.for("eve.dynamic")];
     if (typeof resolver === "function") {
-      const selection = (await resolver(undefined, {})) as { model?: { modelId?: unknown } } | null;
+      const selection = (await resolver({})) as { model?: { modelId?: unknown } } | null;
       const seated = selection && typeof selection === "object" ? selection.model : undefined;
       if (seated && typeof seated === "object" && seated.modelId === SCRIPTED_MODEL_ID) {
         problems.push(
@@ -193,7 +188,7 @@ for (const [rel, mod] of loaded) {
 {
   const agent = loaded.get("agent/agent.ts")?.default as
     | {
-        model?: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> };
+        model?: Record<symbol, ((ctx: unknown) => unknown) | undefined>;
         modelContextWindowTokens?: unknown;
         modelOptions?: unknown;
         compaction?: { modelContextWindowTokens?: unknown };
@@ -214,12 +209,13 @@ for (const [rel, mod] of loaded) {
     );
   }
 
-  const resolver = agent?.model?.events?.["step.started"];
+  // eve's defineDynamic() wraps the model function under this registered symbol.
+  const resolver = agent?.model?.[Symbol.for("eve.dynamic")];
   if (typeof resolver !== "function") {
-    problems.push("MODEL SELECTION: agent/agent.ts exposes no step.started model resolver to check.");
+    problems.push("MODEL SELECTION: agent/agent.ts exposes no defineDynamic model function to check.");
   } else {
     const { PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS } = await import("../agent/model/models.js");
-    const selection = (await resolver(undefined, {})) as
+    const selection = (await resolver({})) as
       | {
           model?: unknown;
           modelContextWindowTokens?: unknown;
@@ -229,14 +225,14 @@ for (const [rel, mod] of loaded) {
       | undefined;
     if (!selection || typeof selection !== "object" || selection.model === undefined) {
       problems.push(
-        "MODEL SELECTION: the step.started resolver did not return a selection object. Every return path must " +
+        "MODEL SELECTION: the model function did not return a selection object. Every return path must " +
           "be `{ model, modelContextWindowTokens, modelOptions }` — a bare model silently drops the context " +
           "window (eve never backfills it from the fallback) and with it the compaction-threshold rescale.",
       );
     } else {
       if (selection.modelContextWindowTokens !== PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS) {
         problems.push(
-          `MODEL SELECTION: the step.started selection carries modelContextWindowTokens=` +
+          `MODEL SELECTION: the model selection carries modelContextWindowTokens=` +
             `${String(selection.modelContextWindowTokens)}, expected the stack's primary window ` +
             `(${PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS}). Compaction fires at a FRACTION of this number, so a wrong ` +
             "or absent value compacts at the wrong point in every long session.",
@@ -244,7 +240,7 @@ for (const [rel, mod] of loaded) {
       }
       if (selection.modelOptions?.providerOptions?.["gateway"] === undefined) {
         problems.push(
-          "MODEL SELECTION: the step.started selection carries no `modelOptions.providerOptions.gateway`. Those " +
+          "MODEL SELECTION: the model selection carries no `modelOptions.providerOptions.gateway`. Those " +
             "options used to reach the model call via the agent-level `modelOptions`; with that field gone, a " +
             "selection that omits them runs every turn with NO gateway provider options at all.",
         );
@@ -256,20 +252,15 @@ for (const [rel, mod] of loaded) {
 {
   const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
   const eveAbs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
-  const { resolveCompactionModel } = (await import(eveAbs("dist/src/harness/compaction.js"))) as {
-    resolveCompactionModel: (input: {
-      compactionModelReference?: unknown;
-      model: unknown;
-      modelReference: unknown;
-      resolveModel: (ref: unknown) => Promise<unknown>;
-    }) => Promise<{ model: unknown; providerOptions: unknown }>;
-  };
+  // eve 1.x has no exported resolveCompactionModel: the choice lives in harness/compaction/step.js's
+  // summaryExecutor, which is module-private, so the pins below read its installed source.
+  const compactionStep = readFileSync(join(eveRoot, "dist/src/harness/compaction/step.js"), "utf8");
   const { isDynamicModelDefinition } = (await import(eveAbs("dist/src/shared/agent-definition.js"))) as {
     isDynamicModelDefinition: (model: unknown) => boolean;
   };
 
   const agent = loaded.get("agent/agent.ts")?.default as
-    | { model?: unknown; compaction?: { model?: unknown; modelContextWindowTokens?: unknown; thresholdPercent?: unknown } }
+    | { model?: unknown; compaction?: { model?: unknown; modelContextWindowTokens?: unknown; threshold?: unknown } }
     | undefined;
 
   if (!isDynamicModelDefinition(agent?.model)) {
@@ -296,60 +287,39 @@ for (const [rel, mod] of loaded) {
     );
   }
 
-  const pct = agent?.compaction?.thresholdPercent;
+  const pct = agent?.compaction?.threshold;
   if (typeof pct !== "number" || !(pct > 0) || !(pct <= 1)) {
     problems.push(
-      `COMPACTION: agent/agent.ts's \`compaction.thresholdPercent\` is ${String(pct)}, expected a fraction in (0, 1]. ` +
+      `COMPACTION: agent/agent.ts's \`compaction.threshold\` is ${String(pct)}, expected a fraction in (0, 1]. ` +
         "It is the only thing that decides WHEN compaction fires; eve's own default (0.9) is not this deployment's choice.",
     );
   }
 
-  const liveModel = { marker: "the-live-turn-model" };
-  const sessionRef = { id: "gateway/primary", providerOptions: { gateway: { caching: "auto" } } };
-  let resolveModelCalls = 0;
-  const spyResolve = async (): Promise<unknown> => {
-    resolveModelCalls += 1;
-    return { marker: "resolved-from-a-reference" };
-  };
-  const shipped = await resolveCompactionModel({
-    compactionModelReference: undefined,
-    model: liveModel,
-    modelReference: sessionRef,
-    resolveModel: spyResolve,
-  });
-  if (shipped.model !== liveModel) {
-    problems.push(
-      "COMPACTION: with no compaction reference, eve's resolveCompactionModel did not return the live turn " +
-        "model by identity. The absence of `compaction.model` is the whole fix for OPE-670 — if this arm " +
-        "changed, the fix no longer holds and compaction needs re-deriving against the pinned eve.",
-    );
+  const summary = /async function summaryExecutor\([^)]*\)\{[^]*?\}function /.exec(compactionStep)?.[0] ?? "";
+  const pickOf = (src: string): RegExpExecArray | null =>
+    /let (\w+)=stepReference\(\w+\);let (\w+)=agentSettings\(\w+\)\.compactionModel\?\?\1;let (\w+)=\2===\1\?\w+\.model:await \w+\.resolveModel\(\2\)/.exec(src);
+  const pick = pickOf(summary);
+  // Matcher controls: the identity arm matches, and an executor that always resolves a reference
+  // (the OPE-670 throwing path, even with no compaction model) does not.
+  if (pickOf("let i=stepReference(e);let a=agentSettings(e).compactionModel??i;let o=a===i?t.model:await n.resolveModel(a);") === null) {
+    problems.push("COMPACTION (matcher control): the pick matcher no longer matches eve's identity arm written by hand — it is broken, not eve.");
   }
-  if (resolveModelCalls !== 0) {
-    problems.push(
-      `COMPACTION: eve resolved a model reference ${resolveModelCalls} time(s) with no compaction reference set. ` +
-        "That resolution is the throwing path (loadSourceBackedRuntimeModelReference) — it must not be reached.",
-    );
+  if (pickOf("let i=stepReference(e);let a=agentSettings(e).compactionModel??i;let o=await n.resolveModel(a);") !== null) {
+    problems.push("COMPACTION (matcher control): the pick matcher accepts an executor that ALWAYS resolves a reference — it cannot tell the OPE-670 fix from its absence.");
   }
-  if ((shipped.providerOptions as { gateway?: unknown } | undefined)?.gateway === undefined) {
+  if (pick === null) {
     problems.push(
-      "COMPACTION: the summary call lost the session model reference's gateway providerOptions. eve reads them " +
-        "off whichever reference it used, so the turn model's options are what the compaction call carries.",
+      "COMPACTION: eve's summaryExecutor no longer picks `compaction.model ?? the step's own reference` and keeps the live " +
+        "turn model by identity when they are the same reference. The absence of `compaction.model` is the whole fix for " +
+        "OPE-670 — if this arm changed, the fix no longer holds and compaction needs re-deriving against the pinned eve.",
     );
-  }
-
-  const distinctRef = { id: "gateway/utility", providerOptions: undefined };
-  const authored = await resolveCompactionModel({
-    compactionModelReference: distinctRef,
-    model: liveModel,
-    modelReference: sessionRef,
-    resolveModel: spyResolve,
-  });
-  if (resolveModelCalls !== 1 || authored.model === liveModel) {
-    problems.push(
-      `COMPACTION (negative control): a DISTINCT compaction reference did not reach eve's resolveModel ` +
-        `(calls=${resolveModelCalls}). The "no authored compaction model" gate above only means something ` +
-        "while this arm is live — if eve stopped resolving compaction references, re-read the chain.",
-    );
+  } else {
+    if (!new RegExp(`providerOptions:${pick[2]}\\.providerOptions`).test(summary)) {
+      problems.push(
+        "COMPACTION: the summary call no longer reads its providerOptions off the reference it used. With no compaction " +
+          "reference that is the session model's reference, so the turn model's gateway options are what the compaction call carries.",
+      );
+    }
   }
 }
 
@@ -432,7 +402,7 @@ if (problems.length > 0) {
 
 console.log(
   `✓ boot-smoke: ${modules.length} agent module(s) load clean; ${routeCount} channel route(s), no collisions; ` +
-    `${scheduleCount} schedule cron(s) valid; dynamic model bound at step.started; scripted model inert; ` +
+    `${scheduleCount} schedule cron(s) valid; dynamic model defined with defineDynamic; scripted model inert; ` +
     `turn-model selection carries the primary window + gateway options; compaction resolves without a reference; ` +
     `the routine permission card offerer is registered by the agent tree`,
 );

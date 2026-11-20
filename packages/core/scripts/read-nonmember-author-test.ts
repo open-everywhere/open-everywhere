@@ -24,6 +24,9 @@ import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import "../agent/tools/read_channel.js";
 import "../agent/tools/read_thread.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -316,7 +319,7 @@ for (const [verb, build] of [
   ["read_thread", async (a: ReadAdapter) => await readThreadResult(ctx, "slack", a, "C1", "999.9")],
 ] as const) {
   for (const graded of [true, false, "none"] as const) {
-    await eveContextStorage().run(new FakeSession(), async () => {
+    await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
       const out = await build(adapter(graded));
       const projected = await replayedProjection(verb, out);
       const v = String(projected.value);
@@ -353,7 +356,7 @@ console.log("7. the author grain on the read path (OPE-534):");
     eq(out.messages[1]!.author, "GUEST", `${grain}: the withheld line keeps its AUTHOR — the marker is legible as "who and when"`);
     eq(out.messages[1]!.ts, "1", `${grain}: …and its timestamp`);
 
-    await eveContextStorage().run(new FakeSession(), async () => {
+    await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
       const fresh = await readChannelResult(ctx, "slack", adapter(true), "C1");
       const projected = await replayedProjection("read_channel", fresh);
       ok(

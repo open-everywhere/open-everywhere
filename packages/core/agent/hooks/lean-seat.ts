@@ -2,21 +2,22 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-seat.js";
 import { setLeanSeatWake, setWorkSessionToken, setWorkTierWake } from "../access/lean-seat-state.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
-import { forwardsToWorkSession, isWorkSessionChildContext, isWorkSessionContext } from "../access/work-session.js";
-import { setNativeDelegationSeat } from "../access/native-delegation-state.js";
+import { forwardsToWorkSession, isWorkSessionChildContext, isWorkSessionContext, seatMemoryRecallRoute } from "../access/work-session.js";
+import { setNativeDelegationSeat, type NativeDelegationVerdict } from "../access/native-delegation-state.js";
 import { setWorkerWake } from "../access/worker-seat-state.js";
 import { setWorkerToolsetIdentity, type WorkerToolsetIdentity } from "../access/worker-toolset-state.js";
 import { INVOKER_POSTURE_ATTR, resolveInvokerPosture } from "../access/invoker-posture.js";
 import { setInvokerPosture } from "../access/invoker-posture-state.js";
 import { WEBHOOK_MARKER_ATTR } from "../routines/fire-auth.js";
 import { jobFireStamped } from "../access/job-posture.js";
-import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { bindFrom, currentTurnId, currentWakeId, delegationRootSessionId, deploymentOrg, isSubagentChildContext, subagentParentSessionId, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { routineManualStamped, routineMarker } from "../routines/routine.js";
+import { optional } from "./control-refusal.js";
+import { dropWorkerRound } from "../access/seat-cut.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
 
@@ -72,20 +73,18 @@ async function auditLeanSeatOnce(ctx: HookContext, grain: WindowGrain, dmSeat: b
   }
 }
 
+/**
+ * The per-wake verdict for eve's built-in `agent`. It reads the same predicate as the seat's memory
+ * route (`seatMemoryRecallRoute`): the verdict is `allow` exactly when that route is `agent`.
+ */
+export function nativeDelegationVerdictFor(c: BindableContext): NativeDelegationVerdict {
+  if (isSubagentChildContext(c)) return "leaf";
+  return seatMemoryRecallRoute(c) === "agent" ? "allow" : "no-seat";
+}
+
 function classifyNativeDelegationSeat(ctx: HookContext): void {
-  const c = ctx as unknown as BindableContext;
   try {
-    if (isSubagentChildContext(c)) {
-      setNativeDelegationSeat("leaf");
-      return;
-    }
-    if (!isWorkSessionContext(c)) {
-      setNativeDelegationSeat("no-seat");
-      return;
-    }
-    const grain = grainOf(c);
-    const admitted = WINDOW_GATED_TOOLS["agent"]?.includes(grain) === true;
-    setNativeDelegationSeat(admitted && oneshotAgentEnabled() && canDelegateFromSeat(c) ? "allow" : "no-seat");
+    setNativeDelegationSeat(nativeDelegationVerdictFor(ctx as unknown as BindableContext));
   } catch {
     setNativeDelegationSeat("unclassified");
   }
@@ -186,24 +185,17 @@ async function classifyWake(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": async (_event, ctx) => {
+    "turn.started": optional("lean-seat", async (_event, ctx) => {
       await classifyWake(ctx);
-    },
-    "turn.completed": () => {
+    }),
+    "turn.settled": optional("lean-seat", (_event, ctx) => {
       setLeanSeatWake(false);
       setWorkTierWake("none");
       setNativeDelegationSeat("unclassified");
       setWorkerWake(false);
       setWorkerToolsetIdentity(null);
       setInvokerPosture("untrusted-remote");
-    },
-    "turn.failed": () => {
-      setLeanSeatWake(false);
-      setWorkTierWake("none");
-      setNativeDelegationSeat("unclassified");
-      setWorkerWake(false);
-      setWorkerToolsetIdentity(null);
-      setInvokerPosture("untrusted-remote");
-    },
+      dropWorkerRound((ctx as unknown as { session?: { id?: string } } | undefined)?.session?.id);
+    }),
   },
 });

@@ -63,6 +63,10 @@ layout, hence this README.
   builders round-tripped against the real verifiers, the judge fallback, the polling backoff. Not
   to be confused with the live pack itself, which drives a real deployment and is not part of
   `npm test` (see AGENTS.md's "Live e2e driver pack").
+  Its source pins read a scenario's code through `printed-source.ts`, never through
+  `run.toString()`. The leg runs under `tsx` and under vite's SSR transform (the batched chain),
+  and the two runners print one function in different shapes. `printedSource` removes each
+  runner's own additions and prints the result once, so a pin holds the same claim under both.
 - **`wake-origin-fixtures-boot.ts`** — a boot wrapper around the FROZEN core oracle
   (`packages/core/scripts/wake-origin-fixtures-test.ts`, which must never change). The oracle
   covers every platform's wake-origin codec, but codecs now live in their provider bundles — so the
@@ -76,7 +80,7 @@ layout, hence this README.
   historical placement, not by the OPE-114 split.
 - **`boot-smoke-test.ts`** — the COLD-START gate (OPE-376). Imports every module under `agent/`
   against a throwaway state dir and fails on any module-load throw, then asserts channel-route
-  uniqueness, schedule-cron validity and the dynamic model's `step.started` binding. App-tier by
+  uniqueness, schedule-cron validity and that the model is a `defineDynamic(ctx => …)` function. App-tier by
   necessity: it boots the app's real graph, which is the one thing no other test in the tree does.
 - **`deploy-test.ts`** — offline unit tests *for* the deploy-ops scripts (`scripts/deploy/*`):
   rollback target selection, known-good pointer read/write, Vercel REST response parsing, the

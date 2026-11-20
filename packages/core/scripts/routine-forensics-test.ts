@@ -34,6 +34,8 @@ const { OE_WAKE_ID_ATTR } = await import("../agent/channels/unified-window.js");
 const { SCHEDULE_APP_AUTHENTICATOR, SCHEDULE_APP_PRINCIPAL_ID, SCHEDULE_APP_PRINCIPAL_TYPE } = await import("../agent/identity/binding.js");
 const { MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
 const outcomeHook = (await import("../agent/hooks/routine-outcome.js")).default;
+const turnSettled = (outcome: "completed" | "failed" | "cancelled"): never => ({ type: "turn.settled", data: { turnId: "t-fire", outcome } }) as never;
+const sessionEnded = (outcome: "completed" | "failed"): never => ({ type: "session.ended", data: { outcome } }) as never;
 const carriageHook = (await import("../agent/hooks/fire-carriage.js")).default;
 const { FIRE_ATTRS_SEEN_ACTION } = await import("../agent/routines/fire-carriage.js");
 const spendHook = (await import("../agent/hooks/spend.js")).default;
@@ -111,10 +113,10 @@ interface AttrView {
   readonly session: { readonly auth: { readonly current: { readonly attributes: Record<string, string> } } };
 }
 
-async function fireOnce(ctx: never, end: "turn.completed" | "turn.failed" = "turn.completed"): Promise<void> {
+async function fireOnce(ctx: never, end: "completed" | "failed" = "completed"): Promise<void> {
   await inEveContext(new FakeEveContext(), async () => {
     await outcomeHook.events!["turn.started"]!({} as never, ctx);
-    await outcomeHook.events![end]!({} as never, ctx);
+    await outcomeHook.events!["turn.settled"]!(turnSettled(end), ctx);
   });
 }
 
@@ -152,24 +154,24 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const fireSession = new FakeEveContext();
   await inEveContext(fireSession, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, ctx);
-    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
-    await outcomeHook.events!["turn.failed"]!({} as never, ctx);
-    await outcomeHook.events!["session.failed"]!({} as never, ctx);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), ctx);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("failed"), ctx);
+    await outcomeHook.events!["session.ended"]!(sessionEnded("failed"), ctx);
   });
   const fires = (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-once");
-  ok(fires.length === 1, "idempotence: one armed fire folds exactly ONCE across turn.completed + turn.failed + session.failed");
+  ok(fires.length === 1, "idempotence: one armed fire folds exactly ONCE across a completed turn, a failed turn and a failed session");
   ok(detailOf(fires[0], "outcome") === "ok", "idempotence: the FIRST turn end wins — the trailing failure edges are no-ops, not a re-settle");
   ok((await store.getRoutine(ORG, SURFACE, "r-once"))?.consecutiveFailures === 0, "idempotence: the single `ok` fold reset the streak, and nothing folded it back up");
 
   const beforeUnarmed = (await rowsFor(ROUTINE_AUDIT.fire)).length;
   await inEveContext(fireSession, async () => {
-    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), ctx);
   });
   ok((await rowsFor(ROUTINE_AUDIT.fire)).length === beforeUnarmed, "idempotence: an UNARMED turn end folds nothing");
 
   await inEveContext(fireSession, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, ctx);
-    await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), ctx);
   });
   ok(
     (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-once").length === 1,
@@ -187,13 +189,13 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
   await inEveContext(seat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, fire);
-    await outcomeHook.events!["turn.cancelled"]!({} as never, fire);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("cancelled"), fire);
   });
   ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: a cancelled fire turn writes NO fire row — a run a human stopped settles nothing");
 
   await inEveContext(seat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, fire);
-    await outcomeHook.events!["turn.completed"]!({} as never, fire);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
   });
   ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: …and the settlement wake cannot fold it either — the wake is latched, so a cancelled run is never reported as `ok`");
   ok(
@@ -207,7 +209,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   } as never;
   await inEveContext(seat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, humanTurn);
-    await outcomeHook.events!["turn.completed"]!({} as never, humanTurn);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), humanTurn);
   });
   ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "cancelled: an ordinary human turn after the cancellation folds nothing — no stale arm survived");
 }
@@ -225,7 +227,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
       session: { id: "sess-abandoned", auth: { current: { attributes: { team_id: "T1", channel_id: "C1" }, principalId: "U1", principalType: "user" } } },
     } as never;
     await outcomeHook.events!["turn.started"]!({} as never, humanTurn);
-    await outcomeHook.events!["turn.completed"]!({} as never, humanTurn);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), humanTurn);
   });
 
   ok((await rowsFor(ROUTINE_AUDIT.fire)).length === before, "abandoned: a human turn after an abandoned fire turn folds NOTHING — the unconditional arm write cleared the stale slot");
@@ -244,9 +246,9 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
   await inEveContext(jobSeat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, fireA);
-    await outcomeHook.events!["turn.completed"]!({} as never, fireA);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fireA);
     await outcomeHook.events!["turn.started"]!({} as never, fireB);
-    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fireB);
   });
   const fires = (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-job-refire");
   ok(fires.length === 2, "idempotence: a JOB seat folds EVERY fire — two fires on one durable session write two join rows, because the latch keys on the wake id");
@@ -267,7 +269,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok((await store.getRoutine(ORG, SURFACE, "r-late"))?.consecutiveFailures === 0, "late/A: the fire's own turn folded `ok` — the streak is 0, which is the state a late strike has to move");
     ok((await firesOf("r-late")).length === 1, "late/A: and it left exactly one fire row");
@@ -278,7 +280,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
       await outcomeHook.events!["turn.started"]!({} as never, fire);
       answer = await declare(fire, "the delegated worker could not reach the payments API");
       midTurnFailures = (await store.getRoutine(ORG, SURFACE, "r-late"))?.consecutiveFailures;
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok(midTurnFailures === 0, "late/A: negative control — mid-turn the counter is still 0, so the strike below comes from the FOLD and not from the tool's own row patch");
     ok(answer?.recorded === true, "late/A: the tool reports the declaration as recorded — it reopened the fire for one late fold");
@@ -303,7 +305,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
       second = await declare(fire, "and it is still down");
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok(second?.recorded === false, "late/B: a SECOND declaration on the same fire is reported as NOT counted — the fire spent its one late fold");
     ok(second?.consecutiveFailures === 1, "late/B: …and the tool reports the real streak (1), not an invented 2");
@@ -312,7 +314,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok((await firesOf("r-late")).length === 2, "late/E: a later turn that declares NOTHING folds nothing — the latch is unchanged for every fire that stays quiet");
   }
@@ -325,13 +327,13 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
-      await outcomeHook.events!["turn.cancelled"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("cancelled"), fire);
     });
     let answer: ToolAnswer | undefined;
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
       answer = await declare(fire, "the worker died after the cancel");
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok(answer?.recorded === false, "late/C: a declaration after a CANCELLED fire is reported as NOT counted");
     ok((await firesOf("r-late-cancelled")).length === 0, "late/C: …and writes no join row — a cancelled fire never becomes late-open, because only a fold that RAN opens one");
@@ -347,7 +349,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
       await declare(fire, "the API was down");
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok((await store.getRoutine(ORG, SURFACE, "r-late-twice"))?.consecutiveFailures === 1, "late/D: a declaration in the fire's OWN turn counts once, unchanged by this ticket");
     const first = await firesOf("r-late-twice");
@@ -357,7 +359,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
     await inEveContext(seat, async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fire);
       answer = await declare(fire, "and the retry failed too");
-      await outcomeHook.events!["turn.completed"]!({} as never, fire);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fire);
     });
     ok(answer?.recorded === false, "late/D: a later declaration on a fire that already settled `failed` is reported as NOT counted");
     ok((await store.getRoutine(ORG, SURFACE, "r-late-twice"))?.consecutiveFailures === 1, "late/D: …and it does not — one fire is one strike, whichever turn says so");
@@ -402,9 +404,9 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
   await inEveContext(seat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, fireA);
-    await outcomeHook.events!["turn.completed"]!({} as never, fireA);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fireA);
     await outcomeHook.events!["turn.started"]!({} as never, fireB);
-    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fireB);
   });
   ok(
     (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-native-job").length === 2,
@@ -413,7 +415,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 
   await inEveContext(seat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, fireB);
-    await outcomeHook.events!["turn.completed"]!({} as never, fireB);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), fireB);
   });
   ok(
     (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-native-job").length === 2,
@@ -433,9 +435,9 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   );
   await inEveContext(seat, async () => {
     await outcomeHook.events!["turn.started"]!({} as never, first);
-    await outcomeHook.events!["turn.completed"]!({} as never, first);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), first);
     await outcomeHook.events!["turn.started"]!({} as never, second);
-    await outcomeHook.events!["turn.completed"]!({} as never, second);
+    await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), second);
   });
   ok(
     (await rowsFor(ROUTINE_AUDIT.fire)).filter((e) => detailOf(e, "routineId") === "r-keyless").length === 1,
@@ -509,7 +511,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 {
   const r = routine({ id: "r-broken", consecutiveFailures: MAX_CONSECUTIVE_FAILURES - 1 });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
-  await fireOnce(firedCtx(r, "sess-strike3"), "turn.failed");
+  await fireOnce(firedCtx(r, "sess-strike3"), "failed");
 
   const disabled = await rowsFor(ROUTINE_AUDIT.disabled);
   ok(disabled.length === 1, "self-disable: the transition writes exactly one routine.disabled row");
@@ -518,7 +520,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   ok(detailOf(disabled[0], "sessionId") === "sess-strike3", "self-disable: the row names the session of the fire that tripped it");
   ok((await store.getRoutine(ORG, SURFACE, "r-broken"))?.status === "disabled", "self-disable: the routine really is disabled on the row too");
 
-  await fireOnce(firedCtx(r, "sess-after"), "turn.failed");
+  await fireOnce(firedCtx(r, "sess-after"), "failed");
   ok((await rowsFor(ROUTINE_AUDIT.disabled)).length === 1, "self-disable: an already-disabled routine does NOT write a second disabled row");
 }
 
@@ -528,7 +530,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   ok(routineIdOf(ctx) === "r-cost", "usage: routineIdOf reads the dispatcher's marker off the fired session's auth");
   ok(routineIdOf({ session: { auth: { current: { attributes: { team_id: "T1" } } } } } as never) === undefined, "usage: an ordinary turn has no routine id (the column stays NULL)");
 
-  await spendHook.events!["step.completed"]!({ data: { usage: { inputTokens: 120, outputTokens: 30, cacheReadTokens: 10, cacheWriteTokens: 0 } } } as never, ctx);
+  await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { inputTokens: 120, outputTokens: 30, cacheReadTokens: 10, cacheWriteTokens: 0 } } } as never, ctx);
   const rows = await usageEvents.usageForSession(ORG, "sess-cost");
   ok(rows.length === 1, "usage: the fired turn records a usage event");
   ok(rows[0]!.kind === "routine", "usage: it is still tagged kind=routine (unchanged)");
@@ -539,7 +541,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   ok(mine.length === 1, "usage: usageSummary groups by routineId");
   ok(mine[0]!.inputTokens === 120 && mine[0]!.outputTokens === 30 && mine[0]!.cacheReadTokens === 10, "usage: the per-routine group sums the real token legs");
 
-  await spendHook.events!["step.completed"]!({ data: { usage: { inputTokens: 5, outputTokens: 5 } } } as never, {
+  await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { inputTokens: 5, outputTokens: 5 } } } as never, {
     channel: { kind: "slack" },
     session: { id: "sess-human-cost", auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" }, principalId: "U1" } } },
   } as never);

@@ -1,4 +1,4 @@
-import { registerConnectorReplayResolver, registerConnectorReplaySettler } from "../access/connection-execute-target.js";
+import { registerConnectorReplayResolver, registerConnectorReplaySettler } from "../access/connector-replay-registry.js";
 import { clearConnectorCardInput, type ConnectorCardRetentionStore } from "./connector-card-retention.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";

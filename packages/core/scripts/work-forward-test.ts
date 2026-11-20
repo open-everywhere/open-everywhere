@@ -4,6 +4,9 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
+import { installedEveRoot, readEveSchemaHelpers } from "./eve-tool-schema.js";
+import { v27Hooks } from "./_hook-view.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-work-forward-")), "ops.sqlite3");
 
@@ -127,6 +130,39 @@ await work.rememberWorkTask(store, ORG, "agent-abc123", receipt.requestId, new D
 eq(await work.readWorkTaskRequest(store, ORG, "agent-abc123"), receipt.requestId, "W's task → request join round-trips");
 eq(work.workTokenForSeat(sent.token), undefined, "a work session has no work session of its own");
 
+console.log("§3b a forward carries the requester's files from ITS OWN wake into the brief (OPE-2781):");
+{
+  const { noteWakeAttachments } = await import("../agent/access/worker-continuation.js");
+  const OTHER_ROOM_WAKE = "99999999-2222-4333-8444-555555555555";
+  const PRIVATE_URL = "https://files.slack.example/F0OWNFILE1/sheet.csv?t=1";
+  const wakeText = (wakeId: string, room: string, body: string, files: string) =>
+    `<wake reason="mention" wake-id="${wakeId}">\n<channel id="${room}"/>\n<message author="Rowan" trigger="true">\n${body}\n${files}</message>\n</wake>`;
+  const ownWake = { role: "user", content: wakeText(WAKE, "C_ROOM", "check the attached sheet", `<attachment kind="file" id="F0OWNFILE1" name="sheet.csv" mimetype="text/csv" url="${PRIVATE_URL}"/>\n`) };
+  const otherRoomWake = { role: "user", content: wakeText(OTHER_ROOM_WAKE, "C_OTHER", "unrelated", '<attachment kind="image" id="F0OTHERRM9" name="other.png" mimetype="image/png"/>\n') };
+  const briefOf = async (callId: string, messages: unknown[]): Promise<string> =>
+    await inSession(async () => {
+      noteWakeAttachments(messages);
+      const at = delivered.length;
+      await workTool.forwardWork({ message: "summarise the sheet" }, seatCtx(callId, `turn-${callId}`), deps());
+      return work.parseWorkRequests(delivered[at]!.message)[0]!.brief;
+    });
+
+  const carried = await briefOf("call-2781-own", [otherRoomWake, { role: "assistant", content: "ok" }, ownWake]);
+  ok(carried.startsWith("summarise the sheet"), "the seat's own words still lead the brief");
+  ok(carried.includes("<delegated-attachments>") && carried.includes('id="F0OWNFILE1"') && carried.includes('name="sheet.csv"'), "🔴 the forward's brief carries the file of the wake that asked, by id and name");
+  ok(!carried.includes(PRIVATE_URL), "🔴 …and never the file's url");
+  ok(!carried.includes("F0OTHERRM9"), "🔴 NEGATIVE CONTROL: a file from ANOTHER room's wake in the same context is not carried");
+
+  const otherLast = await briefOf("call-2781-order", [ownWake, otherRoomWake]);
+  ok(otherLast.includes('id="F0OWNFILE1"') && !otherLast.includes("F0OTHERRM9"), "🔴 the carry reads the forward's wake by id, not the last message: a later wake from another room carries nothing of its own");
+
+  const onlyOther = await briefOf("call-2781-none", [otherRoomWake]);
+  eq(onlyOther, "summarise the sheet", "🔴 NEGATIVE CONTROL: when only another room's wake carries a file, the brief stays byte-identical");
+
+  const sameWakeNoFile = await briefOf("call-2781-plain", [{ role: "user", content: wakeText(WAKE, "C_ROOM", "just text", "") }]);
+  eq(sameWakeNoFile, "summarise the sheet", "a wake with no file leaves the brief byte-identical");
+}
+
 console.log("§4 a seat that does not forward is refused:");
 const before = delivered.length;
 await assert.rejects(
@@ -209,11 +245,14 @@ console.log("§9 the seat's result-wake turn foots what the work session's worke
     channel: { kind: "unified", continuationToken: `unified:${SEAT_TOKEN}` },
     session: { id: "sess-seat", turn: { id: turn }, auth: { current: { attributes: { oe_wake_id: RESULT_WAKE, ...attrs } } } },
   });
-  const handler = settlement.events["actions.requested"];
-  ok(typeof handler === "function", "the seat's step edge that spends a forwarded job's reads exists");
+  const handler = v27Hooks(settlement).callRequested;
+  ok(typeof (settlement as unknown as { events: Record<string, unknown> }).events["call.requested"] === "function", "the seat's step edge that spends a forwarded job's reads exists");
+  // eve 1.x has no per-step `actions.requested` edge: the seat's step edge is `call.requested`, one
+  // per call, so the result-wake turn's first call (its `reply`) is the edge that spends the reads.
+  const replyStep = { data: { actions: [{ kind: "tool-call", callId: "call-reply", toolName: "reply" }] } };
   const spendIn = (attrs: Record<string, unknown>, turn: string) =>
     inSession(async () => {
-      await handler!({ data: { actions: [] } }, resultCtx(attrs, turn));
+      await handler!(replyStep, resultCtx(attrs, turn));
       return connectorReadsThisTurn(turn);
     });
   const reads = await spendIn({ [work.OE_WORK_RESULT_ATTR]: receipt.requestId, [work.OE_WORK_RESULT_READS_ATTR]: READS }, "turn-reads");
@@ -228,7 +267,7 @@ console.log("§9 the seat's result-wake turn foots what the work session's worke
   eq(await spendIn({ [work.OE_WORK_RESULT_ATTR]: receipt.requestId, [work.OE_WORK_RESULT_READS_ATTR]: "oe-wake:not-a-row" }, "turn-reads-4"), [], "🔴 a key that is not a delegation row key names nothing, though a row sits under it");
   await store.putTaskResult(ORG, delegatedProvenanceKey(READS), JSON.stringify({ reads: [{ connection: "notion", op: "read_notion_page" }] }), new Date().toISOString(), 60_000);
   const otherSeatReads = await inSession(async () => {
-    await handler!({ data: { actions: [] } }, {
+    await handler!(replyStep, {
       channel: { kind: "unified", continuationToken: "unified:oe-dom:e2e-other:oe-sup:g2" },
       session: { id: "sess-other", turn: { id: "turn-reads-5" }, auth: { current: { attributes: { oe_wake_id: RESULT_WAKE, [work.OE_WORK_RESULT_ATTR]: receipt.requestId, [work.OE_WORK_RESULT_READS_ATTR]: READS } } } },
     });
@@ -255,7 +294,16 @@ console.log("§10 cancel_work relays a stop into the work session, for the job's
     },
   });
   const at = delivered.length;
-  const stopped = await inSession(() => cancelTool.cancelWork({ taskId: TASK }, seatCtx("call-c1"), cancelDeps()));
+  const { delegationRequestedThisTurn } = await import("../agent/access/pending-delegation-signal.js");
+  const workStatus = await import("../agent/hooks/work-status.js");
+  const statusDeps = { org: () => ORG, store: () => store, react: async () => false, audit: async () => undefined, now: () => new Date() };
+  await workStatus.noteWorkJobStarted({ requestId: receipt.requestId, taskId: TASK }, statusDeps);
+  eq((await workStatus.readWorkJobStatus(store, ORG, receipt.requestId))?.state, "working", "the stopped job's status row says `working`");
+  const [stopped, stopOwes] = await inSession(async () => {
+    const r = await cancelTool.cancelWork({ taskId: TASK }, seatCtx("call-c1"), cancelDeps());
+    return [r, delegationRequestedThisTurn("turn-1")] as const;
+  });
+  ok(stopOwes, "🔴 a relayed stop of a working job notes this turn as owing a later result, so a `done: false` ack ends the stop turn");
   eq(stopped.taskId, TASK, "🔴 the requester's cancel returns a receipt naming the task it stops");
   eq(delivered.length, at + 1, "…and relays ONE delivery into the work session");
   const relayed = delivered[at]!;
@@ -270,6 +318,13 @@ console.log("§10 cancel_work relays a stop into the work session, for the job's
   const bobCtx = { ...seatCtx("call-c2"), session: { id: "sess-seat", turn: { id: "turn-c2" }, auth: { current: { attributes: { oe_wake_id: OTHER_WAKE } } } } };
   await assert.rejects(() => inSession(() => cancelTool.cancelWork({ taskId: TASK }, bobCtx, cancelDeps())), (err: Error) => err.message === cancelTool.CANCEL_WORK_NOT_YOURS_MESSAGE, "🔴 D10: someone who neither asked for the job nor administers it is refused");
   n++;
+  ok(
+    !(await inSession(async () => {
+      await cancelTool.cancelWork({ taskId: TASK }, { ...bobCtx, callId: "call-c2b" }, cancelDeps()).catch(() => undefined);
+      return delegationRequestedThisTurn("turn-c2");
+    })),
+    "🔴 a REFUSED stop notes nothing, so the turn goes on and the model reads the refusal",
+  );
   eq(delivered.length, at + 1, "…and nothing reaches the work session");
   const admin = await inSession(() => cancelTool.cancelWork({ taskId: TASK }, { ...bobCtx, callId: "call-c3" }, cancelDeps(true)));
   eq(admin.taskId, TASK, "🔴 D10: an admin may cancel another person's job");
@@ -321,40 +376,133 @@ console.log("§10 cancel_work relays a stop into the work session, for the job's
   ok(cancelTool.principalAdministers(actor("U_GRIDADMIN", { enterprise: "E_GRID" }), "e2e-unified"), "🔴 OPE-2400: a Grid admin key administers the domain's jobs when the binding names that Grid");
   ok(!cancelTool.principalAdministers(actor("U_GRIDADMIN", {}), "e2e-unified"), "🔴 OPE-2400 NEGATIVE CONTROL: …and not when the binding names no Grid");
 
-  const { fenceWorkSessionCancel, WORK_CANCEL_UNAUTHORISED_MESSAGE } = await import("../agent/access/work-cancel-fence.js");
-  const { setWorkSessionToken } = await import("../agent/access/lean-seat-state.js");
-  const { jsonSchema } = await import("ai");
-  const wToolset = (): Record<string, { inputSchema: unknown }> => ({
-    task_cancel: { inputSchema: jsonSchema({ type: "object", properties: { taskId: { type: "string" } }, required: ["taskId"] } as never) },
-  });
+  const { withWorkSessionCancelFence, WORK_CANCEL_UNAUTHORISED_MESSAGE, WORK_CANCEL_REFUSED_FIELD } = await import("../agent/access/work-cancel-fence.js");
+  const { setWorkSessionToken, setWorkTierWake } = await import("../agent/access/lean-seat-state.js");
   const { noteContinuationTurn } = await import("../agent/access/continuation-turn-state.js");
-  const validateIn = (token: string | undefined, taskId: string, turn = "turn-W1") =>
+  const cancelCall = (taskId: string) => ({ type: "tool-call", toolCallId: "call-W", toolName: "eve__task_cancel", input: JSON.stringify({ taskId }) });
+  const otherCall = { type: "tool-call", toolCallId: "call-A", toolName: "agent", input: JSON.stringify({ message: "go" }) };
+  const fakeModel = (parts: readonly unknown[]) => ({
+    specificationVersion: "v3",
+    provider: "fake",
+    modelId: "fake",
+    supportedUrls: {},
+    doGenerate: async (_options: unknown) => ({ content: [...parts], finishReason: "tool-calls" }),
+    doStream: async (_options: unknown) => ({
+      stream: new ReadableStream({
+        start(c) {
+          for (const p of parts) c.enqueue(p);
+          c.close();
+        },
+      }),
+    }),
+  });
+  const verdictOf = (part: unknown): string => {
+    const input = JSON.parse(String((part as { input: string }).input)) as Record<string, unknown>;
+    return input[WORK_CANCEL_REFUSED_FIELD] === undefined ? "ok" : String(input[WORK_CANCEL_REFUSED_FIELD]);
+  };
+  const fenceIn = (token: string | undefined, taskId: string, turn = "turn-W1", tier: "work" | "forwards" = "work", via: "generate" | "stream" = "generate") =>
     inSession(async () => {
+      setWorkTierWake(tier);
       setWorkSessionToken(token);
       noteContinuationTurn({ session: { id: "sess-W", turn: { id: turn } } } as never);
-      const ts = wToolset();
-      ok(fenceWorkSessionCancel(ts), "the fence wraps W's task_cancel");
+      const inner = fakeModel([cancelCall(taskId), otherCall]);
+      const model = withWorkSessionCancelFence(inner);
+      if (tier !== "work") {
+        await model.doGenerate({});
+        return model === inner ? "unwrapped" : "wrapped";
+      }
+      let parts: unknown[];
+      if (via === "generate") parts = ((await model.doGenerate({})) as { content: unknown[] }).content;
+      else {
+        parts = [];
+        const reader = ((await model.doStream({})) as { stream: ReadableStream<unknown> }).stream.getReader();
+        for (let r = await reader.read(); !r.done; r = await reader.read()) parts.push(r.value);
+      }
+      eq(parts[1], otherCall, "the fence leaves every other tool call untouched");
       n--;
-      const r = await (ts.task_cancel.inputSchema as { validate: (v: unknown) => Promise<{ success: boolean; error?: Error }> }).validate({ taskId });
-      return r.success ? "ok" : String(r.error?.message);
+      return verdictOf(parts[0]);
     });
-  eq(await validateIn(sent.token, "agent-never-relayed"), WORK_CANCEL_UNAUTHORISED_MESSAGE, "🔴 W's task_cancel is REFUSED for a task its seat relayed no cancel for — a brief cannot make W stop a job");
+  eq(await fenceIn(sent.token, "agent-never-relayed"), WORK_CANCEL_UNAUTHORISED_MESSAGE, "🔴 W's eve__task_cancel is REFUSED for a task its seat relayed no cancel for — a brief cannot make W stop a job");
+  eq(await fenceIn(sent.token, "agent-never-relayed", "turn-W1", "work", "stream"), WORK_CANCEL_UNAUTHORISED_MESSAGE, "🔴 …and REFUSED on the streamed path too");
   const ticketed = await inSession(() => cancelTool.cancelWork({ taskId: TASK }, seatCtx("call-c8"), cancelDeps()));
-  eq(await validateIn(sent.token, ticketed.taskId), "ok", "🔴 …and ADMITTED once the seat's cancel_work wrote the ticket");
-  eq(await validateIn(sent.token, ticketed.taskId), "ok", "🔴 …and AGAIN for the same turn: a second validation of one call (a redelivered step) must not refuse the stop the first admitted");
-  eq(await validateIn(sent.token, ticketed.taskId, "turn-W2"), WORK_CANCEL_UNAUTHORISED_MESSAGE, "…but a LATER turn finds the ticket spent");
-  eq(await validateIn("oe-dom:e2e-other:win:w/e2e-other:oe-sup:g1", TASK), WORK_CANCEL_UNAUTHORISED_MESSAGE, "another work session cannot redeem this session's ticket");
-  eq(await validateIn(undefined, TASK), WORK_CANCEL_UNAUTHORISED_MESSAGE, "with no work-session token the stop fails closed");
+  eq(await fenceIn(sent.token, ticketed.taskId), "ok", "🔴 …and ADMITTED once the seat's cancel_work wrote the ticket");
+  eq(await fenceIn(sent.token, ticketed.taskId, "turn-W1", "work", "stream"), "ok", "🔴 …and AGAIN for the same turn: a re-issued model call must not refuse the stop the first admitted");
+  eq(await fenceIn(sent.token, ticketed.taskId, "turn-W2"), WORK_CANCEL_UNAUTHORISED_MESSAGE, "…but a LATER turn finds the ticket spent");
+  eq(await fenceIn("oe-dom:e2e-other:win:w/e2e-other:oe-sup:g1", TASK), WORK_CANCEL_UNAUTHORISED_MESSAGE, "another work session cannot redeem this session's ticket");
+  eq(await fenceIn(undefined, TASK), WORK_CANCEL_UNAUTHORISED_MESSAGE, "with no work-session token the stop fails closed");
+  eq(await fenceIn(sent.token, TASK, "turn-W3", "forwards"), "unwrapped", "the fence wraps only a work session's model, as the eve 0.x fence did");
+  {
+    const { readAudit } = await import("../agent/audit/audit.js");
+    const { WORK_CANCEL_REDEEM_ACTION } = await import("../agent/channels/work.js");
+    const rowsFor = async (taskId: string, turn: string, outcome: string, expected = 1): Promise<number> => {
+      for (let i = 0; i < 50; i++) {
+        const rows = await readAudit({ org: ORG, action: WORK_CANCEL_REDEEM_ACTION, detailEquals: { taskId, turn, outcome }, limit: 50 });
+        if (rows.length >= expected || i === 49) return rows.length;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return 0;
+    };
+    eq(await rowsFor("agent-never-relayed", "turn-W1", "refused", 2), 2, "🔴 each refused call (generate and stream) writes a refused work.cancel_redeemed row");
+    eq(await rowsFor(ticketed.taskId, "turn-W1", "admitted", 2), 2, "🔴 each admitted call (the first and the re-issued one) writes an admitted work.cancel_redeemed row");
+    eq(await rowsFor(ticketed.taskId, "turn-W2", "refused"), 1, "…and the later turn's refused call writes its own refused row");
+    eq(await rowsFor(TASK, "turn-W3", "admitted") + (await rowsFor(TASK, "turn-W3", "refused")), 0, "a model the fence does not wrap writes no row");
+  }
+  {
+    await inSession(async () => {
+      setWorkTierWake("work");
+      const fenced = withWorkSessionCancelFence({ ...fakeModel([]), doStream: async (_options: unknown) => ({ stream: { getReader: () => undefined } }) });
+      await assert.rejects(() => fenced.doStream({}), /fail closed/, "🔴 a model stream the fence cannot read fails the call — it never passes through unfenced");
+      n++;
+      const noContent = withWorkSessionCancelFence({ ...fakeModel([]), doGenerate: async (_options: unknown) => ({ finishReason: "stop" }) });
+      await assert.rejects(() => noContent.doGenerate({}), /fail closed/, "🔴 a model result the fence cannot read fails the call — it never passes through unfenced");
+      n++;
+    });
+  }
+  {
+    const { resolvePrimaryModel } = await import("../agent/model/routing.js");
+    const viaResolver = (tier: "work" | "forwards") =>
+      inSession(async () => {
+        setWorkTierWake(tier);
+        setWorkSessionToken(sent.token);
+        noteContinuationTurn({ session: { id: "sess-W", turn: { id: "turn-W4" } } } as never);
+        const backend = { model: (_id: string) => fakeModel([cancelCall("agent-never-relayed-w4")]), applyOptions: (_r: unknown, options: unknown) => options };
+        const model = await resolvePrimaryModel({} as never, { primary: { id: "fake/primary" } }, { domains: () => [], backend } as never);
+        const reader = ((await model.doStream({})) as { stream: ReadableStream<unknown> }).stream.getReader();
+        const parts: unknown[] = [];
+        for (let r = await reader.read(); !r.done; r = await reader.read()) parts.push(r.value);
+        const call = parts.find((p) => (p as { type?: unknown }).type === "tool-call");
+        return call === undefined ? "no-call" : verdictOf(call);
+      });
+    eq(await viaResolver("work"), WORK_CANCEL_UNAUTHORISED_MESSAGE, "🔴 resolvePrimaryModel applies the fence: a work session's unticketed eve__task_cancel comes back refused");
+    eq(await viaResolver("forwards"), "ok", "…and a seat's model through resolvePrimaryModel is not fenced");
+    const scripted = readFileSync(new URL("../../../agent/model/scripted-resolve.ts", import.meta.url), "utf8");
+    ok(/withWorkSessionCancelFence\(withEmptyStopReissue\(withWorkerToolsetEvidenceModel\(/.test(scripted), "🔴 the integration tier's scripted resolver wraps its model with the fence, outside the empty-stop reissue and the evidence wrapper (the seat cut wraps the fence; it acts on the call's input, the fence on its output)");
+  }
+  {
+    const { taskCancelTool } = (await import(pathToFileURL(join(eveDist, "dist/src/tools/provided/task-cancel.js")).href)) as {
+      taskCancelTool: { inputSchema: { "~standard": { validate: (v: unknown) => Promise<{ issues?: unknown }> } } };
+    };
+    const validate = (v: unknown) => taskCancelTool.inputSchema["~standard"].validate(v);
+    ok((await validate({ taskId: "t1" })).issues === undefined, "eve's own eve__task_cancel schema admits a bare taskId");
+    ok((await validate({ taskId: "t1", [WORK_CANCEL_REFUSED_FIELD]: WORK_CANCEL_UNAUTHORISED_MESSAGE })).issues !== undefined, "🔴 …and REJECTS the refusal field, so eve answers a refused call with a tool error and never stops the task");
+  }
 
   const { approvalDecisionBody } = await import("../agent/approvals/decision-wake.js");
   const notice = (forwardsWork: boolean) =>
     approvalDecisionBody({ origin: ORIGIN as never, wakeId: "w", summaryLine: "x", outcome: "rejected", pendingId: "p", ...(forwardsWork ? { forwardsWork } : {}) });
-  ok(notice(true).includes("`cancel_work`") && !notice(true).includes("task_cancel"), "🔴 the decision notice to a forwarding seat names `cancel_work`, never `task_cancel`");
-  ok(notice(false).includes("`task_cancel`"), "…and a seat that runs its own workers still reads `task_cancel`");
+  ok(notice(true).includes("`cancel_work`") && !notice(true).includes("eve__task_cancel"), "🔴 the decision notice to a forwarding seat names `cancel_work`, never `eve__task_cancel`");
+  ok(notice(false).includes("`eve__task_cancel`"), "…and a seat that runs its own workers still reads `eve__task_cancel`");
+  await workStatus.noteWorkJobSettled({ requestId: receipt.requestId, taskId: TASK, status: "completed" }, statusDeps);
+  const [late, lateOwes] = await inSession(async () => {
+    const r = await cancelTool.cancelWork({ taskId: TASK }, seatCtx("call-c9", "turn-c9"), cancelDeps());
+    return [r, delegationRequestedThisTurn("turn-c9")] as const;
+  });
+  ok(late.note.includes("There is nothing left to stop.") && !late.note.includes("The work session stops it"), "a stop of a job that already settled says there is nothing left to stop");
+  ok(!lateOwes, "🔴 …and notes nothing: no result wake follows, so a `done: false` ack must not end the turn");
   const { renderSeatPersona } = await import("../agent/instructions/seat-prompt.js");
   const persona = (forwardsWork: boolean) => renderSeatPersona({ seatKind: "conversational", delivery: { kind: "wake-addressed" } as never, ...(forwardsWork ? { forwardsWork } : {}) });
   ok(persona(true).includes("Cancel THAT task with `cancel_work`"), "🔴 the forwarding seat's \"stop\" rule names `cancel_work`");
-  ok(persona(false).includes("Cancel THAT task with `task_cancel`"), "…and every other seat's still names `task_cancel`");
+  ok(persona(false).includes("Cancel THAT task with `eve__task_cancel`"), "…and every other seat's still names `eve__task_cancel`");
 }
 
 console.log("§11 the forward carries the asking room's own platform identity, and nothing else:");
@@ -597,6 +745,126 @@ console.log("§OPE-2378 a follow-up after a rotation reaches its task's generati
   n++;
   eq(delivered.length, mid, "…and nothing is delivered");
 }
+console.log("§OPE-2791 a follow-up that starts as a NEW job after a rotation carries the earlier job's files:");
+{
+  const { noteWakeAttachments } = await import("../agent/access/worker-continuation.js");
+  const { clearGenerationDelegation } = await import("../agent/channels/generation-retirement.js");
+  const { workSessionLedgerId } = await import("../agent/channels/work-generation.js");
+  const OLD = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g4-2791aa";
+  const NEW = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g5-2791bb";
+  let current = OLD;
+  const genDeps = { ...deps(), resolveWork: async () => ({ token: current, generation: current === OLD ? 4 : 5 }) };
+  const fileWake = (files: string) => [{ role: "user", content: `<wake reason="mention" wake-id="${WAKE}">\n<channel id="C_ROOM"/>\n<message author="Rowan" trigger="true">\nplease\n${files}</message>\n</wake>` }];
+  const file = (id: string, name: string) => `<attachment kind="file" id="${id}" name="${name}" mimetype="text/csv"/>\n`;
+  const forwarded2791: string[] = [];
+  const forward = async (callId: string, files: string, input: { readonly message: string; readonly taskId?: string }, over: Record<string, unknown> = {}) =>
+    await inSession(async () => {
+      forwarded2791.push(work.workRequestIdFor(callId));
+      noteWakeAttachments(fileWake(files));
+      const at = delivered.length;
+      const receipt = await workTool.forwardWork(input, seatCtx(callId, `turn-${callId}`), { ...genDeps, ...over });
+      return { receipt, block: work.parseWorkRequests(delivered[at]?.message ?? "")[0] ?? { requestId: "", brief: "" } };
+    });
+
+  const a = await forward("call-2791-a", file("F0LEDGER01", "ledger.csv"), { message: "total the ledger" });
+  const b = await forward("call-2791-b", file("F0OTHERJOB", "other.csv"), { message: "another job" });
+  const bare = await forward("call-2791-c", "", { message: "a job with no file" });
+  await work.rememberWorkTask(store, ORG, "agent-a2791", a.receipt.requestId, new Date().toISOString());
+  await work.rememberWorkTask(store, ORG, "agent-c2791", bare.receipt.requestId, new Date().toISOString());
+  ok(a.block.brief.includes('id="F0LEDGER01"'), "fixture: the opening job's own brief carried its file");
+
+  const held = await forward("call-2791-held", file("F0ADDED002", "added.csv"), { message: "add this sheet too", taskId: "agent-a2791" });
+  eq(held.block.taskId, "agent-a2791", "fixture: while the OLD generation can continue the task, the follow-up is a continuation");
+  ok(held.block.brief.includes('id="F0ADDED002"') && !held.block.brief.includes("F0LEDGER01"), "a continuation's brief carries only its own wake's files: its worker already holds the earlier ones");
+
+  const { DispatchNotDeliveredError } = await import("../agent/channels/self-dispatch.js");
+  const undelivered = delivered.length;
+  await assert.rejects(
+    () => forward("call-2791-refused", file("F0NEVERSENT", "never.csv"), { message: "and this sheet", taskId: "agent-a2791" }, { dispatch: async () => { throw new DispatchNotDeliveredError("refused before delivery"); } }),
+    (err: Error) => err.message === workTool.FORWARD_FAILED_NOTE,
+    "fixture: the continuation's dispatch fails before delivery",
+  );
+  n++;
+  eq(delivered.length, undelivered, "fixture: …and nothing was delivered");
+  ok(!(await work.readWorkAttachments(store, ORG, a.receipt.requestId)).some((f) => f.id === "F0NEVERSENT"), "🔴 a continuation that never reached a worker adds no file to the task's row");
+  await assert.rejects(
+    () => forward("call-2791-unknown", file("F0MAYBESENT", "maybe.csv"), { message: "and this one", taskId: "agent-a2791" }, { dispatch: async () => { throw new Error("dispatch returned 500"); } }),
+    (err: Error) => err.message === workTool.FORWARD_UNKNOWN_NOTE,
+    "fixture: the continuation's dispatch fails with an unknown outcome",
+  );
+  n++;
+  ok((await work.readWorkAttachments(store, ORG, a.receipt.requestId)).some((f) => f.id === "F0MAYBESENT"), "🔴 a continuation whose outcome is unknown may have reached the worker, so it adds its file to the task's row");
+  const orderBefore = (await work.readWorkAttachments(store, ORG, a.receipt.requestId)).map((f) => f.id);
+  await forward("call-2791-held", file("F0ADDED002", "added.csv"), { message: "add this sheet too", taskId: "agent-a2791" });
+  eq((await work.readWorkAttachments(store, ORG, a.receipt.requestId)).map((f) => f.id), orderBefore, "🔴 a replayed continuation does not reorder the task's row, so the cap never evicts a newer file for it");
+  const taskRowBefore = await work.readWorkAttachments(store, ORG, a.receipt.requestId);
+  const flakyStore = new Proxy(store, {
+    get(target, prop, receiver) {
+      if (prop === "getTaskResult") {
+        return async (org: string, key: string) => {
+          if (key.startsWith("oe-work-files:")) throw new Error("the store read failed");
+          return await target.getTaskResult(org, key);
+        };
+      }
+      const v = Reflect.get(target, prop, receiver) as unknown;
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+  const flaky = await forward("call-2791-flaky", file("F0FLAKYREAD", "flaky.csv"), { message: "and one more", taskId: "agent-a2791" }, { store: () => flakyStore });
+  ok(flaky.block.brief.includes('id="F0FLAKYREAD"'), "fixture: the flaky continuation carried its own file");
+  eq(await work.readWorkAttachments(store, ORG, a.receipt.requestId), taskRowBefore, "🔴 a merge whose read fails skips its write: the task's row keeps every earlier file");
+  // A delivered continuation becomes the job the task names (`task.started` re-points the task row).
+  await work.rememberWorkTask(store, ORG, "agent-a2791", flaky.receipt.requestId, new Date().toISOString());
+  const viaFlaky = (await work.readWorkAttachments(store, ORG, flaky.receipt.requestId)).map((f) => f.id);
+  ok(["F0LEDGER01", "F0ADDED002", "F0FLAKYREAD"].every((id) => viaFlaky.includes(id)), "🔴 a continuation whose earlier read failed links the earlier row, so the job the task now names still has every file");
+  const flaky2 = await forward("call-2791-flaky2", file("F0FLAKYTWO", "flaky2.csv"), { message: "and a last one", taskId: "agent-a2791" }, { store: () => flakyStore });
+  ok(flaky2.block.brief.includes('id="F0FLAKYTWO"'), "fixture: the second flaky continuation carried its own file");
+  await work.rememberWorkTask(store, ORG, "agent-a2791", flaky2.receipt.requestId, new Date().toISOString());
+  const viaFlaky2 = (await work.readWorkAttachments(store, ORG, flaky2.receipt.requestId)).map((f) => f.id);
+  ok(["F0LEDGER01", "F0FLAKYREAD", "F0FLAKYTWO"].every((id) => viaFlaky2.includes(id)), "🔴 two failed reads in a row: the read follows the chain of links, so no earlier file is lost");
+  const loopAt = new Date().toISOString();
+  await store.putTaskResult(ORG, "oe-work-files:req-2791-loop-a", JSON.stringify({ attachments: [{ id: "F0LOOPA001" }], from: "req-2791-loop-b" }), loopAt, 60_000);
+  await store.putTaskResult(ORG, "oe-work-files:req-2791-loop-b", JSON.stringify({ attachments: [{ id: "F0LOOPB001" }], from: "req-2791-loop-a" }), loopAt, 60_000);
+  eq((await work.readWorkAttachmentsKnown(store, ORG, "req-2791-loop-a"))?.map((f) => f.id).sort(), ["F0LOOPA001", "F0LOOPB001"], "a link back to a row already read ends the chain");
+  for (let i = 0; i < 10; i++) await store.putTaskResult(ORG, `oe-work-files:req-2791-long-${i}`, JSON.stringify({ attachments: [], from: `req-2791-long-${i + 1}` }), loopAt, 60_000);
+  eq(await work.readWorkAttachmentsKnown(store, ORG, "req-2791-long-0"), undefined, "a chain past the link limit reads as unknown, never as a short list");
+  await store.putTaskResult(ORG, "oe-work-files:req-2791-bad", JSON.stringify({ attachments: "not a list" }), new Date().toISOString(), 60_000);
+  eq(await work.readWorkAttachmentsKnown(store, ORG, "req-2791-bad"), undefined, "a row without an attachments list reads as unknown, not as no files");
+
+  for (const id of new Set(forwarded2791)) await clearGenerationDelegation(ORG, workSessionLedgerId(id), store);
+  current = NEW;
+  const fresh = await forward("call-2791-fresh", "", { message: "continue with that ledger", taskId: "agent-a2791" });
+  ok(fresh.block.taskId === undefined && fresh.block.brief.includes("NEW job"), "fixture: after the rotation the follow-up starts as a NEW job");
+  ok(fresh.block.brief.includes("<delegated-attachments>") && fresh.block.brief.includes('<attachment kind="file" id="F0LEDGER01" name="ledger.csv" mimetype="text/csv"/>'), "🔴 the NEW job's brief carries the earlier job's file, by id and name");
+  ok(fresh.block.brief.includes('id="F0ADDED002"'), "🔴 …and the file a continuation of the same task added");
+  ok(!fresh.block.brief.includes("F0OTHERJOB"), "🔴 NEGATIVE CONTROL: a file of ANOTHER job in the same seat is not carried");
+  ok(!fresh.block.brief.includes("F0NEVERSENT"), "🔴 …nor the file of a continuation that was never delivered");
+  ok(fresh.block.brief.includes('id="F0MAYBESENT"'), "…and it carries the file of a continuation whose outcome is unknown");
+  eq(await work.readWorkBrief(store, ORG, a.receipt.requestId), "total the ledger", "the stored brief that a rotated seat reads stays the seat's words, with no file block");
+
+  const pinned = await work.readWorkAttachments(store, ORG, fresh.receipt.requestId);
+  const replayAt = delivered.length;
+  await forward("call-2791-fresh", file("F0LATEWAKE", "late.csv"), { message: "continue with that ledger", taskId: "agent-a2791" });
+  eq(delivered.length, replayAt, "fixture: a replay of the fresh forward delivers nothing again");
+  eq(await work.readWorkAttachments(store, ORG, fresh.receipt.requestId), pinned, "a replay keeps the job's files row of the first execution");
+  const { readWorkForward } = await import("../agent/hooks/work-task-key.js");
+  const recordedForward = (await readWorkForward(store, ORG, fresh.receipt.requestId))?.message ?? "";
+  ok(recordedForward.includes('id="F0LEDGER01"') && !recordedForward.includes("F0LATEWAKE"), "🔴 …and the forward it records is the brief that went out: a later wake's file does not ride into it");
+
+  const again = await forward("call-2791-again", "", { message: "and once more", taskId: "agent-a2791" });
+  ok(again.block.brief.includes('id="F0LEDGER01"'), "a second fresh follow-up on the same task carries the files again");
+  await work.rememberWorkTask(store, ORG, "agent-f2791", fresh.receipt.requestId, new Date().toISOString());
+  await clearGenerationDelegation(ORG, workSessionLedgerId(fresh.receipt.requestId), store);
+  await clearGenerationDelegation(ORG, workSessionLedgerId(again.receipt.requestId), store);
+  current = "oe-dom:e2e-unified:win:w/e2e-unified:oe-sup:g6-2791cc";
+  const chained = await forward("call-2791-chain", "", { message: "one more rotation later", taskId: "agent-f2791" });
+  ok(chained.block.taskId === undefined && chained.block.brief.includes('id="F0LEDGER01"'), "🔴 a second rotation still carries the files: the fresh job stored what its brief carried");
+
+  const noFiles = await forward("call-2791-nofile", "", { message: "carry on", taskId: "agent-c2791" });
+  ok(noFiles.block.taskId === undefined && !noFiles.block.brief.includes("<delegated-attachments>"), "a fresh follow-up on a job that had no file adds no file block");
+  // The seat generation's ledger has a cap; give back what this section owes, so later sections start clean.
+  for (const id of new Set(forwarded2791)) await clearGenerationDelegation(ORG, work.workLedgerId(id), store);
+}
 console.log("§15 the forward carries this turn's own-account ask; the host note carries the stop's refusal:");
 await inSession(async () => {
   const { adoptedOwnAccountAsk, OE_OWN_ACCOUNT_ASK_ATTR } = await import("../agent/connections/own-account-carriage.js");
@@ -755,12 +1023,12 @@ console.log("§16 the D20 join refusals: the agent validate, and actions.request
   const { noteContinuationTurn } = await import("../agent/access/continuation-turn-state.js");
   const { delegatedTaskDispatchAuthority } = await import("../agent/channels/task-wake.js");
   const settlement = await import("../agent/hooks/delegation-settlement.js");
-  const requested = (settlement.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["actions.requested"]!;
+  const requested = v27Hooks(settlement.default).callRequested;
   const { asSchema } = await import("ai");
   const { AuthKey } = (await import(pathToFileURL(join(eveDist, "dist/src/context/keys.js")).href)) as { AuthKey: unknown };
   const taskIdInput = (await import(pathToFileURL(join(eveDist, "dist/src/execution/tasks/task-id-input.js")).href)) as { withTaskIdSchema(schema: unknown): unknown };
-  const agentContract = (await import(pathToFileURL(join(eveDist, "dist/src/tools/framework/agent-contract.js")).href)) as { SUBAGENT_TOOL_INPUT_SCHEMA: unknown };
-  const toolSchema = (await import(pathToFileURL(join(eveDist, "dist/src/tools/schema.js")).href)) as { serializeInputSchema(s: unknown): unknown; toInputSchema(s: unknown): unknown };
+  const agentContract = { SUBAGENT_TOOL_INPUT_SCHEMA: (await import("eve/tools/agent")).default.inputSchema as unknown };
+  const toolSchema = await readEveSchemaHelpers(installedEveRoot(import.meta.url));
   const agentSchema = () => toolSchema.toInputSchema(toolSchema.serializeInputSchema(taskIdInput.withTaskIdSchema(agentContract.SUBAGENT_TOOL_INPUT_SCHEMA)));
   const W_TOKEN = work.workTokenForSeat(SEAT_TOKEN)!;
   const W_SESSION = "sess-W-2347";
@@ -796,7 +1064,7 @@ console.log("§16 the D20 join refusals: the agent validate, and actions.request
     const seen: string[] = [];
     const prior = console.warn;
     console.warn = (...args: unknown[]) => {
-      const m = /delegated dispatch has NO exact wake at actions\.requested \(([^)]+)\)/.exec(String(args[0]));
+      const m = /delegated dispatch has NO exact wake at call\.requested \(([^)]+)\)/.exec(String(args[0]));
       if (m) seen.push(m[1] as string);
     };
     try {
@@ -859,7 +1127,7 @@ console.log("§16 the D20 join refusals: the agent validate, and actions.request
 console.log("§17 a withheld settlement clears W's own ledger entry even when its seat wake is a replay:");
 {
   const settlement = await import("../agent/hooks/delegation-settlement.js");
-  const settledHook = (settlement.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["task.settled"]!;
+  const settledHook = v27Hooks(settlement.default).taskCallSettled;
   const { noteGenerationDelegation, generationOwedTaskIds } = await import("../agent/channels/generation-retirement.js");
   const { workSessionLedgerId } = await import("../agent/channels/work-generation.js");
   const W_TOKEN = work.workTokenForSeat(SEAT_TOKEN)!;

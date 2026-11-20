@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { parseTeamsActivity, isTeamsInputResponseActivity, TEAMS_HITL_DATA_KEY, type TeamsMessageActivity } from "eve/channels/teams";
+import type { TeamsMessageActivity } from "eve/channels/teams";
+import { isTeamsAnswerActivity, parseTeamsActivity, TEAMS_HITL_DATA_KEY } from "../agent/channels/teams-inbound.js";
 import { bindTeams, buildTeamsAuth } from "../agent/channels/teams-identity.js";
 import { buildTeamsFrontHandler } from "../agent/channels/teams-front.js";
 import type { TeamsFrontPlan } from "../agent/channels/teams-front.js";
@@ -328,7 +329,7 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     rawHitl.value = { [TEAMS_HITL_DATA_KEY]: { requestId: "req-room-1" } };
     const parsedRoomHitl = parseTeamsActivity(rawHitl);
     assert.ok(parsedRoomHitl && parsedRoomHitl.type === "message", "room HITL fixture must parse as a message activity");
-    ok(isTeamsInputResponseActivity(parsedRoomHitl), "3s1: precondition — eve reads this channel fixture as an input-response activity");
+    ok(isTeamsAnswerActivity(parsedRoomHitl), "3s1: precondition — the OE answer detector (eve 1.0's rule) reads this channel fixture as an answer");
     const roomHitl = await run(JSON.stringify(rawHitl), holdOpen, { plan: true, roomStopped: true });
     ok(
       roomHitl.forward === 1 && roomHitl.dispatch === 0,
@@ -355,7 +356,7 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     raw.value = { [TEAMS_HITL_DATA_KEY]: { requestId: "req-group-1" } };
     const parsedGroupHitl = parseTeamsActivity(raw);
     assert.ok(parsedGroupHitl && parsedGroupHitl.type === "message", "group HITL fixture must parse as a message activity");
-    ok(isTeamsInputResponseActivity(parsedGroupHitl), "3m2: precondition — eve reads this group-chat fixture as an input-response activity");
+    ok(isTeamsAnswerActivity(parsedGroupHitl), "3m2: precondition — the OE answer detector (eve 1.0's rule) reads this group-chat fixture as an answer");
     const groupHitlOpen = await run(JSON.stringify(raw), holdOpen);
     ok(groupHitlOpen.forward === 1 && groupHitlOpen.dm === 0, "3m3: 🔴 an UN-ENGAGED group chat still FORWARDS an answer to a parked question — the seam gates the room, never a question the agent itself asked");
     const groupHitlStopped = await run(JSON.stringify(raw), holdStopped);
@@ -400,7 +401,7 @@ function depsFor(rows: Record<string, EngagementRow | null>): {
     const hitlBody = JSON.stringify(raw);
     const parsedHitl = parseTeamsActivity(raw);
     assert.ok(parsedHitl && parsedHitl.type === "message", "HITL fixture must parse as a message activity");
-    ok(isTeamsInputResponseActivity(parsedHitl), "3r: precondition — eve reads this fixture as an input-response activity, not an ordinary message");
+    ok(isTeamsAnswerActivity(parsedHitl), "3r: precondition — the OE answer detector (eve 1.0's rule) reads this fixture as an answer, not an ordinary message");
     const stoppedHitl = await run(hitlBody, holdStopped);
     ok(stoppedHitl.forward === 1, "3s: 🔴 …so a stood-down conversation still FORWARDS it — standing down means stop following the room, never stop listening to what the agent asked");
     const stoppedPlain = await run(activityBody("channel"), holdStopped);

@@ -9,6 +9,6 @@ IN  relay message M81 · guild G8 channel C8 (type 0) · from U_DEV8 · mention
   ⇠ 200 ok
 EVT turn.started on discord:TH1
   → POST /channels/TH1/typing ⇒ 204
-EVT turn.failed on discord:TH1 {"error":{"message":"model exploded"}}
+EVT turn.settled on discord:TH1 {"outcome":"failed","error":{"message":"model exploded"}}
   → POST /channels/TH1/messages ⇒ 200 message BM1
       | ⚠️ Sorry, something went wrong and I couldn't finish that. Please try again.

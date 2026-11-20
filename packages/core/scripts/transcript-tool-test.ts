@@ -35,13 +35,12 @@ import {
 import { listRoutineFires, ROUTINE_AUDIT } from "../agent/routines/fire-audit.js";
 import { appendAudit, readAudit } from "../agent/audit/audit.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE, wrapUntrusted, normalizeFenceNonce } from "../agent/access/untrusted.js";
-import { projectToolSet, registeredProjectionNames } from "../agent/access/untrusted-projection.js";
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 import { WINDOW_UNGATED_TOOLS, WINDOW_GATED_TOOLS, JOB_WAKE_TOOLS } from "../agent/access/window-gate-manifest.js";
 import readRoutineTranscript from "../agent/tools/read_routine_transcript.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
-import { withTransformSchemaDescriptors } from "./_eve-schema-stand-in.js";
+import { evaluateDynamic } from "../agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -67,22 +66,22 @@ function signedRequest(body: Record<string, unknown>, secret = SECRET): Request 
 
 function fakeGetSession(
   events: readonly unknown[] | "throw" | "vanished",
-): (id: string) => { getEventStream(): Promise<ReadableStream<unknown>>; getStreamTailIndex(): Promise<number> } {
+): (id: string) => { stream(o?: { signal?: AbortSignal }): AsyncIterable<unknown>; getStreamTailIndex(): Promise<number> } {
   return (_id: string) => ({
     async getStreamTailIndex() {
       if (events === "vanished") return -1;
       if (events === "throw") throw new Error("stream gone");
       return Math.max(0, events.length - 1);
     },
-    async getEventStream() {
-      if (events === "throw") throw new Error("stream gone");
-      if (events === "vanished") return new ReadableStream<unknown>({ pull() {} });
-      return new ReadableStream<unknown>({
-        start(controller) {
-          for (const e of events) controller.enqueue(e);
-          controller.close();
-        },
-      });
+    stream(o?: { signal?: AbortSignal }) {
+      return (async function* () {
+        if (events === "throw") throw new Error("stream gone");
+        if (events === "vanished") {
+          await new Promise<void>((resolve) => o?.signal?.addEventListener("abort", () => resolve(), { once: true }));
+          return;
+        }
+        yield* events;
+      })();
     },
   });
 }
@@ -98,87 +97,30 @@ const FIRE = {
 {
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
-  const lifecycle = await import(pathToFileURL(join(eveRoot, "dist/src/context/dynamic-tool-lifecycle.js")).href);
-  const builder = await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href);
-  const harnessTools = await import(pathToFileURL(join(eveRoot, "dist/src/harness/tools.js")).href);
-  const toolSchema = await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href);
-  const contextKeys = (await import(pathToFileURL(join(eveRoot, "dist/src/context/keys.js")).href)) as {
-    SessionIdKey: unknown;
-    StaticModelReferenceKey: unknown;
+  const { contributeTools } = (await import(pathToFileURL(join(eveRoot, "dist/src/definitions/tools.js")).href)) as {
+    contributeTools(def: { logicalPath: string; slug: string }, value: unknown, ctx: unknown): { live?: Array<{ name: string; inputSchema: unknown; toModelOutput?: unknown }> };
   };
-  const SESSION_ID = "s-transcript-tool";
-
-  const makeCtx = (): Record<string, unknown> => {
-    const durable = new Map<unknown, unknown>();
-    const virtual = new Map<unknown, unknown>();
-    durable.set(contextKeys.SessionIdKey, SESSION_ID);
-    durable.set(contextKeys.StaticModelReferenceKey, null);
-    return {
-      get: (k: unknown) => (virtual.has(k) ? virtual.get(k) : durable.get(k)),
-      set: (k: unknown, v: unknown) => durable.set(k, v),
-      setVirtualContext: (k: unknown, v: unknown) => virtual.set(k, v),
-      require: (k: unknown) => durable.get(k),
-    };
+  const { ContextContainer } = (await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href)) as { ContextContainer: new () => unknown };
+  const { normalizeToolModelOutput } = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/tool-model-output.js")).href)) as {
+    normalizeToolModelOutput(i: { output: unknown; toolCallId: string; toolName: string }): { type: string; value: unknown };
   };
+  const ctxOf = (): Record<string, unknown> => ({ session: { id: "s-transcript-tool" } });
 
   delete process.env.OE_TRANSCRIPT_RELAY_SECRET;
-  const resolver = (readRoutineTranscript as unknown as { events: Record<string, (e: unknown, c: unknown) => unknown> }).events;
-  ok(resolver["session.started"]({ type: "session.started" }, makeCtx()) === null, "tool is ABSENT when the relay secret is unset (absence, not refusal)");
+  ok((await evaluateDynamic(readRoutineTranscript, ctxOf())) === null, "tool is ABSENT when the relay secret is unset (absence, not refusal)");
   process.env.OE_TRANSCRIPT_RELAY_SECRET = SECRET;
   process.env.OE_PUBLIC_BASE_URL = BASE;
-  const entry = resolver["session.started"]({ type: "session.started" }, makeCtx()) as Record<string, unknown>;
+  const entry = (await evaluateDynamic(readRoutineTranscript, ctxOf())) as Record<string, unknown>;
   ok(entry !== null && typeof entry === "object", "tool MOUNTS once the relay secret + base URL are configured");
   ok(typeof entry.toModelOutput === "function", "the mounted entry authors a toModelOutput (the fence)");
 
-  const mounted = withTransformSchemaDescriptors(entry);
-
-  const ctx = makeCtx();
-  await lifecycle.dispatchDynamicToolEvent({
-    ctx,
-    resolvers: [
-      {
-        slug: "read_routine_transcript",
-        eventNames: ["session.started"],
-        sourceId: "oe",
-        events: { "session.started": () => mounted },
-      },
-    ],
-    event: { type: "session.started" },
-    messages: [],
-  });
-  {
-    const setKey = ctx.set as (k: unknown, v: unknown) => void;
-    setKey(contextKeys.SessionIdKey, "");
-    let refusal: unknown;
-    try {
-      builder.buildDynamicTools(ctx);
-    } catch (e) {
-      refusal = e;
-    }
-    setKey(contextKeys.SessionIdKey, SESSION_ID);
-    ok(refusal instanceof Error, "buildDynamicTools REFUSES the replay of a registered entry when the session id is empty");
-    ok(
-      /requires a session id/i.test((refusal as Error).message),
-      `that refusal is eve's session-id requirement, not an unrelated throw (got: ${(refusal as Error | undefined)?.message ?? "no error"})`,
-    );
-    ok((ctx.get as (k: unknown) => unknown)(contextKeys.SessionIdKey) === SESSION_ID, "the session id is restored, so the replay below runs WITH one");
-  }
-
-  const defs = builder.buildDynamicTools(ctx) as Array<{ name: string; inputSchema: unknown; toModelOutput?: unknown }>;
+  const defs = contributeTools({ logicalPath: "agent/tools/read_routine_transcript.ts", slug: "read_routine_transcript" }, entry, new ContextContainer()).live ?? [];
   const def = defs.find((d) => d.name === "read_routine_transcript");
-  ok(def !== undefined, "the tool is built for the model call off the session.started path (replay runs WITH the session id)");
+  ok(def !== undefined, "eve builds the tool for the model call from the dynamic's result");
   ok(
     typeof def!.toModelOutput === "function",
-    "eve PRESERVES the authored toModelOutput on the replay path — and is now its only carrier, so a red here means the transcript reaches the model unfenced unless eve refuses the entry outright",
+    "eve carries the authored toModelOutput onto the live tool — its only carrier, so a red here means the transcript reaches the model unfenced",
   );
-
-  const converted = defs.map((d) => ({ ...d, inputSchema: toolSchema.toInputSchema(d.inputSchema) }));
-  const toolset = harnessTools.buildToolSetFromDefinitions({ approvedTools: new Set(), tools: converted }) as Record<
-    string,
-    { toModelOutput?: (a: { output: unknown; toolCallId: string }) => Promise<{ type: string; value: unknown }> }
-  >;
-  const built = toolset["read_routine_transcript"];
-  ok(built !== undefined, "eve built the tool into the final model toolset");
 
   const hostile =
     "03:00:01 [called] read_linear_issue({\"id\":\"OPE-1\"})\n" +
@@ -198,20 +140,13 @@ const FIRE = {
     },
     toolCallId: "call-1",
   };
+  // eve 1.x renders a result as the live tool's toModelOutput, then its model-output normalizer.
+  const modelView = async (): Promise<{ type: string; value: unknown }> => {
+    const projected = await (def!.toModelOutput as (o: unknown) => unknown)(sampleOutput.output);
+    return normalizeToolModelOutput({ output: projected, toolCallId: sampleOutput.toolCallId, toolName: def!.name });
+  };
 
-  const preHook = await built.toModelOutput!(sampleOutput);
-  const preValue = preHook.type === "text" ? String(preHook.value) : JSON.stringify(preHook.value);
-  ok(preHook.type === "text", "pre-hook: eve's replayed closure serves the AUTHORED projection (0.44.0), not a raw json passthrough");
-  ok(preValue.startsWith(UNTRUSTED_OPEN), "pre-hook: …so the fence is already on the model-visible bytes before OE's hook runs");
-  ok(preValue.includes("IGNORE ALL PREVIOUS INSTRUCTIONS"), "pre-hook: and the ingested content is preserved inside it (fencing, not censoring)");
-
-  const before = built;
-  const eveClosure = built.toModelOutput;
-  projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(toolset["read_routine_transcript"] === before, "projection MUTATES in place (object identity preserved — eve's approval WeakMap depends on it)");
-  ok(built.toModelOutput === eveClosure, "the seam leaves eve's own closure UNTOUCHED on a name it registered — it neither clobbers the envelope nor wraps it twice");
-
-  const projected = await built.toModelOutput!(sampleOutput);
+  const projected = await modelView();
   const value = String(projected.value);
   ok(projected.type === "text", "the model-visible projection is text");
   ok(value.startsWith(UNTRUSTED_OPEN), "MODEL-VISIBLE BYTES open with the untrusted fence");
@@ -232,15 +167,16 @@ const FIRE = {
   const events: RenderableTranscriptEvent[] = [
     { index: 0, at: "2026-07-26T03:00:00.000Z", type: "session.started", data: {} },
     { index: 1, at: "2026-07-26T03:00:00.100Z", type: "turn.started", data: { turnId: "t1" } },
-    { index: 2, at: "2026-07-26T03:00:00.200Z", type: "message.received", data: { message: "Scheduled run: check the release board" } },
-    { index: 3, at: "2026-07-26T03:00:01.000Z", type: "reasoning.appended", data: { reasoningSoFar: "partial" } },
-    { index: 4, at: "2026-07-26T03:00:01.500Z", type: "reasoning.completed", data: { reasoning: "I should look at the board" } },
-    { index: 5, at: "2026-07-26T03:00:02.000Z", type: "actions.requested", data: { actions: [{ callId: "c1", toolName: "read_linear_issue", input: { id: "OPE-1" } }] } },
-    { index: 6, at: "2026-07-26T03:00:03.000Z", type: "action.result", data: { status: "completed", result: { callId: "c1", output: "issue body text" } } },
-    { index: 7, at: "2026-07-26T03:00:03.500Z", type: "action.result", data: { status: "failed", result: { callId: "orphan", output: "no matching request" } } },
-    { index: 8, at: "2026-07-26T03:00:04.000Z", type: "step.completed", data: { usage: { inputTokens: 10 } } },
-    { index: 9, at: "2026-07-26T03:00:05.000Z", type: "message.completed", data: { message: "Nothing needs attention." } },
-    { index: 10, at: "2026-07-26T03:00:06.000Z", type: "session.completed", data: {} },
+    { index: 1, at: "2026-07-26T03:00:00.200Z", type: "delivery.consumed", data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: "Scheduled run: check the release board" }] } },
+    { index: 2, at: "2026-07-26T03:00:01.000Z", type: "content.delta", data: { partId: "p1", kind: "reasoning", delta: "partial" } },
+    { index: 3, at: "2026-07-26T03:00:01.500Z", type: "content.completed", data: { partId: "p1", kind: "reasoning", value: "I should look at the board", phase: "narration" } },
+    { index: 4, at: "2026-07-26T03:00:02.000Z", type: "call.requested", data: { callId: "c1", owner: { turnId: "t1" }, capability: { kind: "tool", name: "read_linear_issue" }, input: { id: "OPE-1" } } },
+    { index: 5, at: "2026-07-26T03:00:03.000Z", type: "call.settled", data: { callId: "c1", outcome: "completed", output: "issue body text" } },
+    { index: 6, at: "2026-07-26T03:00:03.500Z", type: "call.settled", data: { callId: "orphan", outcome: "failed", error: { code: "tool_error", message: "no matching request" } } },
+    { index: 7, at: "2026-07-26T03:00:04.000Z", type: "usage.recorded", data: { kind: "model", usage: { inputTokens: 10 } } },
+    { index: 8, at: "2026-07-26T03:00:05.000Z", type: "content.completed", data: { partId: "p2", kind: "text", value: "Nothing needs attention.", phase: "reply" } },
+    { index: 9, at: "2026-07-26T03:00:05.500Z", type: "turn.settled", data: { turnId: "t1", outcome: "failed", error: { code: "model_error", message: "TURN-FAIL-SENTINEL" } } },
+    { index: 10, at: "2026-07-26T03:00:06.000Z", type: "session.ended", data: { outcome: "completed" } },
     { index: 11, at: "2026-07-26T03:00:06.500Z", type: "brand.new.event", data: {} },
   ];
   const text = renderTranscript(events, { complete: true, eventCount: events.length });
@@ -249,15 +185,34 @@ const FIRE = {
   ok(!text.includes("partial"), "render: streaming reasoning DELTAS are dropped (the completed event carries the final text)");
   ok(text.includes('[called] read_linear_issue({"id":"OPE-1"})'), "render: the tool call names the tool and its input");
   ok(text.includes("[read_linear_issue returned:completed] issue body text"), "render: the result is attributed to the tool that produced it");
-  ok(text.includes("[callId orphan returned:failed]"), "render: a result with no matching request is shown by callId, never dropped");
+  ok(text.includes("[callId orphan returned:failed] no matching request"), "render: a result with no matching request is shown by callId, never dropped, with its error message");
   ok(!text.includes("inputTokens"), "render: per-step token accounting is dropped");
   ok(text.includes("[said] Nothing needs attention."), "render: the assistant's final message is shown");
+  ok(text.includes("[turn FAILED] TURN-FAIL-SENTINEL"), "render: a turn that settles as failed shows its error");
+  ok(text.includes("[run ended]"), "render: session.ended renders the end of the run");
+  ok(
+    renderTranscript([{ index: 0, at: null, type: "session.ended", data: { outcome: "failed", error: { code: "x", message: "RUN-FAIL-SENTINEL" } } }], { complete: true, eventCount: 1 }).includes("[run FAILED] RUN-FAIL-SENTINEL"),
+    "render: a session that ends as failed shows its error",
+  );
+  {
+    const refd = renderTranscript(
+      [
+        { index: 0, at: null, type: "content.completed", data: { partId: "p", kind: "text", phase: "reply", valueRef: { ref: "r1", size: 90000, preview: "REPLY-PREVIEW" } } },
+        { index: 1, at: null, type: "call.requested", data: { callId: "c9", owner: { turnId: "t" }, capability: { kind: "tool", name: "big_tool" }, inputRef: { withheld: true } } },
+        { index: 2, at: null, type: "call.settled", data: { callId: "c9", outcome: "completed", outputRef: { ref: "r2", size: 120000, preview: "OUTPUT-PREVIEW" } } },
+      ],
+      { complete: true, eventCount: 3 },
+    );
+    ok(refd.includes("[said] [stored by reference, 90000 bytes] REPLY-PREVIEW"), "render: a reply eve stored by reference shows its preview and size, never an empty line");
+    ok(refd.includes("[called] big_tool([withheld])"), "render: a withheld tool input says so");
+    ok(refd.includes("[big_tool returned:completed] [stored by reference, 120000 bytes] OUTPUT-PREVIEW"), "render: a tool result stored by reference shows its preview");
+  }
   ok(text.includes("[brand.new.event]"), "render: an event type this module has never seen renders as a named gap, not a silent drop");
   ok(text.includes("03:00:02"), "render: each line carries a wall-clock time");
 
   const long = "x".repeat(TRANSCRIPT_FIELD_CAPS.toolResult + 500);
   const clipped = renderTranscript(
-    [{ index: 0, at: null, type: "action.result", data: { status: "completed", result: { callId: "c", output: long } } }],
+    [{ index: 0, at: null, type: "call.settled", data: { callId: "c", outcome: "completed", output: long } }],
     { complete: true, eventCount: 1 },
   );
   ok(clipped.includes("chars truncated]"), "render: an oversized tool result is clipped with a marker saying how much was cut");
@@ -265,7 +220,7 @@ const FIRE = {
 
   ok(renderTranscript([], { complete: true, eventCount: 0 }).includes("no recorded events"), "render: an empty stream says so");
   ok(
-    renderTranscript([{ index: 0, at: null, type: "step.completed", data: {} }], { complete: true, eventCount: 1 }).includes("none of them content"),
+    renderTranscript([{ index: 0, at: null, type: "model.settled", data: { outcome: "completed" } }], { complete: true, eventCount: 1 }).includes("none of them content"),
     "render: a stream with only noise events distinguishes itself from an empty one",
   );
   ok(renderTranscript([], { complete: false, eventCount: 0 }).includes("transcript truncated"), "render: an incomplete drain says the tail is missing");
@@ -275,7 +230,9 @@ const FIRE = {
   const scope = { org: "acme", platform: "slack", workspace: "W1", surface: "C-ops" };
   const body = { ...scope, routineId: FIRE.routineId, fireDepth: 1 };
   const fires = async () => [FIRE];
-  const events = [{ type: "message.received", data: { message: "WAKE-BODY-SENTINEL" }, meta: { at: "2026-07-26T03:00:00.000Z" } }];
+  const events = [
+    { type: "delivery.consumed", data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: "WAKE-BODY-SENTINEL" }] }, meta: { at: "2026-07-26T03:00:00.000Z", position: { line: 0, index: 0 } } },
+  ];
 
   delete process.env.OE_TRANSCRIPT_RELAY_SECRET;
   const savedKeyForDisarm = process.env.OE_CREDENTIAL_ENCRYPTION_KEY;
@@ -394,7 +351,7 @@ const FIRE = {
   let seen: Request | undefined;
   const loopback: typeof fetch = async (url, init) => {
     seen = new Request(String(url), init as RequestInit);
-    return (await handleTranscriptRelay(seen.clone(), fakeGetSession([{ type: "message.received", data: { message: "loop" } }]) as never, {
+    return (await handleTranscriptRelay(seen.clone(), fakeGetSession([{ type: "delivery.consumed", data: { parts: [{ kind: "text", text: "loop" }] } }]) as never, {
       fires: async () => [FIRE],
     })) as Response;
   };
@@ -444,7 +401,6 @@ const FIRE = {
     !JOB_WAKE_TOOLS.has("read_routine_transcript"),
     "🔴 registry: DELIBERATELY withheld from an un-escalated job wake — replaying another run's ingested residue into an unattended, accumulating session is the lever the job kit exists to withhold (rationale in window-gate-manifest.ts)",
   );
-  ok(registeredProjectionNames().includes("read_routine_transcript"), "registry: the authored projection is registered for replay under the mounted name");
 }
 
 {
@@ -460,10 +416,10 @@ const FIRE = {
 
   const TOKEN = "svc-token-value-never-printed";
   const EVENTS = [
-    { index: 0, at: "2026-09-09T03:00:01.000Z", type: "message.received", data: { message: "run the thing" } },
-    { index: 1, at: "2026-09-09T03:00:02.000Z", type: "actions.requested", data: { actions: [{ toolName: "list_routines", callId: "c1", input: "{}" }] } },
-    { index: 2, at: "2026-09-09T03:00:03.000Z", type: "action.result", data: { status: "completed", result: { callId: "c1", output: "two routines" } } },
-    { index: 3, at: "2026-09-09T03:00:04.000Z", type: "message.completed", data: { message: "there are two routines" } },
+    { index: 0, at: "2026-09-09T03:00:01.000Z", type: "delivery.consumed", data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: "run the thing" }] } },
+    { index: 1, at: "2026-09-09T03:00:02.000Z", type: "call.requested", data: { callId: "c1", owner: { turnId: "t1" }, capability: { kind: "tool", name: "list_routines" }, input: "{}" } },
+    { index: 2, at: "2026-09-09T03:00:03.000Z", type: "call.settled", data: { callId: "c1", outcome: "completed", output: "two routines" } },
+    { index: 3, at: "2026-09-09T03:00:04.000Z", type: "content.completed", data: { partId: "p1", kind: "text", value: "there are two routines", phase: "reply" } },
   ];
 
   const stubFetch = (respond: () => Response): { calls: { url: string; headers: Record<string, string> }[]; impl: typeof fetch } => {

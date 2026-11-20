@@ -122,7 +122,7 @@ ok(/delegate silently and call `no_reply`/.test(threadBlock) && !/Acknowledge th
 ok(/arrives as a NEW message on a later turn/.test(standingBlock), "the seat is told WHERE the result appears — a later turn, not this one");
 ok(!standingBlock.includes("`task_peek`"), "🔴 OPE-904: the prompt names NO read verb — eve owns that steer, and the tool it named is deleted at eve 0.40.0");
 ok(/that message tells you how to read its output/.test(standingBlock), "…and points the seat at the completion message, which is the one instruction true on every eve version");
-ok(standingBlock.includes("`task_cancel`"), "the STOP verb is named — `task_cancel` is how a seat drops work it no longer needs");
+ok(standingBlock.includes("`eve__task_cancel`"), "the STOP verb is named — `eve__task_cancel` is how a seat drops work it no longer needs");
 ok(!standingBlock.includes("`task_update`"), "🔴 `task_update` was the CHILD's verb and eve 0.54.1 DELETED it — naming it would be the dead-affordance class OPE-359 removed");
 ok(!standingBlock.includes("`task_sleep`"), "`task_sleep` is not named either — pausing its own delegated work is a worker decision, not a routing one (OPE-583)");
 ok(/which request the result answers/.test(standingBlock), "🔴 OPE-555 risk 4: the wrong-thread mitigation is IN the copy — a completion notice carries no thread of its own");
@@ -131,6 +131,18 @@ ok(/with the `taskId` from its receipt/.test(standingBlock), "🔴 OPE-2251: the
 ok(/Only continue a task from the room that opened it/.test(standingBlock), "🔴 OPE-2251: …and states the provenance fence, so a refused cross-room continuation is a rule the seat already knew");
 ok(/put everything the new worker needs in its brief/.test(standingBlock), "…and the copy names the route that replaces continuation, so the refusal is actionable");
 
+{
+  const forwardingStanding = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_STANDING, "work", undefined, "spawn_thread_session");
+  const forwardingThread = renderWorkerCapabilityIndex(WORKER_ONLY_TOOLS_THREAD, "work");
+  for (const [name, block] of [["standing", forwardingStanding], ["thread", forwardingThread]] as const) {
+    ok(block.length > 0 && /`work` does NOT block/.test(block), `OPE-2795: a forwarding ${name} seat is told the return shape of its own verb, \`work\``);
+    ok(!block.includes("`agent`"), `🔴 OPE-2795: a forwarding ${name} seat's block never names \`agent\`, which its per-wake verdict refuses`);
+    ok(block.includes("`cancel_work`") && !block.includes("`eve__task_cancel`"), `🔴 OPE-2795: a forwarding ${name} seat stops a job with \`cancel_work\`, the verb it holds — never \`eve__task_cancel\``);
+    ok(/call `work` again with the `taskId` that the job's result named/.test(block), `OPE-2795: a forwarding ${name} seat continues a job with \`work\` and the \`taskId\` its result named`);
+    ok(block.includes("`requestId`") && !block.includes("task id from the receipt") && !block.includes("`taskId` from its receipt"), `🔴 OPE-2795: a forwarding ${name} seat is told its \`work\` receipt holds a \`requestId\`, never a task id it does not hold`);
+  }
+  ok(forwardingStanding.includes("`spawn_thread_session`"), "OPE-2795: a forwarding standing seat still hears about the async spawner");
+}
 ok(/does NOT block/.test(threadBlock), "a thread seat is told the same return shape — the shape is build-wide, not per grain");
 ok(!/BLOCKS this turn/.test(threadBlock), "…and the retired blocking claim is absent there too");
 ok(!threadBlock.includes("spawn_thread_session"), "…and it STILL never hears about the standing-only spawner (no recursive thread trees)");

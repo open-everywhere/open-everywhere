@@ -1,4 +1,5 @@
 import { defineDynamic, defineSkill } from "eve/skills";
+import { memoized } from "../access/window-gated.js";
 import { resolveAccessFor, unattendedOf } from "../access/request.js";
 import { getConfig } from "../access/config.js";
 import { repoSkillPackages } from "../scm/repo-skills.js";
@@ -38,7 +39,7 @@ function withSessionFiles(
   return { ...pkg, files: { ...pkg.files, ...files({ platform, surface }) } };
 }
 
-export async function resolveSkillEntries(ctx: BindableContext): Promise<ResolvedSkillEntry[]> {
+export async function resolveSkillEntries(ctx: BindableContext, domainRows?: Awaited<ReturnType<typeof resolveDomainSkillRows>>): Promise<ResolvedSkillEntry[]> {
   if (!seatMayLoadSkills(ctx)) return [];
   const access = resolveAccessFor(ctx);
   const skillContent = getConfig().skillContent;
@@ -54,7 +55,7 @@ export async function resolveSkillEntries(ctx: BindableContext): Promise<Resolve
     claimed.add(name);
   }
 
-  for (const row of await resolveDomainSkillRows(ctx, grantedNames)) {
+  for (const row of domainRows ?? (await resolveDomainSkillRows(ctx, grantedNames))) {
     entries.push({ name: row.name, tier: "domain", pkg: skillPackageFromRow(row), updatedBy: row.updatedBy, updatedAt: row.updatedAt });
     claimed.add(row.name);
   }
@@ -71,15 +72,14 @@ export async function resolveSkillEntries(ctx: BindableContext): Promise<Resolve
   return entries;
 }
 
-async function granted(ctx: BindableContext) {
-  const out: Record<string, ReturnType<typeof defineSkill>> = {};
-  for (const entry of await resolveSkillEntries(ctx)) out[entry.name] = defineSkill(entry.pkg);
-  return out;
-}
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => granted(ctx),
-    "turn.started": (_event, ctx) => granted(ctx),
-  },
+export default defineDynamic(async (ctx) => {
+  const c = ctx as unknown as BindableContext;
+  const domainRows = await memoized(ctx, ["domain-skill-rows", ctx.session.id, ctx.turn?.id ?? null], () =>
+    seatMayLoadSkills(c) ? resolveDomainSkillRows(c, new Set(resolveAccessFor(c).skills)) : [],
+  );
+  const entries = await resolveSkillEntries(c, domainRows);
+  const out: Record<string, ReturnType<typeof defineSkill>> = {};
+  for (const entry of entries) out[entry.name] = defineSkill(entry.pkg);
+  return out;
 });

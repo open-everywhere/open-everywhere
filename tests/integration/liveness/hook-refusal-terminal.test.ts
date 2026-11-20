@@ -14,7 +14,7 @@ import {
   type RecordedRequest,
   type ScriptedHandle,
 } from "../harness";
-import { EVE_PATCH_PARTS, _resetEvePatchTurnCheckForTest } from "@open-everywhere/core/agent/access/eve-patch-probe.js";
+import { EVE_PATCH_PARTS } from "@open-everywhere/core/agent/access/eve-patch-probe.js";
 
 function freshUnlistedChannelId(): string {
   return `9${randomBytes(8).readBigUInt64BE().toString().padStart(18, "0").slice(0, 18)}`;
@@ -28,11 +28,23 @@ function postingSeat(text: string, id: string): ScriptedHandle {
   return disposeLater(registerScript({ parent: [seatReply(text, id), { say: "done" }] }));
 }
 
+async function egressRowsFor(cursor: Awaited<ReturnType<typeof auditCursor>>, channelId: string) {
+  const rows = await rowsSinceCursor(cursor, ["egress.policy"], { limit: 300 });
+  return rows.filter((r) => (r.surface ?? "").includes(channelId));
+}
+
+async function refusalsFor(cursor: Awaited<ReturnType<typeof auditCursor>>, channelId: string) {
+  const rows = await rowsSinceCursor(cursor, ["hook.refused"], { limit: 300 });
+  return rows.filter((r) => (r.surface ?? "").includes(channelId));
+}
+
+// eve 1.x runs the session.started and turn.started hooks for the first delivery together, so the
+// session-start row is the one whose phase says so, not the first egress row for the channel.
 async function awaitSessionStartRow(cursor: Awaited<ReturnType<typeof auditCursor>>, channelId: string) {
-  return waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["egress.policy"], { limit: 300 });
-    return rows.find((r) => (r.surface ?? "").includes(channelId));
-  }, `a session-start egress.policy row for channel ${channelId} — without it a silent room is a DROPPED delivery, not a refusal`);
+  return waitFor(
+    async () => (await egressRowsFor(cursor, channelId)).find((r) => r.detail?.phase === "session.started"),
+    `a session-start egress.policy row for channel ${channelId} — without it a silent room is a DROPPED delivery, not a refusal`,
+  );
 }
 
 async function repliesFor(cursor: Awaited<ReturnType<typeof auditCursor>>, channelId: string) {
@@ -69,24 +81,52 @@ test("§1 NEGATIVE CONTROL — with nothing broken, the same drive calls the mod
   expect(row.detail?.chars).toBe(replyText.length);
 });
 
-test("§2 a turn.started refusal: the unpatched-eve gate stops the turn — no model call, nothing posted", async () => {
+test("§2 a turn.started refusal: the fail-closed egress re-apply stops a later turn of a live session — no model call, nothing posted", async () => {
+  // eve 1.x declares no runtime patch marker (EVE_PATCH_PARTS is empty), so the unpatched-eve gate has
+  // no marker to miss and cannot refuse. The egress hook's turn-edge re-apply is a live turn.started
+  // refusal: with no policy in force and egress.allowUnenforced off, it refuses the turn.
   await bootAgent();
+  expect(EVE_PATCH_PARTS, "a live patch part is declared again — drive §2 through the unpatched-eve gate as well").toEqual([]);
   const channelId = freshUnlistedChannelId();
+  const opening = randomBytes(5).toString("hex");
   const nonce = randomBytes(5).toString("hex");
+  const openingText = `ope2263-turn-edge-open ${opening}`;
+  const openingHandle = postingSeat(openingText, "ope2263-turn-edge-open");
+
+  const openCursor = await auditCursor();
+  await discordMentionWake({ channelId, text: `<@9000000000000000001> ${opening} please answer`, messageId: `it2263o${opening}` });
+  const opened = await waitFor(async () => (await repliesFor(openCursor, channelId)).find((r) => r.action === "reply.post"), `the opening turn's reply.post row for ${channelId}`);
+  expect(opened.detail?.chars, "the opening turn ran on the unenforced dev posture and answered").toBe(openingText.length);
+  const openingRows = await egressRowsFor(openCursor, channelId);
+  expect(openingRows.map((r) => `${String(r.detail?.phase)}:${String(r.detail?.enforced)}`), "the opening session started with NO policy in force").toContain("session.started:false");
+  await settle();
+  expect(openingHandle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  openingHandle.dispose();
+
   const handle = postingSeat(`ope2263-turn-edge-LEAK ${nonce}`, "ope2263-turn-edge-reply");
-
-  const part = EVE_PATCH_PARTS[0]!;
-  const globals = globalThis as Record<string, unknown>;
-  expect(globals[part.marker], `part ${part.part}'s marker is not published on this host, so §2 would refuse for the wrong reason`).toBe(true);
-
+  const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const cursor = await auditCursor();
   try {
-    delete globals[part.marker];
-    _resetEvePatchTurnCheckForTest();
+    settings.overrideSettingsForTest({ egress: { allowUnenforced: false } });
+    expect(settings.getSettings().egress.allowUnenforced, "the override did not take, so §2 would drive the DEGRADING posture and pass vacuously").toBe(false);
 
     await discordMentionWake({ channelId, text: `<@9000000000000000001> ${nonce} please answer`, messageId: `it2263t${nonce}` });
 
-    await awaitSessionStartRow(cursor, channelId);
+    const refusal = await waitFor(
+      async () => (await refusalsFor(cursor, channelId)).find((r) => r.detail?.hook === "egress"),
+      `a hook.refused row from the egress hook for ${channelId} — without it a silent room is a DROPPED delivery, not a refusal`,
+    );
+    expect(refusal.detail?.phase, "§2 measures a refusal at the TURN edge of a session that already started").toBe("turn.started");
+    expect(refusal.detail?.reason).toBe("unenforced-no-policy-in-force");
+    expect(refusal.detail?.cancelCalled, "the hook called ctx.cancel(); the model-call check below proves the host honoured it").toBe(true);
+
+    const rows = await egressRowsFor(cursor, channelId);
+    expect(rows.map((r) => r.detail?.phase), "the refused turn ran in the opening session: no second session.started").not.toContain("session.started");
+    const turnRow = rows.find((r) => r.detail?.phase === "turn.started");
+    expect(turnRow?.detail?.reason).toBe("retry-after-failure");
+    expect(turnRow?.detail?.aborted).toBe(true);
+    expect(turnRow?.detail?.enforceError, "the abort came from a failed apply").toBeDefined();
+
     await settle();
 
     expect(
@@ -99,10 +139,9 @@ test("§2 a turn.started refusal: the unpatched-eve gate stops the turn — no m
       `🔴 a refused turn still answered in ${channelId}`,
     ).toEqual([]);
   } finally {
-    globals[part.marker] = true;
-    _resetEvePatchTurnCheckForTest();
+    settings.overrideSettingsForTest({ egress: { allowUnenforced: true } });
   }
-  expect((globalThis as Record<string, unknown>)[part.marker]).toBe(true);
+  expect((await import("@open-everywhere/core/agent/settings/settings.js")).getSettings().egress.allowUnenforced).toBe(true);
 });
 
 test("§3 a session.started refusal: the fail-closed egress apply aborts the session — no model call, nothing posted", async () => {
@@ -129,6 +168,12 @@ test("§3 a session.started refusal: the fail-closed egress apply aborts the ses
 
     expect(row.detail?.reason, "§3 is measuring an abort from some other session.started producer").toBe("first-apply");
     expect(row.detail?.enforceError, "the abort did not come from a failed apply — §3 is measuring some other deny-all path").toBeDefined();
+    const refusal = await waitFor(
+      async () => (await refusalsFor(cursor, channelId)).find((r) => r.detail?.hook === "egress" && r.detail?.phase === "session.started"),
+      `the egress hook's session.started hook.refused row for ${channelId}`,
+    );
+    expect(refusal.detail?.reason).toBe("enforce-failed");
+    expect(refusal.detail?.cancelCalled, "the hook called ctx.cancel(); the model-call check below proves the host honoured it").toBe(true);
 
     await settle();
 

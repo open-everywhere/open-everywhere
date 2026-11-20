@@ -12,7 +12,7 @@ import type { ModelRole } from "../memory/domain.js";
 import { routineCardWaitSeconds } from "../routines/permission-card-wait.js";
 import { routinePermissionDeclinedMemo } from "./session-grant.js";
 import type { ActionKind } from "./types.js";
-import { plainValue } from "./plain-text.js";
+import { plainOpWords } from "./plain-text.js";
 
 export const ROUTINE_PERMISSION_KIND = "routine.permission";
 
@@ -104,7 +104,7 @@ const routinePermission: ActionKind<RoutinePermissionArgs> = {
   kind: ROUTINE_PERMISSION_KIND,
   policy: "member",
   plainSummary(args) {
-    return `Let a routine here use ${plainValue(toolWords(args.declaration), 70)} on its own from now on`;
+    return `Let a routine here use ${plainOpWords(toolWords(args.declaration), 80)} on its own from now on`;
   },
   consequence: (args) => `The routine: ${plainQuote(args.prompt, QUOTE_MAX - 20)}`,
   consequenceQuotes: true,

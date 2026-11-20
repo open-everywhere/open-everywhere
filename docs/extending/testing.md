@@ -146,11 +146,19 @@ it: `npx tsx scripts/ambient-env-lint.ts --only <file>`.
 The lint's own header names what it does not check — a conditional pin, a spread handed to the code
 under test, a pass-through a suite branches on. Read it before you add a declaration.
 
-**The shared database is per WORKER, not global (OPE-983).** `_setup.ts` gives every forked worker
-its own `OE_MEMORY_DIR` before any leg runs, keyed on vitest's own worker id. A suite that leaves
-both `OE_SQLITE_PATH` and `OE_MEMORY_DIR` unset still shares its sqlite file with the other suites
-the SAME worker runs — the order-dependence risk above still applies — but never with a suite
-running in one of the other three concurrent workers.
+**Every leg gets its own empty database (OPE-983, OPE-2838).** Before each leg, the runner points
+`OE_MEMORY_DIR` at a fresh, empty dir that no other leg uses, in its own worker or in any other.
+This applies to an in-process leg and to a subprocess leg. A leg run alone on a clean tree starts
+from empty stores, and the chain gives it the same start. The PGlite dir derives from that memory dir
+(`<memory dir>/../.open-everywhere-data/pglite`), so each leg also gets its own PGlite dir and its own
+PGlite lock. Every dir lives under one `mkdtemp` root per shard process
+(`<tmpdir>/oe-chain-db-<pid>-*`), so no run sees an earlier run's rows. The process tries to remove
+its root on exit, but a fork that vitest stops with a signal runs no exit hook. So each new shard
+process also removes every root whose owner pid is no longer live. The runner replaces nothing that
+the host pinned: an `OE_SQLITE_PATH`, or an `OE_MEMORY_DIR` outside that root, stays as it is. 🔴 A host
+`OE_PGLITE_DIR` also stays, and it makes every leg in every worker share ONE PGlite dir and lock
+again — leave it unset for the chain. A leg that pins its own path inside its file keeps its pin. `scripts/chain/sqlite-isolation.spec.ts`
+proves all of this.
 
 ## Writing an integration test
 
@@ -349,6 +357,14 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
   the per-prompt compaction threshold** (`agent.compactionThresholdPercent` × the primary window):
   eve runs compaction BEFORE the session-limit check in the same loop pass, and compaction fails the
   turn on this build (OPE-670).
+- **eve 1.x asks the session's own model for the compaction summary.** The scripted model answers a
+  call whose system prompt is eve's compaction prompt with a fixed summary
+  (`SCRIPTED_COMPACTION_SUMMARY`, `agent/model/scripted-model.ts`). That call serves no script step,
+  so a script that crosses the threshold keeps its step order
+  (`tests/integration/liveness/compaction-trip.test.ts`).
+- **An empty scripted step (`{}`) is reissued once.** The primary model gives an empty `stop` step a
+  non-`stop` finish reason, so eve takes its empty-response recovery. `onEmptyReissue` serves the
+  reissue; an empty reissue fails the turn (`tests/integration/liveness/reply-ends-turn.test.ts`).
 - **Every ingress route has a signed-delivery rung at this tier** (OPE-774): the signed Discord
   relay wake (`discordMentionWake`), the signed Slack interactivity POST
   (`slackInteractivityPost`), the Ed25519-signed Discord interactions front
@@ -359,7 +375,9 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
   webhook (`notionCommentEventPost`), the declared-webhook HMAC (`webhookDeliveryPost`), the signed
   GitHub App installation delivery (`githubInstallationPost`), the signed Linear agent-session
   delivery (`linearAgentSessionPost`), and the RS256-signed Teams Bot Framework Activity
-  (`teamsActivityPost`, verified against a fork-owned JWKS host — `installTeamsJwksStub`). Each
+  (`teamsActivityPost`, verified against a fork-owned JWKS host — `installTeamsJwksStub`; its token
+  carries the `serviceurl` claim, set to the activity's own `serviceUrl`, because the Teams front
+  refuses a token without it). Each
   proves a signed delivery is accepted AND produces its own audit row, and a tampered/unsigned twin
   is refused with none — see each helper's own header in `tests/integration/harness.ts` for the
   ONE mechanism it drives (a route that serves and refuses is not the same claim as a verifier
@@ -387,11 +405,24 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
   the `egress-spoof` test valve (`packages/core/agent/testing/test-valves.ts`) for the whole tier, and `setSurfaceReaction` asks `swallowRoomOp` before it
   builds any request: armed, it returns `true` without calling Discord, so the product behaves
   correctly and the stub's log stays empty.
+- **`wrapToolExecute(tool, stub)` replaces one tool's `execute` for every seat that holds it.** It
+  is the seat cut's stub seam (`stubToolExecuteForTest` in `access/seat-cut.ts`). The seat cut calls
+  a stub only while the `scripted-model` test valve is armed, and `bootAgent` arms it. eve 1.x mounts
+  each tool slot through `seatCut`, except a static slot (`ask_question`), so the seam reaches a tool
+  that a seat-cut slot mounts, after the seat cut and the transforms. It does not reach a static slot,
+  eve's own built-ins (`eve__*`), or a tool the seat's cut withholds. A stub on such a tool does
+  nothing and says nothing: `connectors/connectors.test.ts` stubs `connection_search`, which eve 1.x
+  does not mount, so that spec stops at the tool, not at the seam. The stub receives the arguments
+  eve passes to the tool's `execute`: the input, then eve's tool context. Call the returned restore
+  in reverse order. `test:seat-toolset-stub` drives the same function through eve's real
+  dynamic-tool mount. It also checks that every tool a spec stubs is a seat-cut slot, except the
+  tools it lists as unmounted on eve 1.x.
 - **Only three things cross into the booted agent**: `process.env`, `globalThis`, and HTTP. The
   bundle inlines core, so a core function whose state is module-scoped does NOT cross from your
   test imports into the running agent. The seams the harness exposes all ride the shared
   process-registry (`overrideSettingsForTest`, `registerApprovalJudgeCompletion`, the scripted
-  model store) or `globalThis` (`wrapToolExecute`, and `installSlackWebApiStub`/
+  model store) or `globalThis` (`wrapToolExecute`, whose seat-cut seam keys on a global symbol, and
+  `installSlackWebApiStub`/
   `installDiscordWebApiStub`, which patch `globalThis.fetch` — eve's Slack client and OE's own
   Discord provider both resolve a bare `fetch` at call time, so that patch is the only seam that
   reaches a vendor API call at all).
@@ -661,7 +692,10 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
     key is unchanged (`1 reused, 0 built` against a tree the authored path had just prewarmed). A
     missing eve symbol falls back to the authored path with a named log line, never a silent one.
     On eve 0.69.0+ both roads enter through eve's one remaining export, `prewarmAppSandboxes`, and the
-    fast road is its `loadAgentGraph` hook (OPE-2248).
+    fast road is its `loadAgentGraph` hook (OPE-2248). None of these files is in eve's `exports` map, so
+    each read goes through one module per eve file under `scripts/eve-deep-reads/`.
+    `npm run test:eve-deep-reads` loads every module against the installed eve. It fails by file and
+    export name when an eve bump moves one.
   - The PGlite template was minted **once per shard** (~3.9 s × 4+ shards, OPE-2239) because
     `globalSetup` runs per process. The step mints one under `.oe-it-prepare/` and every shard reads it.
     `tests/integration/global-setup-env.test.ts` is what reds if a shard goes back to minting its own.
@@ -820,13 +854,14 @@ Start from `tests/integration/tasks/child-binding-inheritance.test.ts` — it is
   environments. That divergence reads as a depth-dependent flake and is not one (OPE-582, OPE-1363);
   the prewarm's own state-dir pinning moved with it to `tests/integration/prewarm.ts`. `global-setup-env.test.ts` guards that contract from inside a real fork, and proves it is
   reading an INHERITED environment by matching the setup process's pid against its own `process.ppid`.
-- **Two lifecycle events never reach a hook on this build, so never write a test that waits on
-  one.** `subagent.called` is not dispatched to hook handlers at all. `session.completed` is not
-  emitted for any session: the framework emits it only when a session hits its TIMEOUT deadline,
-  which `limits.sessionTimeoutMs: false` removes, and the per-turn epilogue emits `session.waiting`
-  instead for every `conversation`-mode run, delegated workers included. `session.failed` and `session.started` DO reach hooks.
-  Nothing binds `session.completed` as its only edge any more — the routine outcome fold, the
-  dream cycle and the memory persist backstop all run at the end of a TURN. `tests/integration/
+- **Most `session.ended` events never reach a hook on this build, so never write a test that waits
+  on one.** eve 1.x writes `session.ended` for a timeout, a reset (`end()`), a closed session and a
+  run that threw through its terminal publisher, which emits without running hook effects. A
+  channel's own `session.ended` handler still runs. The one `session.ended` an authored hook
+  receives is a failed turn's terminal end (`outcome: "failed"`). `session.started` reaches hooks.
+  Nothing binds the completed `session.ended` as its only edge — the routine outcome fold, the
+  dream cycle and the memory persist backstop all run at the end of a TURN. The pinned framework
+  facts are PIN 6 in `packages/core/scripts/parked-child-lifecycle-test.ts`. `tests/integration/
   session-end/` exercises those turn edges, so a change that breaks them turns those files red.
 - If a test fails with `REDELIVERY STORM (OPE-559)`, it is a HARNESS artifact, not a product
   failure — a loaded box can make eve's local workflow world re-execute one step's body thousands

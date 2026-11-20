@@ -8,16 +8,19 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-nullable-optional-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 
-import { asSchema, generateText, stepCountIs, tool, type LanguageModel, type ToolSet } from "ai";
-import { MockLanguageModelV3 } from "ai/test";
+import { asSchema } from "ai";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { transformAuthoredToolset } from "../agent/access/authored-tool-transforms.js";
+import { seatCutApplies } from "../agent/access/seat-cut-slots.js";
+import { driveEveToolCall, modelSchemaOf } from "./_eve-tool-path.js";
 import { optionalNonNullablePaths, allowsNull, nullableOptionalSchema } from "../agent/access/nullable-optional-fields.js";
 import { registeredMountedEntries } from "../agent/access/window-gated.js";
 import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 import setSpendLimit, { planSetSpendLimit } from "../agent/tools/set_spend_limit.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
+import { installedEveRoot, readEveSchemaHelpers } from "./eve-tool-schema.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -31,12 +34,7 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 
 const require = createRequire(import.meta.url);
 const eveRoot = require.resolve("eve/package.json").replace(/package\.json$/, "");
-const eveRootUrl = pathToFileURL(eveRoot).href;
-const eveSchema = (await import(`${eveRootUrl}dist/src/tools/schema.js`)) as {
-  isToolSchema(schema: unknown): boolean;
-  serializeInputSchema(schema: unknown): unknown;
-  toInputSchema(schema: unknown): unknown;
-};
+const eveSchema = await readEveSchemaHelpers(installedEveRoot(import.meta.url));
 const staticRuntimeSchema = (s: unknown): unknown => (eveSchema.isToolSchema(s) ? s : eveSchema.toInputSchema(eveSchema.serializeInputSchema(s)));
 const replayedRuntimeSchema = (s: unknown): unknown => eveSchema.toInputSchema(eveSchema.serializeInputSchema(s));
 
@@ -46,30 +44,13 @@ const props = async (schema: unknown): Promise<Record<string, Json>> => ((await 
 
 const spendDef = setSpendLimit as unknown as { description: string; inputSchema: unknown };
 
+// The eve 1.x path (scripts/_eve-tool-path.ts): the roster shim `seatCut(name, tool)`, eve's schema
+// conversion, eve's own input check, then execute. `project: false` skips the seat cut: the CONTROL
+// that shows the seat cut is the rewrite's caller.
 async function driveToolCall(inputSchema: unknown, input: Json, project: boolean): Promise<{ received: unknown; modelTools: unknown; error: unknown }> {
-  let received: unknown = undefined;
-  let modelTools: unknown = undefined;
-  const toolset: Record<string, unknown> = {
-    probe: tool({ description: "probe", inputSchema: inputSchema as never, execute: async (args: unknown) => { received = args; return "ok"; } }),
-  };
-  if (project) projectToolSet(toolset);
-  let step = 0;
-  const model = new MockLanguageModelV3({
-    doGenerate: async (options: { tools?: unknown }) => {
-      step++;
-      if (step === 1) modelTools = options.tools;
-      const content = step === 1 ? [{ type: "tool-call" as const, toolCallId: "c1", toolName: "probe", input: JSON.stringify(input) }] : [{ type: "text" as const, text: "done" }];
-      return {
-        content,
-        finishReason: { unified: step === 1 ? ("tool-calls" as const) : ("stop" as const), raw: undefined },
-        usage: { inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } },
-        warnings: [],
-      };
-    },
-  } as never) as unknown as LanguageModel;
-  const result = await generateText({ model, prompt: "go", tools: toolset as ToolSet, stopWhen: stepCountIs(2) });
-  const errorPart = result.steps.flatMap((s) => s.content).find((p) => (p as { type: string }).type === "tool-error") as { error?: unknown } | undefined;
-  return { received, modelTools, error: errorPart?.error };
+  const authored = defineTool({ description: "probe", inputSchema: inputSchema as never, execute: async () => "ok" });
+  const call = await driveEveToolCall("probe", authored as never, input, { bypassSeatCut: !project });
+  return { received: call.ran ? call.received : undefined, modelTools: [{ name: "probe", inputSchema: call.modelSchema }], error: call.error };
 }
 
 const modelFacingProps = (modelTools: unknown): Record<string, Json> => {
@@ -119,13 +100,14 @@ const reqNull = await driveToolCall(mixed, { need: null }, true);
 ok(reqNull.error !== undefined && reqNull.received === undefined, "🔴 §4 a REQUIRED field sent as null still FAILS validation — only optional fields are widened");
 const allRequired = z.object({ a: z.string(), b: z.number() });
 ok(nullableOptionalSchema(allRequired) === undefined, "§4 a schema with no optional field is not rewritten (the module answers undefined)");
-const stableToolset: Record<string, unknown> = { t: tool({ description: "t", inputSchema: mixed as never, execute: async () => "ok" }) };
-projectToolSet(stableToolset);
+const stableToolset: Record<string, unknown> = { t: defineTool({ description: "t", inputSchema: mixed as never, execute: async () => "ok" }) };
+transformAuthoredToolset(stableToolset);
 const first = (stableToolset.t as { inputSchema: unknown }).inputSchema;
-projectToolSet(stableToolset);
-ok((stableToolset.t as { inputSchema: unknown }).inputSchema === first, "§4 a second projection keeps the SAME replacement (stable bytes for the prompt cache, no double wrap)");
-const sameSource: Record<string, unknown> = { t: tool({ description: "t", inputSchema: mixed as never, execute: async () => "ok" }) };
-projectToolSet(sameSource);
+const again: Record<string, unknown> = { t: stableToolset.t };
+transformAuthoredToolset(again);
+ok((again.t as { inputSchema: unknown }).inputSchema === first, "§4 a second pass keeps the SAME replacement (stable bytes for the prompt cache, no double wrap)");
+const sameSource: Record<string, unknown> = { t: defineTool({ description: "t", inputSchema: mixed as never, execute: async () => "ok" }) };
+transformAuthoredToolset(sameSource);
 ok((sameSource.t as { inputSchema: unknown }).inputSchema === first, "§4 a fresh tool object over the same schema gets the cached replacement");
 
 console.log("5. nesting:");
@@ -140,22 +122,39 @@ ok(allowsNull(((nestedWire.outer as Json).properties as Record<string, Json>).in
 ok(!allowsNull(((nestedWire.outer as Json).properties as Record<string, Json>).must), "§5 NEGATIVE CONTROL: the nested required field is not");
 
 console.log("6. inventory lint over every registered tool:");
+const UNSEAMED_OFFENDERS: readonly string[] = ["core:ask_question.options", "eve:ask-question.js:askQuestion.options", "eve:task-wait.js:taskWaitTool.timeoutSeconds"];
+// eve's provided tools that a roster file mounts through the seat cut: the sandbox kit
+// (agent/tools/sandbox_tools.ts) wraps the file tools and web_fetch. They are in the seamed
+// inventory as gated dynamic entries.
+const EVE_MOUNTED_BY_ROSTER: ReadonlySet<string> = new Set(["bash.js", "glob.js", "grep.js", "read-file.js", "write-file.js", "edit-file.js", "web-fetch.js"]);
+// eve's provided tools that nothing mounts: eve does not mount noReply by itself, and core ships its
+// own no_reply (a core tool file, in the seamed inventory). So no model is offered eve's noReply.
+const EVE_NOT_MOUNTED: ReadonlySet<string> = new Set(["no-reply.js"]);
 registerBrowserToolkit({
   browser_navigate: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
   browser_screenshot: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
 });
-const inventory: Record<string, unknown> = {};
+// Two inventories. SEAMED holds each schema as the seat cut receives it: the authored schema of every
+// tool that passes through `seatCut` (every core tool file except a SEAT_CUT_STATIC_SLOTS slot, and
+// every gated dynamic entry). UNSEAMED holds the tools no seat cut reaches on eve 1.x: the static
+// slots and eve's framework tools. Their optional non-nullable properties stay, and §6 pins them as
+// an explicit list, so a gap that opens or closes changes the list and fails the test.
+const seamed: Record<string, unknown> = {};
+const unseamed: Record<string, unknown> = {};
 const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
 for (const file of readdirSync(toolsDir).filter((f) => f.endsWith(".ts")).sort()) {
   const mod = (await import(pathToFileURL(join(toolsDir, file)).href)) as { default?: { inputSchema?: unknown } };
   const schema = mod.default?.inputSchema;
-  if (schema !== undefined && schema !== null) inventory[`core:${file.replace(/\.ts$/, "")}`] = staticRuntimeSchema(schema);
+  const slug = file.replace(/\.ts$/, "");
+  if (schema === undefined || schema === null) continue;
+  if (seatCutApplies(slug)) seamed[`core:${slug}`] = schema;
+  else unseamed[`core:${slug}`] = staticRuntimeSchema(schema);
 }
 for (const [name, entries] of registeredMountedEntries()) {
   let k = 0;
   for (const entry of entries) {
     const schema = (entry as { inputSchema?: unknown }).inputSchema;
-    if (schema !== undefined && schema !== null) inventory[`dynamic:${name}#${k++}`] = replayedRuntimeSchema(schema);
+    if (schema !== undefined && schema !== null) seamed[`dynamic:${name}#${k++}`] = schema;
   }
 }
 const providedDir = join(eveRoot, "dist/src/tools/provided");
@@ -163,31 +162,32 @@ for (const file of readdirSync(providedDir).filter((f) => f.endsWith(".js")).sor
   const mod = (await import(pathToFileURL(join(providedDir, file)).href)) as Record<string, unknown>;
   for (const [exportName, value] of Object.entries(mod)) {
     const schema = (value as { inputSchema?: unknown } | null)?.inputSchema;
-    if (schema !== undefined && schema !== null && exportName !== "default") inventory[`eve:${file}:${exportName}`] = replayedRuntimeSchema(schema);
+    if (schema !== undefined && schema !== null && exportName !== "default" && !EVE_MOUNTED_BY_ROSTER.has(file) && !EVE_NOT_MOUNTED.has(file)) unseamed[`eve:${file}:${exportName}`] = replayedRuntimeSchema(schema);
   }
 }
-const names = Object.keys(inventory);
-ok(names.filter((k) => k.startsWith("core:")).length >= 30, `§6 the inventory reaches the core static tools (${names.filter((k) => k.startsWith("core:")).length})`);
+const names = Object.keys(seamed);
+ok(names.filter((k) => k.startsWith("core:")).length >= 30, `§6 the seamed inventory reaches the core tool files (${names.filter((k) => k.startsWith("core:")).length})`);
 ok(names.filter((k) => k.startsWith("dynamic:")).length >= 10, `§6 …and the gated dynamic entries (${names.filter((k) => k.startsWith("dynamic:")).length})`);
-ok(names.some((k) => k.startsWith("eve:")), "§6 …and eve's framework tools");
+ok("core:ask_question" in unseamed && Object.keys(unseamed).some((k) => k.startsWith("eve:")), "§6 the unseamed inventory holds the static slot and eve's framework tools");
 
-const offenders = async (project: boolean): Promise<string[]> => {
+const offenders = (inventory: Record<string, unknown>, project: boolean): string[] => {
   const found: string[] = [];
   for (const [name, schema] of Object.entries(inventory)) {
-    const toolset: Record<string, unknown> = { [name]: tool({ description: name, inputSchema: schema as never, execute: async () => "ok" }) };
-    if (project) projectToolSet(toolset);
-    const json = await advertised((toolset[name] as { inputSchema: unknown }).inputSchema);
+    const toolset: Record<string, unknown> = { [name]: { description: name, inputSchema: schema, execute: async () => "ok" } };
+    if (project) transformAuthoredToolset(toolset);
+    const json = modelSchemaOf(toolset[name]);
     for (const path of optionalNonNullablePaths(json)) found.push(`${name}.${path}`);
   }
-  return found;
+  return found.sort();
 };
-const raw = await offenders(false);
-console.log(`   inventory: ${names.length} schemas (core ${names.filter((k) => k.startsWith("core:")).length}, dynamic ${names.filter((k) => k.startsWith("dynamic:")).length}, eve ${names.filter((k) => k.startsWith("eve:")).length}); optional non-nullable without the seam: ${raw.length}; set_spend_limit schema is ${eveSchema.isToolSchema(spendDef.inputSchema) ? "the authored zod" : "eve-rehydrated"}`);
-ok(raw.length > 50, `§6 CONTROL: WITHOUT the seam the inventory has ${raw.length} optional non-nullable properties — the lint below measures a real difference`);
+const raw = offenders(seamed, false);
+console.log(`   seamed: ${names.length} schemas (core ${names.filter((k) => k.startsWith("core:")).length}, dynamic ${names.filter((k) => k.startsWith("dynamic:")).length}); unseamed: ${Object.keys(unseamed).length}; optional non-nullable without the seam: ${raw.length}; set_spend_limit schema is ${eveSchema.isToolSchema(spendDef.inputSchema) ? "the authored zod" : "eve-rehydrated"}`);
+ok(raw.length > 50, `§6 CONTROL: WITHOUT the seam the seamed inventory has ${raw.length} optional non-nullable properties — the lint below measures a real difference`);
 ok(raw.includes("core:set_spend_limit.monthlyTokens"), "§6 CONTROL: …set_spend_limit.monthlyTokens among them");
-const left = await offenders(true);
-eq(left, [], "🔴 §6 WITH the seam no registered tool advertises an optional non-nullable property");
+eq(offenders(seamed, true), [], "🔴 §6 WITH the seam no tool that passes through the seat cut advertises an optional non-nullable property");
+eq(offenders(unseamed, false), UNSEAMED_OFFENDERS, "🔴 §6 the tools no seat cut reaches keep exactly these optional non-nullable properties (a known eve 1.x gap)");
 
 console.log(`\nnullable-optional-fields: ${n} assertions passed`);
 
 // proves: AP-MOD-core-access-nullable-optional-fields
+// proves: AP-MOD-core-access-authored-tool-transforms

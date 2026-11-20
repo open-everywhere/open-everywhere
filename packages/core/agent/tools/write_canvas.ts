@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -30,7 +30,7 @@ import {
   type SlackDocCall,
 } from "../channels/slack-canvas-list.js";
 import { slackBridge } from "../channels/slack-bridge.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 
 const TOOL = "write_canvas";
 
@@ -139,10 +139,5 @@ const writeCanvasEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry(TOOL, "_single", writeCanvasEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => (slackBridge() ? writeCanvasEntry : null),
-  },
-});
+export default sessionMountedTool(TOOL, writeCanvasEntry, () => slackBridge() !== null);

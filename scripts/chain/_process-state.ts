@@ -1,5 +1,4 @@
 const OE_PREFIX = "open-everywhere.";
-const PROJECTION_HOOK_KEY = "__oeToolResultProjection";
 
 export function resetProcessGlobals(): void {
   const g = globalThis as unknown as { [k: symbol]: unknown; [k: string]: unknown };
@@ -12,5 +11,4 @@ export function resetProcessGlobals(): void {
       (value as { oeSlot: unknown }).oeSlot = null;
     }
   }
-  delete g[PROJECTION_HOOK_KEY];
 }

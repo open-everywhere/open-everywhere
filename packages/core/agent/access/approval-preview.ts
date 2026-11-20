@@ -27,7 +27,7 @@ export function approvalPreviewFor(
   const admin: string[] = [];
   const elsewhere: string[] = [];
   const confirm: string[] = [];
-  const lean = (grain === "standing" || grain === "thread") && route === "agent";
+  const lean = (grain === "standing" || grain === "thread") && (route === "agent" || route === "work");
   const holds = (name: string): boolean => mountedOn(name, grain, gated, ungated) && (!lean || allowedOnLeanSeat(name));
   for (const [name, entry] of Object.entries(registry)) {
     if (entry.via.kind === "eve-hitl") {
@@ -47,9 +47,9 @@ const code = (names: readonly string[]): string => names.map((n) => "`" + n + "`
 function elsewhereClause(elsewhere: readonly string[], route: MemoryRecallRoute): string {
   if (elsewhere.length === 0) return "";
   const names = code(elsewhere);
-  if (route === "agent") {
+  if (route === "agent" || route === "work") {
     return (
-      `${names} are not on this seat. A worker you delegate to with \`${route}\` holds them, and they ` +
+      `${names} are not on this seat. A worker you ${route === "work" ? "hand a job to" : "delegate to"} with \`${route}\` holds them, and they ` +
       `stop for the same card there — handing work off never moves an action past a gate, it only moves ` +
       `where the card is proposed from.`
     );

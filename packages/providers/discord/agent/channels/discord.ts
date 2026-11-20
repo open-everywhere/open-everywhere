@@ -67,16 +67,18 @@ const discordInteractionChannel = discordChannel({
     return { auth };
   },
   events: {
-    "turn.started": async (_data, channel, ctx) => {
-      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId(ctx);
+    "turn.started": async (_event, ctx) => {
+      const channel = ctx.channel;
+      (channel.state as unknown as Record<string, unknown>).oeReplyPrincipalId = authPrincipalId({ session: ctx.session });
       await channel.discord.startTyping();
     },
-    "message.completed": async (data, channel, ctx) => {
+    "content.completed": async (event, ctx) => {
+      const channel = ctx.channel;
       const sessionId = ctx?.session?.id;
-      const turnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message, turnId);
+      const turnId = event.scope?.turnId ?? ctx.session.turn?.id;
+      const action = finalMessageActionForTurn(event.data, turnId);
       if (action.kind === "buffer-tool-status") return;
-      const repliedThisTurn = consumeRepliedThisTurn((ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+      const repliedThisTurn = consumeRepliedThisTurn(turnId);
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:discord] judged silence (${action.reason}) — nothing posted (channel ${channel.state.channelId ?? "?"})`);

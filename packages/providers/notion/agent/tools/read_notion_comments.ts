@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionComments, readNotionPageIdentity, resolveBlockOwningPage, resolveNotionCredential, type NotionCommentSummary } from "../channels/notion-api.js";
 import { notionCallerCredential } from "../channels/notion-credentials.js";
@@ -12,7 +12,7 @@ import {
   bindFrom,
   workerChatArmMount,
   getConfig,
-  preRegisterDynamicEntry,
+  sessionMountedTool,
   resolvePartition,
   ageAtRead,
   noteAuthoredRecordRead,
@@ -141,13 +141,8 @@ export const readNotionCommentsEntry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("read_notion_comments", "_single", readNotionCommentsEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!workerChatArmMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
-      return readNotionCommentsEntry;
-    },
-  },
+export default sessionMountedTool("read_notion_comments", readNotionCommentsEntry, (ctx) => {
+  if (!workerChatArmMount(ctx, "notion", () => getConfig().loadDomains())) return false;
+  return true;
 });

@@ -557,8 +557,8 @@ The table below is **generated from the schema** — edit the schema, run `npm r
 | `accessRequests.adminChannel` | `(unset)` | The channel that hears "PR opened — merge to grant" for every pull request the access-request, `create_agent`, `declare_webhook` and `propose_mcp_server` flows open (was `OE_ACCESS_ADMIN_CHANNEL`, OPE-2650). It is also the governance-channel fallback when no memory domain is a governance domain. Empty (shipped) ⇒ unset: with this setting OR `accessRequests.configRepo` unset, each flow refuses politely and nothing else changes. See docs/how-it-works/access-requests.md. |
 | `accessRequests.configBase` | `"main"` | The base branch of `accessRequests.configRepo`: each config pull request branches from it and merges into it (was `OE_ACCESS_CONFIG_BASE`, OPE-2650). |
 | `accessRequests.configRepo` | `(unset)` | This deployment's own config repository, `owner/repo` — the repository the grants, agents, webhook and credential-binding overlays live in, and the one every config pull request targets (was `OE_ACCESS_CONFIG_REPO`, OPE-2650). The GitHub App needs write access to it. Empty (shipped) ⇒ unset: the pull-request flows refuse politely, and with `github.auth: "token"` the token reaches no repository of its own. See docs/how-it-works/access-requests.md. |
-| `agent.compactionThresholdPercent` | `0.5 (50% of the window)` | eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. A FRACTION IS THE ONLY THING AUTHORED: the absolute token count is this value times the active model stack's primary context window, so pointing `models.stack` at a smaller-window stack compacts proportionally lower with no edit here. `/oe status` prints the count this deploy resolved. Per-type thresholds are not reachable on the pinned eve. Read at BOOT. |
-| `agent.sessionInputTokenBudget` | `30000000` | eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. ONE SHARED BUDGET: every delegated worker's input counts toward its seat's total, and a worker starts with only the seat's remaining share. Read at BOOT (it is a `defineAgent` argument). |
+| `agent.compactionThresholdPercent` | `0.5 (50% of the window)` | eve's `compaction.threshold` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. A FRACTION IS THE ONLY THING AUTHORED: the absolute token count is this value times the active model stack's primary context window, so pointing `models.stack` at a smaller-window stack compacts proportionally lower with no edit here. `/oe status` prints the count this deploy resolved. Per-type thresholds are not reachable on the pinned eve. Read at BOOT. |
+| `agent.sessionInputTokenBudget` | `30000000` | The budget behind eve's `limits.sessionUsage`. The agent passes `sessionUsageLimit(budget)` from `@open-everywhere/core/agent/model/session-usage.js`, which trips when the session's input since the last approved continuation reaches this many tokens. CACHE READS DO NOT COUNT; cache writes do. A `decide()` call counts, and a delegated worker's spend counts toward its seat once the worker replies. A worker session applies the same limit to its own usage. It REPLACES eve's own default limit (40M input tokens per window, cache reads excluded), so the graceful park/fail fires at this value. A hosted wall that counts cache reads is not ordered by this budget: a long cached session can pass 40M gross input below it. Read at BOOT (it is a `defineAgent` argument). |
 | `approvals.checkpointTtlHours` | `24 h` | TTL for the session-checkpoint memos of a LIVE session, in hours. A REAL bound, not only a GC bound (OPE-2161). The memo's session id embeds the window generation, so a rotation can drop it first. But one generation can live for days, and then this clock ends the grant. The card and the click answer name this value. It does NOT bound a ROUTINE fire's continue grant, which carries no expiry: approving a durable job's checkpoint records the cost at that moment as the approved mark, and the next card fires only once the session spends a fresh threshold's worth on top of it. It still bounds that fire's "asked" marker, which is what lets a declined job be asked again. |
 | `approvals.judgeMode` | `"enforce"` | The LLM approval judge. `enforce` (shipped): for a judge-deferred act, the judge allows it with no card ONLY when it cites one of the scope's authored pre-approval rules (`preApprovalRules` on a bundle); every other answer, an unreachable judge model and a timeout all post the card. Admin acts never reach the judge. A consult costs up to two model calls on the `judge` model role, and a scope with no authored rule costs none. `shadow` decides nothing and logs a would-be verdict beside every real card. `off` runs no judge, so every gated act posts a card. |
 | `approvals.routineCardWaitSeconds` | `120 s` | How long an unattended routine fire's APPROVALS-PLANE refusal WAITS for its permission card to be answered before it declines for that run. 120 (shipped) holds the refusing call for up to two minutes, so a person who is around can answer the card while the run is still up. 0 is the opt-out: the refusal is immediate and the card decides only FUTURE runs. It does NOT govern the CONNECTOR plane's refusal, which posts its card and refuses at once whatever this says: that refusal is computed inside the connection's own approval gate, so a wait there holds the connector call open rather than the model's turn. Armed, the refusing tool call polls the card's own pending row, and an approval inside the window lets that run proceed. THE BUDGET, and why 120 is the shipped value: the deployed function's wall ceiling is 300 s (measured, platform default, no app pin); the turn's own elapsed time is read off its start stamp and subtracted; the model still has to be told and the run's report posted, so 60 s is reserved. The wait is CLAMPED to what is left, whatever this value says — so a turn already 250 s old waits not at all rather than dying mid-report, and 120 is the value a turn that reached its refusal at the assumed 120 s can still afford (300 − 120 − 60). 🔴 A deadline never decides the card: it stays pending and clickable, and approving it still arms every later run. |
@@ -928,14 +928,16 @@ greps the source for `process.env.X` finds every name accounted for somewhere.
 | `AI_GATEWAY_API_KEY` | — | Vercel AI Gateway key. An **operator secret** since OPE-2650: store it with `oe secret set AI_GATEWAY_API_KEY` (see [Operator secrets](#operator-secrets-ope-2650)). Unneeded on a deployed Vercel project (OIDC auto-injected) or after `eve link`. |
 
 **The build itself also talks to the gateway, separately from any deployed traffic.** `npm run
-build` (`eve build`) resolves each configured model id's context window and output limit from the
+build` (`eve build`) resolves each configured model id's context window from the
 public AI Gateway model catalog (`https://ai-gateway.vercel.sh/v1/models/catalog`). This call needs
 no gateway key — the endpoint is unauthenticated. It does need outbound network access to that
 host. A build environment that cannot reach it (an egress-filtered sandbox, an offline CI runner)
 fails the build, unless a cache already exists at `.eve/cache/model-catalog.json`. Run `npm run
 seed:model-catalog` before building to seed that cache from a small, committed snapshot
 (`agent/model/model-catalog-snapshot.json`, trimmed to this repo's configured model ids). Add
-`--refresh` to refetch the live catalog and update the snapshot itself.
+`--refresh` to refetch the live catalog and update the snapshot itself. The cache format is internal to
+eve. `npm run test:eve-deep-reads` proves that eve's own cache reader accepts the seeded file with no
+network, through the stale-cache fallback.
 
 ### Identity & partitioning
 
@@ -1316,8 +1318,8 @@ change.
 
 One turn-scoped sibling has **no env var at all**. The per-turn **step boundary** used to be
 `OE_TURN_STEP_CEILING`, read inside the patched `eve` bytes — the only seam a byte-patch had. It is
-userland now (`packages/core/agent/model/step-boundary.ts`, counted in the `step.started` model
-resolver), so it is two ordinary [agent settings](#agent-settings-behaviour-config-as-code) —
+userland now (`packages/core/agent/model/step-boundary.ts`, counted in the `defineDynamic` model
+function, which eve runs before every model call), so it is two ordinary [agent settings](#agent-settings-behaviour-config-as-code) —
 [`turn.stepBudget`](#agent-settings-behaviour-config-as-code) and
 [`turn.stepBackstopMultiple`](#agent-settings-behaviour-config-as-code) — changed in `agent/settings/settings.ts`,
 i.e. in a reviewed diff. There is deliberately no ops override: a runaway-turn budget is a tuning
@@ -1358,7 +1360,7 @@ Three things to know before you arm it:
   before arming it on any deployment carrying real conversations.
 - **Retention is your act.** Harvest the captures over
   `GET /control/v1/session/<sessionId>/model-calls`, then delete them by session. There is no TTL.
-- **A capture gap is loud.** The recorder counts what it captured; eve's `step.completed` events
+- **A capture gap is loud.** The recorder counts what it captured; eve's completed `model.settled` events
   count what actually ran. If a model call reaches a provider on a path the recorder does not wrap,
   the turn writes one `soak.capture_gap` audit row carrying both counts. Treat that session's
   captures as unusable for replay and fix the seam — a partial prefix library is worse than none.

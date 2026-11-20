@@ -53,7 +53,7 @@ ok(allowsNull(findingProps.location) && allowsNull(props.meaning), "§1 findings
 for (const key of ["recommendation", "summary", "evidenceSeen", "findings"]) ok(allowsNull(props[key]) === false, `🔴 §1 NEGATIVE CONTROL: the required field \`${key}\` is NOT nullable`);
 for (const key of ["severity", "category", "title", "detail"]) ok(allowsNull(findingProps[key]) === false, `§1 NEGATIVE CONTROL: the required finding field \`${key}\` is NOT nullable`);
 
-console.log("2. final_output tool call:");
+console.log("2. eve__reply tool call:");
 async function finalOutputCall(lowered: Json, input: Json): Promise<{ input: unknown; invalid: boolean }> {
   const tools = { [eveFinal.FINAL_OUTPUT_TOOL_NAME]: eveFinal.buildFinalOutputTool(lowered) };
   const model = new MockLanguageModelV3({
@@ -70,7 +70,7 @@ async function finalOutputCall(lowered: Json, input: Json): Promise<{ input: unk
 }
 const nulls = verdict({ location: null }, { meaning: null });
 const onWrapped = await finalOutputCall(loweredWrapped, nulls);
-ok(onWrapped.invalid === false, "🔴 §2 `location: null` + `meaning: null` is a VALID final_output call on the wrapped schema");
+ok(onWrapped.invalid === false, "🔴 §2 `location: null` + `meaning: null` is a VALID eve__reply call on the wrapped schema");
 const onRaw = await finalOutputCall(loweredRaw, nulls);
 ok(onRaw.invalid === true, "§2 CONTROL: the same call is INVALID on the raw schema — the model's only valid move there is to invent a value");
 const withValue = await finalOutputCall(loweredWrapped, verdict({ location: "a.ts:1" }));

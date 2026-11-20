@@ -192,8 +192,13 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
   ok("a subagent whose model no role names is flagged", bareWhere.includes("subagent extra vendor/other via mistral (no role names this model)"));
   ok("any other bare id takes the primary role's target", bareWhere.includes("any other via mistral, the primary role's target"));
   ok("no bare facts: the row says nothing about bare ids", !row(report({}), "model route").where.includes("bare model ids"));
+  const rooted = report({ bareDefaultVia: "gateway", bareModels: [{ where: "subagent review", id: undefined, rootModel: true }] });
+  ok(
+    "a subagent that takes the root agent's model is named with the primary model resolver",
+    row(rooted, "model route").where.includes("subagent review takes the root agent's model (the primary model resolver, the same route as the root agent's turns)"),
+  );
   const unloaded = report({ bareDefaultVia: "gateway", bareModels: [{ where: "subagent broken", id: undefined }] });
-  ok("a subagent whose module did not load is named as unknown", row(unloaded, "model route").where.includes("subagent broken model unknown (its module did not load)"));
+  ok("a subagent whose module did not load is named as unknown", row(unloaded, "model route").where.includes("subagent broken model unknown (its module did not load, or its model is not a model id)"));
 }
 
 {
@@ -202,10 +207,25 @@ function row(r: ReturnType<typeof sovereigntyReport>, piece: string): Sovereignt
   mkdirSync(join(app, "agent", "subagents", "broken"), { recursive: true });
   writeFileSync(join(app, "agent", "subagents", "good", "agent.ts"), `export default { model: "vendor/model-a" };\n`);
   writeFileSync(join(app, "agent", "subagents", "broken", "agent.ts"), `throw new Error("this subagent does not load");\n`);
+  mkdirSync(join(app, "agent", "subagents", "object"), { recursive: true });
+  writeFileSync(join(app, "agent", "subagents", "object", "agent.ts"), `export default { model: {} };\n`);
+  mkdirSync(join(app, "agent", "subagents", "rooted"), { recursive: true });
+  writeFileSync(
+    join(app, "agent", "subagents", "rooted", "agent.ts"),
+    `import root from "../../agent.js";\nexport default defineAgent({ description: "x", model: root.model });\n`,
+  );
   const found = await declaredSubagentModels(app);
   ok(
     `declared subagents: the broken one stays in the list with an unknown model — got ${JSON.stringify(found)}`,
-    found?.length === 2 && found[0]!.where === "subagent broken" && found[0]!.id === undefined && found[1]!.where === "subagent good" && found[1]!.id === "vendor/model-a",
+    found?.length === 4 && found[0]!.where === "subagent broken" && found[0]!.id === undefined && found[0]!.rootModel === undefined && found[1]!.where === "subagent good" && found[1]!.id === "vendor/model-a",
+  );
+  ok(
+    `declared subagents: a model that is not a model id stays in the list as unknown, not dropped — got ${JSON.stringify(found?.[2])}`,
+    found?.[2]?.where === "subagent object" && found[2]!.id === undefined && found[2]!.rootModel === undefined,
+  );
+  ok(
+    `declared subagents: the root agent's model is read from the source, with no import of a root agent this app does not have — got ${JSON.stringify(found?.[3])}`,
+    found?.[3]?.where === "subagent rooted" && found[3]!.id === undefined && found[3]!.rootModel === true,
   );
 }
 
@@ -361,7 +381,10 @@ const ENV = { DATABASE_URL: NEON_URL, DO_NOT_TRACK: "1" };
   const expectOff = !telemetrySwitches(getSettings().telemetry, appEnv(REPO, ENV)).enabled;
   ok("oe sovereignty honours the env it reads", text.includes("nowhere: telemetry is OFF") === expectOff);
   ok("oe sovereignty reads the app's transcription role", text.includes("■ transcription\n  where:       primary "));
-  ok("oe sovereignty reads the app's declared subagent and its target (OPE-2566)", text.includes("subagent fresh_eyes_review via gateway") && text.includes("any other via gateway"));
+  ok(
+    "oe sovereignty names the app's declared subagent as one that takes the root agent's model, and any other bare id goes via the primary's target",
+    text.includes("subagent fresh_eyes_review takes the root agent's model (the primary model resolver, the same route as the root agent's turns)") && text.includes("any other via gateway"),
+  );
   ok("oe sovereignty reads the app's eve scripts", text.includes("eve CLI telemetry is OFF in every script"));
   ok("oe sovereignty never prints the DSN", !text.includes(SECRET_PASSWORD) && !text.includes("ep-quiet-lab"));
   const j = io();

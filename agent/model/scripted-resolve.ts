@@ -1,14 +1,22 @@
 import { mockModel, type MockModelRequest, type MockModelResponse } from "eve/evals";
+import { runs, type SessionView } from "eve/events";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
-import { isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { currentTurnId, isSubagentChildContext, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { isWorkSessionContext } from "@open-everywhere/core/agent/access/work-session.js";
 import { parseWorkCancels, parseWorkRequests } from "@open-everywhere/core/agent/channels/work.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
 import { NO_REPLY_SENTINEL, REDRIVE_TRIGGER_ID_PREFIX } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
-import { noteWakeAttachments } from "@open-everywhere/core/agent/access/worker-continuation.js";
+import { noteWakeAttachmentsFrom } from "@open-everywhere/core/agent/access/worker-continuation.js";
 import { boundaryStopReply, isTurnEndingTier, noteTurnStep, reportStepBoundary } from "@open-everywhere/core/agent/model/step-boundary.js";
+import { withEmptyStopReissue } from "@open-everywhere/core/agent/model/empty-stop-reissue.js";
+import { withWorkerToolsetEvidenceModel } from "@open-everywhere/core/agent/model/worker-toolset-evidence.js";
+import { withSeatToolCut } from "@open-everywhere/core/agent/model/seat-tool-cut.js";
+import { withWorkSessionCancelFence } from "@open-everywhere/core/agent/access/work-cancel-fence.js";
+import type { RoutableModel } from "@open-everywhere/core/agent/model/routing.js";
 import {
+  compactionSummaryResponse,
+  isCompactionSummaryRequest,
   isEmptyResponseReissue,
   ANY_SESSION,
   SCRIPTED_MODEL_VALVE,
@@ -45,23 +53,37 @@ import {
   type ScriptedStep,
 } from "./scripted-model.js";
 
-function eventData(event: unknown): { turnId?: string; stepIndex?: number } {
-  const data = (event as { data?: { turnId?: unknown; stepIndex?: unknown } } | undefined)?.data;
-  return {
-    turnId: typeof data?.turnId === "string" ? data.turnId : undefined,
-    stepIndex: typeof data?.stepIndex === "number" ? data.stepIndex : undefined,
-  };
+export function frameStepIndex(ctx: unknown, turnId: string | undefined): number {
+  if (turnId === undefined) return 0;
+  const view = (ctx as { view?: unknown } | undefined)?.view;
+  if (view === null || typeof view !== "object") return 0;
+  let own: readonly { readonly status: string }[];
+  try {
+    own = runs(view as SessionView, { turnId });
+  } catch {
+    return 0;
+  }
+  return own.some((run) => run.status !== "settled") ? own.length - 1 : own.length;
 }
 
-function safeEcho(event: unknown): unknown {
+export function frameFacts(ctx: unknown): { readonly turnId: string | undefined; readonly stepIndex: number } {
+  let turnId: string | undefined;
   try {
-    return JSON.parse(JSON.stringify(event ?? null));
+    turnId = currentTurnId(ctx as BindableContext);
   } catch {
-    return "unserializable";
+    turnId = undefined;
   }
+  return { turnId, stepIndex: frameStepIndex(ctx, turnId) };
 }
 
 export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<ReturnType<typeof mockModel> | null> {
+  const model = await scriptedModelForStep(event, ctx);
+  return model === null
+    ? null
+    : (withSeatToolCut(withWorkSessionCancelFence(withEmptyStopReissue(withWorkerToolsetEvidenceModel(model as unknown as RoutableModel, ctx)))) as unknown as ReturnType<typeof mockModel>);
+}
+
+async function scriptedModelForStep(event: unknown, ctx: unknown): Promise<ReturnType<typeof mockModel> | null> {
   if (!scriptedModelArmed()) return null;
   if (onVercel()) {
     throw new Error(
@@ -75,7 +97,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   stampModelCall(SCRIPTED_MODEL_ID);
 
   const boundary = await noteTurnStep(bindable, event);
-  noteWakeAttachments((ctx as { messages?: unknown } | undefined)?.messages);
+  await noteWakeAttachmentsFrom(ctx);
   if (isTurnEndingTier(boundary.tier)) {
     reportStepBoundary(bindable, boundary);
     if (isWorkSessionContext(bindable)) {
@@ -83,7 +105,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
       const wId = typeof wSession === "string" ? wSession : undefined;
       const wStore = scriptedStore();
       const named = (wId !== undefined ? wStore.get(wId) : undefined)?.script.work !== undefined || wStore.get(ANY_SESSION)?.script.work !== undefined;
-      if (!named) noteWorkSessionCall({ sessionId: wId, turnId: eventData(event).turnId });
+      if (!named) noteWorkSessionCall({ sessionId: wId, turnId: frameFacts(ctx).turnId });
     }
     return mockModel({
       modelId: SCRIPTED_MODEL_ID,
@@ -101,7 +123,7 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   if (isWorkSessionContext(bindable)) {
     const named = ownEntry?.script.work !== undefined ? ownEntry : store.get(ANY_SESSION)?.script.work !== undefined ? store.get(ANY_SESSION) : undefined;
     if (named === undefined) {
-      noteWorkSessionCall({ sessionId, turnId: eventData(event).turnId });
+      noteWorkSessionCall({ sessionId, turnId: frameFacts(ctx).turnId });
       return defaultWorkStepModel();
     }
   }
@@ -115,19 +137,18 @@ export async function scriptedModelFor(event: unknown, ctx: unknown): Promise<Re
   }
   const seqAtResolve = scriptedRegistrationSeq();
 
-  const { turnId, stepIndex } = eventData(event);
+  const { turnId, stepIndex } = frameFacts(ctx);
   const role: ScriptedRole = isSubagentChildContext(bindable) ? "child" : isWorkSessionContext(bindable) ? "work" : "parent";
 
   const observation: ResolveObservation = {
     role,
     sessionId,
     turnId,
-    stepIndex: stepIndex ?? 0,
+    stepIndex,
     pid: process.pid,
     channelKind: typeof bindable?.channel?.kind === "string" ? bindable.channel.kind : undefined,
     classifiedKind: classifySessionId(bindable?.channel?.continuationToken).kind,
     hasSessionParent: bindable?.session?.parent !== undefined,
-    eventEcho: safeEcho(event),
   };
 
   if (usedFallback && role === "parent" && sessionId !== undefined && turnId !== undefined) {
@@ -170,9 +191,16 @@ function defaultWorkStepModel(): ReturnType<typeof mockModel> {
   return signalAwareMockModel({
     respond: async (request) => {
       const prompt = request.messages.map((m) => m.text).join("\n");
-      const cancelledCount = request.toolResults.filter((r) => r.name === "task_cancel").length;
+      const cancelledCount = request.toolResults.filter((r) => r.name === "eve__task_cancel").length;
       const cancel = parseWorkCancels(prompt)[cancelledCount];
-      if (cancel !== undefined) return { toolCalls: [{ name: "task_cancel", input: { taskId: cancel.taskId }, id: `work-${cancel.cancelId}` }] };
+      // The work session's model calls only what its model call offers, as a real model does. A
+      // work session that loses `agent` or `eve__task_cancel` to the model-call cut then stalls
+      // here, and every forward flow of the integration tier goes red.
+      const unoffered = (name: string) => !request.tools.some((t) => t.name === name);
+      if (cancel !== undefined) {
+        if (unoffered("eve__task_cancel")) return workStepFault("eve__task_cancel");
+        return { toolCalls: [{ name: "eve__task_cancel", input: { taskId: cancel.taskId }, id: `work-${cancel.cancelId}` }] };
+      }
       const blocks = parseWorkRequests(prompt);
       const results = request.toolResults.filter((r) => r.name === "agent");
       const resultsFor = (requestId: string) => results.filter((r) => r.id === workCallId(requestId) || r.id.startsWith(`${workCallId(requestId)}-`));
@@ -182,11 +210,17 @@ function defaultWorkStepModel(): ReturnType<typeof mockModel> {
         if (tried.some((r) => !r.isError)) continue;
         const delivered = blocks.filter((b) => b.requestId === next.requestId).length;
         if (tried.length >= delivered) continue;
+        if (unoffered("agent")) return workStepFault("agent");
         return { toolCalls: [{ name: "agent", input: { message: next.brief, ...(next.taskId !== undefined ? { taskId: next.taskId } : {}) }, id: `${workCallId(next.requestId)}-${tried.length + 1}` }] };
       }
       return { text: "Started the forwarded job; its result goes back to the conversation when it settles." };
     },
   });
+}
+
+function workStepFault(name: string): MockModelResponse {
+  console.error(`[open-everywhere:scripted-model] the work session's model call does not offer \`${name}\`, so the scripted work step cannot call it`);
+  return { text: `scripted-model fault: the work session is not offered ${name}` };
 }
 
 function workCallId(requestId: string): string {
@@ -454,7 +488,7 @@ export function signalAwareMockModel(opts: {
   const model = mockModel({
     modelId: SCRIPTED_MODEL_ID,
     provider: "open-everywhere-scripted",
-    respond: (request) => opts.respond(request, callSignal),
+    respond: (request) => (isCompactionSummaryRequest(request) ? compactionSummaryResponse(request) : opts.respond(request, callSignal)),
   });
   const calls = callableModel(model);
   const doStream = calls.doStream.bind(calls);

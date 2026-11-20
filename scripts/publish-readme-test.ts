@@ -124,7 +124,7 @@ ok(
 
 const corePin = (JSON.parse(readFileSync(join(root, "packages/core/package.json"), "utf8")) as { peerDependencies?: Record<string, string> })
   .peerDependencies?.eve;
-ok(typeof corePin === "string" && /^\d+\.\d+\.\d+$/u.test(corePin), `@open-everywhere/core pins eve at an exact triple (got ${String(corePin)})`);
+ok(typeof corePin === "string" && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(corePin), `@open-everywhere/core pins eve at an exact triple (got ${String(corePin)})`);
 
 ok(ALL_PUBLISHABLE_PACKAGES.length === 11, `the publish list holds exactly 11 packages (got ${ALL_PUBLISHABLE_PACKAGES.length}) — a shrunk list silently stops checking the package that left`);
 

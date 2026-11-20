@@ -12,6 +12,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { isThreadSeatWindowToken, isTaskWindowToken, parseWindowToken } from "../channels/window-key.js";
 import { threadKeyArgument } from "./read_thread_seat.js";
 import { appendAudit } from "../audit/audit.js";
+import { refuseTargetIfStopped, refuseVerbIfStoodDown } from "../channels/stand-down-gate.js";
 
 export function renderSeatSteer(text: string, mirrored: boolean): string {
   return (
@@ -72,6 +73,8 @@ export default windowGated(
         );
       }
       if (input.mirror) {
+        if (threadKey === ref.threadKey) await refuseVerbIfStoodDown(c, "message_thread_seat");
+        else await refuseTargetIfStopped(c, "message_thread_seat", threadKey);
         await postUnifiedReply(seatOrigin, input.text, {}, replyAuditFor(c, "tool", wakeId ?? undefined));
       }
       const delivered = await dispatchSeatMessage({

@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { proposalScopeKey } from "../channels/propose-scope.js";
@@ -13,7 +13,7 @@ import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { getConfig } from "../access/config.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export interface PurgeInput {
@@ -252,10 +252,5 @@ const purgeEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("purge_memory", "_single", purgeEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => purgeEntry,
-  },
-});
+export default sessionMountedTool("purge_memory", purgeEntry);

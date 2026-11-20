@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MIN_PLAUSIBLE_HOOK_FILES, blankCommentsAndStrings, catchesInSameFile, hookThrowFindings, readHookFiles } from "./hook-throw-lint.js";
+import { MIN_PLAUSIBLE_HOOK_FILES, blankCommentsAndStrings, catchesInSameFile, hookPathFindings, hookThrowFindings, readHookFiles } from "./hook-throw-lint.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -21,7 +21,7 @@ const ok = (cond: boolean, label: string): void => {
   const source = "// hook-throw: CONTROL — refuses a turn\nthrow new Error('stop');\n";
   const findings = hookThrowFindings([{ file: "made-up.ts", source }], []);
   ok(findings.length === 1 && findings[0]!.rule === "control", "rule 2: a CONTROL marker is REFUSED, not accepted");
-  ok(findings[0]!.detail.includes("swallowed"), "rule 2: the message says why a control throw cannot work");
+  ok(findings[0]!.detail.includes("FAILED turn"), "rule 2: the message says why a control throw is not a refusal on eve 1.x");
 }
 {
   const source = "// hook-throw: DEFECT — a non-string here is a programmer error\nthrow new TypeError('bad');\n";
@@ -105,11 +105,45 @@ const ok = (cond: boolean, label: string): void => {
   ok(!blankCommentsAndStrings("type T = `throw ${string}`; const real = 1;").includes("throw"), "a template literal TYPE is text, so it is blanked");
 }
 
+
+{
+  const IMPORT = `import { defineHook } from "eve/hooks";\nimport { optional, refuseTurn } from "./control-refusal.js";\n`;
+  const paths = (source: string) => hookPathFindings([{ file: "made-up.ts", source }]);
+  ok(paths(`${IMPORT}export default defineHook({ events: { "turn.settled": optional("x", async () => {}) } });\n`).length === 0, "rule 5 negative control: a handler wrapped in optional(...) passes");
+  const bare = paths(`${IMPORT}export default defineHook({ events: {\n  "turn.settled": async () => { await record(); },\n} });\n`);
+  ok(bare.length === 1 && bare[0]!.rule === "optional-unwrapped", "🔴 rule 5: an unwrapped handler with no REFUSAL marker is one `optional-unwrapped` finding");
+  ok(bare[0]!.line === 4, "rule 5: …naming the handler's own line");
+  ok(bare[0]!.detail.includes("FAILS the running turn"), "rule 5: …and the message says why an uncaught await matters on eve 1.x");
+  const method = paths(`${IMPORT}export default defineHook({ events: { async "turn.settled"() {} } });\n`);
+  ok(method.length === 1 && method[0]!.rule === "optional-unwrapped", "rule 5: a method-shorthand handler is not wrapped either");
+  const notImported = paths(`import { defineHook } from "eve/hooks";\nconst optional = (_n: string, f: unknown) => f;\nexport default defineHook({ events: { "turn.settled": optional("x", async () => {}) } });\n`);
+  ok(notImported.length === 1 && notImported[0]!.rule === "optional-unwrapped", "🔴 rule 5: a local function NAMED optional is not the wrapper — it must come from ./control-refusal.js");
+
+  const refusal = `${IMPORT}export default defineHook({ events: {\n  // hook-path: REFUSAL — the firewall must hold\n  "turn.started": async (_e, ctx) => { await refuseTurn(ctx, input); },\n} });\n`;
+  ok(paths(refusal).length === 0, "rule 6 negative control: a REFUSAL-marked handler in a file that calls refuseTurn passes");
+  const fakeRefusal = paths(`${IMPORT}export default defineHook({ events: {\n  // hook-path: REFUSAL — says so, does nothing\n  "turn.started": async () => {},\n} });\n`);
+  ok(fakeRefusal.length === 1 && fakeRefusal[0]!.rule === "refusal-without-cancel", "🔴 rule 6: a REFUSAL marker in a file that never cancels is refused");
+  const far = paths(`${IMPORT}// hook-path: REFUSAL — too far away\nconst a = 1;\nexport default defineHook({ events: { "turn.started": async () => { await refuseTurn(c, i); } } });\n`);
+  ok(far.length === 1 && far[0]!.rule === "optional-unwrapped", "rule 6: a marker does NOT carry across a line of code to a later handler");
+
+  const spread = paths(`${IMPORT}const more = {};\nexport default defineHook({ events: { ...more } });\n`);
+  ok(spread.length === 1 && spread[0]!.rule === "events-unreadable", "rule 7: a spread under `events` cannot be classified, so it is refused");
+  const indirect = paths(`${IMPORT}const events = {};\nexport default defineHook({ events });\n`);
+  ok(indirect.length === 1 && indirect[0]!.rule === "events-unreadable", "rule 7: an `events` map built elsewhere is refused too");
+}
+
 {
   const files = readHookFiles();
   ok(files.length >= MIN_PLAUSIBLE_HOOK_FILES, `the real hooks directory yields ${files.length} files, at or above the floor of ${MIN_PLAUSIBLE_HOOK_FILES}`);
-  const findings = hookThrowFindings(files);
+  const findings = [...hookThrowFindings(files), ...hookPathFindings(files)];
   ok(findings.length === 0, `the real tree is CLEAN. Findings: ${findings.map((f) => `${f.rule} ${f.file}:${f.line}`).join("; ")}`);
+  const refusals = files
+    .flatMap(({ file, source }) => (source.match(/hook-path:\s*REFUSAL\b/g) ?? []).map(() => file))
+    .sort();
+  ok(
+    JSON.stringify(refusals) === JSON.stringify(["binding-bridge.ts", "binding-bridge.ts", "egress.ts", "egress.ts", "eve-patch-gate.ts", "routine-test-run.ts"]),
+    `the REFUSAL paths are exactly the refusal hooks — a new marker is a new way to stop a turn and needs review (found: ${refusals.join(", ")})`,
+  );
   {
     const empty = mkdtempSync(join(tmpdir(), "oe-hook-throw-empty-"));
     try {
@@ -140,4 +174,4 @@ const ok = (cond: boolean, label: string): void => {
   }
 }
 
-console.log(`\n✓ hook-throw-lint: ${n} assertions passed (all 4 rules fired on synthetic sources; blanker pinned; empty scan driven through the real reader; real tree clean)\n`);
+console.log(`\n✓ hook-throw-lint: ${n} assertions passed (all 7 rules fired on synthetic sources; blanker pinned; empty scan driven through the real reader; real tree clean)\n`);

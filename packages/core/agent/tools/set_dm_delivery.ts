@@ -1,10 +1,10 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { personAddress, readDmAudience, resumeDmAudience, stopDmAudience } from "../channels/dm-audience.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 
 function isOneToOneDm(ctx: BindableContext): boolean {
   try {
@@ -81,10 +81,5 @@ const setDmDeliveryEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("set_dm_delivery", "_single", setDmDeliveryEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => (isOneToOneDm(ctx as BindableContext) ? setDmDeliveryEntry : null),
-  },
-});
+export default sessionMountedTool("set_dm_delivery", setDmDeliveryEntry, (ctx) => isOneToOneDm(ctx));

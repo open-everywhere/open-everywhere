@@ -222,6 +222,32 @@ export function isEmptyResponseReissue(messages: readonly { readonly text: strin
   return last !== undefined && last.text.includes(EVE_EMPTY_REISSUE_NOTE);
 }
 
+export const EVE_COMPACTION_SYSTEM_MARK = "You are performing a CONTEXT CHECKPOINT COMPACTION.";
+
+export const SCRIPTED_COMPACTION_SUMMARY = "Scripted checkpoint: the conversation so far is summarised here for the scripted model.";
+
+export function isCompactionSummaryRequest(request: { readonly messages: readonly { readonly role: string; readonly text: string }[] }): boolean {
+  return request.messages.some((m) => m.role === "system" && m.text.includes(EVE_COMPACTION_SYSTEM_MARK));
+}
+
+export function compactionSummaryResponse(request: { readonly messages: readonly { readonly role: string; readonly text: string }[] }): { readonly text: string } {
+  noteCompactionSummaryServed(request.messages.reduce((n, m) => n + m.text.length, 0));
+  return { text: SCRIPTED_COMPACTION_SUMMARY };
+}
+
+export interface CompactionSummaryRecord {
+  readonly promptChars: number;
+}
+
+export function compactionSummariesServed(): readonly CompactionSummaryRecord[] {
+  return processRegistryMap<readonly CompactionSummaryRecord[]>("scripted-model-compaction-summaries.v1").get("all") ?? [];
+}
+
+function noteCompactionSummaryServed(promptChars: number): void {
+  const cell = processRegistryMap<readonly CompactionSummaryRecord[]>("scripted-model-compaction-summaries.v1");
+  cell.set("all", [...(cell.get("all") ?? []), { promptChars }]);
+}
+
 export function nextScriptedRequestSequence(): number {
   const cell = processRegistryMap<number>("scripted-model-request-sequence.v1");
   const next = (cell.get("n") ?? 0) + 1;
@@ -239,7 +265,6 @@ export interface ResolveObservation {
   readonly classifiedKind: string;
   readonly hasSessionParent: boolean;
   fault?: string;
-  readonly eventEcho?: unknown;
 }
 
 export interface ScriptedEntry {

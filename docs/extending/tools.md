@@ -68,6 +68,10 @@ schema: every property that is not in `required`, and does not already allow nul
 receives the field as absent, exactly as it does when the model omits it. A field that you declare
 nullable yourself (`.nullable()`) keeps its `null`, because there the null is your tool's own value.
 Write `.optional()` for "may be absent"; do not add `.nullable()` to get this behaviour.
+The seat cut applies the rewrite to each tool your roster shim mounts
+(`packages/core/agent/access/authored-tool-transforms.ts`). It applies only to a schema that eve keeps
+as written: a zod schema or another Standard Schema with a JSON Schema emitter. A plain JSON Schema
+object gets no rewrite.
 
 Six gates in `npm test` the roster does *not* excuse you from:
 
@@ -190,26 +194,41 @@ import { disableTool } from "eve/tools";
 export default disableTool();
 ```
 
-This is how the shipped app takes away four Eve **framework** tools — `bash`, `read_file`,
-`write_file` and `web_fetch`. A framework tool is mounted by Eve itself, not by a
-file, so a sentinel is the way to remove one — but not for every slot. Since eve 0.69.0
-`compiler/default-tool-policy.js` declares a set of **reserved** slots —
-`tools/connection_tools`, `tools/connection_search` and `tools/connection_execute` — and
-`assertFrameworkToolPolicy` throws on **any** authored module at one of them: a `disableTool()`
-sentinel and an authored replacement alike ("is reserved … cannot be replaced or disabled"). The
-declaration and the refusal are one mechanism here, which is what makes the set safe to act on (see
-`packages/core/scripts/eve-framework-tools.ts`). So a `framework.disable` entry for any of the three
-in `roster.config.ts` would fail `eve build` through the sentinel this section renders. OE's own
-roster declares none, so nothing is broken today.
+🔴 **A kit member needs its sentinel, and `oe build` refuses an app without it.** A kit is a tool
+module whose default export is `windowGatedKit(slug, { … })`. The core kit `packages/core/agent/tools/sandbox_tools.ts` re-provides
+eve's `bash`, `read_file`, `write_file`, `edit_file` and `web_fetch` per session grain, behind the
+stall guard (and, for `write_file` and `edit_file`, the memory write fence). A dynamic tool can only shadow a static built-in, never remove
+it. So without the `framework.disable` line, eve's own unfenced built-in stays mounted on every seat.
+`oe build` (and `oe build --check`) reads the member keys of every mounted kit, and it refuses the app
+when a member names a built-in that the installed eve mounts and `framework.disable` does not list it.
+The refusal names the tool and the line to add, and writes nothing. The names come from the kits'
+own `windowGatedKit(...)` calls (`packages/core/scripts/kit-sentinel-refusal.ts`), so a new kit member
+is covered with no edit to the check. An opt-in built-in (`glob`, `grep`) mounts only when the app
+authors it, so it needs no sentinel. The scan reads source text, and the module's header names the
+roads that escape it.
+
+This is how the shipped app takes away five Eve **framework** tools — `bash`, `read_file`,
+`write_file`, `edit_file` and `web_fetch`. A framework tool is mounted by Eve itself, not by a
+file, so a sentinel is the way to remove one — but not for every name. Since 0.76.0, eve **reserves** its
+own tool namespace: `eveNamespaceReservation` (`protocol/runtime-tools.js`) refuses `eve` and every
+`eve__` name, and eve's tool compiler throws on an authored tool there, a `disableTool()` sentinel
+included. The names eve provides in that namespace are `eve__search`, `eve__tool`, `eve__skill`,
+`eve__reply`, `eve__task_wait` and `eve__task_cancel`. `packages/core/scripts/eve-framework-tools.ts`
+reads each name off eve's protocol modules and checks it against eve's own reservation rule. It
+throws on a new `eve__` name that eve's protocol modules declare and it does not read, so a new built-in tool reaches the window gate as an
+unclassed name. eve 0.69.0 to 0.75.x reserved three connector **slots** instead
+(`tools/connection_tools`, `tools/connection_search`, `tools/connection_execute`, declared in
+`compiler/default-tool-policy.js`). eve 0.76.0 retired that policy, and the reader throws if it
+returns.
 
 Through 0.68.x the regime was different and the advice was the opposite: the same module declared a
 set of **required** slots, refused a sentinel for `connection_search` by name, and took an authored
 no-op **replacement** instead — the declaration and the refusal really were two different bytes then.
 🔴 **That route is gone.** The no-op replacement OE used to ship was deleted with it; see
 [zero hands](../capabilities/skills-and-plugins.md#declared-subagents-the-specialist-unit)
-for what holds the invariant now. Several of the four are then re-provided per **session
+for what holds the invariant now. Several of the five are then re-provided per **session
 grain** by a resolver file, so a task session gets a shell and a standing seat does not (see
-[the agent & the loop](../how-it-works/agent-and-loop.md)). For most of these four, the sentinel
+[the agent & the loop](../how-it-works/agent-and-loop.md)). For most of these five, the sentinel
 makes the per-grain provision authoritative: a dynamic tool can *shadow* a static built-in when
 it resolves, but cannot remove it.
 
@@ -221,16 +240,23 @@ the one OE **does** opt into, and the opt-in is an ordinary core tool re-exporti
 definition — `packages/core/agent/tools/ask_question.ts`, with a `contributions.ts` row so the roster
 plans its shim. Opting in is what makes the name mount at all: without that file no session holds it.
 
-The framework-named `agent` tool is a fifth case, and it is the one name that must carry **no
+The framework-named `agent` tool is a sixth case, and it is the one name that must carry **no
 sentinel at all**. eve's built-in `agent` is this deployment's delegation route, and nothing
 re-provides it, so a sentinel would leave every seat with no delegation verb. A dynamic `agent`
-is not the answer either: it does not shadow the built-in the way the other four are shadowed —
+is not the answer either: it does not shadow the built-in the way the other five are shadowed —
 eve **throws** ("Dynamic tool \"agent\" collides with a runtime-visible subagent") because the
 built-in declares dispatch handling (`behavior.handling.kind === "dispatch"`, the descriptor eve
 0.47.7 replaced the retired `runtimeAction` property with), and the model call dies. So the gate on
 `agent` is neither a
 sentinel nor a mount predicate; it is subtraction at the per-model-call projection seam, and
 `window-gate-lint` refuses both a sentinel and a kit key for the name.
+On eve 1.x the projection seam is gone. eve 1.0.0-rc.18 mounts `agent` from its own root defaults,
+and a dynamic tool cannot carry it (it loses the built-in's self-agent dispatch), so no file can
+withhold it. The model-call cut (`packages/core/agent/model/seat-tool-cut.ts`) takes the subtraction's
+place: it removes `agent` from the list that each model call offers when the wake's verdict is not
+`allow`. The root agent's `approval` policy also refuses an `agent` call from such a session before
+the task starts (`packages/core/agent/access/native-delegation-gate.ts`). See the **seat cut** in the
+[glossary](../glossary.md).
 
 🔴 **Decline by exclusion, never by deletion.** Deleting the generated file does nothing — the next
 `oe build` writes it straight back. And an exclusion always carries WHY, so six months later nobody
@@ -238,8 +264,8 @@ has to guess whether a refusal was deliberate or an oversight.
 
 ## The roster is not the directory listing
 
-The trap, stated plainly: **a file being present does not mean a tool is mounted.** Four of this
-app's generated tool files are sentinels under the shipped default (five when native delegation
+The trap, stated plainly: **a file being present does not mean a tool is mounted.** Five of this
+app's generated tool files are sentinels under the shipped default (six when native delegation
 is disarmed), so a bare listing over-counts capabilities. Since the tree is build output, the
 *edits worth reviewing* live in the lock and the config instead:
 
@@ -340,11 +366,14 @@ interchangeable, and each one names the others:
 
 ### When a live session re-derives its roster
 
-A window-gated tool decides whether it mounts on a `session.started` arm
-(`packages/core/agent/access/window-gated.ts`). That arm is **not** a once-per-session arm. Eve
-stamps every durable session with a runtime revision — the deployment id of the process that runs
-the turn. A turn taken under a revision the session has not seen re-runs every session-scoped
-resolver and rewrites the session's durable tool metadata.
+A window-gated tool is a `defineDynamic` function (`packages/core/agent/access/window-gated.ts`).
+eve runs it before every model call, and it keeps its seat decision — the grain and the tools that
+grain mounts — in `ctx.memo`, keyed on the session. So one deployment serves a session the same seat
+on every model call, in any process. eve stamps every session with a runtime revision, the
+deployment id of the process that runs the turn. When a turn runs under a revision the session has
+not seen, eve discards the session's memos and the seat is decided again from the session's latest
+frame. Each mount also re-checks the current grain row against the memoized grain, so a row that a
+new build narrows withholds the tool even from a memo that survived.
 
 🔴 **A deploy does not reach a standing seat that way.** A durable session is one workflow run, and
 a workflow run is pinned to the deployment that created it. The seat's turns keep executing the
@@ -359,19 +388,21 @@ step, so it inherits the parent's deployment and is current only once the parent
 
 Two limits are worth stating, because they are the cases the refresh does not cover:
 
-- A session that never takes another turn keeps the old metadata. It also never calls a tool, so
-  nothing acts on the stale roster.
+- A session that never takes another turn keeps the old seat decision. It also never calls a tool,
+  so nothing acts on the stale roster.
 - The roster is not the whole seat. An `eve` version bump can strand a durable session outright,
   which is a different failure with the same remedy — the rotation keys on the eve build **and** the
   deployment, so a bump and a ship both retire the generation once.
 
-`packages/core/scripts/window-gated-test.ts` §6 drives eve's own lifecycle functions to hold this, so an eve
-upgrade that drops the refresh fails the tree instead of the deployment.
+`packages/core/scripts/window-gated-test.ts` §6b holds this. It pins that eve's `restoreDefinitions`
+drops the memos on a new revision, drives eve's own memo store, and shows that a narrowed row
+withholds the tool both with the memo discarded and with a memo that survived. An eve upgrade that
+drops the discard fails the tree instead of the deployment.
 
 Static enumeration has a floor worth knowing about: connector operations and the injected browser
-family are named at runtime, and no file scan can produce them. A connector operation is not a
-mounted tool: the agent calls it through `connection_execute` by its `connection` and `tool`, and
-the gates read it as `<connection>__<operation>`. They are separate planes with their own gates —
+family are named at runtime, and no file scan can produce them. A connector operation is a
+deferred tool that the connector mount lists at runtime: the agent calls it through `eve__tool` by
+its name, and the gates read it as `<connection>__<operation>`. They are separate planes with their own gates —
 [connectors](./connectors.md) and [browser QA](../capabilities/browser-qa.md).
 
 ## Every mounted name must be documented — and the one escape hatch
@@ -423,6 +454,18 @@ replacement. (Through eve 0.68.x a required slot took a no-op replacement instea
 on a sentinel there; that route no longer exists.) Deleting an ordinary slot's file is never the fix
 either: it re-mounts the framework default. An **authored** tool in that directory is refused as well, because a subagent
 session carries no surface binding and any tool there would have to invent or trust a scope.
+
+**The model must be the root agent's own.** `agent.ts` imports the root agent
+(`import root from "../../agent.js"`) and sets `model: root.model`. That model runs the primary model
+resolver: the step budget, the closeout boundary, call capture, the empty-stop reissue, the toolset
+evidence and the scripted test valve. eve inherits no model, so a static model id, a literal or a
+missing `model` skips all of them, and the lint refuses each one. The lint reads the source text and
+does not evaluate it: it also refuses a second `model` key, quoted or computed from a literal, but a
+key computed from a variable is beyond its reach. `test:subagent-root-model`
+(`scripts/subagent-root-model-test.ts`) proves the runtime half. It evaluates the model of every
+directory under `agent/subagents/` with a subagent child context. It asserts that each child gets the
+primary model through the routed half of the resolver, and that the step count, the hard backstop and
+the closeout key on the child's own session.
 
 **A missing `hooks/spend.ts` is a lint failure.** Hooks are not inherited from the root, so a
 delegated child's model calls would never reach the ledger or the monthly cap. The file re-exports the

@@ -1,3 +1,4 @@
+import { SessionNotActiveError } from "eve/sessions";
 import { auditErrorDetail } from "../audit/tool-action.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { resolveTurnAnchor, TURN_ANCHOR_TTL_MS, type TurnAnchorQuery } from "./turn-registry.js";
@@ -19,8 +20,12 @@ export function isStopDirective(body: string | undefined): boolean {
 const STOP_DIRECTIVE = /^(?:\/oe\s+)?stop[.!]?$/i;
 
 export type AttachSessionForCancel = (sessionId: string) => {
-  cancel(options?: { turnId?: string }): Promise<{ readonly status?: string } | undefined>;
+  cancel(options?: { turnId?: string }): Promise<unknown>;
 };
+
+function isNoActiveTurn(err: unknown): err is SessionNotActiveError {
+  return SessionNotActiveError.is(err) && !err.retryable;
+}
 
 export type CancelOutcome =
   | "requested"
@@ -104,11 +109,14 @@ export async function cancelAnchoredTurn(input: CancelAnchoredTurnInput): Promis
 
   let status: string | undefined;
   try {
-    const res = await input.attachSession(anchor.sessionId).cancel({ turnId: anchor.turnId });
-    status = typeof res?.status === "string" ? res.status : undefined;
+    await input.attachSession(anchor.sessionId).cancel({ turnId: anchor.turnId });
   } catch (err) {
-    await auditCancel(input, { outcome: "error", anchorSurfaceKey: anchor.surfaceKey, note: auditErrorDetail(err).error, sessionId: anchor.sessionId, turnId: anchor.turnId });
-    return { outcome: "error", message: "Couldn't reach that turn to stand it down — try again in a moment.", sessionId: anchor.sessionId, turnId: anchor.turnId };
+    if (isNoActiveTurn(err)) {
+      status = "no_active_turn";
+    } else {
+      await auditCancel(input, { outcome: "error", anchorSurfaceKey: anchor.surfaceKey, note: auditErrorDetail(err).error, sessionId: anchor.sessionId, turnId: anchor.turnId });
+      return { outcome: "error", message: "Couldn't reach that turn to stand it down — try again in a moment.", sessionId: anchor.sessionId, turnId: anchor.turnId };
+    }
   }
 
   const outcome: CancelOutcome = status === "no_active_turn" ? "no_active_turn" : "requested";

@@ -29,18 +29,33 @@ export interface WorkTaskKey {
   readonly reason?: WorkStampFailure;
 }
 
-export function workTaskKeyKey(taskId: string): string {
-  return `${WORK_TASK_KEY_PREFIX}${taskId}`;
+/**
+ * The key row of one call a task serves. On eve 1.x one task can serve several calls (the opening
+ * call, then each continuation by `taskId`), and each call joins its own job. So the verdict is kept
+ * per call: a continuation keyed to another job never overwrites the verdict of the call before it.
+ * With no `callId`, the row is the task-wide row an earlier release wrote.
+ */
+export function workTaskKeyKey(taskId: string, callId?: string): string {
+  return callId === undefined ? `${WORK_TASK_KEY_PREFIX}${taskId}` : `${WORK_TASK_KEY_PREFIX}${taskId}:call:${callId}`;
 }
 
-export async function rememberWorkTaskKey(store: WorkRowStore, org: string, taskId: string, key: WorkTaskKey, atIso: string): Promise<void> {
-  await store.putTaskResult(org, workTaskKeyKey(taskId), JSON.stringify(key), atIso, WORK_TASK_KEY_TTL_MS);
+export async function rememberWorkTaskKey(store: WorkRowStore, org: string, taskId: string, key: WorkTaskKey, atIso: string, callId?: string): Promise<void> {
+  await store.putTaskResult(org, workTaskKeyKey(taskId, callId), JSON.stringify(key), atIso, WORK_TASK_KEY_TTL_MS);
 }
 
-export async function readWorkTaskKey(store: WorkRowStore, org: string, taskId: string): Promise<WorkTaskKey | undefined> {
+/** The verdict of the call `callId` on task `taskId`; a task with no per-call row falls back to its task-wide row. */
+export async function readWorkTaskKey(store: WorkRowStore, org: string, taskId: string, callId?: string): Promise<WorkTaskKey | undefined> {
+  if (callId !== undefined) {
+    const own = await readWorkTaskKeyRow(store, org, workTaskKeyKey(taskId, callId));
+    if (own !== null) return own;
+  }
+  return (await readWorkTaskKeyRow(store, org, workTaskKeyKey(taskId))) ?? undefined;
+}
+
+async function readWorkTaskKeyRow(store: WorkRowStore, org: string, rowKey: string): Promise<WorkTaskKey | undefined | null> {
   try {
-    const raw = await store.getTaskResult(org, workTaskKeyKey(taskId));
-    if (raw === null) return undefined;
+    const raw = await store.getTaskResult(org, rowKey);
+    if (raw === null) return null;
     const row = JSON.parse(raw) as Partial<WorkTaskKey> | null;
     if (row === null || typeof row.requestId !== "string" || (row.verdict !== "keyed" && row.verdict !== "needs-reissue")) return undefined;
     return { requestId: row.requestId, verdict: row.verdict, ...(row.reason === "stamp-absent" || row.reason === "stamp-names-another-request" ? { reason: row.reason } : {}) };
@@ -67,7 +82,7 @@ export async function keyWorkTask(input: { readonly taskId: string; readonly cal
   const org = deps.org();
   const store = deps.store();
   try {
-    await rememberWorkTaskKey(store, org, input.taskId, { requestId: input.joined, verdict: verdict.kind, ...(verdict.kind === "needs-reissue" ? { reason: verdict.reason } : {}) }, new Date().toISOString());
+    await rememberWorkTaskKey(store, org, input.taskId, { requestId: input.joined, verdict: verdict.kind, ...(verdict.kind === "needs-reissue" ? { reason: verdict.reason } : {}) }, new Date().toISOString(), input.callId);
   } catch (err) {
     console.warn(`[open-everywhere:work] task ${input.taskId}: the key row could NOT be written — its settlement fails closed: ${String(err).slice(0, 160)}`);
   }

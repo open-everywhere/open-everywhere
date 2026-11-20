@@ -14,6 +14,8 @@ import {
   withStreamDropRetry,
 } from "../agent/model/stream-drop-retry.js";
 import type { ModelBackend, RoutableModel, RoutingDeps } from "../agent/model/routing.js";
+import { unwrapEmptyStopReissue } from "../agent/model/empty-stop-reissue.js";
+import { unwrapSeatToolCut } from "../agent/model/seat-tool-cut.js";
 import { readAudit, type AuditEntry } from "../agent/audit/audit.js";
 
 let failures = 0;
@@ -297,7 +299,7 @@ console.log("§5b the arm is the worker bit, driven through the real resolver");
       setWorkerWake(worker);
       handed = await resolvePrimaryModel(childCtx as never, { primary: { id: "test-model" } }, depsFor(inner) as never);
     });
-    return handed !== inner;
+    return unwrapEmptyStopReissue(unwrapSeatToolCut(handed)) !== inner;
   }
 
   ok(await armedFor(true), "🔴 a grain-`task` DELEGATED WORKER is armed — the resolver hands back a decorated model");
@@ -329,7 +331,7 @@ async function settledRows(): Promise<AuditEntry[]> {
 const hub = (await import("../agent/hooks/delegation-settlement.js")).default;
 const events = (hub as { events?: Record<string, unknown> }).events ?? {};
 const turnStarted = events["turn.started"] as ((event: unknown, ctx: HookContext) => void) | undefined;
-const turnFailed = events["turn.failed"] as ((event: unknown, ctx: HookContext) => Promise<void>) | undefined;
+const turnFailed = events["turn.settled"] as ((event: unknown, ctx: HookContext) => Promise<void>) | undefined;
 assert.ok(turnStarted !== undefined && turnFailed !== undefined, "both delegation-settlement arms must exist for §6 to mean anything");
 
 function workerCtx(sessionId: string): HookContext {
@@ -338,8 +340,8 @@ function workerCtx(sessionId: string): HookContext {
 
 function turnFailedEvent() {
   return {
-    type: "turn.failed",
-    data: { code: "MODEL_CALL_FAILED", message: S24_DROP, details: { errorId: "err_2132", name: "Error", detail: `Error: ${S24_DROP}\n    at doStream (x.js:1:1)\n` } },
+    type: "turn.settled",
+    data: { turnId: "turn_worker", outcome: "failed", error: { code: "MODEL_CALL_FAILED", message: S24_DROP } },
   };
 }
 

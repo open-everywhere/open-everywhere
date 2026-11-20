@@ -81,7 +81,7 @@ test("a seat that hits eve's session-token bound parks, and OE retires the gener
   expect(detail["limit"]).toBe(SESSION_INPUT_TOKEN_BUDGET);
   expect(detail["kind"]).toBe("input");
   expect(Number(detail["usedTokens"])).toBeGreaterThanOrEqual(SESSION_INPUT_TOKEN_BUDGET);
-  expect(String(detail["requestId"])).toMatch(/:limit:input:\d+$/u);
+  expect(String(detail["requestId"])).toMatch(/:limit:usage:0$/u);
   expect(detail["remedy"]).toBe("rotate_on_next_wake");
   const registryKey = String(detail["registryKey"] ?? "");
   expect(registryKey.length).toBeGreaterThan(0);

@@ -33,6 +33,8 @@ const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
 const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
 const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
 const { SessionKey } = await import(abs("dist/src/context/keys.js"));
+const { emptySessionView: rawEmptyView } = (await import(abs("dist/src/protocol/session-projection/fold.js"))) as { emptySessionView: () => unknown };
+const replyEvent = (message: string | null) => ({ type: "content.completed", scope: { turnId: "t1" }, data: { partId: "p1", kind: "text", phase: "reply", value: message ?? "" } });
 const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
   const c = new ContextContainer();
   c.set(SessionKey, { sessionId: "chat-audit-test", auth: null, turn: { id: "t1", sequence: 1 }, parent: undefined });
@@ -47,7 +49,7 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
 
 {
   const slackChannel = (await import("../agent/channels/slack.js")).default as unknown as AdapterChannel;
-  const completed = (message: string | null, ctx: unknown) => inSession(() => slackChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
+  const completed = (message: string | null, ctx: unknown) => inSession(() => slackChannel.adapter["content.completed"]!(replyEvent(message), { ...(ctx as object), view: rawEmptyView() }));
   const posts: string[] = [];
   const fakeSlack = { channelId: "C_AUD", threadTs: "1752501000.000100", request: async () => ({}) };
   const ctxFor = (state: Record<string, unknown>) => ({
@@ -72,7 +74,7 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
 
   await inSession(async () => {
     markRepliedThisTurn("t1");
-    await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
+    await slackChannel.adapter["content.completed"]!(replyEvent(""), { ...ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }), view: rawEmptyView() });
   });
   ok((await replyPosts("slack")).length === 0, "slack: a reply-tool turn's empty terminal writes no reply.post row here — the tool's own door wrote its row");
   ok((await readAudit({ org: deploymentOrg(), action: "turn.supervisor_prose_dropped" })).filter((r) => r.platform === "slack").length === 1, "🔴 negative control: an EMPTY terminal writes NO second drop row — a drop is prose that was lost, never every turn");
@@ -88,7 +90,7 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   );
   await inSession(async () => {
     markRepliedThisTurn("t1");
-    await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "here's the answer" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
+    await slackChannel.adapter["content.completed"]!(replyEvent("here's the answer"), { ...ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }), view: rawEmptyView() });
   });
   const engaged = await getThreadEngagement(engPartition, "1752501000.000100");
   ok(engaged !== null, "🔴 POSITIVE CONTROL: a turn that DID deliver through the `reply` tool engages the thread — the promotion is still wired");

@@ -4,7 +4,8 @@ import { windowGated } from "../access/window-gated.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { forwardsToWorkSession } from "../access/work-session.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
-import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { currentTurnId, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { noteDelegationRequested } from "../access/pending-delegation-signal.js";
 import { resolveUnifiedWakeAuthority } from "../channels/unified-window.js";
 import { dispatchWorkRequest } from "../channels/unified.js";
 import { readWorkRequest, readWorkTaskRequest, workRequestIdFor, workTokenForSeat, type WorkRowStore } from "../channels/work.js";
@@ -93,6 +94,11 @@ export async function cancelWork(input: CancelWorkInput, ctx: unknown, deps: Can
     },
     { store, dispatch: deps.dispatch, audit: deps.audit, ...(deps.markEventSeen ? { markEventSeen: deps.markEventSeen } : {}), ...(deps.forgetEventSeen ? { forgetEventSeen: deps.forgetEventSeen } : {}) },
   );
+  // A relayed stop of a job that is still working owes a later result: the stopped job's result wake
+  // arrives as a turn of its own. Noted like a worker request, so a `done: false` ack ends this turn
+  // (`continuesTurn` in tools/reply.ts). A refused cancel throws above and a job that already settled
+  // owes no wake, so neither is noted, and the turn goes on to read that outcome.
+  if (settled === undefined) noteDelegationRequested(currentTurnId(c));
   return {
     taskId,
     cancelId,

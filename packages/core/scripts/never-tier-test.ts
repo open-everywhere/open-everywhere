@@ -117,8 +117,18 @@ resetSettingsForTest();
 registerSettings({ connectors: { opTiering: true } });
 const { connectorApprovalPolicy } = await import("../agent/connections/connector-auth.js");
 const policy = connectorApprovalPolicy();
+const memoized = connectorApprovalPolicy({
+  store: {
+    getSessionApproval: async (org: string, sessionId: string, kind: string) =>
+      ({ org, sessionId, kind, grantedBy: "U1", createdAt: "2026-01-01T00:00:00.000Z", expiresAt: "2999-01-01T00:00:00.000Z" }) as never,
+    markEventSeen: async () => true,
+    hasEventSeen: async () => false,
+  } as never,
+  grantScope: () => ({ key: "win-never", reach: "call" }) as never,
+  credentialOf: async () => "domain",
+});
 const ask = (toolName: string, approved: readonly string[] = []) =>
-  policy({ toolName, approvedTools: new Set(approved), callId: `c-${toolName}`, toolInput: {} } as never);
+  (approved.includes(toolName) ? memoized : policy)({ toolName, callId: `c-${toolName}`, toolInput: {} } as never);
 function reasonOf(decision: unknown): string {
   return typeof decision === "object" && decision !== null && (decision as { type?: string }).type === "denied" ? String((decision as { reason?: string }).reason) : "";
 }
@@ -131,11 +141,11 @@ for (const tool of ["stripe__send_money", "alpaca__place_stock_order", "stripe__
   ok(fresh.includes("never allowed"), `🔴 live gate: ${tool} is denied as never allowed (got ${JSON.stringify(fresh.slice(0, 120))})`);
   ok(!PENDING.test(fresh), `live gate: the ${tool} refusal does not read as a pending approval`);
   const memo = reasonOf(await ask(tool, [tool]));
-  ok(memo.includes("never allowed"), `🔴 live gate: ${tool} stays denied when the session memo already approved it`);
+  ok(memo.includes("never allowed"), `🔴 live gate: ${tool} stays denied when the card plane's one-call memo already approved it`);
 }
 ok(reasonOf(await ask("notion__create_page")).includes("never allowed"), "live gate: a config `never` entry is denied too");
 const approved = await ask("notion__update_page", ["notion__update_page"]);
-eq(approved, "not-applicable", "live gate control: the session memo lifts an ordinary approved write, so the memo assertions above are not vacuous");
+eq(approved, "not-applicable", "live gate control: the card plane's one-call memo lifts an ordinary approved write, so the memo assertions above are not vacuous");
 eq(await ask("notion__search"), "not-applicable", "live gate control: a read is still open");
 resetSettingsForTest();
 

@@ -12,7 +12,9 @@ import {
   type PlanResult,
 } from "../agent/scaffold/roster-plan.js";
 import { SLOT_DIR } from "../agent/scaffold/roster-config.js";
-import { readEveFrameworkTools } from "./eve-framework-tools.js";
+import { readEveFrameworkTools, type EveFrameworkTools } from "./eve-framework-tools.js";
+import { openApiConnectionFindings, openApiConnectionRefusal } from "./openapi-connection-refusal.js";
+import { kitSentinelFindings, kitSentinelRefusal } from "./kit-sentinel-refusal.js";
 import { exitAfterFlush } from "./exit-after-flush.js";
 import { APP_CODE_FINGERPRINT_MODULE, writeAppCodeFingerprint } from "./code-fingerprint.js";
 import {
@@ -82,10 +84,9 @@ function flagValue(args: readonly string[], name: string): string | undefined {
   return inline === undefined ? undefined : inline.slice(name.length + 1);
 }
 
-async function frameworkToolNames(repoRoot: string): Promise<string[] | undefined> {
+async function frameworkTools(repoRoot: string): Promise<EveFrameworkTools | undefined> {
   try {
-    const tools = await readEveFrameworkTools({ resolveFrom: pathToFileURL(join(repoRoot, "package.json")).href });
-    return [...tools.all];
+    return await readEveFrameworkTools({ resolveFrom: pathToFileURL(join(repoRoot, "package.json")).href });
   } catch {
     return undefined;
   }
@@ -122,12 +123,13 @@ async function runBuild(args: readonly string[]): Promise<void> {
   if (mcpServers.error !== undefined) fail([`✗ oe build: ${mcpServers.error}`]);
 
   const packages = await resolvePackages(repoRoot, declaredPackages(parsed.config));
+  const eveTools = await frameworkTools(repoRoot);
   const plan = planRoster({
     config: parsed.config,
     lock: lockRead.lock,
     acceptLock: accept,
     packages,
-    frameworkToolNames: await frameworkToolNames(repoRoot),
+    frameworkToolNames: eveTools === undefined ? undefined : [...eveTools.all],
     agentDir,
     mcpServers: mcpServers.names,
   });
@@ -154,6 +156,15 @@ async function runBuild(args: readonly string[]): Promise<void> {
     fail([`✗ oe build: ${plan.reds.length} problem(s) — NOTHING was written.`, ...plan.reds.map((r) => `  - ${r}`)]);
   }
 
+  // An eve OpenAPI connection can return its token to the model, so no app may mount one. The check
+  // runs before the tree is written, in the build and in --check alike.
+  const openapi = openApiConnectionFindings(
+    repoRoot,
+    agentDir,
+    plan.resolved.filter((r) => r.kind === "connection" && r.decision === "mounted").map((r) => r.package),
+  );
+  if (openapi.length > 0) fail(openApiConnectionRefusal(openapi));
+
   const bad = unresolvableSpecifiers(
     repoRoot,
     plan.resolved.filter((r) => r.decision === "mounted").map((r) => `${r.package}/${r.module}`),
@@ -166,6 +177,16 @@ async function runBuild(args: readonly string[]): Promise<void> {
       "  A manifest offers a module its package does not ship. Fix the package's agent/contributions.ts.",
     ]);
   }
+
+  // A kit re-provides an eve built-in behind the window-grain gate, but it can only shadow the
+  // built-in. So each such built-in needs its framework.disable sentinel, or every seat keeps eve's own.
+  const kits = kitSentinelFindings(
+    repoRoot,
+    plan.resolved.filter((r) => r.kind === "tool" && r.decision === "mounted"),
+    plan.frameworkDisabled,
+    eveTools === undefined ? undefined : [...eveTools.defaultMounted, ...eveTools.rootOnly],
+  );
+  if (kits.length > 0) fail(kitSentinelRefusal(kits));
 
   const owned = ownedSlotDirs(agentDir);
   const goldenLines = goldenPlanLines(plan, agentDir);
@@ -306,9 +327,6 @@ function assertAgainstSummary(repoRoot: string, summaryPath: string, plan: PlanR
       if (r.kind !== kind || r.decision !== "mounted") continue;
       if (!present.has(r.name)) missing.push(`${SLOT_DIR[kind]}/${r.name}`);
     }
-    if (kind === "connection") {
-      for (const name of plan.mcpServers) if (!present.has(name)) missing.push(`${SLOT_DIR[kind]}/${name}`);
-    }
   }
   if (missing.length > 0) {
     fail([
@@ -319,4 +337,11 @@ function assertAgainstSummary(repoRoot: string, summaryPath: string, plan: PlanR
     ]);
   }
   console.log(`✓ oe build --against-summary: every statically-mounted channel/schedule/connection is present in ${summaryPath}.`);
+  if (plan.mcpServers.length > 0) {
+    // A declared MCP server mounts as a connector mount, a defineDynamic tool FILE. eve's agent
+    // summary lists static tools only, so it cannot show one, and this check does not cover them.
+    console.log(
+      `  Not checked: the ${plan.mcpServers.length} declared MCP server(s) (${plan.mcpServers.join(", ")}). Each mounts as a dynamic tool file, and eve's agent summary does not list dynamic tool files.`,
+    );
+  }
 }

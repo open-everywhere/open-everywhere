@@ -26,6 +26,7 @@ import {
   type ScriptedHandle,
 } from "../harness";
 import { installHostFetchStub } from "../fetch-stub";
+import { CONNECTOR_GATE_PROBE, installConnectorGateProbe, type ConnectorGateProbe } from "./connector-gate-probe";
 
 const CONNECTION = "slack-as-you";
 const OAUTH_HOME_REF = "mcp-server/slack-as-you";
@@ -181,8 +182,9 @@ async function pinShippedFixture(): Promise<void> {
     loadGroups().find((g) => g.name === PILOT_GROUP)?.members,
     `the ${PILOT_GROUP} group no longer holds the fixture person — the DM drive would resolve no slack-as-you grant`,
   ).toContain(`slack/${SLACK_TEAM_ID}/${PERSON_ID}`);
-  const conn = (await import("../../../agent/connections/slack-as-you")).default as { readonly url?: unknown };
-  expect(String(conn.url ?? ""), "the slack-as-you connection no longer dials mcp.slack.com — the stub would not be what it reaches").toBe("https://mcp.slack.com/mcp");
+  await import("../../../agent/tools/slack-as-you");
+  const { connectorTransportSpec } = await import("@open-everywhere/core/agent/connections/connector-transport.js");
+  expect(connectorTransportSpec(CONNECTION)?.directUrl ?? "", "the slack-as-you connector mount no longer dials mcp.slack.com — the stub would not be what it reaches").toBe("https://mcp.slack.com/mcp");
 
   const { getSettings } = await import("@open-everywhere/core/agent/settings/settings.js");
   expect(getSettings().connectors.userPrincipal, "connectors.userPrincipal resolves OFF, so no personal mint can run").toBe(true);
@@ -190,6 +192,25 @@ async function pinShippedFixture(): Promise<void> {
   const { effectiveConnectorOpTier } = await import("@open-everywhere/core/agent/access/connector-op-gating.js");
   expect(effectiveConnectorOpTier(READ_TOOL), `${READ_TOOL} is no longer an open-tier read`).toBe("read");
   expect(effectiveConnectorOpTier(WRITE_TOOL), `${WRITE_TOOL} is no longer a gated write`).toBe("write");
+}
+
+let probe: ConnectorGateProbe | undefined;
+/**
+ * The gate probe: it captures the agent's own WRITE op where the DM's mount offers it (①), for the
+ * channel arm (③). The write is card tier, so a call in a channel meets the approval policy: the DM
+ * fence must refuse it before any card exists.
+ */
+function gateProbe(): ConnectorGateProbe {
+  if (probe === undefined) {
+    probe = installConnectorGateProbe(CONNECTION, WRITE_VENDOR_TOOL);
+    const armed = probe;
+    cleanups.push(() => armed.restore());
+  }
+  return probe;
+}
+
+function textOf(output: unknown): string {
+  return typeof output === "string" ? output : JSON.stringify(output);
 }
 
 function resultOf(handle: ScriptedHandle, callId: string) {
@@ -204,6 +225,7 @@ function promptText(handle: ScriptedHandle): string {
 test("① ② a Slack DM answers about a channel the bot is not in through the person's own tool, and a write as the person raises a card", async () => {
   await bootAgent({ sharedSqlite: true });
   await pinShippedFixture();
+  gateProbe();
 
   const slack = armSlackWebApi();
   cleanups.push(() => slack.uninstall());
@@ -218,13 +240,9 @@ test("① ② a Slack DM answers about a channel the bot is not in through the p
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: "what does the unjoined channel say" }, id: "it2421-delegate" }] }, { say: NO_REPLY_SENTINEL }],
       child: [
-        { delayMs: 120_000, calls: [{ tool: "connection_search", input: { query: "slack channel" }, id: "it2421-search" }] },
-        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: READ_VENDOR_TOOL, input: { channel_id: UNJOINED_CHANNEL_ID } }, id: "it2421-read" }] },
-        {
-          calls: [
-            { tool: "connection_execute", input: { connection: CONNECTION, tool: WRITE_VENDOR_TOOL, input: { channel_id: UNJOINED_CHANNEL_ID, text: "on it" } }, id: "it2421-write" },
-          ],
-        },
+        { delayMs: 120_000, calls: [{ tool: "eve__search", input: { query: `${CONNECTION}__` }, id: "it2421-search" }] },
+        { calls: [{ tool: "eve__tool", input: { name: READ_TOOL, input: { channel_id: UNJOINED_CHANNEL_ID } }, id: "it2421-read" }] },
+        { calls: [{ tool: "eve__tool", input: { name: WRITE_TOOL, input: { channel_id: UNJOINED_CHANNEL_ID, text: "on it" } }, id: "it2421-write" }] },
         { say: "reported" },
       ],
     }),
@@ -245,12 +263,16 @@ test("① ② a Slack DM answers about a channel the bot is not in through the p
   expect(promptText(handle), "the DM's prompt does not carry slack-as-you's bot-first copy").toContain("I can only see channels I am in. Want me to see what you see?");
 
   const listed = vendorRequests(vendor, "tools/list");
-  expect(listed.length, "the real connection_search never reached Slack's MCP server").toBeGreaterThan(0);
+  expect(listed.length, "the connector mount never listed Slack's MCP ops").toBeGreaterThan(0);
   expect(authorizationOf(listed[0]!.init), "Slack's MCP server was dialled under something other than the person's own token").toContain(PERSON_TOKEN);
+  const dmSearch = textOf(resultOf(handle, "it2421-search")?.output ?? "");
+  for (const qualified of [READ_TOOL, WRITE_TOOL]) {
+    expect(dmSearch, `control: the DM's eve__search does not offer ${qualified}: ${dmSearch.slice(0, 400)}`).toContain(qualified);
+  }
   const read = resultOf(handle, "it2421-read");
   expect(read, "the personal read never returned").toBeDefined();
-  expect(read!.isError, `the personal read errored: ${String(read!.output).slice(0, 400)}`).toBe(false);
-  expect(String(read!.output), "the read did not carry what the unjoined channel says").toContain(CHANNEL_BODY_MARKER);
+  expect(read!.isError, `the personal read errored: ${textOf(read!.output).slice(0, 400)}`).toBe(false);
+  expect(textOf(read!.output), "the read did not carry what the unjoined channel says").toContain(CHANNEL_BODY_MARKER);
   const readCalls = vendorRequests(vendor, "tools/call").filter((c) => c.rpc.params["name"] === READ_VENDOR_TOOL);
   expect(readCalls.length, "the read did not leave the host as exactly one MCP tools/call").toBe(1);
   expect(authorizationOf(readCalls[0]!.init), "🔴 the read left under something other than the person's own token").toContain(PERSON_TOKEN);
@@ -308,18 +330,16 @@ test("③ a Slack CHANNEL seat never mounts slack-as-you: no grant, the DM fence
   const vaultSubject = await effectiveUserVaultSubject(CONNECTION, deploymentOrg(), "slack", SLACK_TEAM_ID, PERSON_ID);
   await encryptedKvVault().write(`oe-oauth:tok:${OAUTH_HOME_REF}:user:${vaultSubject}`, JSON.stringify({ accessToken: PERSON_TOKEN, obtainedAt: Date.now() }));
   const dialledBefore = vendor.calls.length;
+  expect(gateProbe().captured(), "the gate probe holds no slack-as-you write op: ③ needs ①'s DM step to run first in this file").toBe(true);
 
   const cursor = await auditCursor();
   const handle = disposeLater(
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: "read the planning channel as me" }, id: "it2421c-delegate" }] }, { say: NO_REPLY_SENTINEL }],
       child: [
-        { delayMs: 120_000, calls: [{ tool: "connection_search", input: { query: "slack channel" }, id: "it2421c-search" }] },
-        {
-          calls: [
-            { tool: "connection_execute", input: { connection: CONNECTION, tool: WRITE_VENDOR_TOOL, input: { channel_id: UNJOINED_CHANNEL_ID, text: "on it" } }, id: "it2421c-write" },
-          ],
-        },
+        { delayMs: 120_000, calls: [{ tool: "eve__search", input: { query: `${CONNECTION}__` }, id: "it2421c-search" }] },
+        { calls: [{ tool: "eve__tool", input: { name: WRITE_TOOL, input: { channel_id: UNJOINED_CHANNEL_ID, text: "on it" } }, id: "it2421c-write" }] },
+        { calls: [{ tool: CONNECTOR_GATE_PROBE, input: { channel_id: UNJOINED_CHANNEL_ID, text: "on it" }, id: "it2421c-probe" }] },
         { say: "reported" },
       ],
     }),
@@ -339,15 +359,38 @@ test("③ a Slack CHANNEL seat never mounts slack-as-you: no grant, the DM fence
   const taskId = await workTaskIdOfCall(cursor, handle, "it2421c-delegate", "it2421c: the channel forward");
   const settlement = disposeLater(armSettlement(handle, { parent: [{ say: NO_REPLY_SENTINEL }, { say: NO_REPLY_SENTINEL }] }));
   handle.releaseHolds();
-  await waitForChildren(handle, { count: 1, lastStepIndex: 2, label: "it2421c: the worker's report step" });
+  await waitForChildren(handle, { count: 1, lastStepIndex: 3, label: "it2421c: the worker's report step" });
   expect(handle.requests.filter((r) => r.fault !== undefined), "a scripted request degraded").toEqual([]);
 
-  const search = String(resultOf(handle, "it2421c-search")?.output ?? "");
-  expect(search, `the channel's connection_search did not carry the DM fence's refusal: ${search.slice(0, 400)}`).toContain(
+  // On eve 1.x the DM fence refuses the mount's LISTING: a channel's catalogue holds no
+  // slack-as-you op, so the model has nothing to call, and a call by name reaches no op.
+  // eve offers eve__search only while the catalogue holds a deferred tool. So either the search ran
+  // and shows no slack-as-you op, or the step held no eve__search: the catalogue was empty.
+  const searchResult = resultOf(handle, "it2421c-search");
+  expect(searchResult, "the channel's eve__search returned nothing").toBeDefined();
+  const searchStep = handle.requests.find((r) => r.role === "child" && r.stepIndex === 0);
+  expect(searchStep, "control: the channel worker never made its search step").toBeDefined();
+  const search = textOf(searchResult!.output);
+  if (searchStep!.tools.includes("eve__search")) {
+    expect(searchResult!.isError, `control: the channel's eve__search failed, so the absence below reads nothing: ${search.slice(0, 400)}`).toBe(false);
+  } else {
+    expect(search, "control: the channel's search failed for a reason other than an empty catalogue").toContain("eve__search");
+  }
+  expect(searchStep!.tools.filter((t) => t.startsWith(`${CONNECTION}__`)), "🔴 the channel worker holds a slack-as-you op by name").toEqual([]);
+  expect(searchStep!.tools.includes("eve__search") ? search : "", `🔴 the channel's catalogue offers a slack-as-you op: ${search.slice(0, 400)}`).not.toContain(`${CONNECTION}__`);
+  const writeResult = resultOf(handle, "it2421c-write");
+  expect(writeResult, "the channel write's call returned nothing").toBeDefined();
+  const write = textOf(writeResult!.output);
+  expect(writeResult!.isError, `🔴 the channel's call by name reached a slack-as-you op: ${write.slice(0, 400)}`).toBe(true);
+  // The agent's own WRITE op, called through the probe on the channel's session: its call-time
+  // checks (the approval policy, then the connector token) refuse at the DM fence before any card,
+  // and write the connector.refused row below.
+  const probed = resultOf(handle, "it2421c-probe");
+  expect(probed, "the gate probe returned nothing").toBeDefined();
+  expect(probed!.isError, `🔴 the channel's call-time checks let the write run: ${textOf(probed!.output).slice(0, 400)}`).toBe(true);
+  expect(textOf(probed!.output), `the channel's call-time gate was not refused by the DM fence: ${textOf(probed!.output).slice(0, 400)}`).toContain(
     `connection "${CONNECTION}" acts as one person's own slack account, so it answers only in that person's 1:1 DM on slack`,
   );
-  const write = JSON.stringify(resultOf(handle, "it2421c-write")?.output ?? "");
-  expect(write, `the channel write was not refused by the DM fence: ${write.slice(0, 400)}`).toContain("answers only in that person's 1:1 DM");
   expect(
     (await rowsSinceCursor(cursor, ["approval.requested"], { limit: 50 })).filter((r) => r.detail?.kind === "op.connector"),
     "🔴 a channel raised an approval card for a call that can never run there",

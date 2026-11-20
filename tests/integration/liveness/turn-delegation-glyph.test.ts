@@ -209,7 +209,7 @@ test("D17 — a forwarded job's ✋ sits on the asking message while the work se
   );
   await waitFor(
     async () => ((await rowsSinceCursor(cursor, ["work.cancel_redeemed"], { limit: 50 })).some((r) => r.detail?.taskId === taskId && r.detail?.outcome === "admitted") ? true : undefined),
-    "the work session's fenced task_cancel to be ADMITTED for the job's task",
+    "the work session's fenced eve__task_cancel to be ADMITTED for the job's task",
   );
   await waitFor(() => (forwarding.holdsCancelDelivered() === 1 ? true : undefined), "🔴 the job's running child to see its abort");
   expect((await rowsSinceCursor(cursor, ["turn.cancel_requested"], { limit: 50 })).filter((r) => r.detail?.via === "reaction"), "🔴 the ✋ click cancelled a TURN").toEqual([]);

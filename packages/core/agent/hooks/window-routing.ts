@@ -3,9 +3,9 @@ import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { classifyWindowRouting, WINDOW_ROUTING_DEGRADED_ACTION } from "../access/window-routing.js";
-import { memoryRecallRouteFor } from "../access/window-gate-manifest.js";
-import { seatHoldsDelegationVerb } from "../access/work-session.js";
+import { seatMemoryRecallRoute } from "../access/work-session.js";
 import { currentWakeId, deploymentOrg, windowGrainOf, type BindableContext } from "../identity/binding.js";
+import { optional } from "./control-refusal.js";
 
 async function auditRoutingPosture(ctx: HookContext): Promise<void> {
   try {
@@ -25,7 +25,7 @@ async function auditRoutingPosture(ctx: HookContext): Promise<void> {
         domainKey,
         surfaceKey: partition.surfaceKey,
         grain,
-        recall: memoryRecallRouteFor(grain, undefined, undefined, seatHoldsDelegationVerb(c)),
+        recall: seatMemoryRecallRoute(c),
         wakeId: currentWakeId(c) ?? null,
       },
     });
@@ -35,8 +35,8 @@ async function auditRoutingPosture(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": async (_event, ctx) => {
+    "turn.started": optional("window-routing", async (_event, ctx) => {
       await auditRoutingPosture(ctx);
-    },
+    }),
   },
 });

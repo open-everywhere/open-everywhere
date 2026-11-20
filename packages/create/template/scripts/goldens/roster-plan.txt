@@ -18,7 +18,6 @@ agent/channels/transcript-relay.ts	mounted @open-everywhere/core
 agent/channels/unified.ts	mounted @open-everywhere/core
 agent/channels/webhook-reveal-page.ts	mounted @open-everywhere/core
 agent/channels/webhooks.ts	mounted @open-everywhere/core
-agent/connections/notion.ts	mounted @open-everywhere/core
 agent/hooks/approval-raised.ts	mounted @open-everywhere/core
 agent/hooks/approval-settlement.ts	mounted @open-everywhere/core
 agent/hooks/binding-bridge.ts	mounted @open-everywhere/core
@@ -101,6 +100,7 @@ agent/tools/delete_skill.ts	mounted @open-everywhere/core
 agent/tools/describe_image.ts	mounted @open-everywhere/core
 agent/tools/dm_person.ts	mounted @open-everywhere/core
 agent/tools/doing_for_me.ts	mounted @open-everywhere/core
+agent/tools/edit_file.ts	framework-disabled
 agent/tools/edit_reply.ts	mounted @open-everywhere/core
 agent/tools/edit_routine.ts	mounted @open-everywhere/core
 agent/tools/enable_routine.ts	mounted @open-everywhere/core
@@ -127,6 +127,7 @@ agent/tools/my_browser_handoff.ts	mounted @open-everywhere/core
 agent/tools/my_browser.ts	mounted @open-everywhere/core
 agent/tools/no_reply.ts	mounted @open-everywhere/core
 agent/tools/notion_search.ts	mounted @open-everywhere/provider-notion
+agent/tools/notion.ts	mounted @open-everywhere/core
 agent/tools/open_pull_request.ts	mounted @open-everywhere/core
 agent/tools/permission_fit_report.ts	mounted @open-everywhere/core
 agent/tools/post_file.ts	mounted @open-everywhere/core

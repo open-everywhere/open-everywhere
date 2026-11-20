@@ -94,6 +94,25 @@ export function notePendingDelegation(turnId: string | undefined, taskId: string
   }
 }
 
+const requestedSlot = defineState<{ readonly turn?: string }>("open-everywhere.delegation-requested", () => ({}));
+
+export function noteDelegationRequested(turnId: string | undefined): void {
+  if (turnId === undefined || turnId.length === 0) return;
+  try {
+    requestedSlot.update(() => ({ turn: turnId }));
+  } catch {
+  }
+}
+
+export function delegationRequestedThisTurn(turnId: string | undefined): boolean {
+  if (turnId === undefined || turnId.length === 0) return false;
+  try {
+    return requestedSlot.get().turn === turnId;
+  } catch {
+    return false;
+  }
+}
+
 export function noteDelegationSettled(turnId: string | undefined, taskId: string): void {
   if (turnId === undefined || turnId.length === 0) return;
   if (taskId.length === 0) return;

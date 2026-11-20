@@ -85,9 +85,12 @@ import {
   renderOwnAccountAskRows,
 } from "./own-account-rows.js";
 import {
+  NO_REPLY_OBSERVED_ACTION,
   REPLY_POST_ACTION,
   STOOD_DOWN_ACTION,
   awaitReplyPostRows,
+  describeEngagedFollowUp,
+  diagnoseEngagedFollowUp,
   awaitRepliesForAdmittedWakes,
   awaitStandDownVerdict,
   dispatchAddressings,
@@ -199,6 +202,9 @@ import {
   PROMISE_SUBJECT,
   readsAsClarifyingQuestion,
   readsAsSpendRefusalReport,
+  APPROVAL_DENIED_ACTION,
+  nonAdminDenialRow,
+  ONE_SHOT_FIRE_WAIT_MS,
   ROUTINE_FIRE_ACTION,
   rowForReplyChunkSet,
   rowsAtOrAfter,
@@ -234,7 +240,8 @@ import {
   WORKER_TOOLSET_ACTION,
   APPROVAL_DECISION_NOTICE,
   s23AckCheck,
-  s23ConfirmationCheck,
+  approvalCardDecision,
+  spendCapRaiseAsk,
 } from "./gate-joins.js";
 import { haltConfirmation } from "../../agent/tools/halt.js";
 import { noteNamesViewedRoom, slackTsAt, toolCallsNamingRoom, turnRows, viewedRoomRows } from "./side-panel.js";
@@ -275,7 +282,7 @@ import {
   otherFactTokens,
   withoutMarker,
   answersNumber,
-  parseLinkCode,
+  linkCodeFromPosts,
   parseClaimCodeBack,
   CLAIM_CODE_BACK_MARKER,
   silenceCauseGate,
@@ -497,6 +504,7 @@ const BROWSER_QA_WAIT = 420_000;
 const QA_REPO_WAIT = 600_000;
 const SILENCE_WINDOW = 45_000;
 const LINK_VENUE_PROOF_WINDOW = 20_000;
+const LINK_CODE_POST_WAIT = 30_000;
 
 export const isPendingWorkHandoff = (text: string): boolean => isFillerAck(text);
 
@@ -524,6 +532,14 @@ export function replyIsPendingWorkHandoff(ctx: Pick<ScenarioContext, "auditRead"
 
 export const handoffReplyWaitMs = (firstReplyText: string): number | undefined =>
   isPendingWorkHandoff(firstReplyText) ? FILE_REPLY_WAIT : undefined;
+
+/**
+ * The wait for an audit row that the ANSWER of a turn writes, chosen from the first reply. A first reply
+ * that hands the ask to a worker (its `reply.post` row says `done: false`) comes before the worker's
+ * reads, its settlement, the carriage of its reads and the answer's own provenance row. So those rows get
+ * the delegated budget. A first reply that is the answer itself gets the short audit-row wait.
+ */
+export const answerRowWaitMs = (handedOff: boolean): number => (handedOff ? FILE_REPLY_WAIT : AUDIT_ROW_WAIT);
 
 export const fireReportWaitMs = (reportRoad: "settlement" | "last-post" | undefined, reportText: string): number | undefined =>
   reportRoad === "settlement" ? undefined : handoffReplyWaitMs(reportText);
@@ -616,6 +632,8 @@ async function awaitOwnWakeReply(
     readonly skip?: (m: SlackMessage) => boolean;
     readonly want?: { readonly label: string; readonly match: (m: SlackMessage) => boolean };
     readonly threadTs?: string;
+    /** Without an audit reader, read the thread only, never a top-level post in the channel (a channel leg's old `awaitThreadReply` rule). */
+    readonly threadOnly?: true;
   },
 ): Promise<SlackMessage> {
   const read = ctx.auditRead;
@@ -630,6 +648,13 @@ async function awaitOwnWakeReply(
       opts.skip === undefined && opts.want === undefined
         ? undefined
         : (m: SlackMessage) => (opts.skip?.(m) ?? false) || (opts.want !== undefined && !opts.want.match(m));
+    if (opts.threadOnly) {
+      return driver.awaitThreadReply(threadRoot, {
+        timeoutMs: opts.timeoutMs,
+        ...(opts.threadTs === undefined ? {} : { afterTs: anchorTs }),
+        ...(degradedSkip ? { skip: degradedSkip } : {}),
+      });
+    }
     const degradedSkipAfter = opts.threadTs === undefined ? degradedSkip : (m: SlackMessage) => !tsAfter(m.ts, anchorTs) || (degradedSkip?.(m) ?? false);
     return driver.awaitAnyReply(threadRoot, { timeoutMs: opts.timeoutMs, ...(degradedSkipAfter ? { skip: degradedSkipAfter } : {}) });
   }
@@ -733,7 +758,6 @@ const STAND_DOWN_ACK_CRITERIA =
 const CAP_REFUSAL = "I'm holding off here";
 const CAP_REFUSAL_MARKER = /holding off/i;
 const LINK_VENUE_REFUSAL_MARKER = /can't take a link code here/i;
-const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
 const MEMORY_ADMIN_GATE = "requires an org admin";
 
 function closedQA(criteria: string, fallback: Rubric["fallback"]): Rubric {
@@ -899,6 +923,22 @@ async function gateAmbientReplyRow(ctx: ScenarioContext, opts: { readonly sinceI
 const ENGAGED_STOP_ASK = "thanks, that's everything — please stop following this thread now";
 const ENGAGED_NAME = "Open Everywhere";
 
+async function logEngagedFollowUp(
+  ctx: ScenarioContext,
+  opts: { readonly sinceIso: string; readonly platform: string; readonly leg: string },
+): Promise<void> {
+  try {
+    const rows = await ctx.auditRead!({
+      sinceIso: opts.sinceIso,
+      platform: opts.platform,
+      actions: [dispatchedAction(opts.platform), REPLY_POST_ACTION, NO_REPLY_OBSERVED_ACTION],
+    });
+    ctx.log(`${opts.leg}: ${describeEngagedFollowUp(diagnoseEngagedFollowUp(rows, opts.platform), opts.platform)} (evidence, not a gate)`);
+  } catch (err) {
+    ctx.log(`${opts.leg}: the engaged follow-up diagnosis could not read the audit rows: ${String(err)}`);
+  }
+}
+
 async function gateEngagedWake(
   ctx: ScenarioContext,
   opts: {
@@ -916,6 +956,7 @@ async function gateEngagedWake(
     ...(opts.surface === undefined ? {} : { surface: opts.surface }),
     budget: { timeoutMs: AUDIT_ROW_WAIT, what: `${opts.leg}: a ${opts.platform} ${REPLY_POST_ACTION} audit row` },
   });
+  if (opts.expect === "thread-follow") await logEngagedFollowUp(ctx, opts);
   ctx.gate(
     posts !== undefined,
     `${opts.leg}: a ${REPLY_POST_ACTION} audit row proves the deployment dispatched a turn and posted (waited up to ${AUDIT_ROW_WAIT / 1000}s) — not merely that a message appeared`,
@@ -1706,7 +1747,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const teach1Start = await presenceSince(ctx, "teach1Start");
       const { ts: teachTs } = await a.post(a.mention(`remember: the deploy day for service ${svc} is Thursday`));
-      const ack1 = await a.awaitThreadReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const ack1 = await awaitOwnWakeReply(ctx, a, teachTs, { what: "J2 (teach deploy day)", threadOnly: true, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
         closedQA("Does it indicate the fact is in memory — stored just now, or already stored / already known?", {
           mustMatch: [/remember|stored|noted|got it|saved|already|in (?:our |the )?memory/i],
@@ -1730,7 +1771,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log("grounding check skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so J2 can assert the ack's save-claim against a real memory.write audit row");
       }
       const { ts: teach2Ts } = await a.post(`also remember: the deploy token colour is ${colour}`, teachTs);
-      const ack2 = await a.awaitThreadReply(teachTs, { afterTs: teach2Ts, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const ack2 = await awaitOwnWakeReply(ctx, a, teach2Ts, { what: "J2 (teach colour)", threadOnly: true, threadTs: teachTs, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
         closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
         ack2.text,
@@ -1738,7 +1779,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const { ts: missTs } = await b.post(b.mention("what's the deploy token colour? if you don't know, say so plainly"));
-      const miss = await b.awaitThreadReply(missTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const miss = await awaitOwnWakeReply(ctx, b, missTs, { what: "J2 (channel-B miss)", threadOnly: true, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(
         !miss.text.toLowerCase().includes(colour.toLowerCase()),
         `cross-domain: channel-B recall MISSES (hard gate: the taught token is absent) — reply: "${miss.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
@@ -1750,7 +1791,7 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const { ts: dayTs } = await a.post(a.mention(`which day do we deploy service ${svc}?`));
-      const day = await a.awaitThreadReply(dayTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const day = await awaitOwnWakeReply(ctx, a, dayTs, { what: "J2 (deploy-day recall)", threadOnly: true, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(day.threadTs === dayTs, "freshness: deploy-day recall lands in its OWN fresh thread (was S4)");
       await ctx.judgePass(
         factuality("Thursday", "Does the reply say the deploy day is Thursday?", { mustMatch: ["thursday"] }),
@@ -1758,7 +1799,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "freshness: deploy-day recalled from the silo across threads (was S4)",
       );
       const { ts: hitTs } = await a.post(a.mention("what's the deploy token colour?"));
-      const hit = await a.awaitThreadReply(hitTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const hit = await awaitOwnWakeReply(ctx, a, hitTs, { what: "J2 (colour recall)", threadOnly: true, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(hit.threadTs === hitTs, "freshness: colour recall lands in its OWN fresh thread (silo, not thread ctx)");
       ctx.gate(
         hit.text.toLowerCase().includes(colour.toLowerCase()),
@@ -2039,7 +2080,7 @@ export const SCENARIOS: readonly Scenario[] = [
         if (windowed.length !== events.length) {
           ctx.log(`  session ${sessionId}: ${events.length - windowed.length} event(s) predate the recall ask and are OUT of the read window — on a standing seat legs 0-1 share this session`);
         }
-        const found = extractMemoryPathReads(windowed);
+        const found = extractMemoryPathReads(windowed, events);
         if (found.length > 0) {
           ctx.log(`  session ${sessionId}: ${found.length} memory-path read(s) — ${[...new Set(found)].slice(0, 6).join(", ")}`);
           readingSessions.push(sessionId);
@@ -2118,7 +2159,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { teamId } = await slack.identity();
 
       const capDollars = 21 + (Math.floor(Date.now() / 1000) % 9_000);
-      const capAsk = `raise this channel's spend cap to $${capDollars}/month`;
+      const capAsk = spendCapRaiseAsk(capDollars);
       const { ts: ask1Ts } = await slack.post(slack.mention(capAsk));
       const card1 = await awaitCard(slack, ask1Ts, FILE_REPLY_WAIT);
       const btn1 = approveButton(card1)!;
@@ -2127,12 +2168,13 @@ export const SCENARIOS: readonly Scenario[] = [
       const denied = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "approve", messageTs: card1.ts, channelId: slack.channelId, userId: user2, teamId });
       ctx.log(`${denied.label}: NON-admin approve ${btn1.pendingId} as ${user2} → ${denied.status}`);
       ctx.gate(denied.status === 200, "S15: non-admin forged approve acked 200 (route contract, not consent)");
-      const note = await slack.awaitThreadMessage(
-        ask1Ts,
-        { timeoutMs: REPLY_WAIT, what: `the non-admin denial note in thread ${ask1Ts}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.text.includes(NON_ADMIN_DENIAL)),
+      ctx.gate(ctx.auditRead !== undefined, "S15: the non-admin denial is proved by its approval.denied row, and that read needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN (the product's denial note is ephemeral, so the Slack API cannot read it)");
+      const deniedSince = auditSinceForVendorInstant(slackVendorEventTime(ask1Ts)?.ms ?? Date.now() - AUDIT_SINCE_SKEW_MS);
+      const deniedRow = await pollUntil(
+        async () => nonAdminDenialRow(await ctx.auditRead!({ sinceIso: deniedSince, platform: "slack", actions: [APPROVAL_DENIED_ACTION] }), btn1.pendingId, user2),
+        { timeoutMs: REPLY_WAIT, what: `the ${APPROVAL_DENIED_ACTION} row (reason not-admin) for pending ${btn1.pendingId} clicked by ${user2}` },
       );
-      ctx.gate(note.text.includes(`<@${user2}>`), "S15: denial note names the refused clicker");
+      ctx.log(`S15: the product denied the non-admin click (${deniedRow.action} ${deniedRow.ts}, reason not-admin, clicker ${user2})`);
       await sleep(10_000);
       const stillPending = (await slack.replies(ask1Ts)).find((m) => m.ts === card1.ts);
       ctx.gate(
@@ -2429,7 +2471,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "a bot reply carrying a file attachment" });
       ctx.gate(fileReply.attachments.length > 0, "post_file: the reply carries a file attachment");
 
-      const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/month`), threadId);
+      const cardAsk = await discord.post(discord.mention(spendCapRaiseAsk(21 + (Math.floor(Date.now() / 1000) % 9_000))), threadId);
       const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
       ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
       const discordCardFault = dollarOnlySpendCardFault(cardReply.content);
@@ -3163,23 +3205,28 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: mintTs } = await dm.post(mintAsk);
       const mintReply = await awaitOwnWakeReply(ctx, dm, mintTs, { what: "S-LINK-SLACK (mint)", timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       await assertDmDoorAdmitted(ctx, runStart, "S-LINK-SLACK (mint)");
-      const code = parseLinkCode(mintReply.text);
       const issuedRows = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_issued"] });
+      const codePost = await pollOptional(
+        async () => linkCodeFromPosts([mintReply, ...(await dm.collectBotMessagesAfter(mintTs, mintTs))]),
+        { timeoutMs: issuedRows.length > 0 ? LINK_CODE_POST_WAIT : 0, what: `a bot post in DM ${dm.channelId} after ${mintTs} that carries the link code` },
+      );
+      const code = codePost?.code;
+      if (codePost !== undefined) ctx.log(`mint: the link code rides bot post ${codePost.ts}${codePost.ts === mintReply.ts ? " (the wake's own reply)" : " (the host's DM post, not the wake's reply)"}`);
       if (!code) {
         if (issuedRows.length === 0) {
           ctx.skip(
-            "no link code in the DM reply and NO identity.link.challenge_issued audit row — this DM turn never called " +
+            "no link code in the DM (the wake's reply or any bot post after the ask) and NO identity.link.challenge_issued audit row — this DM turn never called " +
               `link_identity (it may have declined, delegated, or answered in prose; the tool's own mount is NOT measured here). ` +
               `Reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
           );
         }
         ctx.gate(
           false,
-          "mint: an identity.link.challenge_issued row exists but no `link <CODE>` line could be parsed out of the private DM delivery. " +
-            `Post: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+          `mint: an identity.link.challenge_issued row exists but no \`link <CODE>\` line could be parsed out of any bot post in the DM after the ask (read for ${LINK_CODE_POST_WAIT / 1000}s). ` +
+            `The wake's reply: "${mintReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
         );
       }
-      ctx.log(`mint: parsed link code (${code!.length} symbols) from the host DM post; ${issuedRows.length} challenge_issued row(s) in the window`);
+      ctx.log(`mint: parsed link code (${code!.length} symbols); ${issuedRows.length} challenge_issued row(s) in the window`);
 
       const { ts: negativeTs } = await claimant.post(claimant.mention(`link ${code!}`));
       const refusalReply = await claimant.awaitAnyReply(negativeTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
@@ -3736,11 +3783,11 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S23",
     proves: ["ROUT-30"],
-    title: "One-shot routine: create_routine(\"once\") acks now, and the routine then actually FIRES (dispatcher ticks every ~10 min)",
+    title: "One-shot routine: create_routine(\"once\") is acknowledged now (the host's decision on its card, or the seat's ack when no card is posted), and the routine then actually FIRES (dispatcher ticks every ~10 min)",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
-    timeoutMs: 1_800_000,
+    timeoutMs: 2_400_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -3750,7 +3797,6 @@ export const SCENARIOS: readonly Scenario[] = [
           `schedule a ONE-SHOT check-in for a couple of minutes from now — a single "at" time, not a recurring cron/interval — that checks back here and posts exactly the word ${note}. Confirm you've scheduled it.`,
         ),
       );
-      let cardTs: string | undefined;
       const s23Since = auditSinceForVendorInstant(slackVendorEventTime(askTs)?.ms ?? Date.now() - AUDIT_SINCE_SKEW_MS);
       const cardOrAllow = await pollOptional<{ readonly card: SlackMessage } | { readonly allow: true }>(
         async () => {
@@ -3777,41 +3823,33 @@ export const SCENARIOS: readonly Scenario[] = [
         });
         ctx.log(`${clicked.label}: admin approve routine.create ${btn.pendingId} → ${clicked.status}`);
         ctx.gate(clicked.status === 200, "S23: forged admin approve on the routine.create card acked 200");
-        cardTs = card.ts;
-      }
-      const isDecisionNotice = (m: SlackMessage): boolean => APPROVAL_DECISION_NOTICE.test(m.text);
-      const ack = await slack.awaitThreadReply(askTs, {
-        timeoutMs: FILE_REPLY_WAIT,
-        skip: (m) => isFillerAck(m.text) || m.ts === cardTs || isDecisionNotice(m),
-      });
-      const ackCheck = s23AckCheck(cardTs !== undefined);
-      await ctx.judgePass(
-        closedQA(ackCheck.question, { mustMatch: ackCheck.mustMatch, mustNotMatch: ackCheck.mustNotMatch }),
-        ack.text,
-        "one-shot routine creation ack",
-      );
-      if (cardTs !== undefined) {
-        const noticeTs = (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && isDecisionNotice(m))?.ts;
-        const latest = (a: string, b: string | undefined): string => (b !== undefined && tsAfter(b, a) ? b : a);
-        const ackIsPostDecision = noticeTs !== undefined && tsAfter(ack.ts, noticeTs);
-        const confirmation = ackIsPostDecision
-          ? ack
-          : await slack.awaitThreadReply(askTs, {
-              afterTs: latest(latest(ack.ts, cardTs), noticeTs),
-              timeoutMs: FILE_REPLY_WAIT,
-              skip: (m) => isFillerAck(m.text) || m.ts === cardTs || isDecisionNotice(m) || m.text.trim() === note,
-            });
-        ctx.log(`S23 confirmation reply ${confirmation.ts}${ackIsPostDecision ? " (the ack itself: it came after the decision notice)" : ""}`);
-        const confirmCheck = s23ConfirmationCheck();
+        const decidedCardTs = card.ts;
+        const decision = await pollUntil(
+          async () => approvalCardDecision((await slack.replies(askTs)).filter((m) => slack.isBotReply(m)), decidedCardTs),
+          { timeoutMs: FILE_REPLY_WAIT, what: `the host's decision on the routine.create card ${decidedCardTs} (the card updated in place, or the decision notice) in thread ${askTs}` },
+        );
+        ctx.log(`S23: the host recorded the card decision "${decision.verdict}" on ${decision.message.ts === decidedCardTs ? "the card itself" : `notice ${decision.message.ts}`}: ${JSON.stringify(decision.message.text.slice(0, 200))}`);
+        ctx.gate(
+          decision.verdict === "approved",
+          `S23: the host shows the routine.create card APPROVED with no failure — the card shows its own outcome, so the seat owes no ack after the click (got "${decision.verdict}")`,
+        );
+      } else {
+        const ack = await awaitOwnWakeReply(ctx, slack, askTs, {
+          what: "S23 (no-card ack)",
+          threadOnly: true,
+          timeoutMs: FILE_REPLY_WAIT,
+          skip: (m) => isFillerAck(m.text) || APPROVAL_DECISION_NOTICE.test(m.text),
+        });
+        const ackCheck = s23AckCheck();
         await ctx.judgePass(
-          closedQA(confirmCheck.question, { mustMatch: confirmCheck.mustMatch, mustNotMatch: confirmCheck.mustNotMatch }),
-          confirmation.text,
-          "one-shot routine confirmation after the approve",
+          closedQA(ackCheck.question, { mustMatch: ackCheck.mustMatch, mustNotMatch: ackCheck.mustNotMatch }),
+          ack.text,
+          "one-shot routine creation ack (no-card path)",
         );
       }
       const fired = await slack.awaitExactBotPost(askTs, note, {
-        timeoutMs: 720_000,
-        what: `the one-shot routine's fired post "${note}" (thread ${askTs} or top-level after it)`,
+        timeoutMs: ONE_SHOT_FIRE_WAIT_MS,
+        what: `the one-shot routine's fired post "${note}" (thread ${askTs} or top-level after it, waiting up to one ${DISPATCH_TICK_MINUTES}-minute dispatcher tick)`,
       });
       ctx.gate(fired.text.trim() === note, `the one-shot routine actually fired and posted "${note}" (hard gate)`);
     },
@@ -3849,7 +3887,7 @@ export const SCENARIOS: readonly Scenario[] = [
             `If the live search returns nothing, say so plainly; don't guess, never invent a link, and never write a sentence the page does not contain.`,
         ),
       );
-      const reply = await notion.awaitThreadReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const reply = await awaitOwnWakeReply(ctx, notion, askTs, { what: "S24", threadOnly: true, timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await arming.recheck();
       await ctx.judgePass(
         closedQA(
@@ -5812,7 +5850,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const dollars = 31 + (Math.floor(Date.now() / 1000) % 9_000);
-      const { ts: askTs } = await slack.post(slack.mention(`raise this channel's spend cap to $${dollars}/month`));
+      const { ts: askTs } = await slack.post(slack.mention(spendCapRaiseAsk(dollars)));
       const card = await pollOptional<SlackMessage>(
         async () => (await slack.replies(askTs)).find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
         { timeoutMs: FILE_REPLY_WAIT, what: `a spend.set approval card in thread ${askTs}` },
@@ -8740,7 +8778,7 @@ export const SCENARIOS: readonly Scenario[] = [
           `search Notion for "${ctx.notionQuery ?? S24_DEFAULT_QUERY}" and tell me the first result's title (ref ${rToken}). Just answer directly — no confirmation needed for a read.`,
         ),
       );
-      const readReply = await connector.awaitThreadReply(readTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const readReply = await awaitOwnWakeReply(ctx, connector, readTs, { what: "S-CONNECTOR-TIER (read)", threadOnly: true, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(readReply.text.trim().length > 0, "tier-split: the READ op returned a reply (turn ran)");
       await arming.recheck();
       await ctx.judgePass(
@@ -8755,7 +8793,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: writeTs } = await connector.post(
         connector.mention(`now create a Notion page titled "OE tier ${wToken}" whose body includes the exact token ${wToken}.`),
       );
-      const writeReply = await connector.awaitThreadReply(writeTs, { timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const writeReply = await awaitOwnWakeReply(ctx, connector, writeTs, { what: "S-CONNECTOR-TIER (write)", threadOnly: true, timeoutMs: REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
       ctx.gate(writeReply.text.trim().length > 0, "tier-split: the WRITE op drew a reply (turn ran)");
       const writeArming = await arming.recheck();
       const ungatedClaims = detectNoApprovalClaims(writeReply.text);
@@ -8885,7 +8923,7 @@ export const SCENARIOS: readonly Scenario[] = [
     requires: ["slack", "syntheticDm"],
     surface: "notion",
     suite: "core",
-    timeoutMs: 1_200_000,
+    timeoutMs: 1_800_000,
     judged: false,
     run: async (ctx) => {
       const dm = ctx.dm!;
@@ -8952,13 +8990,21 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       await arming.recheck();
 
+      const handedOff = await replyIsPendingWorkHandoff(ctx, runStart)(answer.ts, answer.text);
+      const answerWait = answerRowWaitMs(handedOff);
+      if (handedOff) {
+        ctx.log(
+          `first reply ${answer.ts} is a hand-off (reply.post done=false): the worker's reads, the carriage and the answer's provenance row all come after it, so each row wait is ${answerWait} ms`,
+        );
+      }
+
       const opRows = await pollOptional(
         async () => {
           const rows = await auditRead({ sinceIso: runStart, actions: ["connector.op"] });
           const reads = rows.filter((r) => r.detail?.connection === NOTION_CONNECTOR && r.detail?.opTier === PROVENANCE_READ_TIER);
           return reads.length > 0 ? reads : undefined;
         },
-        { timeoutMs: AUDIT_ROW_WAIT, what: `a connector.op row at the "${PROVENANCE_READ_TIER}" tier for the "${NOTION_CONNECTOR}" connection in this leg's window` },
+        { timeoutMs: answerWait, what: `a connector.op row at the "${PROVENANCE_READ_TIER}" tier for the "${NOTION_CONNECTOR}" connection in this leg's window` },
       );
       if (opRows === undefined) {
         ctx.skip(
@@ -8978,7 +9024,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const rows = await auditRead({ sinceIso: runStart, actions: [REPLY_PROVENANCE_ACTION] });
           return rowForReplyChunkSet(rows, chunkIds);
         },
-        { timeoutMs: AUDIT_ROW_WAIT, what: `the ${REPLY_PROVENANCE_ACTION} row for any chunk of the DM answer (first chunk ${answer.ts})` },
+        { timeoutMs: answerWait, what: `the ${REPLY_PROVENANCE_ACTION} row for any chunk of the DM answer (first chunk ${answer.ts})` },
       );
       if (provRow === undefined) {
         const chunkIds = (replyChunks.length > 0 ? replyChunks : [answer]).map((c) => c.ts);
@@ -8998,7 +9044,9 @@ export const SCENARIOS: readonly Scenario[] = [
           false,
           `🔴 NOT-JOINED: a ${PROVENANCE_READ_TIER}-tier connector.op row exists for "${NOTION_CONNECTOR}", NO ${REPLY_PROVENANCE_ACTION} row names ANY chunk of the reply (${JSON.stringify(chunkIds)}), and no reply.edit re-rendered a chunk. ` +
             `The window carries ${delegated.length} delegation row(s) (${[...new Set(delegated.map((r) => r.action))].join(", ") || "none"}) and ${carried.length} ${DELEGATED_PROVENANCE_ACTION} row(s). ` +
-            "READ THOSE TWO NUMBERS FIRST — they name which half broke. Delegation rows with NO carriage row means the SETTLE never carried: check `settleDelegatedReads` in `applyTaskSettlement` " +
+            "READ THOSE TWO NUMBERS FIRST — they name which half broke. A delegation.task_started row with NO delegation.task_settled row means the worker had not settled when this wait ended: " +
+            "the carriage and the answer come after the settlement, so read the window again before you diagnose the product. " +
+            "Delegation rows with a settlement and NO carriage row means the SETTLE never carried: check `settleDelegatedReads` in `applyTaskSettlement` " +
             "(hooks/delegation-settlement.ts), and check the worker wrote at all — the carriage joins through the task-to-call join row (`access/task-call-link.ts`), which every deployment writes whatever `taint.mode` says, so a missing row means the dispatch write was lost, the row's six-hour TTL lapsed, or the task predates OPE-2712. That settle is " +
             "FAIL-SOFT: it catches every store error and returns `found: 0`, so an operational store that is down costs the footer and looks exactly like a worker that read nothing. A carriage row " +
             "with no provenance row means the reads reached the ledger and the REPLY did not read it: check `applyReplyProvenance` at the choke point the seat posted through. NEITHER kind of row, on a turn " +
@@ -10763,9 +10811,10 @@ export const SCENARIOS: readonly Scenario[] = [
         const second = await notion
           .awaitBotReplyIn(opened.discussionId, followFrom, { timeoutMs: REPLY_WAIT, seen, skip: (c) => isPendingWorkHandoff(c.text) })
           .catch(() => undefined);
+        if (second === undefined) await logEngagedFollowUp(ctx, { sinceIso: followFrom, platform: "notion", leg: "engaged follow-up" });
         ctx.gate(
           second !== undefined && second.id !== first?.id,
-          "engaged: a plain comment in the engaged discussion woke the agent without re-naming it — `notion-engagement.ts` admits it on the PAGE row the name-drop wrote",
+          "engaged: a plain comment in the engaged discussion drew a reply without re-naming the agent — `notion-engagement.ts` admits it on the PAGE row the name-drop wrote",
         );
         if (second) seen.add(second.id);
         await gateEngagedWake(ctx, { sinceIso: followFrom, platform: "notion", leg: "engaged follow-up", expect: "thread-follow" });

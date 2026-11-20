@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { readLinearIssue, type LinearCommentSummary } from "../channels/linear-api.js";
 import { enrichIssueTeam } from "../channels/linear.js";
@@ -14,7 +14,7 @@ import {
   noteAuthoredRecordRead,
   workerChatArmMount,
   getConfig,
-  preRegisterDynamicEntry,
+  sessionMountedTool,
   resolvePartition,
   ageAtRead,
   type BindableContext,
@@ -130,15 +130,9 @@ export const readLinearIssueEntry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("read_linear_issue", "_single", readLinearIssueEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const bctx = ctx as BindableContext;
-      const ok = workerChatArmMount(bctx, "linear", safeDomains) || linearWorkMount(bctx, safeDomains);
-      if (!ok) return null;
-      return readLinearIssueEntry;
-    },
-  },
+export default sessionMountedTool("read_linear_issue", readLinearIssueEntry, (ctx) => {
+  const ok = workerChatArmMount(ctx, "linear", safeDomains) || linearWorkMount(ctx, safeDomains);
+  if (!ok) return false;
+  return true;
 });

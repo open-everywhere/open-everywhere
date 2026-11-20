@@ -4,7 +4,7 @@ import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import type { CredentialGrantMode, CredentialGrantRow } from "../operational/credential-grant-rows.js";
 import { getConfig } from "./config.js";
 import { resolveOwnWindowToken } from "./delegation-mount.js";
-import { isThreadSeatWindowId, isWorkWindowId, parseWindowToken } from "../channels/window-key.js";
+import { isThreadSeatWindowId, isWorkWindowId, seatWindowKey } from "../channels/window-key.js";
 import {
   GRANT_DOMAIN_KEY_PREFIX,
   GRANT_KEY_SEGMENT_SEPARATOR,
@@ -71,6 +71,6 @@ export function grantScopeAdmits(
 
 function isThreadSeatWorkSessionToken(token: string | undefined): boolean {
   if (token === undefined) return false;
-  const key = parseWindowToken(token.startsWith("unified:") ? token.slice("unified:".length) : token);
+  const key = seatWindowKey(token);
   return key !== undefined && isWorkWindowId(key.windowId) && isThreadSeatWindowId(key.windowId.slice("w/".length));
 }

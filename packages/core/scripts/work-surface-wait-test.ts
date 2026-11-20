@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { idleView } from "./_hook-view.js";
 
 delete process.env.DATABASE_URL;
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-work-surface-wait-")), "ops.sqlite3");
@@ -148,7 +149,7 @@ console.log("§4 the real turn-anchor hook's park");
   const turn = (id: string) =>
     inEveContext(new FakeEveContext(), async () => {
       await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: id } }, dmCtx());
-      await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, dmCtx());
+      await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(dmCtx() as object), view: idleView() } as never);
     });
   const live: import("../agent/channels/work-surface-wait.js").WorkWaitDeps = { ...fakeDeps().deps, org: deploymentOrg, store: getOperationalStore, mark: async () => undefined, now: () => new Date() };
   await turn("p0");
@@ -173,7 +174,7 @@ console.log("§4 the real turn-anchor hook's park");
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "p3" } }, dmCtx());
     await wait.noteJobForwarded({ requestId: "hreq-2", openingRequestId: "hreq-1", taskId: "htask-1", ctx: dmCtx() }, live);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, dmCtx());
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(dmCtx() as object), view: idleView() } as never);
   });
   eq(calls, ["processing", "active"], "the turn that forwards the answer parks active");
 
@@ -187,7 +188,7 @@ console.log("§4 the real turn-anchor hook's park");
   const ctxB = dmCtx({ ...DM_ATTRS, agent_session_ts: "1700159720.000200" });
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "p4" } }, dmCtx());
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctxB);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(ctxB as object), view: idleView() } as never);
   });
   eq(
     steered,
@@ -222,7 +223,7 @@ console.log("§6 the wiring");
   const workTool = src("agent/tools/work.ts");
   eq(/await rememberWorkRequest\([\s\S]*?\}\);[\s\S]{0,600}await noteJobForwarded\(\{ requestId, ctx: c,/.test(workTool), true, "the forward records the conversation right after the request row");
   eq(/await noteJobForwarded\(\{ requestId, ctx: c, \.\.\.\(openingRequest !== undefined \? \{ openingRequestId: openingRequest \} : \{\}\) \}\);/.test(workTool), true, "the first record carries no task, so it moves nothing on");
-  eq(/run: \(\) => deps\.dispatch\(forward\),[\s\S]*?throw new Error\(definite \? FORWARD_FAILED_NOTE : FORWARD_UNKNOWN_NOTE\);\s*\}\s*if \(input\.taskId !== undefined\) \{\s*await noteJobForwarded\(\{[^\n]*taskId: input\.taskId \}\);/.test(workTool), true, "🔴 the move-on runs after the delivery, never before it");
+  eq(/run: async \(\) => \{\s*await addTaskFiles\(\);\s*try \{\s*return await deps\.dispatch\(forward\);[\s\S]*?throw new Error\(definite \? FORWARD_FAILED_NOTE : FORWARD_UNKNOWN_NOTE\);\s*\}\s*if \(input\.taskId !== undefined\) \{\s*await noteJobForwarded\(\{[^\n]*taskId: input\.taskId \}\);/.test(workTool), true, "🔴 the move-on runs after the delivery, never before it");
   const spawn = src("agent/hooks/delegation-settlement.ts");
   eq(/run: async \(\) => \{[\s\S]*?if \(silentFire\) return;\s*(?:\/\/[^\n]*\n\s*)*if \(row\.fire === undefined\) \{\s*const waits = settledJobWaitReason\([\s\S]*?await noteJobSettledWait\([\s\S]*?delivered = await dispatchWorkResult\(/.test(spawn), true, "W's settlement writes the wait inside the once-guard, for a seat's job only, BEFORE the result wake");
   eq(spawn.indexOf("await noteJobSettledWait(") < spawn.indexOf("await settleSignIn("), true, "the wait is written before the sign-in resume can wake the seat");

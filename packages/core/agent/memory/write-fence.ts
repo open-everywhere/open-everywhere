@@ -103,12 +103,32 @@ function assertMemoryWriteAllowed(toolName: string, filePath: string, ctx: ToolC
   if (refusal) throw new Error(`${toolName}: ${refusal}`);
 }
 
-export function withMemoryWriteFence<I, O>(toolName: string, tool: ToolDefinition<I, O>): ToolDefinition<I, O> {
+export type MemoryWritePathField = "filePath" | "path";
+
+const EDIT_PATH_UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+const EDIT_PATH_HOME_PREFIX = /^(?:~|\$HOME)(?=\/|$)/u;
+
+export function editFileFencePath(raw: string): string {
+  let path = raw.replace(EDIT_PATH_UNICODE_SPACES, " ");
+  if (path.startsWith("@")) path = path.slice(1);
+  const home = EDIT_PATH_HOME_PREFIX.exec(path)?.[0];
+  if (home !== undefined) return `/${SANDBOX_CWD[0]}${path.slice(home.length)}`;
+  if (path.startsWith("file://")) {
+    try {
+      return decodeURIComponent(new URL(path).pathname);
+    } catch {
+      return path;
+    }
+  }
+  return path;
+}
+
+export function withMemoryWriteFence<I, O>(toolName: string, tool: ToolDefinition<I, O>, pathField: MemoryWritePathField = "filePath"): ToolDefinition<I, O> {
   return {
     ...tool,
     execute(input: I, ctx: ToolContext) {
-      const filePath = (input as { filePath?: unknown } | null | undefined)?.filePath;
-      if (typeof filePath === "string") assertMemoryWriteAllowed(toolName, filePath, ctx);
+      const raw = (input as Record<string, unknown> | null | undefined)?.[pathField];
+      if (typeof raw === "string") assertMemoryWriteAllowed(toolName, pathField === "path" ? editFileFencePath(raw) : raw, ctx);
       return tool.execute(input, ctx);
     },
   };

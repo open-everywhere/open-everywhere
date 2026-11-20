@@ -6,17 +6,43 @@ export interface WindowKey {
   readonly generation: number;
 }
 
+// eve namespaces a session's continuation token with its channel name: the unified channel's sessions
+// carry `unified:<token>`. eve's hook, tool and instruction frame (`ctx.channel.continuationToken`)
+// hands that namespaced form over. A channel handler's `continuation.token` is the bare form.
+// stripUnifiedSendPrefix and seatWindowKey remove the `unified:` namespace, so the domain, the
+// window and the generation resolve on both shapes. bareTokenFromEveContext (below) is the other
+// tolerant reader: it removes any channel's namespace. No module hand-rolls the strip.
+export const UNIFIED_SEND_PREFIX = "unified:";
+
+export function stripUnifiedSendPrefix(token: string): string;
+export function stripUnifiedSendPrefix(token: unknown): unknown;
+export function stripUnifiedSendPrefix(token: unknown): unknown {
+  return typeof token === "string" && token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
+}
+
+export function seatWindowKey(token: unknown): WindowKey | undefined {
+  return parseWindowToken(stripUnifiedSendPrefix(token));
+}
+
 const EXPLICIT_WINDOW_TOKEN_RE = /^oe-dom:(.+):win:([^:]+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 const DEGENERATE_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 export const HOOK_TOKEN_MAX_BYTES = 255;
 
-export const LONGEST_EVE_HOOK_PREFIX = "eve:inbox:handoff:unified:";
+// The longest Workflow hook token eve builds over a window token: the session inbox hook over the
+// namespaced continuation token. eve's other session hooks (`eve:session:<sessionId>:inbox` and its
+// inbox hook) carry the session id, which is the Workflow run id, not the window token.
+export const LONGEST_EVE_HOOK_PREFIX = "eve:inbox:v1:unified:";
+
+// The bytes the budget reserves for the hook prefix. It is more than LONGEST_EVE_HOOK_PREFIX needs.
+// It stays at 26 because a smaller reserve moves the compact boundary in formatWindowToken, and a
+// work-session token in that band would mint new bytes for a key that already has a live session.
+export const HOOK_PREFIX_RESERVE_BYTES = 26;
 
 const SALT_TAIL_BYTES = 7;
 
-export const WINDOW_TOKEN_MAX_BYTES = HOOK_TOKEN_MAX_BYTES - Buffer.byteLength(LONGEST_EVE_HOOK_PREFIX) - SALT_TAIL_BYTES;
+export const WINDOW_TOKEN_MAX_BYTES = HOOK_TOKEN_MAX_BYTES - HOOK_PREFIX_RESERVE_BYTES - SALT_TAIL_BYTES;
 
 const WORK_OF_DOMAIN_WIRE_ID = "w/=";
 
@@ -79,7 +105,7 @@ export function isTaskWindowId(windowId: string): boolean {
 }
 
 export function isTaskWindowToken(token: unknown): boolean {
-  const key = parseWindowToken(token);
+  const key = seatWindowKey(token);
   return key !== undefined && isTaskWindowId(key.windowId);
 }
 
@@ -102,7 +128,7 @@ export function isThreadSeatWindowId(windowId: string): boolean {
 }
 
 export function isThreadSeatWindowToken(token: unknown): boolean {
-  const key = parseWindowToken(token);
+  const key = seatWindowKey(token);
   return key !== undefined && isThreadSeatWindowId(key.windowId);
 }
 
@@ -123,8 +149,7 @@ export function isWorkWindowId(windowId: string): boolean {
 
 export function isWorkWindowToken(token: unknown): boolean {
   if (typeof token !== "string") return false;
-  const raw = token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
-  const key = parseWindowToken(raw);
+  const key = seatWindowKey(token);
   return key !== undefined && isWorkWindowId(key.windowId);
 }
 
@@ -137,8 +162,7 @@ export function formatDmSeatToken(dmChannelId: string, generation: number): stri
 
 export function parseDmSeatToken(token: unknown): { channelId: string; generation: number } | undefined {
   if (typeof token !== "string") return undefined;
-  const raw = token.startsWith("unified:") ? token.slice("unified:".length) : token;
-  const m = DM_SEAT_TOKEN_RE.exec(raw);
+  const m = DM_SEAT_TOKEN_RE.exec(stripUnifiedSendPrefix(token));
   return m ? { channelId: m[1], generation: Number(m[2]) } : undefined;
 }
 
@@ -176,7 +200,7 @@ export function dmAnchorWindowKey(dmSurfaceKey: string): WindowKey {
 }
 
 export function isDmAnchoredTaskToken(token: unknown): boolean {
-  const key = parseWindowToken(stripUnifiedPrefix(token));
+  const key = seatWindowKey(token);
   return key !== undefined && isTaskWindowId(key.windowId) && isDmAnchorDomain(key.domain);
 }
 
@@ -186,12 +210,12 @@ export function dmWindowKey(dmSurfaceKey: string, generation: number): WindowKey
 }
 
 export function isDmAnchorWindowToken(token: unknown): boolean {
-  const key = parseWindowToken(stripUnifiedPrefix(token));
+  const key = seatWindowKey(token);
   return key !== undefined && isDmAnchorDomain(key.domain) && !isTaskWindowId(key.windowId) && !isThreadSeatWindowId(key.windowId) && !isWorkWindowId(key.windowId);
 }
 
 export function dmAnchorSurfaceForToken(token: unknown): string | undefined {
-  const key = parseWindowToken(stripUnifiedPrefix(token));
+  const key = seatWindowKey(token);
   return key ? dmSurfaceKeyFromAnchorDomain(key.domain) : undefined;
 }
 
@@ -199,8 +223,7 @@ const SUBAGENT_TOKEN_RE = /^subagent:(.+):([^:]+)$/;
 
 export function parseSubagentToken(token: unknown): { parentSessionId: string; callId: string } | undefined {
   if (typeof token !== "string") return undefined;
-  const raw = token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
-  const m = SUBAGENT_TOKEN_RE.exec(raw);
+  const m = SUBAGENT_TOKEN_RE.exec(stripUnifiedSendPrefix(token));
   return m ? { parentSessionId: m[1], callId: m[2] } : undefined;
 }
 
@@ -210,11 +233,6 @@ export function isSubagentSessionToken(token: unknown): token is string {
 
 const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
-const UNIFIED_SEND_PREFIX = "unified:";
-
-function stripUnifiedPrefix(token: unknown): unknown {
-  return typeof token === "string" && token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
-}
 
 export function mintGenerationSalt(): string {
   return randomBytes(3).toString("hex");
@@ -236,7 +254,7 @@ export type SessionId =
 
 export function classifySessionId(token: unknown): SessionId {
   if (typeof token !== "string") return { kind: "native", grain: "native" };
-  const raw = token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
+  const raw = stripUnifiedSendPrefix(token);
   const key = parseWindowToken(raw);
   if (key) {
     if (isTaskWindowId(key.windowId)) return { kind: "task", grain: "task", key };

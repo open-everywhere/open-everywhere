@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -146,7 +147,7 @@ await withPatchedFetch(
       readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
     }
     type Handler = (event: unknown, ctx: unknown) => unknown;
-    const armEvent = (react as unknown as { events: Record<string, Handler> }).events["session.started"];
+    const armEvent = _dynamicResolverForTest(react);
 
     function discordCtx(): Record<string, unknown> {
       return {

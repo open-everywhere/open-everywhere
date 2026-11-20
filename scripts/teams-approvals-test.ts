@@ -6,7 +6,7 @@ registerTeamsProvider();
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
+import { createHmac, generateKeyPairSync, sign as cryptoSign, type KeyObject } from "node:crypto";
 import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/types.js";
 
 const dir = join(tmpdir(), `open-everywhere-teams-approvals-${process.pid}`);
@@ -38,7 +38,7 @@ const {
 const { postTeamsApprovalCard, postTeamsJudgeLiftNotice, postTeamsRowDecisionNotice, parseTeamsApprovalInvoke, teamsClickSurfaceKey, teamsResponseFor, handleTeamsApprovalInvoke, teamsRowWakeTarget } =
   await import("@open-everywhere/provider-teams/agent/approvals/teams-flow.js");
 const { buildTeamsFrontHandler } = await import("@open-everywhere/provider-teams/agent/channels/teams-front.js");
-const { verifyTeamsRequest } = await import("eve/channels/teams");
+const { verifyTeamsInbound } = await import("@open-everywhere/provider-teams/agent/channels/teams-verify.js");
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -221,7 +221,7 @@ function invokeBody(data: unknown, over: Record<string, unknown> = {}): Record<s
   };
 }
 {
-  const { parseTeamsActivity } = await import("eve/channels/teams");
+  const { parseTeamsActivity } = await import("@open-everywhere/provider-teams/agent/channels/teams-inbound.js");
   const r = row();
   const tap = parseTeamsApprovalInvoke(parseTeamsActivity(invokeBody(buildTeamsApprovalData(r, "approve"))));
   ok(tap?.action.id === r.id && tap.clickerId === "29:clicker" && tap.tenantId === TENANT && tap.teamsChannelId === CHANNEL, "an OE tap parses, with the clicker, tenant and room off the activity");
@@ -258,6 +258,14 @@ function mintJwt(privateKey: KeyObject, kid: string, claims: Record<string, unkn
   const sig = cryptoSign("RSA-SHA256", Buffer.from(`${header}.${payload}`), privateKey);
   return `${header}.${payload}.${b64url(sig)}`;
 }
+function unsignedJwt(claims: Record<string, unknown>): string {
+  return `${b64url(JSON.stringify({ alg: "none", typ: "JWT", kid: "bf-key-1" }))}.${b64url(JSON.stringify(claims))}.`;
+}
+function hs256Jwt(secret: string, kid: string, claims: Record<string, unknown>): string {
+  const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT", kid }));
+  const payload = b64url(JSON.stringify(claims));
+  return `${header}.${payload}.${b64url(createHmac("sha256", secret).update(`${header}.${payload}`).digest())}`;
+}
 const trusted = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const rogue = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const jwk = { ...(trusted.publicKey.export({ format: "jwk" }) as Record<string, unknown>), kid: "bf-key-1", use: "sig", alg: "RS256" };
@@ -267,7 +275,7 @@ const fakeFetch = (async (url: string) => {
   return new Response("not found", { status: 404 });
 }) as unknown as typeof fetch;
 const now = Math.floor(Date.now() / 1000);
-const goodClaims = { iss: "https://api.botframework.com", aud: APP_ID, iat: now, nbf: now - 10, exp: now + 600 };
+const goodClaims = { iss: "https://api.botframework.com", aud: APP_ID, serviceurl: SERVICE_URL, iat: now, nbf: now - 10, exp: now + 600 };
 const goodToken = mintJwt(trusted.privateKey, "bf-key-1", goodClaims);
 
 let innerCalls = 0;
@@ -281,7 +289,7 @@ const handler = buildTeamsFrontHandler(
     return new Response("native");
   },
   {
-    verify: (req) => verifyTeamsRequest(req, { appId: APP_ID, fetch: fakeFetch as never }),
+    verify: (req) => verifyTeamsInbound(req, { appId: APP_ID, fetch: fakeFetch as never }),
     approvalInvoke: (tap, waitUntil) => {
       tapCalls += 1;
       return handleTeamsApprovalInvoke(tap, {
@@ -334,6 +342,10 @@ async function auditFor(action: string, id: string) {
     ["a token for another bot (wrong audience)", `Bearer ${mintJwt(trusted.privateKey, "bf-key-1", { ...goodClaims, aud: "another-app" })}`],
     ["an expired token", `Bearer ${mintJwt(trusted.privateKey, "bf-key-1", { ...goodClaims, exp: now - 3600, nbf: now - 7200, iat: now - 7200 })}`],
     ["a garbage bearer", "Bearer not.a.jwt"],
+    ["an unsigned token (alg none)", `Bearer ${unsignedJwt(goodClaims)}`],
+    ["an HS256 token keyed with the trusted PUBLIC key (algorithm confusion)", `Bearer ${hs256Jwt(trusted.publicKey.export({ format: "pem", type: "spki" }).toString(), "bf-key-1", goodClaims)}`],
+    ["a valid token with no serviceurl claim", `Bearer ${mintJwt(trusted.privateKey, "bf-key-1", { ...goodClaims, serviceurl: undefined })}`],
+    ["a valid token bound to ANOTHER service URL than the activity names", `Bearer ${mintJwt(trusted.privateKey, "bf-key-1", { ...goodClaims, serviceurl: "https://smba.trafficmanager.net/emea/" })}`],
   ];
   for (const [label, auth] of cases) {
     const res = await postTap(forged, auth);
@@ -533,8 +545,21 @@ async function auditFor(action: string, id: string) {
   const oldCard = { type: "AdaptiveCard", version: "1.4", body: [], actions: [{ type: "Action.Submit", title: "Approve", data: { oe_approval: { id: r.id, decision: "approve" } } }] };
   const oldShape = teamsCardShape(wire(oldCard));
   ok(oldShape.kind === "unrecognised" && oldShape.saw.includes("Action.Submit{oe_approval}"), `a card with buttons but no readable approval payload is UNRECOGNISED and names its buttons (got ${JSON.stringify(oldShape)})`);
-  const { renderInputRequestAttachment } = await import("eve/channels/teams");
-  const eveInput = renderInputRequestAttachment({ requestId: "q1", prompt: "Which one?", options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] } as never);
+  // eve 1.0 keeps its card renderer internal. This is the question card it renders for a two-option
+  // question (captured from eve 1.0.0-rc.18): Action.Submit buttons that carry eve_input.
+  const eveInput = {
+    contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE,
+    content: {
+      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      type: "AdaptiveCard",
+      version: "1.5",
+      body: [{ type: "RichTextBlock", inlines: [{ type: "TextRun", text: "Which one?" }] }],
+      actions: [
+        { type: "Action.Submit", title: "A", data: { eve_input: { requestId: "q1", prompt: "Which one?", optionId: "a" } } },
+        { type: "Action.Submit", title: "B", data: { eve_input: { requestId: "q1", prompt: "Which one?", optionId: "b" } } },
+      ],
+    },
+  };
   ok(teamsCardShape({ attachments: [{ contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE, content: JSON.stringify(eveInput.content) }] }).kind === "none", "eve's real input-request card (eve_input buttons) is a known shape, not an approval card and not a shape error");
   const eveSignIn = { type: "AdaptiveCard", version: "1.5", body: [{ type: "TextBlock", text: "Authorization required for GitHub" }], actions: [{ type: "Action.OpenUrl", title: "Sign in with GitHub", url: "https://example.test/auth" }] };
   ok(teamsCardShape(wire(eveSignIn)).kind === "none", "eve's sign-in card (one Action.OpenUrl button, the authorization.required shape) is a known shape, not a shape error");

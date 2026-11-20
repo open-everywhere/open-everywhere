@@ -48,6 +48,7 @@ import { dmAnchorWindowKey, formatWindowToken } from "../agent/channels/window-k
 import type { BindableContext } from "../agent/identity/binding.js";
 import { registerSlackFixtureCodec, registerSlackFixtureManifest, registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import expectBotReplyTool from "../agent/tools/expect_bot_reply.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -269,7 +270,7 @@ console.log("§5 expect_bot_reply");
       },
     }) as unknown as BindableContext;
 
-  const handler = (expectBotReplyTool as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["session.started"];
+  const handler = _dynamicResolverForTest(expectBotReplyTool);
   const mounted = (await handler({}, dmCtx())) as { execute: (input: unknown, ctx: unknown) => Promise<Record<string, unknown>> } | null;
   ok(mounted !== null, "expect_bot_reply mounts on the person's DM seat");
   const call = (input: unknown, ctx: BindableContext) => mounted!.execute(input, ctx);

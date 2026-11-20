@@ -263,23 +263,24 @@ against a newer one.
 `fresh_eyes_review` is a [declared subagent](./skills-and-plugins.md#declared-subagents-the-specialist-unit):
 eve gives it a fresh session with **no parent history**, and every slot in its `tools/` directory is
 taken over. Every framework tool eve mounts by default carries a `disableTool()` sentinel — `bash`,
-`read_file`, `write_file`, `web_fetch`, `web_search` and `load_skill` — so there is no bash, no
-`read_file`, no `web_fetch` and no `web_search`.
+`read_file`, `write_file`, `edit_file`, `web_fetch` and `web_search` — so there is no bash, no
+`read_file`, no file write, no `web_fetch` and no `web_search`.
 
-**There is no connector search either, and since eve 0.69.0 that rests on eve rather than on us.** eve
-0.52.0 declared `connection_search` a slot an app could not disable, so this subagent carried an
-authored no-op there instead. eve 0.69.0 RESERVED the slot against any authored module, replacement
-included, so that file is gone. What keeps the subagent connector-free now is eve's own per-node
-scoping: its connection registry is built only for a node that declares connections of its own —
-static or dynamic, both of which are modules under `connections/` — and this subagent declares
-neither, so it gets no registry and therefore no `connection_search` and no `connection_execute`. The root's own connectors are not reachable from it.
-🔴 `npm run lint:subagents` and `npm run test:subagent-zero-hands` both read eve's mount sets through
-the one reader, and both pin the halves below. (The lint was dead on the 0.69.0 re-roll, because the
-reader expected a declaration eve had removed; OPE-2254 re-derived it.) The test pins, against the
-real tree: that the subagent authors nothing at a reserved
-slot, and that eve still scopes its registry to the active node — the one check that would notice a
-future eve losing that property. So an instruction embedded in the diff cannot make it go and find the
-proposing session's reasoning, or anything else.
+**The skill loader and the connector routes are kept out by eve, not by a sentinel, and one
+condition of that is unproven.** eve reserves its `eve__` tool namespace: `eve build` throws on any authored module at a
+reserved name, a `disableTool()` sentinel included. So no file in `tools/` can remove `eve__skill`,
+`eve__search` or `eve__tool`. eve mounts them only from the session's catalog: `eve__skill` while the
+catalog holds a skill, and `eve__search` and `eve__tool` while it holds a connection or a deferred
+entry. This subagent declares no `skills/` and no `connections/`. So it holds none of the three, on one
+condition: eve must build a subagent's catalog from that subagent's own node, not from the root's. On
+that condition, an instruction embedded in the diff cannot make it go and find the proposing
+session's reasoning, or anything else.
+🔴 `npm run test:subagent-zero-hands` pins, against the real tree and the installed eve: that the
+subagent authors nothing at a reserved name, that every authored file is a sentinel, that a sentinel
+exists for every tool eve mounts by default, that eve's catalog still mounts the three routes only
+under those conditions, and that the subagent declares no skills and no connections. The test does
+NOT prove the condition above. On eve 1.x it is unproven, so the containment of the three `eve__`
+routes is unproven too.
 Everything it knows arrives in the brief, and the diff inside that brief is wrapped in
 the untrusted-content envelope, with embedded delimiters defanged so a diff containing a literal
 closing tag cannot break out and address it as trusted instruction.

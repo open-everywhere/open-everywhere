@@ -153,7 +153,7 @@ function deps(over: Partial<LinearReactionFeedbackDeps> = {}): { deps: LinearRea
   }) as typeof globalThis.fetch;
 
   const { LINEAR_SIGNATURE_HEADER } = await import("../agent/channels/linear-webhook-verify.js");
-  const { signLinearWebhookBody } = await import("eve/channels/linear");
+  const { signLinearWebhookBody } = await import("../agent/channels/linear-webhook-verify.js");
   const channel = (await import("../agent/channels/linear.js")).default;
   type WebhookHandler = (req: Request, args: unknown) => Promise<Response>;
   const route = channel.routes.find((r) => r.transport !== "websocket" && r.method === "POST" && r.path === "/eve/v1/linear") as { handler: WebhookHandler } | undefined;

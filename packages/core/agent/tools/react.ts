@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, currentTurnAddressed, isUnifiedWindowContext, turnOriginPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
@@ -9,7 +9,8 @@ import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
 import { carryFailureSignals, platformFailureClass, platformFailureStatus } from "../channels/platform-failure.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
+import { refuseTargetIfStopped, refuseVerbIfStoodDown } from "../channels/stand-down-gate.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
 
@@ -64,6 +65,7 @@ const reactEntry = defineTool({
         }),
         outputSchema: z.object({ reacted: z.boolean(), emoji: z.string(), ts: z.string(), note: z.string() }),
         async execute(input, ctx) {
+          await refuseVerbIfStoodDown(ctx as BindableContext, "react");
           {
             const origin = turnOriginPlatform(ctx as BindableContext);
             if (origin !== undefined && !capabilitiesForPlatform(origin).reactions) {
@@ -128,6 +130,7 @@ const reactEntry = defineTool({
               "react needs a message ts — none was given and none could be inferred from this turn.",
             );
           }
+          if (input.ts !== undefined && input.ts !== binding.threadTs) await refuseTargetIfStopped(ctx as BindableContext, "react", input.ts);
           try {
             await bridgeSlackReadCall("reactions.add", { channel: channelId, name: input.emoji, timestamp: ts });
           } catch (err) {
@@ -152,14 +155,9 @@ const reactEntry = defineTool({
           };
         },
 });
-preRegisterDynamicEntry("react", "_single", reactEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const c = ctx as BindableContext;
-      if (!isUnifiedWindowContext(c) && !capabilitiesFor(c).reactions) return null;
-      return reactEntry;
-    },
-  },
+export default sessionMountedTool("react", reactEntry, (ctx) => {
+  const c = ctx;
+  if (!isUnifiedWindowContext(c) && !capabilitiesFor(c).reactions) return false;
+  return true;
 });

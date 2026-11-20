@@ -9,7 +9,7 @@ IN  relay message M21 · guild G2 channel C2 (type 0) · from U_DEV2 · mention
   ⇠ 200 ok
 EVT turn.started on discord:TH1
   → POST /channels/TH1/typing ⇒ 204
-EVT message.completed on discord:TH1 {"finishReason":"stop","message":"The build fails on the lint step."}
+EVT content.completed on discord:TH1 {"partId":"part-1","kind":"text","phase":"reply","value":"The build fails on the lint step."}
   → DELETE /channels/C2/messages/M21/reactions/👀/@me ⇒ 204
 IN  relay message M22 · guild G2 channel TH1 (type 11) · from U_DEV2 · plain
       | and which rule is tripping it?
@@ -30,6 +30,6 @@ IN  relay message M22 · guild G2 channel TH1 (type 11) · from U_DEV2 · plain
       | </wake>
   ⇠ 200 ok
 EVT turn.started on discord:TH1
-EVT message.appended on discord:TH1 {"messageSoFar":"no-unused-vars"}
+EVT content.delta on discord:TH1 {"partId":"part-1","kind":"text","delta":"no-unused-vars"}
   → POST /channels/TH1/typing ⇒ 204
-EVT message.completed on discord:TH1 {"finishReason":"stop","message":"no-unused-vars, in ci.ts line 12."}
+EVT content.completed on discord:TH1 {"partId":"part-1","kind":"text","phase":"reply","value":"no-unused-vars, in ci.ts line 12."}

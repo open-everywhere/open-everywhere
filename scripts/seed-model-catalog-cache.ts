@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ModelStack } from "../agent/model/stacks.js";
 import { importAppModule, resolveAppRoot } from "@open-everywhere/core/agent/scaffold/app-root.js";
 import { pathToFileURL } from "node:url";
@@ -17,7 +17,6 @@ export interface CatalogModelProvider {
   provider: string;
   providerModelId: string;
   contextWindowTokens?: number;
-  maxOutputTokens?: number;
   [extra: string]: unknown;
 }
 
@@ -53,9 +52,6 @@ function assertCatalogModelProvider(x: unknown, path: string): asserts x is Cata
   }
   if (x.contextWindowTokens !== undefined && !(Number.isInteger(x.contextWindowTokens) && (x.contextWindowTokens as number) >= 0)) {
     throw new Error(`${path}.contextWindowTokens: expected a nonnegative integer`);
-  }
-  if (x.maxOutputTokens !== undefined && !(Number.isInteger(x.maxOutputTokens) && (x.maxOutputTokens as number) >= 0)) {
-    throw new Error(`${path}.maxOutputTokens: expected a nonnegative integer`);
   }
 }
 
@@ -105,13 +101,9 @@ export function findCatalogModelBySlug(models: readonly CatalogModel[], slug: st
 
 export function modelCatalogLimitsFromProvider(
   provider: CatalogModelProvider,
-): { contextWindowTokens: number; maxOutputTokens?: number } | null {
+): { contextWindowTokens: number } | null {
   if (provider.contextWindowTokens === undefined || provider.contextWindowTokens <= 0) return null;
-  const limits: { contextWindowTokens: number; maxOutputTokens?: number } = {
-    contextWindowTokens: provider.contextWindowTokens,
-  };
-  if (provider.maxOutputTokens !== undefined && provider.maxOutputTokens > 0) limits.maxOutputTokens = provider.maxOutputTokens;
-  return limits;
+  return { contextWindowTokens: provider.contextWindowTokens };
 }
 
 export function registryModelIds(): string[] {
@@ -165,9 +157,11 @@ async function readCommittedSnapshot(): Promise<CompiledRuntimeModelCatalogCache
   return raw;
 }
 
-async function seedCache(snapshot: CompiledRuntimeModelCatalogCache): Promise<void> {
-  await mkdir(join(REPO_ROOT, ".eve", "cache"), { recursive: true });
-  await writeFile(CACHE_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+export async function seedCache(snapshot: CompiledRuntimeModelCatalogCache, root: string = REPO_ROOT): Promise<string> {
+  const path = join(root, ".eve", "cache", "model-catalog.json");
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  return path;
 }
 
 async function main(): Promise<void> {

@@ -96,7 +96,7 @@ export function skillPackageFromRow(row: DomainSkillRow): SkillPackageDefinition
       typeof desc === "string" && desc
         ? desc
         : `Domain skill "${row.name}" for the "${row.domain}" domain${row.updatedBy ? `, authored by ${row.updatedBy}` : ""}.`,
-    markdown: row.content,
+    content: row.content,
   };
 }
 

@@ -18,7 +18,7 @@ import {
 } from "../agent/access/invoker-posture.js";
 import { currentInvokerPosture, setInvokerPosture } from "../agent/access/invoker-posture-state.js";
 import { fullKit, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
-import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { seatCutToolset } from "../agent/access/seat-cut.js";
 import { nativeAgentAllowedNow, setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { currentLeanSeatPosture } from "../agent/access/lean-seat-state.js";
 import { allowedOnLeanSeat } from "../agent/access/lean-seat.js";
@@ -29,6 +29,7 @@ import { OE_GRAIN_ATTR } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId, workWindowId } from "../agent/channels/window-key.js";
 import { WORKER_WITHHELD_TOOLS } from "../agent/access/worker-seat.js";
 import { currentWorkerWake } from "../agent/access/worker-seat-state.js";
+import { v27Hooks } from "./_hook-view.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -91,7 +92,7 @@ const leanSeatHook = (await import("../agent/hooks/lean-seat.js")).default as un
 ok(typeof leanSeatHook.events["turn.started"] === "function", "the lean-seat hook registers a turn.started handler — the classification is WIRED, not just written");
 
 function makeToolset(): Record<string, { description: string; execute: () => unknown }> {
-  const names = [...Object.keys(WINDOW_GATED_TOOLS), ...WINDOW_UNGATED_TOOLS, "ask_question", "todo", "final_output"];
+  const names = [...Object.keys(WINDOW_GATED_TOOLS), ...WINDOW_UNGATED_TOOLS, "ask_question", "todo", "eve__reply"];
   const out: Record<string, { description: string; execute: () => unknown }> = {};
   for (const name of names) out[name] = { description: `${name} tool`, execute: () => ({ ok: true }) };
   return out;
@@ -105,7 +106,7 @@ async function kitForDelivery(ctx: unknown): Promise<{ toolset: Record<string, u
     const lean = currentLeanSeatPosture();
     const worker = currentWorkerWake();
     const toolset = makeToolset() as unknown as Record<string, unknown>;
-    projectToolSet(toolset);
+    seatCutToolset(toolset);
     return { toolset, posture, lean, worker };
   });
 }
@@ -136,7 +137,7 @@ ok(webhookBag[FIRE_UNATTENDED_ATTR] === "true", "fixture provenance: …and the 
   ok(worker === false, "…and the fire's own WINDOW is NOT a delegated worker — the per-wake bit is `false`");
   ok(!("bash" in toolset), "⭐ THE PROPERTY: a webhook fire's assembled toolset has NO `bash` — asserted at the model-call seam that decides");
   ok([...UNTRUSTED_REMOTE_WITHHELD_TOOLS].every((k) => !(k in toolset)), "…and no other wide-hands tool either (checkout_repo, write_file, web_fetch, open_pull_request, create_skill, …)");
-  ok("reply" in toolset && "final_output" in toolset, "…while the fire keeps the verbs its job consists of — this is a bounded subtraction, not a roster swap");
+  ok("reply" in toolset && "eve__reply" in toolset, "…while the fire keeps the verbs its job consists of — this is a bounded subtraction, not a roster swap");
   ok("remember" in toolset || "read_channel" in toolset, "…including the reads/memory a fire is FOR (it was not collapsed onto the lean conversational roster)");
 }
 
@@ -234,11 +235,11 @@ const THREAD_SEAT_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowI
 
 inSession(() => {
   setInvokerPosture("interactive");
-  (leanSeatHook.events["turn.completed"] as () => void)();
-  ok(currentInvokerPosture() === "untrusted-remote", "turn.completed drops the posture back to the NARROWEST class, never to a stale wide one");
+  void v27Hooks(leanSeatHook).turnSettled("completed")({});
+  ok(currentInvokerPosture() === "untrusted-remote", "a completed turn.settled drops the posture back to the NARROWEST class, never to a stale wide one");
   setInvokerPosture("interactive");
-  (leanSeatHook.events["turn.failed"] as () => void)();
-  ok(currentInvokerPosture() === "untrusted-remote", "turn.failed does the same");
+  void v27Hooks(leanSeatHook).turnSettled("failed")({});
+  ok(currentInvokerPosture() === "untrusted-remote", "a failed turn.settled does the same");
 });
 
 ok(currentInvokerPosture() === "interactive", "outside an eve context the posture read fails soft to `interactive` — no session, no invoker (see the state module's header)");
@@ -285,6 +286,15 @@ ok(currentInvokerPosture() === "interactive", "outside an eve context the postur
   inSession(() => {
     ok(eveContextActive() === true, "OPE-2157: inside a live context the probe answers true");
   });
+  {
+    // eve 1.x can hold a live store with no context (a scope value set outside any eve context). The
+    // probe counts it as a context, so an unreadable slot there takes the RESTRICTING answer.
+    const storage = (globalThis as Record<symbol, unknown>)[Symbol.for("eve.context-storage")] as { run<T>(store: unknown, fn: () => T): T };
+    storage.run({ context: undefined, values: new Map<unknown, unknown>() }, () => {
+      ok(eveContextActive() === true, "a live eve store with no context still counts as a context for the probe");
+      ok(currentHaltStamp() === true, "…so an unreadable halt slot there reads as HALTED (restricting), never as the context-less null");
+    });
+  }
 
   const broken = {
     get: () => undefined,
@@ -338,16 +348,16 @@ ok(currentInvokerPosture() === "interactive", "outside an eve context the postur
     contextStorage.run(store, () => {
       setNativeDelegationSeat("allow");
       const toolset = makeToolset() as unknown as Record<string, unknown>;
-      toolset["web_search"] = { description: "web_search", execute: () => ({ ok: true }) };
-      projectToolSet(toolset);
+      toolset["web_fetch"] = { description: "web_fetch", execute: () => ({ ok: true }) };
+      seatCutToolset(toolset);
       return toolset;
     });
   const control = projectUnder(new ContextContainer());
-  ok(control["bash"] !== undefined && control["web_search"] !== undefined, "OPE-2157 negative control: with healthy slots the interactive default keeps `bash` and `web_search`");
+  ok(control["bash"] !== undefined && control["web_fetch"] !== undefined, "OPE-2157 negative control: with healthy slots the interactive default keeps `bash` and `web_fetch`");
   const postureBroken = projectUnder(brokenOnly("open-everywhere.invoker-posture"));
   ok(postureBroken["bash"] === undefined, "OPE-2157: 🔴 a failed invoker-posture read ALONE withholds `bash` at the projection — the untrusted-remote cut lands");
   const haltBroken = projectUnder(brokenOnly("open-everywhere.halted"));
-  ok(haltBroken["web_search"] === undefined && haltBroken["bash"] !== undefined, "OPE-2157: 🔴 a failed halt read ALONE withholds `web_search` (and nothing else changes)");
+  ok(haltBroken["web_fetch"] === undefined && haltBroken["bash"] !== undefined, "OPE-2157: 🔴 a failed halt read ALONE withholds `web_fetch` (and nothing else changes) — the halt name the seat cut reaches on eve 1.x");
 }
 
 {
@@ -358,7 +368,7 @@ ok(currentInvokerPosture() === "interactive", "outside an eve context the postur
       const allowed = nativeAgentAllowedNow();
       const lean = currentLeanSeatPosture();
       const toolset = { ...makeToolset(), agent: { description: "agent tool", execute: () => ({ ok: true }) } } as unknown as Record<string, unknown>;
-      projectToolSet(toolset);
+      seatCutToolset(toolset);
       return { allowed, lean, toolset };
     });
   const W_TOKEN = `unified:${formatWindowToken({ domain: "acme", windowId: workWindowId("acme"), generation: 3 })}`;
@@ -371,20 +381,41 @@ ok(currentInvokerPosture() === "interactive", "outside an eve context the postur
   const bare = await agentVerdictFor(tokenless);
   ok(!bare.allowed && !("agent" in bare.toolset), "OPE-2351: 🔴 a seat whose token the hook cannot read holds no `agent` either — no wake but W delegates natively");
   ok(bare.lean === "lean" && Object.keys(bare.toolset).every((name) => allowedOnLeanSeat(name)), "OPE-2351: …and it still runs lean, as before: the narrow direction, which the execute backstop agrees with");
-  const { seatHoldsDelegationVerb } = await import("../agent/access/work-session.js");
-  const { memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
+  const { seatDelegationVerb, seatHoldsDelegationVerb, seatMemoryRecallRoute } = await import("../agent/access/work-session.js");
   ok(!seatHoldsDelegationVerb(tokenless as unknown as BindableContext), "OPE-2351: the token-less seat holds no delegation verb…");
-  ok(memoryRecallRouteFor("standing", undefined, undefined, seatHoldsDelegationVerb(tokenless as unknown as BindableContext)) !== "agent", "…so its prompt's memory route does not name `agent`");
-  ok(seatHoldsDelegationVerb(deliveryCtx({}, undefined, STANDING_TOKEN) as unknown as BindableContext) && seatHoldsDelegationVerb(deliveryCtx({}, undefined, W_TOKEN) as unknown as BindableContext), "…while a forwarding seat and the work session do (the controls)");
+  ok(seatMemoryRecallRoute(tokenless as unknown as BindableContext) !== "agent", "…so its prompt's memory route does not name `agent`");
+  const forwarding = deliveryCtx({}, undefined, STANDING_TOKEN) as unknown as BindableContext;
+  const workSession = deliveryCtx({}, undefined, W_TOKEN) as unknown as BindableContext;
+  ok(seatHoldsDelegationVerb(forwarding) && seatHoldsDelegationVerb(workSession), "…while a forwarding seat and the work session do (the controls)");
+  ok(seatDelegationVerb(forwarding) === "work" && seatDelegationVerb(workSession) === "agent", "OPE-2795: 🔴 a forwarding seat's hand-off verb is `work`, and only the work session's is `agent`");
+  ok(seatMemoryRecallRoute(forwarding) === "work", "OPE-2795: 🔴 a forwarding seat's memory route is `work` — never `agent`, which its per-wake verdict refuses, and never `none`, which loses its memory road");
+  ok(seatMemoryRecallRoute(workSession) === "agent", "OPE-2795: …and the work session's route is `agent`, which its verdict admits (the control)");
+  ok(seatMemoryRecallRoute(tokenless as unknown as BindableContext) === "none", "OPE-2795: …and the token-less seat has no memory road at all");
+  {
+    const { nativeDelegationVerdictFor } = await import("../agent/hooks/lean-seat.js");
+    const { threadSeatWindowId } = await import("../agent/channels/window-key.js");
+    const cases: readonly [string, BindableContext][] = [
+      ["token-less", tokenless as unknown as BindableContext],
+      ["forwarding", forwarding],
+      ["work session", workSession],
+      ["thread seat", deliveryCtx({}, undefined, `unified:${formatWindowToken({ domain: "acme", windowId: threadSeatWindowId("slack/T1/C1", "1700000000.000100"), generation: 3 })}`) as unknown as BindableContext],
+    ];
+    for (const [name, c] of cases) {
+      ok((nativeDelegationVerdictFor(c) === "allow") === (seatMemoryRecallRoute(c) === "agent"), `OPE-2795: 🔴 ${name}: the \`agent\` verdict is \`allow\` exactly when the memory route names \`agent\` (one predicate)`);
+    }
+    ok(nativeDelegationVerdictFor(forwarding) === "no-seat" && nativeDelegationVerdictFor(workSession) === "allow", "OPE-2795: the forwarding seat's verdict stays `no-seat`, and the work session's is `allow`");
+  }
   {
     const { readFileSync } = await import("node:fs");
     const src = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8").replace(/^\s*(\/\/|\*|\/\*).*$/gm, "");
     const access = src("../agent/instructions/access.ts");
     const routing = src("../agent/hooks/window-routing.ts");
-    ok((access.match(/memoryRecallRouteFor\(windowGrainOf\(ctx\), undefined, undefined, seatHoldsDelegationVerb\(ctx\)\)/g) ?? []).length === 2, "OPE-2351: both prompt recall routes in instructions/access.ts pass seatHoldsDelegationVerb");
-    ok(/memoryRecallRouteFor\(grain, undefined, undefined, seatHoldsDelegationVerb\(c\)\)/.test(routing), "OPE-2351: …and so does the routing audit row (hooks/window-routing.ts)");
-    const recallLines = (access + "\n" + routing).split("\n").filter((line) => line.includes("memoryRecallRouteFor("));
-    ok(recallLines.length >= 3 && recallLines.every((line) => !line.includes("canDelegateFromSeat")), "OPE-2351: 🔴 no recall route passes the bare canDelegateFromSeat");
+    const seatRoute = src("../agent/access/work-session.ts");
+    ok((access.match(/seatMemoryRecallRoute\(ctx\)/g) ?? []).length === 2, "OPE-2351: both prompt recall routes in instructions/access.ts read seatMemoryRecallRoute");
+    ok(/seatMemoryRecallRoute\(c\)/.test(routing), "OPE-2351: …and so does the routing audit row (hooks/window-routing.ts)");
+    ok(!access.includes("memoryRecallRouteFor(") && !routing.includes("memoryRecallRouteFor("), "OPE-2795: 🔴 no seat route bypasses seatMemoryRecallRoute, whose verb is the seat's own");
+    const recallLines = seatRoute.split("\n").filter((line) => line.includes("memoryRecallRouteFor("));
+    ok(recallLines.length === 1 && recallLines.every((line) => !line.includes("canDelegateFromSeat") && line.includes("verb")), "OPE-2351: 🔴 the seat route passes the seat's own delegation verb, never the bare canDelegateFromSeat");
   }
   {
     const { workTierSectionFor } = await import("../agent/instructions/access.js");

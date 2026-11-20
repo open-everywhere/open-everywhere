@@ -1,4 +1,4 @@
-import { resolveTeamsAppId, resolveTeamsAppPassword, resolveTeamsTenantId } from "eve/channels/teams";
+import { resolveTeamsAppId, resolveTeamsAppPassword, resolveTeamsTenantId } from "./teams-credentials.js";
 import { teamsAppCredentials } from "./teams-connector.js";
 import {
   auditChannelReadRefusal,

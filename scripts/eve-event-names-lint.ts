@@ -24,6 +24,11 @@ export const BASELINE_0_71_0: readonly string[] = Object.freeze([
 export const NOT_EVE_EVENTS: readonly { readonly file: string; readonly name: string; readonly why: string }[] = [
   { file: "packages/core/agent/channels/turn-cancel.ts", name: "turn.cancelled", why: "OE's own audit action TURN_CANCELLED_ACTION; renaming it breaks audit history" },
   { file: "packages/core/agent/audit/action-registry.ts", name: "turn.cancelled", why: "the registry row for OE's turn.cancelled audit action" },
+  { file: "packages/core/scripts/e2e/scenarios.ts", name: "turn.cancelled", why: "an audit read of OE's own turn.cancelled action (TURN_CANCELLED_ACTION)" },
+  { file: "packages/core/agent/channels/work.ts", name: "task.settled", why: "OE's postOnce dedupe-key namespace for a work result; renaming it re-posts results already posted inside the TTL" },
+  { file: "packages/providers/slack/agent/channels/slack.ts", name: "turn.failed", why: "the surface.quiet_fail audit row's event label; renaming it splits audit history and drops the failure meaning" },
+  { file: "packages/providers/slack/agent/channels/slack.ts", name: "session.failed", why: "the surface.quiet_fail audit row's event label; renaming it splits audit history and drops the failure meaning" },
+  { file: "packages/core/scripts/dream-mode3-test.ts", name: "turn.failed", why: "fixtures of the surface.quiet_fail audit row, whose event label slack.ts writes (the row above)" },
   { file: "packages/providers/email/agent/provider-events.ts", name: "message.received", why: "AgentMail's webhook event name (docs.agentmail.to), the vendor's word" },
   { file: "packages/providers/email/agent/transports/agentmail.ts", name: "message.received", why: "AgentMail's webhook event name, matched on the inbound payload" },
   { file: "packages/providers/email/scripts/email-agentmail-test.ts", name: "message.received", why: "AgentMail webhook fixtures" },

@@ -17,6 +17,7 @@ import { adoptDelegatedAuthority } from "@open-everywhere/core/agent/identity/de
 import { getSettings, overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import readLinearIssueDefault, { readLinearIssueEntry } from "@open-everywhere/provider-linear/agent/tools/read_linear_issue.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 registerLinearProvider();
 
@@ -140,7 +141,7 @@ async function withWorkerAuthority<T>(parent: BindableContext, principalId: stri
 
 type MountHandler = (event: unknown, ctx: unknown) => unknown;
 async function mount(ctx: BindableContext): Promise<unknown> {
-  const handler = (readLinearIssueDefault as unknown as { events: Record<string, MountHandler> }).events["session.started"];
+  const handler = _dynamicResolverForTest(readLinearIssueDefault);
   return handler({}, ctx);
 }
 

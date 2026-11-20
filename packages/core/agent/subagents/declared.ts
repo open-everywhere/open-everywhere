@@ -15,6 +15,28 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, (m) => m.replace(/[^\n]/gu, " "));
 }
 
+const ROOT_AGENT_IMPORT_RE = /\bimport\s+([A-Za-z_$][\w$]*)\s+from\s+["']\.\.\/\.\.\/agent(?:\.js|\.ts)?["']/u;
+
+const ROOT_MODEL_RULE =
+  "A declared subagent must take the root agent's own model: `import root from \"../../agent.js\"` and `model: root.model`. " +
+  "That model runs the primary model resolver, so the step budget, the closeout boundary, call capture, the empty-stop reissue, " +
+  "the toolset evidence and the scripted test valve act on the subagent's turns too. A static model id skips all of them";
+
+function rootModelProblem(agentCode: string): string | undefined {
+  const root = ROOT_AGENT_IMPORT_RE.exec(agentCode)?.[1];
+  if (root === undefined) return `does not import the root agent. ${ROOT_MODEL_RULE}.`;
+  const escaped = root.replace(/\$/gu, "\\$");
+  const fields = [...agentCode.matchAll(/(?:\[\s*["'`]model["'`]\s*\]|["'`]model["'`]|\bmodel)\s*:\s*([^,}\n]+)/gu)].map((m) => m[1]!.trim());
+  if (fields.length !== 1 || !new RegExp(`^${escaped}\\.model$`, "u").test(fields[0]!)) {
+    return `sets \`model\` to ${fields.length === 0 ? "nothing" : fields.map((f) => `\`${f}\``).join(", ")}, not \`${root}.model\`. ${ROOT_MODEL_RULE}.`;
+  }
+  return undefined;
+}
+
+export function usesRootAgentModel(agentSource: string): boolean {
+  return rootModelProblem(withoutComments(agentSource)) === undefined;
+}
+
 export function listDeclaredSubagents(subagents: readonly DeclaredSubagentSource[]): string[] {
   return subagents.map((s) => s.name).sort();
 }
@@ -50,6 +72,8 @@ export function checkDeclaredSubagents(
       if (!/\bdescription\s*:/u.test(agentCode)) {
         problems.push(`${at}/agent.ts has no \`description\` — it is the tool description the parent reads to decide whether to delegate, and eve rejects the build without it`);
       }
+      const modelProblem = rootModelProblem(agentCode);
+      if (modelProblem !== undefined) problems.push(`${at}/agent.ts ${modelProblem}`);
       if (/\boutputSchema\s*:/u.test(agentCode)) {
         problems.push(
           `${at}/agent.ts binds \`outputSchema\` — eve 0.69.0 removed it from \`defineAgent\` (there is no \`mode: "task"\` and no \`resolveEffectiveOutputSchema\` any more), so the field is a typecheck error against \`never\` and applies to nothing. A schema is requested PER TURN by the caller, as JSON Schema on the send. Remove the binding; the contract stays in packages/core/agent/subagents/contracts.ts for the re-derive (OPE-2250)`,

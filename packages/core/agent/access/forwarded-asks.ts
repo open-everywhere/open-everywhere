@@ -1,7 +1,7 @@
 import { defineState } from "eve/context";
 import { currentTurnId, deploymentOrg, subagentParentSessionId, type BindableContext } from "../identity/binding.js";
 import { delegatedRequesterThisTurn } from "../identity/delegated-binding.js";
-import { parseWindowToken } from "../channels/window-key.js";
+import { seatWindowKey } from "../channels/window-key.js";
 import { readWorkCall, readWorkRequest, workTokenForSeat, type WorkRequestRow } from "../channels/work.js";
 import { ensureDelegatedTaskBinding } from "../channels/task-wake.js";
 import { readContinuationWake, type ContinuationWake } from "../channels/task-provenance.js";
@@ -14,8 +14,8 @@ import type { RequesterVerdict } from "./requester-identity.js";
 const MAX_FORWARDED_ASKS = 6;
 
 function sameWindow(a: string | undefined, b: string | undefined): boolean {
-  const ka = parseWindowToken(a?.startsWith("unified:") ? a.slice("unified:".length) : a);
-  const kb = parseWindowToken(b?.startsWith("unified:") ? b.slice("unified:".length) : b);
+  const ka = seatWindowKey(a);
+  const kb = seatWindowKey(b);
   return ka !== undefined && kb !== undefined && ka.domain === kb.domain && ka.windowId === kb.windowId;
 }
 

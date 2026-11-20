@@ -95,7 +95,7 @@ ok(bound.plugins.includes("notion"), "route ②: bundle grants the 'notion' plug
 ok(bound.skills.includes("notion-rest"), "route ②: plugin expands to the 'notion-rest' skill (scoped visibility)");
 ok(SKILL_CONTENT["notion-rest"] !== undefined, "route ②: skill content exists in the registry");
 ok(
-  SKILL_CONTENT["notion-rest"].description.length > 0 && SKILL_CONTENT["notion-rest"].markdown.includes("Notion"),
+  SKILL_CONTENT["notion-rest"].description.length > 0 && SKILL_CONTENT["notion-rest"].content.includes("Notion"),
   "route ②: skill has a description and Notion-referencing prose",
 );
 ok(

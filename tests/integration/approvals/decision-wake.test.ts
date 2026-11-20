@@ -251,14 +251,14 @@ test("a guild-context click wakes the proposing window session with the decision
   await waitFor(async () => {
     const raw = await (await getStore()).getTaskResult(org, ticketKey);
     return raw !== null && (JSON.parse(raw) as { spent?: unknown }).spent === true ? true : undefined;
-  }, "the work session's task_cancel to redeem the seat's cancel ticket");
+  }, "the work session's eve__task_cancel to redeem the seat's cancel ticket");
   await waitFor(
     async () => ((await rowsSinceCursor(clickCursor, ["work.cancel_redeemed"])).some((r) => r.detail?.taskId === workerTaskId && r.detail?.outcome === "admitted") ? true : undefined),
-    "the work session's fenced task_cancel to be ADMITTED for the braked task",
+    "the work session's fenced eve__task_cancel to be ADMITTED for the braked task",
   );
   await awaitWindowQuiet();
   const forTask = (await rowsSinceCursor(clickCursor, ["work.cancel_redeemed"])).filter((r) => r.detail?.taskId === workerTaskId);
-  expect(forTask.map((r) => r.detail?.outcome), "the work session's task_cancel was REFUSED by the fence on some validation").not.toContain("refused");
+  expect(forTask.map((r) => r.detail?.outcome), "the work session's eve__task_cancel was REFUSED by the fence on some validation").not.toContain("refused");
   expect(prompt).toContain(`<system-note>A pending approval you were waiting on (id ${id})`);
   expect(prompt).not.toContain(`approval-decision-${id}`);
 });

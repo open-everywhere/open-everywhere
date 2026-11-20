@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-linear",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Open Everywhere Linear provider — Linear as a wake surface plus issue-tracker tools.",
   "keywords": [
     "agent",
@@ -115,6 +115,10 @@
       "types": "./dist/agent/channels/linear-supervisor.d.ts",
       "default": "./dist/agent/channels/linear-supervisor.js"
     },
+    "./agent/channels/linear-webhook-event.js": {
+      "types": "./dist/agent/channels/linear-webhook-event.d.ts",
+      "default": "./dist/agent/channels/linear-webhook-event.js"
+    },
     "./agent/channels/linear-webhook-verify.js": {
       "types": "./dist/agent/channels/linear-webhook-verify.d.ts",
       "default": "./dist/agent/channels/linear-webhook-verify.js"
@@ -174,6 +178,7 @@
     "test:linear-message-ops": "NODE_NO_WARNINGS=1 tsx scripts/linear-message-ops-test.ts",
     "test:linear-credentials": "NODE_NO_WARNINGS=1 tsx scripts/linear-credentials-test.ts",
     "test:linear-webhook-verify": "NODE_NO_WARNINGS=1 tsx scripts/linear-webhook-verify-test.ts",
+    "test:linear-webhook-event": "NODE_NO_WARNINGS=1 tsx scripts/linear-webhook-event-test.ts",
     "test:linear-multi-org-reply": "NODE_NO_WARNINGS=1 tsx scripts/linear-multi-org-reply-test.ts",
     "test:linear-multi-org-tools": "NODE_NO_WARNINGS=1 tsx scripts/linear-multi-org-tools-test.ts",
     "test:linear-supervisor": "NODE_NO_WARNINGS=1 tsx scripts/linear-supervisor-test.ts",
@@ -192,11 +197,11 @@
     "test:linear-write-seam": "NODE_NO_WARNINGS=1 tsx scripts/linear-write-seam-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.10.0",
+    "@open-everywhere/core": "0.11.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.71.0"
+    "eve": "1.0.0-rc.18"
   },
   "devDependencies": {
     "@types/node": "latest",

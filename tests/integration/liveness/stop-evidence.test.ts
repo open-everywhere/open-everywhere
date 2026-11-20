@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
 import {
@@ -67,7 +68,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
   handle.releaseHolds();
 
   const evidence = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
+    const rows = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION, "turn.stop_ignored"]);
     return rows.length > 0 ? rows : undefined;
   }, "the cancel evidence row — turn.cancelled if eve settled the cancel, turn.stop_ignored if it dropped it");
   const observedAtMono = performance.now();
@@ -80,7 +81,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
       "the read must sit past the ignored-stop arm's own deadline, measured from the evidence row's own arrival",
     ).toBeGreaterThan(PRODUCT_CANCEL_SETTLE_GRACE_MS);
   }
-  const settled = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
+  const settled = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION, "turn.stop_ignored"]);
   expect(
     settled,
     `an accepted stop produced ${settled.length} evidence rows: ${JSON.stringify(settled.map((r) => ({ action: r.action, ts: r.ts, turnId: r.detail?.turnId })))}`,
@@ -97,7 +98,7 @@ test("a stop the ingress accepted leaves exactly one evidence row — turn.cance
     expect(row.principalId, "…and the person whose stop was ignored").toBe(STOPPER_ID);
     expect(row.detail?.ran, "an ignored stop interrupted nothing, so it names no interrupted work").toBeUndefined();
   } else {
-    expect(row.action).toBe("turn.cancelled");
+    expect(row.action).toBe(TURN_CANCELLED_ACTION);
     expect(row.detail?.ran, "a settled cancel names the work it interrupted").toEqual([RAN_TOOL]);
     expect(await rowsSinceCursor(cursor, ["turn.stop_ignored"]), "a settled cancel must not ALSO be recorded as an ignored stop").toEqual([]);
   }

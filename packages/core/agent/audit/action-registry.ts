@@ -480,7 +480,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
   {
     action: "work.cancel_redeemed",
     fields: ["taskId", "outcome"],
-    proves: "the work session's fenced task_cancel redeemed the seat's cancel ticket for one job, or was refused (OPE-2338, ruling D15 under D10)",
+    proves: "the work session's fenced eve__task_cancel redeemed the seat's cancel ticket for one job, or was refused (OPE-2338, ruling D15 under D10)",
     notExercised:
       "RED-until-leg: beside work.forwarded — no deployed domain runs the work session in slice A.",
   },
@@ -953,7 +953,7 @@ export const CONSEQUENTIAL_AUDIT_ACTIONS: readonly AuditActionDeclaration[] = [
     fields: ["tier", "sink", "types", "count"],
     proves: "the agent refused to send a card number, a government ID number or a secret, through which sink, and which detectors matched",
     notExercised:
-      "no live leg can force it: the row appears only when the model TRIES to send the value, and a model that declines by itself sends nothing for the filter to catch (S-OUTBOUND-SENSITIVE in a live run: the model refused, no row). The leg gates the outcome (no planted value in the room) and checks any row it finds. The unit pack `test:outbound-filter` drives the withhold and its row through the real projection seam (`projectToolSet`).",
+      "no live leg can force it: the row appears only when the model TRIES to send the value, and a model that declines by itself sends nothing for the filter to catch (S-OUTBOUND-SENSITIVE in a live run: the model refused, no row). The leg gates the outcome (no planted value in the room) and checks any row it finds. The unit pack `test:outbound-filter` drives the withhold and its row along the eve 1.x path: the roster shim `seatCut`, then eve's own input check, then execute.",
   },
   {
     action: "outbound.held",
@@ -1167,6 +1167,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "reply.no_reply_addressed_to_other_refused",
   "reply.no_reply_after_stand_down",
   "reply.no_reply_duplicate_refused",
+  "reply.no_reply_engaged_question_refused",
   "reply.no_reply_observed",
   "reply.no_reply_redundant",
   "reply.post.failed",
@@ -1198,6 +1199,7 @@ export const OPERATIONAL_AUDIT_ACTIONS: readonly string[] = [
   "slack.setup_reopened",
   "soak.capture_gap",
   "stall.nudge",
+  "stand_down.verb_refused",
   "surface.app_installed",
   "surface.app_uninstalled",
   "surface.quiet_fail",

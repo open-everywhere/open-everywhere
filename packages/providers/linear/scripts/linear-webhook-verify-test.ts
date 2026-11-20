@@ -1,6 +1,5 @@
-import { signLinearWebhookBody } from "eve/channels/linear";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/adapter-api.js";
-import { LINEAR_MAX_SKEW_MS, linearWebhookSecretForOrg, verifyLinearWebhookDelivery } from "../agent/channels/linear-webhook-verify.js";
+import { LINEAR_MAX_SKEW_MS, linearWebhookSecretForOrg, signLinearWebhookBody, verifyLinearWebhookDelivery } from "../agent/channels/linear-webhook-verify.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -91,6 +90,10 @@ const TWO_APPS: NodeJS.ProcessEnv = {
   declarePrimaryOrg("");
   const raw = body(PRIMARY_ORG);
   const sig = signLinearWebhookBody(raw, "primary-secret");
+  ok(
+    signLinearWebhookBody('{"type":"Issue"}', "whsec-fixture") === "e0b3972b5b62a09fc0800c2f80fdcb3f8ee1a101bb6f6e996c1be977d394b0f5",
+    "the signer is the hex HMAC-SHA256 of the raw body (a fixed vector, no prefix)",
+  );
   ok(verifyLinearWebhookDelivery(new Headers(), raw, { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "no Linear-Signature header ⇒ REFUSED");
   ok(verifyLinearWebhookDelivery(headers(sig), raw, { env: {}, nowMs: NOW }) === false, "no webhook secret configured at all ⇒ REFUSED (never verifies against an empty secret)");
   ok(verifyLinearWebhookDelivery(headers(sig), "not json at all", { primarySecret: PRIMARY_ONLY.LINEAR_WEBHOOK_SECRET, env: PRIMARY_ONLY, nowMs: NOW }) === false, "a non-JSON body ⇒ REFUSED (it carries no organization to key on)");

@@ -237,12 +237,6 @@ export const OFF_CHAIN_BY_DESIGN: ReadonlyMap<string, string> = new Map([
       "the tier above and never as a chain leg. Its own pure helpers are a chain leg: `test:it-prepare`.",
   ],
   [
-    `${ROOT_PKG_LABEL} test:dynamic-closure-bundle`,
-    "a `postbuild` leg (OPE-1063): it reads the just-built `.output/server/index.mjs` to prove no " +
-      "`defineTool` callback carries an undeclared capture, which no `tsx`-tier test can see. It runs " +
-      "wherever `npm run build` runs, so it is already inside the `build` proof suite.",
-  ],
-  [
     `${ROOT_PKG_LABEL} test:e2e-driver`,
     "an argument-taking passthrough to the core workspace's `e2e:driver`, not a suite: it drives ONE " +
       "named e2e leg against a deployed instance. The batched runner imports a file and can pass no argv.",
@@ -300,8 +294,7 @@ export const SUITE_FILE_WITHOUT_SCRIPT: ReadonlyMap<string, string> = new Map([
   [
     "scripts/agent-version-seam-bundle-test.ts",
     "a `postbuild` leg: it reads the just-built bundle, which no `tsx`-tier `test:*` script can produce. It " +
-      "runs wherever `npm run build` runs, so it is already inside the build proof — the same reason " +
-      "`test:dynamic-closure-bundle` is in OFF_CHAIN_BY_DESIGN above.",
+      "runs wherever `npm run build` runs, so it is already inside the build proof.",
   ],
 ]);
 

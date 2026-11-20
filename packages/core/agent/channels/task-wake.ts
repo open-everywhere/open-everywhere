@@ -45,6 +45,12 @@ export function taskWakeKey(taskId: string): string {
   return `${TASK_WAKE_PREFIX}${taskId}`;
 }
 
+const TASK_START_WAKE_PREFIX = "oe-task-start-wake:";
+
+function taskStartWakeKey(parentSessionId: string, callId: string, taskId: string): string {
+  return `${TASK_START_WAKE_PREFIX}${parentSessionId}:${callId}:${taskId}`;
+}
+
 function delegatedTaskWakeKey(parentSessionId: string, callId: string): string {
   return `${DELEGATED_TASK_WAKE_PREFIX}${parentSessionId}:${callId}`;
 }
@@ -161,6 +167,13 @@ export async function advanceDelegatedTaskWake(
   ) {
     throw new Error("delegated task authority changed before receipt");
   }
+  await getOperationalStore().putTaskResult(
+    org,
+    taskStartWakeKey(parentSessionId, callId, taskId),
+    JSON.stringify({ wakeId, parentWakeId: expected.wakeId }),
+    new Date().toISOString(),
+    TASK_WAKE_TTL_MS,
+  );
   await rememberDelegatedTaskWake(org, parentSessionId, callId, wakeId, authority.requester, authority.nonMemberWake);
   await getOperationalStore().putTaskResult(
     org,
@@ -169,6 +182,33 @@ export async function advanceDelegatedTaskWake(
     new Date().toISOString(),
     TASK_WAKE_TTL_MS,
   );
+}
+
+/**
+ * The wakes one task start wrote: the minted task wake and the dispatch wake it was minted under.
+ * `advanceDelegatedTaskWake` writes this row for one call of one task, BEFORE it points the call's
+ * authority row at the minted wake, because after that point the authority row no longer names the
+ * dispatch wake. The row is per call: another start of the same task writes its own row, while it
+ * overwrites the task-wide wake row. The read returns `undefined` when the row is absent or unparseable.
+ * A store read that fails throws, because the caller must not read a failed read as an absent row.
+ */
+export async function startedTaskWake(
+  org: string,
+  taskId: string,
+  parentSessionId: string,
+  callId: string,
+): Promise<{ readonly wakeId: string; readonly parentWakeId: string } | undefined> {
+  if (taskId.length === 0 || parentSessionId.length === 0 || callId.length === 0) return undefined;
+  const raw = await getOperationalStore().getTaskResult(org, taskStartWakeKey(parentSessionId, callId, taskId));
+  if (raw === null) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { wakeId?: unknown; parentWakeId?: unknown } | null;
+    if (typeof parsed?.wakeId !== "string" || parsed.wakeId.length === 0) return undefined;
+    if (typeof parsed.parentWakeId !== "string" || parsed.parentWakeId.length === 0) return undefined;
+    return { wakeId: parsed.wakeId, parentWakeId: parsed.parentWakeId };
+  } catch {
+    return undefined;
+  }
 }
 
 async function readDelegatedSnapshot(org: string, parentSessionId: string, callId: string): Promise<DelegatedDispatchAuthority | "no-row" | "no-binding"> {

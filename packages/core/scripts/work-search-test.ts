@@ -14,6 +14,7 @@ import {
   type WorkSearchHit,
 } from "../agent/channels/work-search.js";
 import { searchEntry, default as searchDefault } from "../agent/tools/search.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -93,7 +94,7 @@ ok(registeredSearchConnectors().join(",") === "github,notion", "registeredSearch
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
-  const handler = (tool as { events: Record<string, Handler> }).events["session.started"];
+  const handler = _dynamicResolverForTest(tool);
   return (await handler({}, c)) as T | null;
 }
 

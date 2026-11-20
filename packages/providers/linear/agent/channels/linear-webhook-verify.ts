@@ -1,5 +1,4 @@
-import { signLinearWebhookBody } from "eve/channels/linear";
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { operatorSecretOrUnset } from "@open-everywhere/core/agent/adapter-api.js";
 import { linearAppForOrg, primaryLinearOrganizationId } from "./linear-credentials.js";
 
@@ -8,6 +7,10 @@ const LINEAR_WEBHOOK_SECRET_NAME = "LINEAR_WEBHOOK_SECRET";
 export const LINEAR_SIGNATURE_HEADER = "linear-signature";
 
 export const LINEAR_MAX_SKEW_MS = 60_000;
+
+export function signLinearWebhookBody(body: string, secret: string): string {
+  return createHmac("sha256", secret).update(body).digest("hex");
+}
 
 export function linearWebhookSecretForOrg(
   organizationId: string | undefined,

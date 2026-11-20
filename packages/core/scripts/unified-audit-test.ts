@@ -8,6 +8,24 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
+// eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+// projection. A direct call carries an empty view.
+const v27Completed = (adapter: object) => async (event: unknown, ctx: unknown): Promise<void> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (adapter as Record<string, (e: unknown, c: unknown) => Promise<unknown>>)["content.completed"]!;
+  await handler(event, { ...(ctx as object), view: fold.emptySessionView() });
+};
+// eve 1.x delivers a final message as `content.completed` (a text part in the "reply" phase).
+const asV27Content = (f: { readonly finishReason: string; readonly message: string | null; readonly turnId?: string }) => ({
+  type: "content.completed" as const,
+  ...(f.turnId !== undefined ? { scope: { turnId: f.turnId } } : {}),
+  data: { partId: "part-1", kind: "text", phase: f.finishReason === "stop" ? "reply" : "narration", value: f.message ?? "" },
+});
+
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -299,7 +317,7 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   const replyTool = (await import("../agent/tools/reply.js")).default;
   type Handler = (event: unknown, ctx: unknown) => unknown;
   const armReply = (ctx: unknown) =>
-    (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]!({}, ctx) as
+    _dynamicResolverForTest(replyTool)({}, ctx) as
       | { execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown> }
       | null;
 
@@ -308,7 +326,7 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   }).adapter;
   const adapterCtx805 = { session: { continuation: { token: `unified:${TOKEN805}` } } };
   const completed805 = (message: string | null): Promise<void> =>
-    unifiedAdapter805["message.completed"]!({ finishReason: "stop", message }, adapterCtx805);
+    v27Completed(unifiedAdapter805)(asV27Content({ finishReason: "stop", message }), adapterCtx805);
 
   async function wake805(threadTs: string): Promise<string> {
     const id = mintWakeId();

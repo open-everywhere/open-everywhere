@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { execTool } from "./_tool-exec.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 registerSlackFixtureMapper();
 
 const dir = join(tmpdir(), `open-everywhere-ticket-verbs-tools-${process.pid}`);
@@ -96,7 +97,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
-  const handler = (tool as { events: Record<string, Handler> }).events["session.started"];
+  const handler = _dynamicResolverForTest(tool);
   return (await handler({}, c)) as T | null;
 }
 

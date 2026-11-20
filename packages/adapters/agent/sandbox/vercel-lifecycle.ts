@@ -176,9 +176,25 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
 
 export default defineHook({
   events: {
-    "turn.completed": async (_event, ctx) => onTurnEnd(ctx, "completed"),
-    "turn.failed": async (_event, ctx) => onTurnEnd(ctx, "failed"),
-    "session.completed": async (_event, ctx) => onTurnEnd(ctx, "session-completed"),
-    "session.failed": async (_event, ctx) => onTurnEnd(ctx, "session-failed"),
+    "turn.settled": async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+          return onTurnEnd(ctx, "completed");
+        case "failed":
+          return onTurnEnd(ctx, "failed");
+        default:
+          return;
+      }
+    },
+    "session.ended": async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+          return onTurnEnd(ctx, "session-completed");
+        case "failed":
+          return onTurnEnd(ctx, "session-failed");
+        default:
+          return;
+      }
+    },
   },
 });

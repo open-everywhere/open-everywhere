@@ -181,9 +181,9 @@ async function pinShippedFixture(): Promise<void> {
     `no principal binding of \`notion-personal\` to slack/${SLACK_TEAM_ID}/${OPERATOR_ID} — the drive below would resolve no connector at all`,
   ).toBe(true);
 
-  const notionConnection = (await import("@open-everywhere/core/agent/connections/notion.js")).default as { readonly url?: unknown };
+  const { NOTION_MOUNT } = await import("@open-everywhere/core/agent/connections/notion.js");
   expect(
-    String(notionConnection.url ?? ""),
+    NOTION_MOUNT.url,
     "the notion connection no longer dials mcp.notion.com — the vendor stub below would not be the thing it reaches",
   ).toContain("mcp.notion.com");
 }
@@ -212,13 +212,18 @@ async function inputRequestRows(cursor: AuditCursor): Promise<readonly AuditRow[
   return rowsSinceCursor(cursor, ["turn.question_dropped", "turn.native_input_requested"], { limit: 50 });
 }
 
-function connectionSearchOutputs(handle: ScriptedHandle): readonly string[] {
+function textOf(output: unknown): string {
+  return typeof output === "string" ? output : JSON.stringify(output);
+}
+
+/** The worker's `eve__search` results: eve 1.x's catalogue search, which lists each mounted connector op by its qualified name. */
+function catalogSearchOutputs(handle: ScriptedHandle): readonly string[] {
   const out: string[] = [];
-  for (const r of handle.requests) for (const t of r.toolResults) if (t.name === "connection_search") out.push(String(t.output));
+  for (const r of handle.requests) for (const t of r.toolResults) if (t.name === "eve__search") out.push(textOf(t.output));
   return out;
 }
 
-test("a DM-delegated worker calls a DISCOVERED connector op through connection_execute after a real connection_search, and the write raises the approval BEFORE the vendor is dialled", async () => {
+test("a DM-delegated worker calls a DISCOVERED connector op through eve__tool after a real eve__search, and the write raises the approval BEFORE the vendor is dialled", async () => {
   await bootAgent({ sharedSqlite: true });
   await pinShippedFixture();
   await pinConnectorFlagsAndTiers();
@@ -240,9 +245,9 @@ test("a DM-delegated worker calls a DISCOVERED connector op through connection_e
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: "look in notion" }, id: "it1232-delegate" }] }, { say: NO_REPLY_SENTINEL }],
       child: [
-        { delayMs: 120_000, calls: [{ tool: "connection_search", input: { query: "pages" }, id: "it1232-search" }] },
-        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: READ_VENDOR_TOOL, input: { query: "handbook" } }, id: READ_CALL_ID }] },
-        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: WRITE_VENDOR_TOOL, input: { title: "handbook notes" } }, id: WRITE_CALL_ID }] },
+        { delayMs: 120_000, calls: [{ tool: "eve__search", input: { query: `${CONNECTION}__` }, id: "it1232-search" }] },
+        { calls: [{ tool: "eve__tool", input: { name: READ_TOOL, input: { query: "handbook" } }, id: READ_CALL_ID }] },
+        { calls: [{ tool: "eve__tool", input: { name: WRITE_TOOL, input: { title: "handbook notes" } }, id: WRITE_CALL_ID }] },
         { say: "reported" },
       ],
     }),
@@ -274,26 +279,26 @@ test("a DM-delegated worker calls a DISCOVERED connector op through connection_e
   const listed = vendorRequests(vendor, "tools/list");
   expect(
     listed.length,
-    `the real connection_search never reached the vendor's MCP server — it stopped earlier. connection_search said: ${connectionSearchOutputs(handle).join(" | ").slice(0, 400)}`,
+    `the connector mount never listed the vendor's ops — it stopped earlier. eve__search said: ${catalogSearchOutputs(handle).join(" | ").slice(0, 400)}`,
   ).toBeGreaterThan(0);
   expect(
     authorizationOf(listed[0]!.init),
     "the vendor was dialled under something other than the operator's seeded per-user token — the mint took a different credential path",
   ).toContain(OPERATOR_ACCESS_TOKEN);
 
-  const searchOut = connectionSearchOutputs(handle).join(" | ");
-  for (const vendorTool of [READ_VENDOR_TOOL, WRITE_VENDOR_TOOL]) {
-    expect(searchOut, `the real connection_search did not report the vendor's ${vendorTool}: ${searchOut.slice(0, 400)}`).toContain(vendorTool);
+  const searchOut = catalogSearchOutputs(handle).join(" | ");
+  for (const qualified of [READ_TOOL, WRITE_TOOL]) {
+    expect(searchOut, `the real eve__search did not report the mounted op ${qualified}: ${searchOut.slice(0, 400)}`).toContain(qualified);
   }
   const secondStep = handle.requests.find((r) => r.role === "child" && r.stepIndex === 1);
   expect(secondStep, "the worker never reached a second step — the search step faulted").toBeDefined();
   expect(
     secondStep!.tools,
-    `the worker's op-calling step does not offer connection_execute. The worker was offered [${secondStep!.tools.slice().sort().join(", ")}]`,
-  ).toContain("connection_execute");
+    `the worker's op-calling step does not offer eve__tool. The worker was offered [${secondStep!.tools.slice().sort().join(", ")}]`,
+  ).toContain("eve__tool");
   for (const step of handle.requests.filter((r) => r.role === "child")) {
     for (const qualified of [READ_TOOL, WRITE_TOOL]) {
-      expect(step.tools, `🔴 worker step ${step.stepIndex} offers ${qualified} as a tool of its own — eve mounts discovered ops again`).not.toContain(qualified);
+      expect(step.tools, `🔴 worker step ${step.stepIndex} offers ${qualified} as a tool of its own — the connector op is no longer deferred behind eve__tool`).not.toContain(qualified);
     }
   }
 
@@ -302,9 +307,9 @@ test("a DM-delegated worker calls a DISCOVERED connector op through connection_e
     return undefined;
   })();
   expect(readResult, `the READ op ${READ_TOOL} never returned a result — the open tier did not execute`).toBeDefined();
-  expect(readResult!.isError, `the READ op ${READ_TOOL} errored: ${String(readResult!.output).slice(0, 400)}`).toBe(false);
+  expect(readResult!.isError, `the READ op ${READ_TOOL} errored: ${textOf(readResult!.output).slice(0, 400)}`).toBe(false);
   expect(
-    String(readResult!.output),
+    textOf(readResult!.output),
     `the READ op's result did not carry the vendor's own body — it was answered by something other than the stubbed MCP server`,
   ).toContain(VENDOR_BODY_MARKER);
   const readCalls = vendorRequests(vendor, "tools/call").filter((c) => c.rpc.params["name"] === READ_VENDOR_TOOL);

@@ -94,7 +94,7 @@ for (const pkgDir of targets) {
   if (!isBin) {
     const evePeer = manifest.peerDependencies?.eve;
     if (!evePeer) fail("eve is not a peerDependency");
-    else if (!/^\d+\.\d+\.\d+$/.test(evePeer)) fail(`eve peer range "${evePeer}" is not an exact pin`);
+    else if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(evePeer)) fail(`eve peer range "${evePeer}" is not an exact pin`);
   } else if (manifest.peerDependencies?.eve) {
     fail("a bin package declares an eve peer — it imports nothing from eve");
   }
@@ -138,7 +138,7 @@ for (const pkgDir of targets) {
   for (const problem of checkEveApplierPacking({ bin: manifest.bin, files: (manifest.files ?? []) as readonly string[] })) {
     fail(problem);
   }
-  const evePatchFile = /^\d+\.\d+\.\d+$/.test(String(manifest.peerDependencies?.eve)) ? evePatchFileName(manifest.peerDependencies.eve) : "";
+  const evePatchFile = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(String(manifest.peerDependencies?.eve)) ? evePatchFileName(manifest.peerDependencies.eve) : "";
   if (shipsEveApplier) {
     const patchDir = join(pkgDir, EVE_PATCH_DIR);
     const body = (dir: string): string | undefined => {

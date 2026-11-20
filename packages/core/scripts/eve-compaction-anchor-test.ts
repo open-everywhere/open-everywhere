@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { MockLanguageModelV4 } from "ai/test";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -13,12 +12,19 @@ const ok = (cond: boolean, label: string): void => {
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
-const compactionPath = join(eveRoot, "dist/src/harness/compaction.js");
+const harness = join(eveRoot, "dist/src/harness");
+const enginePath = join(harness, "compaction/engine.js");
+const stepPath = join(harness, "compaction/step.js");
+const configPath = join(harness, "compaction/config.js");
 
 interface CompactionConfig {
+  readonly contextWindowTokens?: number;
+  readonly estimateRatio?: number;
   readonly lastKnownInputTokens?: number;
   readonly lastKnownPromptMessageCount?: number;
+  readonly lastStage?: string;
   readonly recentWindowSize: number;
+  readonly target: number;
   readonly threshold: number;
 }
 interface Msg {
@@ -26,46 +32,73 @@ interface Msg {
   readonly content: unknown;
   readonly kind?: string;
 }
-interface CompactionModule {
-  compactMessages(
-    messages: Msg[],
-    model: unknown,
-    config: CompactionConfig,
-    providerOptions?: unknown,
-    telemetry?: unknown,
-    headers?: unknown,
-    abortSignal?: unknown,
-    forceSummary?: boolean,
-  ): Promise<Msg[]>;
-  getInputTokenCount(messages: readonly Msg[], config: CompactionConfig): number;
-  shouldCompact(messages: readonly Msg[], config: CompactionConfig): boolean;
+type Summarize = (prompt: { messages: Msg[]; system: string }) => Promise<string>;
+type Compact = (
+  messages: Msg[],
+  config: CompactionConfig,
+  summarize: Summarize,
+  forceSummary?: boolean,
+  resume?: boolean,
+) => Promise<{ messages: Msg[]; stage: string }>;
+interface EngineModule {
+  compactMessages: Compact;
+  estimateRatio(config: CompactionConfig): number;
+  getInputTokenCount(messages: readonly Msg[], config: CompactionConfig, envelope?: number, previousEnvelope?: number): number;
+  shouldCompact(messages: readonly Msg[], config: CompactionConfig, envelope?: number, previousEnvelope?: number): boolean;
 }
 
-const compaction = (await import(pathToFileURL(compactionPath).href)) as unknown as CompactionModule;
-const { estimateTokens } = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/token-estimate.js")).href)) as unknown as {
+ok(existsSync(enginePath), `upstream: ${enginePath} exists — the compaction engine this test reads (moved there in the v1 rewrite)`);
+ok(existsSync(stepPath), `upstream: ${stepPath} exists — the step that decides whether to compact before a model call`);
+ok(
+  !existsSync(join(harness, "compaction.js")) && !existsSync(join(harness, "tool-loop.js")),
+  "upstream: the 0.x carriers harness/compaction.js and harness/tool-loop.js are gone — a 0.x eve is installed if either is back",
+);
+
+const engine = (await import(pathToFileURL(enginePath).href)) as unknown as EngineModule;
+const { estimateTokens } = (await import(pathToFileURL(join(harness, "token-estimate.js")).href)) as unknown as {
   estimateTokens(messages: readonly unknown[]): number;
 };
-const { validateHarnessModelMessages } = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/messages.js")).href)) as unknown as {
-  validateHarnessModelMessages(messages: readonly Msg[]): Msg[];
-};
-const promptModule = (await import(pathToFileURL(join(eveRoot, "dist/src/harness/compaction-prompt.js")).href)) as unknown as {
+const promptModule = (await import(pathToFileURL(join(harness, "compaction/prompt.js")).href)) as unknown as {
   COMPACTION_CHECKPOINT_MARKER: string;
   COMPACTION_PROMPT_ENVELOPE: { prompt: string; system: string };
   TRANSCRIPT_PAYLOAD_LIMIT: number;
 };
+const contextChanges = (await import(pathToFileURL(join(harness, "session-machine/context-changes.js")).href)) as unknown as {
+  completeCompaction(input: { changeId: string; runId: string; runOpen: boolean; summarized: boolean; usage?: unknown }): unknown;
+};
+
+const engineSrc = readFileSync(enginePath, "utf8");
+const stepSrc = readFileSync(stepPath, "utf8");
+const configSrc = readFileSync(configPath, "utf8");
+
+const distFiles = readdirSync(join(eveRoot, "dist/src"), { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".js"));
+const adjusted = distFiles.filter((f) => readFileSync(join(eveRoot, "dist/src", f), "utf8").includes("tokenEstimateAdjustment"));
+ok(
+  adjusted.length === 0,
+  `upstream: no eve module carries a tokenEstimateAdjustment (found in ${adjusted.join(", ")}). The v1 engine anchors the ` +
+    "trigger on the provider's count and scales the estimate by estimateRatio. An additive adjustment on top of that " +
+    "double-counts the gap, so re-derive this test before it lands",
+);
+ok(
+  !engineSrc.includes("__oeAnchoredConfig") && !engineSrc.includes("__oeNoteNoOpCompaction"),
+  "upstream: NO part-3 helper of ours is installed — the hunk stays retired",
+);
+ok(
+  /export\{compactMessages,[^}]*shouldCompact[^}]*\}/.test(engineSrc),
+  "upstream: `compactMessages` and `shouldCompact` are still the exported names the compaction step reaches",
+);
+const targetShare = /const TARGET_SHARE=([0-9.]+);/.exec(configSrc);
+ok(targetShare !== null && Number(targetShare[1]) === 0.5, "upstream: the compaction target is half the context window (TARGET_SHARE=.5)");
+ok(
+  engineSrc.includes("const COMPACTION_HEURISTICS=[fixedTailHeuristic];"),
+  "upstream: the only compaction heuristic is fixedTailHeuristic, so every compacted result follows a summary call, and the " +
+    "step's second opener never opens a change except on the way to a summary call",
+);
 
 const OVERHEAD = estimateTokens([
   { content: promptModule.COMPACTION_PROMPT_ENVELOPE.system, role: "system" },
   { content: promptModule.COMPACTION_PROMPT_ENVELOPE.prompt, role: "user" },
 ]);
-
-const src = readFileSync(compactionPath, "utf8");
-ok(src.includes("tokenEstimateAdjustment"), "upstream: eve carries its own tokenEstimateAdjustment correction (landed 0.52.3)");
-ok(
-  !src.includes("__oeAnchoredConfig") && !src.includes("__oeNoteNoOpCompaction"),
-  "upstream: NO part-3 helper of ours is installed — the hunk is retired, and porting it back would patch upstream's fix on top of itself",
-);
-ok(src.includes("export{compactMessages,"), "upstream: `compactMessages` is still the exported name every eve caller reaches");
 
 const DENSE = "eJyVk1tv2jAUx7/KUZ42qUlIQmhJpUmoTNM0abtIm/YwTZUJDrhN7Mx2oKzqd99xEijQru";
 
@@ -76,100 +109,110 @@ function denseSession(): Msg[] {
   return out;
 }
 
-const THRESHOLD = 10_000;
+const WINDOW = 20_000;
+const THRESHOLD = 18_000;
+const TARGET = Math.floor(WINDOW * 0.5);
+const REPORTED = 70_000;
 
-type MockConfig = NonNullable<ConstructorParameters<typeof MockLanguageModelV4>[0]>;
-
-function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
-  let calls = 0;
-  const doGenerate: MockConfig["doGenerate"] = async () => {
-    calls++;
-    return {
-      content: [{ type: "text" as const, text: "SUMMARY: the earlier conversation, condensed." }],
-      finishReason: { unified: "stop" as const, raw: undefined },
-      usage: {
-        inputTokens: { total: 100, noCache: 100, cacheRead: undefined, cacheWrite: undefined },
-        outputTokens: { total: 12, text: 12, reasoning: undefined },
-      },
-      warnings: [],
-    };
+function denseConfig(messages: readonly Msg[], extra: Partial<CompactionConfig> = {}): CompactionConfig {
+  return {
+    contextWindowTokens: WINDOW,
+    estimateRatio: REPORTED / estimateTokens(messages),
+    lastKnownInputTokens: REPORTED,
+    lastKnownPromptMessageCount: messages.length,
+    recentWindowSize: 4,
+    target: TARGET,
+    threshold: THRESHOLD,
+    ...extra,
   };
-  return { model: new MockLanguageModelV4({ doGenerate }), calls: () => calls };
+}
+
+const SUMMARY = "SUMMARY: the earlier conversation, condensed.";
+
+function mockSummarize(): { summarize: Summarize; calls: () => number } {
+  let calls = 0;
+  return {
+    summarize: async () => {
+      calls++;
+      return SUMMARY;
+    },
+    calls: () => calls,
+  };
 }
 
 {
   const messages = denseSession();
-  const estimated = estimateTokens(messages);
-  const config: CompactionConfig = {
-    lastKnownInputTokens: 30_000,
-    lastKnownPromptMessageCount: messages.length,
-    recentWindowSize: 4,
-    threshold: THRESHOLD,
-  };
-
-  ok(estimated + OVERHEAD <= THRESHOLD, "premise: the UTF-8 bytes/4 estimate reads the fixture as WITHIN the threshold");
+  const config = denseConfig(messages);
+  ok(estimateTokens(messages) + OVERHEAD <= THRESHOLD, "premise: the UTF-8 bytes/4 estimate reads the fixture as WITHIN the threshold");
   ok(
-    compaction.getInputTokenCount(messages, config) + OVERHEAD > THRESHOLD,
+    engine.getInputTokenCount(messages, config) + OVERHEAD > THRESHOLD,
     "premise: the reported input-token count reads the same fixture as OVER the threshold",
   );
-  ok(compaction.shouldCompact(messages, config), "premise: the trigger therefore fires");
+  ok(engine.shouldCompact(messages, config), "premise: the trigger anchors on the provider's count, so it fires");
+  ok(
+    !engine.shouldCompact(messages, { recentWindowSize: 4, target: TARGET, threshold: THRESHOLD }),
+    "premise: with no reported count the estimate alone keeps the trigger quiet — the provider's count is the anchor",
+  );
+}
+
+async function assertReduces(compact: Compact, label: string): Promise<void> {
+  const messages = denseSession();
+  const before = JSON.stringify(messages);
+  const config = denseConfig(messages);
+  const { summarize, calls } = mockSummarize();
+  const { messages: after } = await compact(messages, config, summarize);
+
+  ok(after.length < messages.length, `${label}reduces: the message list shrank (${messages.length} → ${after.length})`);
+  ok(JSON.stringify(after).length < before.length, `${label}reduces: the serialized transcript shrank too, not only the message count`);
+  ok(calls() >= 1, `${label}reduces: the summary model was called (${calls()} call(s)) — a summary really happened`);
+  ok(
+    after[0]?.role === "user" && after[0]?.content === promptModule.COMPACTION_CHECKPOINT_MARKER,
+    `${label}reduces: the result opens with eve's checkpoint marker, so it is a real compaction result`,
+  );
+  ok(after.some((m) => m.content === SUMMARY), `${label}reduces: the summary the model produced is in the result`);
+  ok(JSON.stringify(after) !== before, `${label}not-a-no-op: compactMessages did NOT return the input list unchanged (the OPE-689 defect shape)`);
+  const provider = Math.ceil(estimateTokens(after) * engine.estimateRatio(config));
+  ok(
+    provider <= TARGET,
+    `${label}target: the result is under half the window on the provider's token count (${provider} ≤ ${TARGET}), so the ` +
+      "next call does not re-trigger the compaction that just ran",
+  );
+}
+
+await assertReduces(engine.compactMessages, "");
+
+{
+  const identity: Compact = async (messages) => ({ messages, stage: "tail" });
+  const before = n;
+  await assert.rejects(
+    assertReduces(identity, "negative-control "),
+    "negative-control: a compaction that returns its input unchanged must FAIL the reduces block",
+  );
+  n = before + 1;
 }
 
 {
   const messages = denseSession();
-  const before = messages.map((m) => ({ ...m }));
-  const config: CompactionConfig = {
-    lastKnownInputTokens: 30_000,
-    lastKnownPromptMessageCount: messages.length,
-    recentWindowSize: 4,
-    threshold: THRESHOLD,
-  };
-  const { model, calls } = mockModel();
-  const after = await compaction.compactMessages(messages, model, config);
-
-  ok(after.length < before.length, `reduces: the message list shrank (${before.length} → ${after.length})`);
+  const ratio = 60;
+  const config = denseConfig(messages, { estimateRatio: ratio });
+  const { summarize } = mockSummarize();
+  const { messages: after, stage } = await engine.compactMessages(messages, config, summarize);
+  ok(stage === "summary-only", `escalation: a tail that cannot reach the target escalates to summary-only (got ${stage})`);
   ok(
-    JSON.stringify(after).length < JSON.stringify(before).length,
-    "reduces: the serialized transcript shrank too, not only the message count",
-  );
-  ok(calls() >= 1, `reduces: the compaction model was actually called (${calls()} call(s)) — a summary really happened`);
-  ok(
-    after.some((m) => m.role === "user" && m.content === promptModule.COMPACTION_CHECKPOINT_MARKER),
-    "reduces: the result opens with eve's checkpoint marker, so it is a real compaction result",
-  );
-  ok(
-    after.some((m) => typeof m.content === "string" && m.content.includes("SUMMARY: the earlier conversation, condensed.")),
-    "reduces: the summary the model produced is in the result",
-  );
-  ok(
-    JSON.stringify(after) !== JSON.stringify(before),
-    "not-a-no-op: compactMessages did NOT return the input list unchanged (the OPE-689 defect shape)",
+    after.length < messages.length && after.some((m) => m.content === SUMMARY),
+    "escalation: the escalated result still holds the summary and is shorter than the input",
   );
 }
 
-{
-  const messages: Msg[] = [
-    { role: "user", content: "hello", kind: "user" },
-    { role: "assistant", content: "hi" },
-    { role: "user", content: "how are you", kind: "user" },
-    { role: "assistant", content: "fine" },
-    { role: "user", content: "thanks", kind: "user" },
-    { role: "user", content: "one more thing", kind: "user" },
-  ];
-  const before = JSON.stringify(messages);
-  const estimated = estimateTokens(messages);
-  const config: CompactionConfig = {
-    lastKnownInputTokens: Math.round(estimated * 1.2),
-    lastKnownPromptMessageCount: messages.length,
-    recentWindowSize: 4,
-    threshold: THRESHOLD,
-  };
-  ok(!compaction.shouldCompact(messages, config), "fast-path: the trigger would not fire on this session at all");
-
-  const { model, calls } = mockModel();
-  const after = await compaction.compactMessages(messages, model, config);
-  ok(calls() === 0, "fast-path: NO model call — the correction did not turn every compaction into a summary");
-  ok(JSON.stringify(after) === before, "fast-path: the message list is returned untouched when it genuinely fits");
+for (const lastStage of [undefined, "tail", "text-tail"]) {
+  const messages = denseSession();
+  const config = denseConfig(messages, lastStage === undefined ? {} : { lastStage });
+  const { summarize, calls } = mockSummarize();
+  const { messages: after } = await engine.compactMessages(messages, config, summarize);
+  ok(
+    calls() >= 1 && JSON.stringify(after) !== JSON.stringify(messages),
+    `no-op-path: from lastStage=${String(lastStage)} the engine summarizes and changes the history — it has no exit that returns the input`,
+  );
 }
 
 {
@@ -178,294 +221,156 @@ function mockModel(): { model: MockLanguageModelV4; calls: () => number } {
     messages.push({ role: "assistant", content: [{ type: "tool-call", toolCallId: `c${i}`, toolName: "read", input: {} }] });
     messages.push({
       role: "tool",
-      content: [
-        {
-          type: "tool-result",
-          toolCallId: `c${i}`,
-          toolName: "read",
-          output: { type: "text", value: DENSE.repeat(200) },
-        },
-      ],
+      content: [{ type: "tool-result", toolCallId: `c${i}`, toolName: "read", output: { type: "text", value: DENSE.repeat(200) } }],
     });
   }
   messages.push({ role: "user", content: "what did you find", kind: "user" });
-
   const estimated = estimateTokens(messages);
   const config: CompactionConfig = {
+    estimateRatio: 1.25,
     lastKnownInputTokens: Math.round(estimated * 1.25),
     lastKnownPromptMessageCount: messages.length,
-    recentWindowSize: 2,
+    recentWindowSize: 3,
+    target: 10_000,
     threshold: 20_000,
   };
   ok(estimated > config.threshold, "tool-cap: the raw transcript is over the threshold on the estimate alone");
-  ok(compaction.shouldCompact(messages, config), "tool-cap: the trigger fires");
+  ok(engine.shouldCompact(messages, config), "tool-cap: the trigger fires");
 
   const before = JSON.stringify(messages);
-  const { model, calls } = mockModel();
-  const after = await compaction.compactMessages(messages, model, config);
-  ok(calls() === 0, "tool-cap: no model call — capping oversized tool results was enough");
-  ok(JSON.stringify(after).length < before.length, "tool-cap: the transcript really shrank (tool payloads were capped)");
+  const { summarize, calls } = mockSummarize();
+  const { messages: after } = await engine.compactMessages(messages, config, summarize);
+  ok(
+    calls() >= 1,
+    "no-op-path: capping oversized tool results does NOT end the pass without a summary — the 0.x tool-cap-only exit is gone",
+  );
+  ok(JSON.stringify(after).length < before.length, "tool-cap: the transcript really shrank");
   ok(
     JSON.stringify(after).includes("Truncated by eve"),
-    `tool-cap: oversized tool results were capped at the ${promptModule.TRANSCRIPT_PAYLOAD_LIMIT}-character payload limit`,
+    `tool-cap: a kept oversized tool result is capped at the ${promptModule.TRANSCRIPT_PAYLOAD_LIMIT}-character payload limit`,
   );
 }
 
-{
-  const messages = denseSession();
-  const config: CompactionConfig = { recentWindowSize: 4, threshold: THRESHOLD };
-  ok(
-    compaction.shouldCompact(messages, config) === false,
-    "no-usage: with no reported input-token count the trigger cannot see the overrun at all — the hunk anchors on " +
-      "the provider's figure and can only correct a session that has already reported one",
-  );
+const CU_START = "async function compactUnder(";
+const CU_END = "async function summarizeHistory(";
+const cuStart = stepSrc.indexOf(CU_START);
+const cuEnd = stepSrc.indexOf(CU_END);
+ok(cuStart !== -1 && cuEnd > cuStart, "gate: compactUnder and lazyChange are extractable from the installed step by their unminified names");
+const gateSrc = stepSrc.slice(cuStart, cuEnd);
+ok((gateSrc.match(/async function compactUnder\(/g) ?? []).length === 1, "gate: the slice holds exactly one compactUnder definition");
+ok((gateSrc.match(/function lazyChange\(/g) ?? []).length === 1, "gate: the slice holds exactly one lazyChange definition");
+
+interface Published {
+  readonly fact: unknown;
+}
+interface DriveResult {
+  readonly published: Published[];
+  readonly summarized: number;
 }
 
-const toolLoopPath = join(eveRoot, "dist/src/harness/tool-loop.js");
-const toolLoopSrc = readFileSync(toolLoopPath, "utf8");
-
-const REDUCED_DEF =
-  "function __oeCompactionReduced(e,t){return t!==e&&(t.length!==e.length||JSON.stringify(t)!==JSON.stringify(e))}";
-const WITH_REDUCED_DEF = "function __oeWithReduced(e,t){return{...e,data:{...e.data,reduced:t}}}";
-const END = "// === END OE PATCH HELPERS ===";
-
-ok(toolLoopSrc.includes(REDUCED_DEF), "event-wiring: __oeCompactionReduced is byte-exact in the installed tool loop");
-ok(toolLoopSrc.includes(WITH_REDUCED_DEF), "event-wiring: __oeWithReduced is byte-exact in the installed tool loop");
-ok(
-  toolLoopSrc.indexOf(REDUCED_DEF) < toolLoopSrc.indexOf(END),
-  "event-wiring: the OPE-697 helpers live inside the OE helper block, not loose in eve's bytes",
-);
-ok(
-  toolLoopSrc.includes(
-    'function __oeProjectToolSet(ts){const h=globalThis.__oeToolResultProjection;if(typeof h==="function")h(ts);return ts}',
-  ),
-  "event-wiring: the OPE-73 untrusted-projection hook is still byte-exact beside the OPE-697 helpers",
-);
-const workStepPin = /:\[\.\.\.([A-Za-z_$]{1,2})\];__oeRed=__oeCompactionReduced\(\1,([A-Za-z_$]{1,2})\);if\([A-Za-z_$]{1,2}=(?:[A-Za-z_$]+\()?\[\.\.\.[A-Za-z_$]{1,2}\.memory,\.\.\.\2\]/.exec(toolLoopSrc);
-ok(
-  workStepPin !== null,
-  "event-wiring: the flag is computed from the work step's OWN input and output, between the ternary that runs it and the memory rebuild that consumes it",
-);
-ok(
-  /await [A-Za-z_$]{1,2}\(__oeWithReduced\(createCompactionCompletedEvent\(/.test(toolLoopSrc),
-  "event-wiring: the emitted compaction.completed event is the stamped one",
-);
-ok(
-  (toolLoopSrc.match(/createCompactionCompletedEvent\(/g) ?? []).length === 1,
-  "event-wiring: there is exactly one compaction.completed emission, so no path can emit an unstamped event",
-);
-ok((toolLoopSrc.match(/__oeWithReduced\(/g) ?? []).length === 2, "event-wiring: one __oeWithReduced definition and one call site");
-
-const isReduced = new Function(`${REDUCED_DEF}\nreturn __oeCompactionReduced;`)() as (
-  before: readonly Msg[],
-  after: readonly Msg[],
-) => boolean;
-{
-  const list: Msg[] = [{ role: "user", content: "a" }];
-  ok(isReduced(list, list) === false, "reduced-drive: the same array instance is NOT a reduction");
-  ok(isReduced(list, [{ role: "user", content: "a" }]) === false, "reduced-drive: an equal-by-value copy is NOT a reduction");
-  ok(isReduced(list, []) === true, "reduced-drive: a shorter list IS a reduction");
-  ok(isReduced(list, [{ role: "user", content: "b" }]) === true, "reduced-drive: a same-length list with changed content IS a reduction");
-}
-
-const MC_START = "async function maybeCompact(";
-const MC_END = "function resolveApprovalKeyFromTools(";
-const mcStart = toolLoopSrc.indexOf(MC_START);
-const mcEnd = toolLoopSrc.indexOf(MC_END);
-ok(mcStart !== -1 && mcEnd > mcStart, "event-honesty: maybeCompact is extractable from the installed bytes by its unminified name");
-const maybeCompactSrc = toolLoopSrc.slice(mcStart, mcEnd);
-ok(
-  (maybeCompactSrc.match(/async function maybeCompact\(/g) ?? []).length === 1,
-  "event-honesty: the extracted slice holds exactly one maybeCompact definition",
-);
-
-const { createCompactionCompletedEvent, createCompactionRequestedEvent } = (await import(
-  pathToFileURL(join(eveRoot, "dist/src/protocol/message.js")).href
-)) as unknown as {
-  createCompactionCompletedEvent(input: { modelId: string; sequence: number; sessionId: string; turnId: string }): {
-    data: Record<string, unknown>;
-    type: string;
-  };
-  createCompactionRequestedEvent(input: Record<string, unknown>): { data: Record<string, unknown>; type: string };
-};
-
-const withReduced = new Function(`${WITH_REDUCED_DEF}\nreturn __oeWithReduced;`)() as (
-  event: { data: Record<string, unknown>; type: string },
-  reduced: boolean,
-) => { data: Record<string, unknown>; type: string };
-
-interface Emitted {
-  data: Record<string, unknown>;
-  type: string;
-}
-type WorkStep = (messages: Msg[]) => Msg[];
-
-interface DriveOptions {
-  readonly compactTriggered?: boolean;
-  readonly canonicalizeTriggered?: boolean;
-  readonly memoryRecords?: string[];
-  readonly supersededRecords?: string[];
-}
-
-function driveMaybeCompact(work: WorkStep, onCompaction?: () => Msg[], opts: DriveOptions = {}): Promise<Emitted[]> {
-  const events: Emitted[] = [];
-  const memoryRecords = opts.memoryRecords ?? [];
-  const supersededRecords = opts.supersededRecords ?? [];
+async function driveCompactUnder(messages: Msg[], config: CompactionConfig, openChange: boolean): Promise<DriveResult> {
+  const published: Published[] = [];
+  let summarized = 0;
   const factory = new Function(
     "shouldCompact",
-    "shouldCanonicalizeMemory",
-    "canonicalizeMemoryRecords",
-    "resolveCompactionModel",
-    "requireSessionModelReference",
-    "resolveCallProviderOptions",
-    "resolveConversationId",
-    "createCompactionRequestedEvent",
-    "createCompactionCompletedEvent",
-    "formatLanguageModelGatewayId",
     "getInputTokenCount",
-    "getRequestEnvelopeTokens",
-    "compactMessages",
-    "buildGatewayAttributionHeaders",
-    "contextStorage",
-    "prepareMemoryCompaction",
-    "drainMemoryCommit",
-    "__oeCompactionReduced",
-    "__oeWithReduced",
-    "validateHarnessModelMessages",
-    "replaceSessionHistory",
-    `${maybeCompactSrc}\nreturn maybeCompact;`,
-  ) as (...deps: unknown[]) => (input: Record<string, unknown>) => Promise<{ messages: Msg[] }>;
-
-  const maybeCompact = factory(
-    () => opts.compactTriggered ?? true,
-    () => opts.canonicalizeTriggered ?? false,
-    (messages: Msg[]) => ({
-      memory: messages.filter((m) => memoryRecords.includes(String(m.content))),
-      ordinary: messages.filter((m) => !memoryRecords.includes(String(m.content)) && !supersededRecords.includes(String(m.content))),
-    }),
-    async () => ({ model: { modelId: "stub" }, providerOptions: undefined }),
-    () => ({ modelId: "stub" }),
-    (input: { providerOptions: unknown }) => input.providerOptions,
-    (sessionId: string) => sessionId,
-    createCompactionRequestedEvent,
-    createCompactionCompletedEvent,
-    () => "stub/model",
-    () => 999,
-    () => undefined,
-    async (messages: Msg[]) => work(messages),
-    () => undefined,
-    { getStore: () => undefined },
-    () => undefined,
-    () => undefined,
-    isReduced,
-    withReduced,
-    validateHarnessModelMessages,
-    (session: Record<string, unknown>, history: Msg[]) => ({ ...session, history }),
-  );
-
-  return maybeCompact({
-    emissionState: { sequence: 1, turnId: "turn-1" },
-    emit: (event: Emitted) => {
-      events.push(event);
+    "nextChangeId",
+    "nextRunId",
+    "activeTurnId",
+    "summarizeHistory",
+    "startChange",
+    "takeBlockingFailure",
+    `${gateSrc}\nreturn compactUnder;`,
+  ) as (...deps: unknown[]) => (e: unknown, t: unknown, n: Msg[], r: CompactionConfig) => Promise<unknown>;
+  const compactUnder = factory(
+    engine.shouldCompact,
+    engine.getInputTokenCount,
+    () => "change-1",
+    () => "run-1",
+    () => "turn-1",
+    async (_e: unknown, t: { change: { open(): Promise<void>; opened: boolean } }) => {
+      summarized++;
+      if (openChange) {
+        await t.change.open();
+        await t.change.open();
+      }
+      return undefined;
     },
-    messages: [
-      { role: "user", content: "one", kind: "user" },
-      { role: "assistant", content: "two" },
-      { role: "user", content: "three", kind: "user" },
-    ],
-    model: { modelId: "stub" },
-    onCompaction,
-    resolveModel: async () => ({ modelId: "stub" }),
-    session: {
-      agent: {},
-      compaction: { recentWindowSize: 2, threshold: THRESHOLD },
-      sessionId: "s-1",
-      state: {},
+    (input: unknown) => ({ startChange: input }),
+    () => undefined,
+  );
+  const ctx = {
+    ctx: {},
+    position: () => ({ turnId: "turn-1" }),
+    publish: async (fact: unknown) => {
+      published.push({ fact });
     },
-  }).then(() => events);
-}
-
-function completedEvent(events: Emitted[]): Emitted {
-  const found = events.find((e) => e.type === "compaction.completed");
-  assert.ok(found, "no compaction.completed event was emitted at all");
-  return found;
+    view: () => ({ projection: {} }),
+  };
+  await compactUnder(ctx, { messages, model: {}, requestEnvelopeTokens: 0 }, messages, config);
+  return { published, summarized };
 }
 
 {
-  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY", kind: "user" }]);
-  ok(events.some((e) => e.type === "compaction.requested"), "event-honesty: the requested event still fires (contract unchanged)");
-  const completed = completedEvent(events);
-  ok("reduced" in completed.data, "event-honesty: a real compaction carries the reduced field at all");
-  ok(completed.data.reduced === true, "event-honesty: a real compaction reports reduced === true");
-  ok(completed.data.sessionId === "s-1" && completed.data.turnId === "turn-1", "event-honesty: the stamp preserves the original payload");
-  ok(completed.type === "compaction.completed", "event-honesty: the stamp does not change the event kind");
+  const messages: Msg[] = [
+    { role: "user", content: "hello", kind: "user" },
+    { role: "assistant", content: "hi" },
+    { role: "user", content: "thanks", kind: "user" },
+  ];
+  const estimated = estimateTokens(messages);
+  const config: CompactionConfig = {
+    lastKnownInputTokens: Math.round(estimated * 1.2),
+    lastKnownPromptMessageCount: messages.length,
+    recentWindowSize: 4,
+    target: TARGET,
+    threshold: THRESHOLD,
+  };
+  ok(!engine.shouldCompact(messages, config), "fast-path: the trigger does not fire on a session that fits");
+  const { published, summarized } = await driveCompactUnder(messages, config, true);
+  ok(summarized === 0, "fast-path: a fitting session never reaches the summary step, so no model call happens");
+  ok(published.length === 0, "fast-path: a fitting session publishes NO context event — absence means no compaction");
 }
 {
-  const events = await driveMaybeCompact((messages) => messages);
-  ok(events.some((e) => e.type === "compaction.requested"), "event-honesty: a no-op still emits requested — no suppression");
-  ok(events.some((e) => e.type === "compaction.completed"), "event-honesty: a no-op still emits completed — no consumer can hang");
-  const completed = completedEvent(events);
-  ok("reduced" in completed.data, "event-honesty: a no-op carries the reduced field rather than omitting it");
-  ok(completed.data.reduced === false, "event-honesty: a no-op reports reduced === false");
-}
-{
-  const events = await driveMaybeCompact((messages) => messages.map((m) => ({ ...m })));
-  ok(completedEvent(events).data.reduced === false, "event-honesty: an equal-by-value copy reports reduced === false");
-}
-{
-  const events = await driveMaybeCompact(
-    (messages) => messages.map((m) => ({ ...m })),
-    () => [{ role: "assistant", content: "appended after compaction" }],
-  );
+  const messages = denseSession();
+  const config = denseConfig(messages);
+  const quiet = await driveCompactUnder(messages, config, false);
+  ok(quiet.summarized === 1, "gate: an over-threshold session reaches the summary step once");
+  ok(quiet.published.length === 0, "gate: the change is lazy — nothing is published until the summary step opens it");
+  const opened = await driveCompactUnder(messages, config, true);
+  ok(opened.published.length === 1, "gate: opening the change twice publishes exactly one context.started fact");
+  const started = (opened.published[0]?.fact as { startChange?: { kind?: string; trigger?: { inputTokens?: number } } }).startChange;
   ok(
-    completedEvent(events).data.reduced === false,
-    "event-honesty: an equal-by-value no-op whose onCompaction() appended a message STILL reports reduced === false",
+    started?.kind === "compaction" && started.trigger?.inputTokens === engine.getInputTokenCount(messages, config),
+    "gate: the started fact is a compaction, and its trigger carries the provider-anchored input count",
   );
-}
-{
-  const events = await driveMaybeCompact(
-    (messages) => messages,
-    () => [{ role: "assistant", content: "appended after compaction" }],
-  );
-  ok(
-    completedEvent(events).data.reduced === false,
-    "event-honesty: an identity no-op whose onCompaction() appended a message STILL reports reduced === false",
-  );
-}
-{
-  const events = await driveMaybeCompact(
-    () => [{ role: "user", content: "SUMMARY", kind: "user" }],
-    () => [{ role: "assistant", content: "appended after compaction" }],
-  );
-  ok(completedEvent(events).data.reduced === true, "event-honesty: a real reduction with an appended message still reports true");
 }
 
+ok(
+  /let summarize=async [A-Za-z_$]{1,2}=>\{await [A-Za-z_$]{1,2}\.open\(\)/.test(stepSrc) &&
+    /isDeepStrictEqual\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\)\|\|await [A-Za-z_$]{1,2}\.open\(\)/.test(stepSrc) &&
+    /let ([A-Za-z_$]{1,2})=isDeepStrictEqual\([A-Za-z_$]{1,2},[A-Za-z_$]{1,2}\);if\([A-Za-z_$]{1,2}\.opened&&await settleChange\([^;]*\),\1\)return;let [A-Za-z_$]{1,2}=changeHistory\(/.test(stepSrc),
+  "event: the summary call opens the change before the model runs, and a changed history opens it too. The step settles a " +
+    "change only when it was opened, and it rewrites the history only after that, and only when the result differs from the input",
+);
 {
-  const events = await driveMaybeCompact(() => [{ role: "user", content: "SUMMARY", kind: "user" }], undefined, {
-    compactTriggered: false,
-    canonicalizeTriggered: true,
-  });
+  const facts = contextChanges.completeCompaction({ changeId: "c-1", runId: "r-1", runOpen: true, summarized: true }) as {
+    data: Record<string, unknown>;
+    type: string;
+  }[];
+  const settled = facts.find((f) => f.type === "context.settled");
+  ok(settled?.data.outcome === "completed" && settled.data.kind === "compaction", "event: a finished compaction settles as context.settled, outcome completed");
   ok(
-    events.some((e) => e.type === "compaction.completed"),
-    "event-honesty: a canonicalization-only pass still emits completed — eve's contract, unchanged",
+    !("summarized" in (settled?.data ?? {})) && !("reduced" in (settled?.data ?? {})),
+    "event: context.settled carries neither `summarized` nor `reduced` — a consumer reads the started/settled pair, not a flag",
   );
   ok(
-    completedEvent(events).data.reduced === false,
-    "🔴 event-honesty: a pass where ONLY memory canonicalization fired reports reduced === false — the work step never ran, so no compaction happened",
-  );
-}
-{
-  const events = await driveMaybeCompact((messages) => messages.map((m) => ({ ...m })), undefined, {
-    memoryRecords: ["one"],
-    supersededRecords: ["two"],
-  });
-  ok(
-    completedEvent(events).data.reduced === false,
-    "🔴 event-honesty: a no-op work step reports reduced === false even when canonicalization DROPPED a superseded record and shortened the rebuilt history — the flag measures the work step, not the history",
+    facts.findIndex((f) => f.type === "model.settled") >= 0 &&
+      facts.findIndex((f) => f.type === "model.settled") < facts.findIndex((f) => f.type === "context.settled"),
+    "event: a summarized compaction settles its summary run (model.settled) before the context change",
   );
 }
 
 console.log(
-  `\n✓ eve-compaction-anchor: ${n} assertions passed (upstream, premise, reduces, fast-path, tool-cap, no-usage, ` +
-    `event-wiring, reduced-drive, event-honesty)\n`,
+  `\n✓ eve-compaction-anchor: ${n} assertions passed (upstream, premise, reduces, target, negative-control, escalation, ` +
+    `no-op-path, tool-cap, fast-path, gate, event)\n`,
 );

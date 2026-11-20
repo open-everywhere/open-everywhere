@@ -1,6 +1,7 @@
-import { callTeamsConnectorApi, resolveTeamsTenantId, type TeamsHandle } from "eve/channels/teams";
+import type { TeamsHandle } from "eve/channels/teams";
 import { dmTrustTtlMs } from "@open-everywhere/core/agent/adapter-api.js";
-import { teamsAppCredentials } from "./teams-connector.js";
+import { callTeamsConnectorApi } from "./teams-connector.js";
+import { resolveTeamsTenantId } from "./teams-credentials.js";
 import { teamsUserTypeFromMember } from "./teams-identity.js";
 import { teamsChannelGrainConversationId } from "./teams-conversation-ref.js";
 import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
@@ -23,7 +24,7 @@ export function teamsHandleRosterProbe(teams: Pick<TeamsHandle, "request" | "ser
 
 export function teamsServiceUrlRosterProbe(serviceUrl: string | undefined): TeamsRosterProbe | undefined {
   if (!serviceUrl || !isTrustedTeamsServiceUrl(serviceUrl)) return undefined;
-  return (path) => callTeamsConnectorApi({ serviceUrl, path, method: "GET", credentials: teamsAppCredentials() });
+  return (path) => callTeamsConnectorApi({ serviceUrl, path, method: "GET" });
 }
 
 const teamsUserTypeCache = new Map<string, { userType: "guest" | "member"; at: number }>();

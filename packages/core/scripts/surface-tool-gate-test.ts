@@ -5,6 +5,7 @@ import requestAccess from "../agent/tools/request_access.js";
 import react from "../agent/tools/react.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { registerCardPoster } from "../agent/approvals/flow.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 registerCardPoster("discord", async () => undefined);
 
@@ -26,10 +27,6 @@ function ctxFor(kind: string): BindableContext {
   return { channel: { kind } };
 }
 
-interface DynamicLike {
-  readonly kind?: unknown;
-  readonly events?: Record<string, ((event: unknown, ctx: BindableContext) => unknown) | undefined>;
-}
 
 function isToolEntry(v: unknown): v is { execute: unknown; description: unknown } {
   return typeof v === "object" && v !== null && typeof (v as { execute?: unknown }).execute === "function";
@@ -43,15 +40,10 @@ const CARD_PATH_KINDS = ["slack", "channel:slack", "discord", "channel:discord"]
 const NON_CARD_KINDS = ["teams", "linear", "local", "channel:teams"];
 
 async function assertGate(name: string, def: unknown, descNeedle: string, armedKinds: readonly string[] = ["slack", "channel:slack"], hiddenKinds: readonly string[] = NON_SLACK_KINDS): Promise<void> {
-  const d = def as DynamicLike;
-  ok(d.kind === "eve:dynamic", `${name} default export is a dynamic (defineDynamic) sentinel`);
-  ok(!!d.events, `${name} exposes an events map`);
-  ok(typeof d.events?.["turn.started"] !== "function", `${name} does NOT register a turn.started resolver (platform is session-immutable)`);
+  ok(typeof def === "object" && def !== null && Symbol.for("eve.dynamic") in def, `${name} default export is a dynamic (defineDynamic) sentinel`);
 
   for (const ev of EVENTS) {
-    const handler = d.events?.[ev];
-    ok(typeof handler === "function", `${name} has a ${ev} resolver`);
-    if (typeof handler !== "function") return;
+    const handler = _dynamicResolverForTest(def);
 
     for (const armedKind of armedKinds) {
       const armed = await handler({}, ctxFor(armedKind));

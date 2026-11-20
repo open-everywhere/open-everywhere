@@ -2,8 +2,8 @@
 
 Install Open Everywhere's GitHub App on a repo and the agent becomes a **conversational
 teammate on issues and pull requests**: @mention it in an issue/PR/review comment and it wakes
-with the repo checked out into its sandbox (and the PR diff in context), does the work, and
-replies as a comment. Opt the repo's memory **domain** into ambient mode and it also becomes a
+with the PR diff in context, clones a repository it is granted with the `checkout_repo` tool,
+does the work, and replies as a comment. Opt the repo's memory **domain** into ambient mode and it also becomes a
 **quiet standing reviewer**: it reads every issue/PR-timeline comment, judges each against a
 deliberately high bar (GitHub defaults to the *reserved* calibration tier), and comments only
 where it clearly adds something — every silence audited.
@@ -22,8 +22,11 @@ chat-based, so it's out of scope for the chat [support matrix](./support-matrix.
 Every GitHub App webhook delivery hits **`POST /eve/v1/github`** and feeds up to three legs:
 
 1. **The @mention leg** (eve's native `githubChannel`). Typing `@<app-slug>` in an issue, PR,
-   or review comment wakes an agent session anchored to that conversation, with the repo
-   checked out and (for PRs) the diff in context; the reply posts back as a comment. Note App
+   or review comment wakes an agent session anchored to that conversation, with (for PRs) the
+   diff in context; the reply posts back as a comment. The session does not start with the repo
+   checked out: eve's own checkout would put allow-all egress and an installation token in the
+   sandbox, so the agent clones through `checkout_repo` instead
+   ([credentials and planes](../../security/credentials-and-planes.md)). Note App
    bots don't appear in GitHub's `@` autocomplete — the mention matcher is text-based, so
    **type the slug in full** (e.g. `@open-everywhere`). The `@mention` also **engages** that
    issue or pull request: later plain comments on it wake the agent with no new mention, until
@@ -64,8 +67,8 @@ wakes the agent — no second `@mention`, and no domain opt-in: the invitation w
 somebody already wrote.
 
 - **It is per container, never per repo.** Engaging issue #42 says nothing about #43.
-- **Private repos only.** A plain follow-up wakes a full turn — the agent checks the repo out and
-  spends on the model — so on a public repo it would let any passer-by buy one. The follow-up
+- **Private repos only.** A plain follow-up wakes a full turn — the agent runs the model and can
+  clone the repo with `checkout_repo` — so on a public repo it would let any passer-by buy one. The follow-up
   therefore does nothing on a public repo, or on one whose privacy the delivery does not state.
   It is a *stricter* floor than ambient mode's below: ambient mode admits a public repo you vouched
   internal, and this one does not — vouching a repo never opens an uninvited full turn on it. An
@@ -127,7 +130,7 @@ somebody already wrote.
   an issue, the ambient leg stops answering it as well, whatever the domain flag says. That is the
   only thing that makes the stop a stop rather than a note.
 - **The supervisor is silent plumbing.** Its judged turns add no 👀 reaction (the mention leg
-  keeps its ack reaction), never check the repo out, and a *failed* judge turn is audited —
+  keeps its ack reaction), and a *failed* judge turn is audited —
   never posted as an error comment.
 - Review-thread **inline** comments (`pull_request_review_comment`) are out of ambient scope
   v1 (a different reply/threading model); PR *timeline* comments are covered (GitHub delivers

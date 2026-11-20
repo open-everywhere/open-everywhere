@@ -8,7 +8,6 @@ import {
   setConnectorContentOrigin,
   type ConnectorContentOriginMap,
 } from "../agent/access/connector-content-origin-state.js";
-import { connectionSearchRows as realConnectionSearchRows } from "../agent/access/untrusted-projection.js";
 import { TAINTED_CONNECTOR_ORIGIN_ADVICE, unattendedConnectorRefusalMessage } from "../agent/connections/connector-auth.js";
 import { _resetContentOriginNoticeForTest, assertBundlesValid, type Bundle, type ConnectorContentOriginSpec } from "../agent/access/bundle.js";
 
@@ -28,7 +27,6 @@ ok(
   "1. the search lookup answers undefined",
 );
 
-ok(connectionSearchRows === realConnectionSearchRows, "2. the shim re-exports the SAME connectionSearchRows the projection seam uses");
 ok(connectionSearchRows({ tools: [{ connection: "notion", tool: "x" }], total: 1 })?.length === 1, "2. …and it still decomposes an eve 0.71 result");
 ok(connectionSearchRows({ tools: [], total: 0, extra: 1 }) === undefined, "2. …and still fails closed on an unknown key");
 

@@ -197,7 +197,7 @@ export const FAMILY_BENCH: readonly FamilyCase[] = [
       'changelog this release. the PR stays one file". Two tasks were running. The clause named ' +
       "ONE of them, and the second half of the message says the other stands.",
     expected:
-      "Cancel the named task with `task_cancel` and leave the other running — a stop that names a " +
+      "Cancel the named task with `eve__task_cancel` and leave the other running — a stop that names a " +
       "piece of work is not a brake on the room.",
     observed: {
       text: "",

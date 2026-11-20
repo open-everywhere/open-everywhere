@@ -1,6 +1,6 @@
 import { defineTool, type ToolDefinition } from "eve/tools";
 import type { WindowGrain } from "../identity/binding.js";
-import { preRegisterDynamicEntry, grainBackstopAtExecute, fullKit } from "./window-gated.js";
+import { registerMountedEntry, grainBackstopAtExecute, fullKit } from "./window-gated.js";
 import { currentSessionId, type BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "./untrusted.js";
@@ -203,7 +203,7 @@ export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserT
       execute: browserBackstoppedExecute(name, entry, auditAction),
       ...(fenced ? { toModelOutput: (output: unknown) => browserContentModelOutput(name, output) } : {}),
     } as unknown as ToolDefinition) as unknown as BrowserToolEntry;
-    preRegisterDynamicEntry(BROWSER_TOOLS_SLUG, name, backstopped);
+    registerMountedEntry(BROWSER_TOOLS_SLUG, name, backstopped);
     armed[name] = backstopped;
   }
   registered = armed;

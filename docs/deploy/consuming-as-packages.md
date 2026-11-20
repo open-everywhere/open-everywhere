@@ -47,7 +47,9 @@ supported routes (Vercel and Docker). The ordered step list lives in ONE place �
 test:quickstart` (`scripts/quickstart-test.ts`) proves the path from the packed tarballs: it
 scaffolds with the packed CLI, installs, and asserts that the eve patch probe reads `patched`,
 that `oe build --check` passes after `oe build`, that the ops MCP server lists its tools, that the
-app typechecks, and that `eve build` succeeds. The rest of this page explains what the scaffold wrote and why.
+app typechecks, and that `eve build` succeeds. On eve 1.0.0-rc.18 no patch part is declared, so the
+probe reads `patched` on any eve, and that one assertion proves nothing about the patch bytes. The
+applier's per-part byte report is the check. The rest of this page explains what the scaffold wrote and why.
 
 ## The packages
 
@@ -117,10 +119,14 @@ ignores lifecycle scripts by default, and a package that did meaningful work dur
 would trip every supply-chain scanner in your CI. So no OE integrity check can live there.
 
 `oe build` runs as your `prebuild`, `predev` and `prestart`, and it does gate a build: it refuses
-an out-of-date roster lock and an unresolvable package specifier. 🔴 **It does not verify the eve
-install.** Its one read of the installed eve degrades silently to `undefined` on any failure
-(`packages/core/scripts/oe-cli.ts:45-52`), so a second nested copy of eve, an unpatched copy, or a
-peer-version mismatch does not red your build. The gates that would catch those are **repo-side
+an out-of-date roster lock, an unresolvable package specifier, an eve OpenAPI connection that its scan
+finds in the app tree (`docs/security/credentials-and-planes.md` states the scan's reach and its
+escape roads), and a mounted kit member whose eve built-in has no `framework.disable` sentinel
+(`docs/extending/tools.md#disable-a-core-tool`). 🔴 **It does not verify the eve
+install.** Its one read of the installed eve degrades to `undefined` on any failure
+(`frameworkTools` in `packages/core/scripts/oe-cli.ts`). The kit check then refuses a mounted kit,
+because it cannot prove the sentinels, but nothing else reds. So a second nested copy of eve, an
+unpatched copy, or a peer-version mismatch does not red your build. The gates that would catch those are **repo-side
 tests** a consumer never runs — `npm run test:eve-install` (from `packages/core`) and
 `scripts/publish-lint.ts`'s peer-dependency assertion. On a consumer tree, one resolved and pinned
 copy of `eve` is your own responsibility.
@@ -129,10 +135,14 @@ Two things a consumer DOES get, and neither is an install hook. `npx oe-eve-patc
 `@open-everywhere/core` ships beside the packed patch — applies the patch on demand, refuses an eve
 that is not the pinned version, and verifies the patched bytes afterwards rather than trusting its
 own apply step. It applies the patch itself, so core carries no patch tool in its runtime
-dependencies (OPE-2398). And core **refuses to boot, then refuses the first turn**, on an eve whose
-patch markers are absent (`agent/access/eve-patch-probe.ts`, `agent/hooks/eve-patch-gate.ts`). So an
-unpatched tree fails loudly instead of serving wakes with the connector fence inert.
-[Publishing](../dev/publishing.md) carries the recipe and what each refusal means.
+dependencies (OPE-2398). And core **refuses to boot, then refuses the first turn**, on an eve that
+lacks a DECLARED runtime patch part (`agent/access/eve-patch-probe.ts`, `agent/hooks/eve-patch-gate.ts`).
+🔴 **On the eve 1.0.0-rc.18 pin (the `eve-v1` branch, OPE-2691) no part is declared, so this refusal is
+empty.** An eve without the patch boots and serves wakes, so run `npx oe-eve-patch` and do not wait for a
+refusal. The rc patch carries one part, part 10, and it is CLI-side only, so it has no boot marker. The connector fence and the other controls that patch part 1
+carried are absent on every tree until they return on eve's public API (OPE-2690). The seat cuts are
+back as `defineDynamic` tool shims (OPE-2697), with the gaps the glossary **seat cut** entry names.
+[Publishing](../dev/publishing.md) lists them, and carries the recipe and what each refusal means.
 
 ### 3. The root `zod` must be ONE version
 

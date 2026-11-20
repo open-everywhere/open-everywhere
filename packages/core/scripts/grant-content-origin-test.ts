@@ -4,13 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { AsyncLocalStorage } from "node:async_hooks";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-grant-origin-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 
-import { _resetDynamicVariantsForTest, registerDynamicVariant, type ReplayableToolEntry } from "../agent/access/window-gated.js";
-import { projectToolSet, registeredProjectionNames, setVariantProjectedName, variantProjectedNameList } from "../agent/access/untrusted-projection.js";
+import { _resetMountedVariantsForTest, type MountedToolEntry } from "../agent/access/window-gated.js";
+import { variantProjectedNameList } from "../agent/access/connector-result-fence.js";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import { envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import { grantToolEntry, mountGrantEntries } from "../agent/tools/grant_tools.js";
@@ -29,68 +28,16 @@ const eq = (a: unknown, b: unknown, label: string): void => {
 const require_ = createRequire(import.meta.url);
 const eveRoot = dirname(require_.resolve("eve/package.json"));
 const u = (rel: string): string => pathToFileURL(join(eveRoot, "dist/src", rel)).href;
-const harnessTools = (await import(u("harness/tools.js"))) as {
-  buildToolSetFromDefinitions(i: { approvedTools: Set<string>; tools: unknown[] }): Record<string, BuiltTool>;
+const { ContextContainer, contextStorage } = (await import(u("context/container.js"))) as {
+  ContextContainer: new () => unknown;
+  contextStorage: { run<T>(store: unknown, fn: () => T): T };
 };
-const toolSchema = (await import(u("tools/schema.js"))) as { toInputSchema(s: unknown): unknown };
-const lifecycle = (await import(u("context/dynamic-tool-lifecycle.js"))) as {
-  dispatchDynamicToolEvent(e: unknown): Promise<void>;
+const { normalizeToolModelOutput } = (await import(u("harness/tool-model-output.js"))) as {
+  normalizeToolModelOutput(i: { output: unknown; toolCallId: string; toolName: string }): { type: string; value: unknown };
 };
-const { replayDynamicTools } = (await import(u("context/build-dynamic-tools.js"))) as {
-  replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): Replayed[];
-};
-const keys = (await import(u("context/keys.js"))) as { SessionIdKey: unknown; StaticModelReferenceKey: unknown; SessionDynamicToolMetadataKey: unknown };
+const inTurn = <T>(fn: () => T | Promise<T>): Promise<T> => contextStorage.run(new ContextContainer(), fn) as Promise<T>;
 
-interface BuiltTool {
-  execute?: (...a: unknown[]) => unknown;
-  toModelOutput?: (a: { output: unknown; toolCallId: string }) => Promise<{ type: string; value: unknown }> | { type: string; value: unknown };
-}
-interface Replayed {
-  name: string;
-  toModelOutput?: (output: unknown) => Promise<{ type: string; value: string }>;
-}
-interface DurableRow {
-  readonly name: string;
-  readonly callbacks: Record<string, { readonly closure: Record<string, unknown> } | undefined>;
-}
-
-const buildSet = (defs: Array<Record<string, unknown>>): Record<string, BuiltTool> =>
-  harnessTools.buildToolSetFromDefinitions({
-    approvedTools: new Set<string>(),
-    tools: defs.map((d) => ({ ...d, inputSchema: toolSchema.toInputSchema(d.inputSchema) })),
-  });
-
-class FakeSession {
-  private readonly store = new Map<string, unknown>();
-  get<T>(key: { name: string }): T | undefined {
-    return this.store.get(key.name) as T | undefined;
-  }
-  has(key: { name: string }): boolean {
-    return this.store.has(key.name);
-  }
-  require<T>(key: { name: string }): T {
-    if (!this.has(key)) throw new Error(`missing ${key.name}`);
-    return this.get(key) as T;
-  }
-  set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
-    const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
-    this.store.set(key.name, next);
-    return next;
-  }
-  ensure<T>(key: { name: string }, create: () => T): T {
-    return this.has(key) ? this.require(key) : this.set(key, create());
-  }
-  clearVirtualContext(): void {}
-  setVirtualContext(): void {}
-  *entries(): Generator<readonly [unknown, unknown]> {}
-}
-const g = globalThis as Record<PropertyKey, unknown>;
-const alsKey = Symbol.for("eve.context-storage");
-g[alsKey] ??= new AsyncLocalStorage();
-const als = g[alsKey] as InstanceType<typeof AsyncLocalStorage>;
-const inTurn = <T>(fn: () => T | Promise<T>): Promise<T> => als.run(new FakeSession(), fn) as Promise<T>;
-
-_resetDynamicVariantsForTest();
+_resetMountedVariantsForTest();
 
 const GRANT: CredentialGrantRow = {
   askId: "ask-1",
@@ -133,27 +80,10 @@ const firstSource = (text: string): string | undefined => /source="([^"]*)"/u.ex
 const DEFANGED_OPEN = "‹untrusted_external_data";
 const GRANT_SOURCE = `granted notion_fetch as rowan_hale — notion ${GRANT.resource}`;
 
-console.log("1. baseline: the connector wrap is the floor, and it names the wrong thing:");
-{
-  const set = buildSet([{ description: "granted read", execute: async () => OK_OUTPUT, inputSchema: { properties: {}, type: "object" }, name: NAME }]);
-  setVariantProjectedName(NAME, false);
-  projectToolSet(set as unknown as Record<string, unknown>);
-  const rendered = String((await inTurn(async () => set[NAME].toModelOutput!({ output: OK_OUTPUT, toolCallId: "c1" })))!.value);
-
-  ok(rendered.startsWith(`${UNTRUSTED_OPEN} `), "baseline: the bytes ARE fenced — the ticket's 'no mark at all' premise was too strong");
-  eq(
-    /source="([^"]*)"/u.exec(rendered)?.[1],
-    `connector ${NAME}`,
-    "baseline: the WHOLE provenance is the mounted tool name, called a CONNECTOR op — no connector, no resource, and nothing saying a credential was spent",
-  );
-  const closeAt = rendered.indexOf(UNTRUSTED_CLOSE);
-  ok(rendered.indexOf("acting as rowan_hale") < closeAt, "baseline: the HOST-AUTHORED disclosure sits INSIDE the fence, where the notice tells the model not to act on it");
-}
-
 console.log("2. the grant variant's own projection:");
 const entry = grantToolEntry(GRANT);
-ok(entry !== undefined && typeof (entry as ReplayableToolEntry).toModelOutput === "function", "every grant entry authors a toModelOutput — the mount wires it, not the test");
-const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => Promise<{ type: string; value: string }>;
+ok(entry !== undefined && typeof (entry as MountedToolEntry).toModelOutput === "function", "every grant entry authors a toModelOutput — the mount wires it, not the test");
+const project = (entry as MountedToolEntry).toModelOutput as (o: unknown) => Promise<{ type: string; value: string }>;
 
 {
   const rendered = await inTurn(async () => {
@@ -188,106 +118,41 @@ const project = (entry as ReplayableToolEntry).toModelOutput as (o: unknown) => 
   });
 }
 
-console.log("3. the patch-side hook over the mounted grant tool:");
+console.log("3. the mount declares the grant family as self-projecting:");
 {
   const mounted = mountGrantEntries([GRANT]);
   eq(Object.keys(mounted), [NAME], "the mount projects the grant under grant__<ownerSlug>__<verb>");
-  ok(variantProjectedNameList().includes(NAME), "…and registering the variant DECLARES the family as self-projecting to the toolset hook");
-
-  const set = buildSet([
-    {
-      description: "granted read",
-      execute: async () => OK_OUTPUT,
-      inputSchema: { properties: {}, type: "object" },
-      name: NAME,
-      toModelOutput: project,
-    },
-  ]);
-  projectToolSet(set as unknown as Record<string, unknown>);
-  const rendered = String((await inTurn(async () => set[NAME].toModelOutput!({ output: OK_OUTPUT, toolCallId: "c2" })))!.value);
-  eq(firstSource(rendered), GRANT_SOURCE, "🔴 the hook returns the variant's envelope UNTOUCHED — the origin mark is the OUTERMOST fence's own attribute");
-  ok(!rendered.includes(DEFANGED_OPEN), "…and no fence was defanged inside another, so the grant's delimiter is a real delimiter");
-  const closeAt = rendered.indexOf(UNTRUSTED_CLOSE);
-  ok(rendered.indexOf("acting as rowan_hale") > closeAt, "…and the disclosure is still outside the fence at the seam");
+  ok(variantProjectedNameList().includes(NAME), "…and registering the variant DECLARES the family as self-projecting, so no connector executed-fact is added to its result");
 }
 
+console.log("4. eve carries THIS grant's projection onto each session's own tool:");
 {
-  setVariantProjectedName(NAME, false);
-  const set = buildSet([
-    { description: "granted read", execute: async () => OK_OUTPUT, inputSchema: { properties: {}, type: "object" }, name: NAME, toModelOutput: project },
-  ]);
-  projectToolSet(set as unknown as Record<string, unknown>);
-  const rendered = String((await inTurn(async () => set[NAME].toModelOutput!({ output: OK_OUTPUT, toolCallId: "c3" })))!.value);
-  eq(firstSource(rendered), `connector ${NAME}`, "NEGATIVE CONTROL: with the declaration withdrawn the hook wraps AGAIN — its absence over-wraps rather than under-wraps");
-  ok(rendered.includes(DEFANGED_OPEN), "…and the outer wrap DEFANGED the grant's own fence into guillemets, which is exactly the cost the narrowing removes");
-  setVariantProjectedName(NAME, true);
-}
-
-{
-  const set = buildSet([{ description: "granted read", execute: async () => OK_OUTPUT, inputSchema: { properties: {}, type: "object" }, name: NAME }]);
-  projectToolSet(set as unknown as Record<string, unknown>);
-  const rendered = String((await inTurn(async () => set[NAME].toModelOutput!({ output: OK_OUTPUT, toolCallId: "c4" })))!.value);
-  eq(
-    firstSource(rendered),
-    `connector ${NAME}`,
-    "NEGATIVE CONTROL: a DECLARED name whose projection did not run still gets the connector fence — the raw body never opens with our fence, and that is the belt-and-braces the declaration must not remove",
-  );
-}
-
-console.log("4. eve replays THIS grant's projection from the persisted closure:");
-{
-  const makeCtx = (sessionId: string) => {
-    const store = new Map<unknown, unknown>();
-    store.set(keys.SessionIdKey, sessionId);
-    store.set(keys.StaticModelReferenceKey, null);
-    return {
-      get: (k: unknown) => store.get(k),
-      require: (k: unknown) => {
-        if (!store.has(k)) throw new Error("ctx.require: missing key");
-        return store.get(k);
-      },
-      set: (k: unknown, v: unknown) => {
-        store.set(k, v);
-      },
-    };
+  const { contributeTools } = (await import(u("definitions/tools.js"))) as {
+    contributeTools(def: { logicalPath: string; slug: string }, value: unknown, ctx: unknown): { live?: { name: string; toModelOutput?: (output: unknown) => Promise<{ type: string; value: unknown }> }[] };
   };
   const other: CredentialGrantRow = { ...GRANT, id: "grant-other", resource: "Team OKRs — notion-fetch({page:zzz999})", scopeKey: "session-2" };
-  registerDynamicVariant(NAME, other.id, grantToolEntry(other)!);
-  registerDynamicVariant(NAME, GRANT.id, grantToolEntry(GRANT)!);
-
-  const resolveWith = async (row: CredentialGrantRow, sessionId: string): Promise<DurableRow> => {
-    const ctx = makeCtx(sessionId);
-    await lifecycle.dispatchDynamicToolEvent({
-      ctx,
-      event: { type: "session.started" },
-      messages: [],
-      resolvers: [{ eventNames: ["session.started"], events: { "session.started": async () => mountGrantEntries([row]) }, slug: "grant_tools" }],
-    });
-    return (ctx.get(keys.SessionDynamicToolMetadataKey) as DurableRow[])[0]!;
+  const liveFor = (row: CredentialGrantRow) => {
+    const contributed = contributeTools({ logicalPath: "agent/tools/grant_tools.ts", slug: "grant_tools" }, mountGrantEntries([row]), new ContextContainer());
+    return (contributed.live ?? [])[0]!;
   };
-
-  const rowOther = await resolveWith(other, "sess-grant-other");
-  const rowThis = await resolveWith(GRANT, "sess-grant-this");
-  eq(rowThis.callbacks.toModelOutput, { closure: { entryKey: GRANT.id } }, "the persisted toModelOutput phase names THIS grant id — the closure is the only thing that tells two grants apart");
-  eq(rowOther.callbacks.toModelOutput, { closure: { entryKey: other.id } }, "…and the other session's row names the other grant");
-
-  const replayedThis = replayDynamicTools([rowThis], { sessionId: "sess-grant-this", scope: "session" })[0]!;
-  const replayedOther = replayDynamicTools([rowOther], { sessionId: "sess-grant-other", scope: "session" })[0]!;
-  ok(typeof replayedThis.toModelOutput === "function", "🔴 eve REBUILDS the authored projection onto the replayed grant tool — the envelope is reachable, not merely correct");
-  const renderedThis = await inTurn(async () => String((await replayedThis.toModelOutput!(OK_OUTPUT)).value));
-  const renderedOther = await inTurn(async () => String((await replayedOther.toModelOutput!(OK_OUTPUT)).value));
-  eq(firstSource(renderedThis), GRANT_SOURCE, "the replayed tool marks THIS grant's origin");
+  const liveOther = liveFor(other);
+  const liveThis = liveFor(GRANT);
+  ok(typeof liveThis.toModelOutput === "function", "🔴 eve carries the authored projection onto the live grant tool — the envelope is reachable, not merely correct");
+  const renderedThis = await inTurn(async () => String((await liveThis.toModelOutput!(OK_OUTPUT)).value));
+  const renderedOther = await inTurn(async () => String((await liveOther.toModelOutput!(OK_OUTPUT)).value));
+  eq(firstSource(renderedThis), GRANT_SOURCE, "THIS session's tool marks THIS grant's origin, though the other session mounted under the same name");
   eq(
     firstSource(renderedOther),
     `granted notion_fetch as rowan_hale — notion ${other.resource}`,
-    "…and the other session's marks ITS OWN resource — one name, two origin marks, no collision",
+    "…and the other session's tool marks ITS OWN resource — one name, two origin marks, no collision",
   );
+  const modelBytes = await inTurn(async () => {
+    const out = normalizeToolModelOutput({ output: await liveThis.toModelOutput!(OK_OUTPUT), toolCallId: "c4", toolName: liveThis.name });
+    return out.type === "text" ? String(out.value) : JSON.stringify(out.value);
+  });
+  eq(firstSource(modelBytes), GRANT_SOURCE, "🔴 through eve's model-output normalizer the grant's envelope is the OUTERMOST fence — eve 1.x adds no second wrap");
+  ok(!modelBytes.includes(DEFANGED_OPEN), "…and no fence was defanged inside another, so the grant's delimiter is a real delimiter");
+  ok(modelBytes.indexOf("acting as rowan_hale") > modelBytes.indexOf(UNTRUSTED_CLOSE), "…and the host-authored disclosure still rides outside the fence");
 }
 
-console.log("5. the projection registry stays out of it:");
-ok(
-  !registeredProjectionNames().includes(NAME),
-  "🔴 NEGATIVE CONTROL: no grant name enters the projection registry — it is a NAME SET read by isConnectorExternalName, so this name entering it would DISABLE the connector fence on every grant behind it",
-);
-
-console.log(`\n✓ grant-content-origin: ${n} assertions passed (baseline connector wrap, authored envelope + origin mark, refusal no-taint, one envelope at the seam, two fail-closed controls, eve replay reachability)\n`);
+console.log(`\n✓ grant-content-origin: ${n} assertions passed (authored envelope + origin mark, refusal no-taint, variant declaration, eve 1.x reachability with one envelope)\n`);

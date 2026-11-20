@@ -1,0 +1,8 @@
+{
+  "name": "oe-chain-subprocess-leg-fixture",
+  "private": true,
+  "scripts": {
+    "db-env-probe": "node db-env-probe.mjs",
+    "broken": "node -e \"process.exit(3)\""
+  }
+}

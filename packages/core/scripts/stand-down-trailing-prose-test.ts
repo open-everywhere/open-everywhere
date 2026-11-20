@@ -6,6 +6,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 const dir = join(tmpdir(), `open-everywhere-stand-down-trailing-prose-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -101,7 +102,7 @@ async function enrol(ctx: unknown, threadTs: string): Promise<void> {
 
 type Armed = { execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown> } | null;
 const arm = (ctx: unknown): Armed =>
-  (replyTool as unknown as { events: Record<string, (a: unknown, c: unknown) => unknown> }).events["session.started"]({}, ctx) as Armed;
+  _dynamicResolverForTest(replyTool)({}, ctx) as Armed;
 
 async function callReply(ctx: unknown, text: string): Promise<{ posted?: boolean; error?: string }> {
   const armed = arm(ctx);
@@ -278,7 +279,9 @@ const ackRows = async (): Promise<number> => (await ackRowsAll()).length;
     ["../../providers/linear/agent/channels/linear.ts", "Linear (native arm)"],
     ["../../providers/github/agent/channels/github.ts", "GitHub (native arm)"],
   ];
-  const withTurnId = /finalMessageActionForTurn\(\s*data\.finishReason,\s*data\.message,/;
+  // eve 1.x: a surface hands the whole `content.completed` data and the turn id as the SECOND
+  // argument (the two-argument overload); the 0.x three-argument form still counts.
+  const withTurnId = /finalMessageActionForTurn\(\s*(?:(?:event\.)?data,\s*[^)\s]|data\.finishReason,\s*data\.message,)/;
   const anyCall = /finalMessageActionForTurn\s*\(/;
   for (const [rel, label] of surfaces) {
     const src = readFileSync(new URL(rel, import.meta.url), "utf8");

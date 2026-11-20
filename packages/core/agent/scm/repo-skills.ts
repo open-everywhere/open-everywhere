@@ -109,7 +109,7 @@ export function mergeRepoSkills(
       out[full] = {
         description:
           typeof desc === "string" && desc ? desc : `Skill "${name}" shipped in the ${entry.repo} repo.`,
-        markdown,
+        content: markdown,
       };
     }
     for (const agent of Object.values(entry.agents ?? {})) {
@@ -117,7 +117,7 @@ export function mergeRepoSkills(
       if (!full) continue;
       out[full] = {
         description: agent.description || `Delegation persona "${agent.name}" shipped in the ${entry.repo} repo.`,
-        markdown: `${delegationHeader(entry.repo)}\n\n${agent.body}\n`,
+        content: `${delegationHeader(entry.repo)}\n\n${agent.body}\n`,
       };
     }
   }

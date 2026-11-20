@@ -156,8 +156,8 @@ const turnStarted = (attributes?: Record<string, string>): Promise<unknown> =>
     ok(!silentRoutineThisTurn(), "a LATER turn in the SAME session without the stamp CLEARS it (the durable-job re-wake case)");
     await turnStarted({ [ROUTINE_MARKER.silent]: "true" });
     ok(silentRoutineThisTurn(), "…and re-seeds on the next silent fire");
-    await Promise.resolve(silenceHook.events!["turn.completed"]!({} as never, hookCtx() as never));
-    ok(!silentRoutineThisTurn(), "turn.completed drops the signal (belt on the clear-first brace)");
+    await Promise.resolve(silenceHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "completed" } } as never, hookCtx() as never));
+    ok(!silentRoutineThisTurn(), "turn.settled drops the signal (belt on the clear-first brace)");
   });
   await inSession(async () => {
     ok(!silentRoutineThisTurn(), "a different session never sees a previous session's signal");

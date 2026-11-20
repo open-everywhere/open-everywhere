@@ -18,7 +18,7 @@ import {
 const SETTLEMENT_FLUSH_ACTION = "memory.settlement_flush";
 const ROUTINE_FIRE_ACTION = "routine.fire";
 const TASK_SETTLED_ACTION = "delegation.task_settled";
-const TERMINAL_SESSION_EVENTS = ["session.completed", "session.failed"] as const;
+const TERMINAL_SESSION_EVENTS = ["session.ended"] as const;
 const SUPERVISOR_FAILURE_ACTIONS = ["unified.supervisor_session_failed", "unified.supervisor_turn_failed"] as const;
 
 const FIRE_SEAT_CHANNEL_ID = "1300000001500000014";
@@ -118,7 +118,9 @@ test("a routine fire's memory flush and settlement row land when its job complet
   expect(res.status, `the transcript route answered ${res.status}: ${res.body.slice(0, 300)}`).toBe(200);
   const page = JSON.parse(res.body) as { complete: boolean; count: number; events: { type: string }[] };
   expect(page.count, "the transcript page is empty, so the absences below are facts about an unread stream").toBeGreaterThan(0);
-  expect(page.events.map((e) => e.type), "the work session's stream carries no task.settled, so it is not the stream that ran the job").toContain("task.settled");
+  const types = page.events.map((e) => e.type);
+  expect(types, "the work session's stream carries no task.started, so it is not the stream that ran the job").toContain("task.started");
+  expect(types, "the work session's stream carries no call.settled, so the job's call never settled there (eve 1.x settles a task's call and keeps the agent task open)").toContain("call.settled");
   expect(
     page.events.filter((e) => (TERMINAL_SESSION_EVENTS as readonly string[]).includes(e.type)).map((e) => e.type),
     "the work session emitted a terminal event — so the end effects may be riding an edge the park removes",

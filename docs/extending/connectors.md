@@ -42,7 +42,7 @@ import { defineMcpServers } from "@open-everywhere/core/agent/connections/mcp-se
 
 export const MCP_SERVERS = defineMcpServers([
   {
-    name: "fullstory", // the connection slug: agent/connections/fullstory.ts and the grant key
+    name: "fullstory", // the connection slug: agent/tools/fullstory.ts and the grant key
     url: "https://<the vendor's hosted MCP endpoint>",
     description: "FullStory: search sessions, read session summaries and product analytics.",
   },
@@ -51,9 +51,21 @@ export const MCP_SERVERS = defineMcpServers([
 
 Then run `npx oe build` and commit the diff. What the entry gives you:
 
-- **A connection.** `oe build` writes `agent/connections/<name>.ts`, a stub that builds the
-  connection from your list. The golden plan (`scripts/goldens/roster-plan.txt`) shows one line per
-  server. A name that a package already mounts is refused.
+- **A connection.** `oe build` writes `agent/tools/<name>.ts`, a stub that builds the connector
+  mount from your list and passes it through `seatCut`. Each op of the server reaches the model as a
+  deferred tool named `<name>__<op>`, with its result inside the untrusted-content envelope. The
+  golden plan (`scripts/goldens/roster-plan.txt`) shows one line per server. A name that a package
+  already mounts as a tool or a connection is refused.
+- **No window gate.** The stub has no `windowGated` wrapper, so it mounts on every grain, as
+  `eve__tool` does. The seat cut decides per op by name, the connector grant decides per
+  connection, and the approval policy decides per op call. In this repository only,
+  `lint:window-gate` reads every file under `agent/tools/` with no default posture. There it
+  refuses the stub until `<name>` has a row in `WINDOW_UNGATED_TOOLS`
+  (`packages/core/agent/access/window-gate-manifest.ts`). The same change adds `<name>` to
+  `WORKER_INDEX_MACHINERY` (`packages/core/agent/access/worker-capabilities.ts`) and gives it a
+  `WORKER_SEAT_UNREACHABLE` entry in `packages/core/scripts/eval/_worker-seat.ts`, because
+  `lint:capabilities` and the offline worker seat refuse an undeclared name. An app made with
+  `@open-everywhere/create` runs none of these checks.
 - **A sign-in.** The default is MCP OAuth discovery, dynamic client registration and PKCE against
   the URL: no client id and no secret. A vendor WITHOUT dynamic registration takes
   `signIn: { mode: "static-confidential", authorizationEndpoint, tokenEndpoint, clientId,
@@ -146,45 +158,77 @@ AGENT instead, declare it in `agent/access/a2a-agents.ts`: see [A2A agents](./a2
 
 ## Defining a new MCP connection in a package
 
-Eve discovers a connection from the app's `agent/connections/<slug>.ts`, and the file's slug (its
-filename, minus `.ts`) becomes the connection's runtime name — exactly the name a catalogue's
-`connector` field and a grant's `name` reference.
+A connection mounts as a **connector mount** (`packages/core/agent/connections/connector-mount.ts`):
+a `defineDynamic` tool file, under the app's `agent/tools/<slug>.ts`. Before each model call it lists
+the server's ops with OE's own MCP client, memoised per session and principal, and returns one
+deferred tool per op, named `<slug>__<op>`. The slug is exactly the name a catalogue's `connector`
+field and a grant's `name` reference. Each tool's `toModelOutput` applies the connector-result
+fence, and the roster shim passes the map through `seatCut`, so every seat cut applies to each op by
+name.
 
-🔴 **That app directory is build output, not a place to author.** `.gitignore` excludes
-`/agent/connections/`, and `npm run oe:build` rewrites the directory wholesale, so a file you
-write there is deleted by the next build. Author the connection in a package and declare it, the
-same way [a tool or a channel](./tools.md) is declared:
+🔴 **Do not mount an MCP server as an eve `defineMcpClientConnection`.** eve's MCP connection runtime
+has no per-result transform, so its results reach the model outside the untrusted-content envelope.
+eve also refuses a dynamic tool named `<slug>__*` while a connection named `<slug>` is mounted
+(`connections/ownership.js`), so a connection is a connector mount or an eve connection, never both.
+
+**No connection event starts a turn on a shipped tree.** eve 1.x can start a turn from an event of a
+mounted eve connection that declares `experimental_events` (`runtime/connections/events/dispatch-step.js`).
+That turn attaches with the channel name set to the connection name. Open Everywhere mounts no eve
+connection, so no such turn starts. An app that mounts its own eve connection with
+`experimental_events` gets turns whose platform no test pins. The platform that the connector hard
+gate reads for such a turn (`readChannelKind` in `access/connector-scope.ts`) is not proven. eve
+passes the connection name as the channel name, so the gate can read the connection name as the
+platform.
+
+🔴 **The app's slot directories are build output, not a place to author.** `npm run oe:build`
+rewrites them wholesale, so a file you write there is deleted by the next build. Author the mount in
+a package and declare it, the same way [a tool or a channel](./tools.md) is declared:
 
 1. Write the module in the package — `packages/core/agent/connections/<slug>.ts`, or
    `packages/providers/<name>/agent/connections/<slug>.ts` for a [bundle](./provider-bundles.md).
-2. Declare it in that package's `agent/contributions.ts`:
-   `{ kind: "connection", name: "<slug>", module: "agent/connections/<slug>.js" }`.
+2. Declare it in that package's `agent/contributions.ts` as a TOOL:
+   `{ kind: "tool", name: "<slug>", module: "agent/connections/<slug>.js" }`.
 3. Run `npx oe build --accept` and commit `roster.lock.json`. The build writes the app's
-   `agent/connections/<slug>.ts` stub.
+   `agent/tools/<slug>.ts` shim, which wraps the module in `seatCut`.
+4. Add `"<slug>"` to `WINDOW_UNGATED_TOOLS` in `packages/core/agent/access/window-gate-manifest.ts`.
+   The manifest has no default posture, so in this repository `lint:window-gate` refuses the new
+   shim until the slug has a row. A connector mount is window-ungated, as `eve__tool` and
+   `eve__search` are: the window grain does not decide which ops a seat holds. The seat cut decides
+   per op by name, the connector grant decides per connection, and the mount's approval policy
+   decides per op call.
+5. Add `"<slug>"` to `WORKER_INDEX_MACHINERY` in `packages/core/agent/access/worker-capabilities.ts`.
+   A mount slug is not a verb, so it stays out of the worker-capability index, and
+   `checkWorkerCapabilityGroups` refuses an ungated name that no group and no exclusion set holds.
+   Also add a `WORKER_SEAT_UNREACHABLE` entry in `packages/core/scripts/eval/_worker-seat.ts`, with
+   its reason, because the offline worker seat cannot list a live server's ops.
 
-The module itself default-exports an Eve connection:
+The module itself default-exports a connector mount:
 
 ```ts
 // packages/core/agent/connections/<slug>.ts
-import { defineMcpClientConnection } from "eve/connections";
+import { defineConnectorMount } from "./connector-mount.js";
+import { mcpConnectionMountSpec } from "./mcp-server-connection.js";
 
-export default defineMcpClientConnection({
-  url: "https://mcp.example.com/mcp", // the vendor's hosted MCP server
-  description: "…",
-  // `auth` resolves the credential HOST-SIDE per call: the per-surface hard gate
-  // (assertConnectorGranted, access/connector-scope.ts) runs first, then the app-principal or
-  // user-principal token path — see connections/connector-auth.ts.
-  auth: …,
-});
+export default defineConnectorMount(
+  mcpConnectionMountSpec({
+    name: "<slug>",
+    url: "https://mcp.example.com/mcp", // the vendor's hosted MCP server
+    description: "…",
+  }),
+);
 ```
 
-`packages/core/agent/connections/notion.ts` is the shipped worked example. It builds through
-`buildMcpConnection(...)` (`connections/mcp-server-connection.ts`), the one builder every MCP
-connection uses, rather than calling `defineMcpClientConnection` inline. The builder declares the
-sign-in, takes the `url` and `auth` from `selectConnectorTransport(...)` so the connection picks up
-the [transport seam](./adapter-model.md#the-connector-transport-seam-is-swappable-too), and
-attaches the approval policy. The other files under `packages/core/agent/connections/` are helper
-modules, not connections.
+`packages/core/agent/connections/notion.ts` is the shipped worked example. It builds its spec
+through `mcpConnectionMountSpec(...)` (`connections/mcp-server-connection.ts`), the one builder
+every MCP connection uses. The builder declares the sign-in, takes the `url` and `auth` from
+`selectConnectorTransport(...)` so the mount picks up the
+[transport seam](./adapter-model.md#the-connector-transport-seam-is-swappable-too), and attaches
+the approval policy. `auth` resolves the credential HOST-SIDE per call: the per-surface hard gate
+(`assertConnectorGranted`, `access/connector-scope.ts`) runs first, then the app-principal or
+user-principal token path (`connections/connector-auth.ts`). A listing that the server refuses for
+sign-in offers one tool, `<slug>__sign_in`, whose call runs that sign-in. The listed MCP
+`annotations` feed the connector-op hints lookup (`connections/connector-tool-hints.ts`). The other
+files under `packages/core/agent/connections/` are helper modules, not connections.
 
 The credential never lives on the connection — a provider's `ConnectorCredential` names a
 `secretRef` + `broker` (or a `home` bag for an OAuth-homed credential, or a future registered

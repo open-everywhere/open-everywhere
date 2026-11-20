@@ -15,7 +15,7 @@ afterAll(async () => {
   if (topologyBefore !== undefined) settings.overrideSettingsForTest({ window: { topology: topologyBefore } });
 });
 
-test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row, not two", async () => {
+test("Discord: a no_reply TOOL call beside another call ends the turn at that step and writes ONE row, not two", async () => {
   await bootAgent();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
@@ -26,7 +26,13 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
   const channelId = freshUnlistedChannelId();
   const at = Date.now();
   const callId = `ope890-tool-${at}`;
-  afterThisTest(wrapToolExecute("list_routines", async () => ({ routines: [] })));
+  let listed = 0;
+  afterThisTest(
+    wrapToolExecute("list_routines", async () => {
+      listed += 1;
+      return { routines: [] };
+    }),
+  );
   const handle: ScriptedHandle = registerScript({
     parent: [
       {
@@ -42,11 +48,7 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
     const cursor = await auditCursor();
     await discordMentionWake({ channelId, text: `${BOT_MENTION} ope890 stay quiet on this one`, messageId: `ope890tool${at}` });
 
-    const sentinelStep = await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), "the mention wake's trailing sentinel step", 180_000);
-    const noReplyResult = sentinelStep.toolResults.find((t) => t.id === callId);
-    expect(noReplyResult, "the sentinel step's prompt carries the no_reply result").toBeDefined();
-    expect(noReplyResult?.isError, `the wake's no_reply TOOL call was refused: ${JSON.stringify(noReplyResult?.output)}`).toBe(false);
-
+    await waitFor(() => handle.requests.find((r) => r.stepIndex === 0), "the mention wake's no_reply step", 180_000);
     await waitFor(
       async () => {
         const found = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
@@ -57,8 +59,13 @@ test("Discord: no_reply TOOL call + the taught trailing sentinel writes ONE row,
       180_000,
     );
     await awaitWindowQuiet();
+    expect(listed, "the other call in the no_reply step still ran").toBe(1);
+    expect(
+      handle.requests.map((r) => r.stepIndex),
+      "a successful no_reply ends the turn at its own step: the taught trailing sentinel step is never requested",
+    ).toEqual([0]);
     const rows = (await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 })).filter((r) => r.platform === "discord" && r.surface === channelId);
-    expect(rows, "the tool call's OWN row must land (OPE-649) — one row minimum").toHaveLength(1);
+    expect(rows, "the tool call's OWN row must land (OPE-649), and the turn-end decision adds no second row").toHaveLength(1);
     expect(rows[0]!.detail?.reason, "the surviving row is the TOOL route's own — it carries `reason`, not `route`").toBe("not_relevant");
     expect(rows[0]!.detail?.route, "the tool route's row has no `route` field — that's the sentinel row's marker").toBeUndefined();
   } finally {

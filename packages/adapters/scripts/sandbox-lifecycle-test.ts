@@ -28,6 +28,8 @@ import {
 import { recordCreatedSandbox, clearRecordedSandboxesForTest } from "../agent/sandbox/created-sandbox-registry.js";
 import { removeTempDir } from "./_temp-dir.js";
 
+const TURN_COMPLETED = { type: "turn.settled", data: { turnId: "t-done", outcome: "completed" } };
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
@@ -48,7 +50,7 @@ function testStopper(parts: Partial<SandboxStopper>): SandboxStopper {
 
 {
   const events = lifecycleHook.events ?? {};
-  for (const key of ["turn.completed", "turn.failed", "session.completed", "session.failed"]) {
+  for (const key of ["turn.settled", "session.ended"]) {
     ok(typeof (events as Record<string, unknown>)[key] === "function", `hook subscribes to ${key}`);
   }
 }
@@ -501,9 +503,9 @@ const parentCtx = {
   });
   setSandboxStopperForTest(stopper);
 
-  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.settled"] as (e: unknown, c: unknown) => Promise<void>;
 
-  await turnCompleted({}, childCtx);
+  await turnCompleted(TURN_COMPLETED, childCtx);
   ok(stops.length === 0, "🔴 OPE-447: a subagent child issues NO stop — the parent owns the shared VM and is still mid-turn");
   ok(
     retags.length === 1 && retags[0].name === "sbx-shared" && retags[0].sessionId === "sess-parent",
@@ -512,7 +514,16 @@ const parentCtx = {
 
   stops.length = 0;
   retags.length = 0;
-  await turnCompleted({}, parentCtx);
+  await turnCompleted({ type: "turn.settled", data: { turnId: "t-cancel", outcome: "cancelled" } }, parentCtx);
+  ok(stops.length === 0 && retags.length === 0, "a CANCELLED turn.settled stops nothing — only completed and failed turns end the sandbox window (the v26 hook keyed turn.completed and turn.failed)");
+  await turnCompleted({ type: "turn.settled", data: { turnId: "t-fail", outcome: "failed" } }, parentCtx);
+  ok(stops.includes("sbx-shared") === true, "a FAILED turn.settled stops the sandbox, as turn.failed did");
+  stops.length = 0;
+  const sessionEnded = (lifecycleHook.events ?? {})["session.ended"] as (e: unknown, c: unknown) => Promise<void>;
+  await sessionEnded({ type: "session.ended", data: { outcome: "completed" } }, parentCtx);
+  ok(stops.includes("sbx-shared") === true, "session.ended stops the sandbox, as session.completed did");
+  stops.length = 0;
+  await turnCompleted(TURN_COMPLETED, parentCtx);
   ok(stops.includes("sbx-shared") === true, "negative control: an ordinary (non-child) turn DOES stop its own sandbox — the stop is issued, not merely error-free");
   ok(retags.length === 0, "…and never re-tags anything: only a child hands ownership back");
 
@@ -562,7 +573,7 @@ const parentCtx = {
     },
   });
   setSandboxStopperForTest(stopper);
-  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.settled"] as (e: unknown, c: unknown) => Promise<void>;
 
   const slot = { name: LIVE_DELEGATED_TASKS_STATE_KEY };
   const container = new ContextContainer();
@@ -579,7 +590,7 @@ const parentCtx = {
         "OPE-595 arm: the hook's own reader sees the dispatched task — if this reds, the state key moved in core and every assertion below would be vacuous",
       );
 
-      await turnCompleted({}, parentCtx);
+      await turnCompleted(TURN_COMPLETED, parentCtx);
       ok(
         stops.length === 0,
         "🔴 OPE-595: the parent's turn-end sweep issues NO stop while a delegated background task is still live — it would kill a child mid-bash and bill a resume cycle",
@@ -597,7 +608,7 @@ const parentCtx = {
       container.set(slot, {});
 
       logLines.length = 0;
-      await turnCompleted({}, parentCtx);
+      await turnCompleted(TURN_COMPLETED, parentCtx);
       ok(
         stops.includes("sbx-shared"),
         "🔴 OPE-595 negative control: once the task settles, the SAME parent turn end stops the VM — the guard delays the stop, it does not delete it",
@@ -606,7 +617,7 @@ const parentCtx = {
       stops.length = 0;
       retags.length = 0;
       container.set(slot, { task_sibling: 0 });
-      await turnCompleted({}, childCtx);
+      await turnCompleted(TURN_COMPLETED, childCtx);
       ok(stops.length === 0, "OPE-595 × OPE-447: a child still issues no stop with a live sibling task");
       ok(
         retags.length === 1 && retags[0].sessionId === "sess-parent",
@@ -616,7 +627,7 @@ const parentCtx = {
 
     stops.length = 0;
     ok(liveDelegatedTasksHoldingSandbox().length === 0, "OPE-595: outside any eve context the reader fails soft to empty, never throws");
-    await turnCompleted({}, parentCtx);
+    await turnCompleted(TURN_COMPLETED, parentCtx);
     ok(stops.includes("sbx-shared"), "OPE-595: …so a sessionless turn end still stops its sandbox");
   } finally {
     console.log = realLog;
@@ -633,9 +644,9 @@ const parentCtx = {
   };
   try {
     setSandboxStopperForTest(testStopper({ metered: false, ownership: "stop owner = probe-backend", list: async () => [] }));
-    const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
-    await turnCompleted({}, parentCtx);
-    await turnCompleted({}, parentCtx);
+    const turnCompleted = (lifecycleHook.events ?? {})["turn.settled"] as (e: unknown, c: unknown) => Promise<void>;
+    await turnCompleted(TURN_COMPLETED, parentCtx);
+    await turnCompleted(TURN_COMPLETED, parentCtx);
   } finally {
     console.log = realLog;
     setSandboxStopperForTest(undefined);
@@ -649,18 +660,18 @@ const parentCtx = {
   await removeTempDir(dir);
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   const { resolvePartition, domainKeyOf, spendTotals, periodOf } = await import("@open-everywhere/core/agent/adapter-api.js");
-  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.settled"] as (e: unknown, c: unknown) => Promise<void>;
   const listing = async () => [{ name: "sbx-metered", status: "running", createdAt: Date.now() - 3_600_000 }];
 
   setSandboxStopperForTest(testStopper({ backend: "docker", metered: false, list: listing }));
-  await turnCompleted({}, parentCtx);
+  await turnCompleted(TURN_COMPLETED, parentCtx);
   const p = resolvePartition(parentCtx as never);
   const period = periodOf(new Date().toISOString());
   const unmetered = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period });
   ok(unmetered.calls === 0 && unmetered.usdMicros === 0, "an UNMETERED backend's stop writes NO spend row — a self-hosted container has no per-second bill to book");
 
   setSandboxStopperForTest(testStopper({ backend: "vercel", metered: true, list: listing }));
-  await turnCompleted({}, parentCtx);
+  await turnCompleted(TURN_COMPLETED, parentCtx);
   const metered = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period });
   ok(metered.calls === 1 && metered.usdMicros > 0, `the METERED backend's stop DOES book its runtime (got ${metered.calls} row(s), ${metered.usdMicros} micros)`);
 
@@ -693,7 +704,7 @@ const parentCtx = {
       },
     }),
   );
-  const turnCompleted = (lifecycleHook.events ?? {})["turn.completed"] as (e: unknown, c: unknown) => Promise<void>;
+  const turnCompleted = (lifecycleHook.events ?? {})["turn.settled"] as (e: unknown, c: unknown) => Promise<void>;
   const W = "oe-dom:e2e-unified:win:w/discord/111/222:oe-sup:g2-a1b2c3";
   const workCtx = { agent: { name: "oe" }, channel: { kind: "unified", continuationToken: `unified:${W}` }, session: { id: "sess-work" } };
   const seatCtx = { agent: { name: "oe" }, channel: { kind: "unified", continuationToken: "unified:oe-dom:e2e-unified:win:discord/111/222:oe-sup:g5" }, session: { id: "sess-seat" } };
@@ -706,20 +717,20 @@ const parentCtx = {
     ok(liveDelegatedTasksHoldingSandbox().length === 0, "OPE-2341 precondition: the session-local live set names no task, so the OLD rule would stop");
 
     await owes(W, ["work-session:req-pending"]);
-    await turnCompleted({}, workCtx);
+    await turnCompleted(TURN_COMPLETED, workCtx);
     ok(stops.length === 0, "🔴 OPE-2341: a W turn end issues NO stop while W still owes a job — the old stop-after-turn rule stopped the VM here");
     ok(logLines.some((l) => l.includes("not idle") && l.includes("req-pending")), "OPE-2341: …and the skip names what W still owes");
 
     await owes(W, []);
-    await turnCompleted({}, workCtx);
+    await turnCompleted(TURN_COMPLETED, workCtx);
     ok(stops.includes("sbx-work"), "🔴 OPE-2341 negative control: an IDLE W's turn end DOES stop its sandbox — the rule delays the stop, it never deletes it");
 
     stops.length = 0;
     await owes(W, ["agent-live-task"]);
-    await turnCompleted({}, workCtx);
+    await turnCompleted(TURN_COMPLETED, workCtx);
     ok(stops.length === 0, "OPE-2341: a task W started and that has not settled also keeps W busy");
 
-    await turnCompleted({}, seatCtx);
+    await turnCompleted(TURN_COMPLETED, seatCtx);
     ok(stops.includes("sbx-work"), "OPE-2341: a non-W session keeps the stop-after-turn rule — W's ledger never holds another session's stop");
     await owes(W, []);
   } finally {

@@ -1,4 +1,4 @@
-import { resolveTeamsAppId } from "eve/channels/teams";
+import { resolveTeamsAppId } from "./teams-credentials.js";
 import { teamsAppCredentials } from "./teams-connector.js";
 import type { BotDisplayNameArm } from "@open-everywhere/core/agent/adapter-api.js";
 import { liveTeamsGraphRequest, type TeamsGraphRequester } from "./teams-read.js";

@@ -3,6 +3,7 @@ import { appendAudit } from "../audit/audit.js";
 import { resolvePartition } from "../memory/partition.js";
 import { WAKE_TURN_START_ACTION, type WakeTurnStartDetail } from "../channels/wake-timing.js";
 import { auditSurfaceModeFrom, currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { optional } from "./control-refusal.js";
 
 async function auditTurnStart(turnId: string | undefined, ctx: HookContext): Promise<void> {
   try {
@@ -32,8 +33,8 @@ async function auditTurnStart(turnId: string | undefined, ctx: HookContext): Pro
 
 export default defineHook({
   events: {
-    "turn.started": async (event, ctx) => {
-      await auditTurnStart((event.data as { turnId?: string } | undefined)?.turnId, ctx);
-    },
+    "turn.started": optional("wake-turn-start", async (event, ctx) => {
+      await auditTurnStart(event.data.turnId, ctx);
+    }),
   },
 });

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,46 +28,93 @@ export interface EveFrameworkTools {
   readonly taskTools: readonly string[];
 }
 
-export function readReservedFrameworkToolSlots(eveRoot: string): string[] {
-  const file = join(eveRoot, POLICY_PATH);
-  let source: string;
+const RESERVATION_PATH = "dist/src/protocol/runtime-tools.js";
+
+const PROTOCOL_DIR = "dist/src/protocol";
+
+const RESERVED_NAME_EXPORTS = [
+  ["catalog-tools.js", "SEARCH_TOOL_NAME"],
+  ["catalog-tools.js", "CALL_TOOL_NAME"],
+  ["catalog-tools.js", "SKILL_TOOL_NAME"],
+  ["reply-tool.js", "REPLY_TOOL_NAME"],
+] as const;
+
+async function importEveModule(eveRoot: string, rel: string, why: string): Promise<Record<string, unknown>> {
   try {
-    source = readFileSync(file, "utf8");
-  } catch {
-    return [];
+    return (await import(pathToFileURL(join(eveRoot, rel)).href)) as Record<string, unknown>;
+  } catch (cause) {
+    throw new Error(`eve framework tools: cannot read ${rel} from the installed eve (${String(cause)}). ${why}`, { cause });
   }
+}
 
-  const declaration = /CONNECTION_TOOL_SLOTS\s*=\s*new Set\(\[([^\]]*)\]\)/u.exec(source);
-  if (declaration === null) {
+export async function readReservedFrameworkToolNames(eveRoot: string): Promise<string[]> {
+  const policy = join(eveRoot, POLICY_PATH);
+  if (existsSync(policy) && /CONNECTION_TOOL_SLOTS\s*=/u.test(readFileSync(policy, "utf8"))) {
     throw new Error(
-      `eve framework tools: ${POLICY_PATH} exists but declares no readable ` +
-        `\`CONNECTION_TOOL_SLOTS = new Set([...])\`. eve restructured the policy that declares which framework ` +
-        `tool slots an app may author nothing at. Guessing is not safe in both directions: an OVER-report ` +
-        `exempts a slot from the sentinel demand and lets a hands-on tool sit there unreviewed, and an ` +
-        `UNDER-report leaves the failure to surface as an \`eve build\` throw naming eve's file instead of OE's ` +
-        `zero-hands invariant. Read eve's policy module and update this reader.`,
+      `eve framework tools: ${POLICY_PATH} declares \`CONNECTION_TOOL_SLOTS\` again. eve 0.76.0 retired that reserved-slot ` +
+        `policy and reserves the \`eve__\` tool namespace instead, so this reader no longer reads the slot set. A ` +
+        `returned slot family is a second reservation regime: read eve's compiler and teach this reader both, or ` +
+        `every zero-hands gate demands a sentinel that \`eve build\` throws on.`,
     );
   }
 
-  const constants = new Map<string, string>();
-  for (const [, name, slot] of source.matchAll(/([A-Z_]+)\s*=\s*`(tools\/[a-z_]+)`/gu)) constants.set(name!, slot!);
-
-  const entries = declaration[1]!
-    .split(",")
-    .map((entry) => entry.trim().replace(/^["'`]|["'`]$/gu, ""))
-    .filter((entry) => entry.length > 0)
-    .map((entry) => (entry.startsWith("tools/") ? entry : (constants.get(entry) ?? entry)));
-  const unresolved = entries.filter((entry) => !/^tools\/[A-Za-z0-9_]+$/u.test(entry));
-  if (unresolved.length > 0) {
+  const reservation = (
+    await importEveModule(
+      eveRoot,
+      RESERVATION_PATH,
+      `It is eve's own rule for which tool names an app may not author (\`eveNamespaceReservation\`). Find its new home and update RESERVATION_PATH.`,
+    )
+  ).eveNamespaceReservation;
+  if (typeof reservation !== "function") {
     throw new Error(
-      `eve framework tools: ${POLICY_PATH} declares CONNECTION_TOOL_SLOTS with entr(ies) this reader cannot ` +
-        `resolve to a \`tools/<name>\` slot: ${JSON.stringify(unresolved)}. eve spells the set with a mix of ` +
-        `literals and constants, so a RENAMED constant lands here. Extend the constant resolution rather than ` +
-        `letting the entry drop: a dropped entry under-reports the reserved set, and \`connection_tools\` is ` +
-        `also DEFAULT-MOUNTED, so dropping it makes every zero-hands gate demand a sentinel \`eve build\` throws on.`,
+      `eve framework tools: ${RESERVATION_PATH} exports no \`eveNamespaceReservation\` function. eve moved or renamed the ` +
+        `rule that reserves its built-in tool names. Without it this reader cannot prove that the names below are ` +
+        `closed to an authored module, so it throws instead of guessing.`,
     );
   }
-  return [...new Set(entries.map((entry) => entry.slice("tools/".length)))].sort();
+  const reservedBy = reservation as (name: string) => string | undefined;
+
+  const names = new Set<string>();
+  for (const [file, exportName] of RESERVED_NAME_EXPORTS) {
+    const rel = `${PROTOCOL_DIR}/${file}`;
+    const value = (
+      await importEveModule(eveRoot, rel, `It declares one of eve's built-in model-visible tool names. Find the declaration's new home and update RESERVED_NAME_EXPORTS.`)
+    )[exportName];
+    if (typeof value !== "string" || value.length === 0) {
+      throw new Error(
+        `eve framework tools: ${rel} exports no non-empty \`${exportName}\` string (got ${JSON.stringify(value)}). eve renamed ` +
+          `or restructured the declaration. Read the module and update RESERVED_NAME_EXPORTS; a dropped name leaves ` +
+          `a model-visible tool off every lint's surface.`,
+      );
+    }
+    names.add(value);
+  }
+  for (const name of await readTaskToolNames(eveRoot)) names.add(name);
+
+  const open = [...names].filter((name) => reservedBy(name) === undefined).sort();
+  if (open.length > 0) {
+    throw new Error(
+      `eve framework tools: eve declares the built-in tool name(s) ${JSON.stringify(open)}, but its own ` +
+        `\`eveNamespaceReservation\` does not reserve them. The reservation rule and the names moved apart. An ` +
+        `unreserved name is an authorable slot, so the "reserved" class would excuse a slot that needs a posture.`,
+    );
+  }
+
+  const declared = new Set<string>();
+  for (const file of readdirSync(join(eveRoot, PROTOCOL_DIR)).filter((f) => f.endsWith(".js"))) {
+    for (const [, name] of readFileSync(join(eveRoot, PROTOCOL_DIR, file), "utf8").matchAll(/[`"'](eve__[A-Za-z0-9_]+)[`"']/gu)) {
+      declared.add(name!);
+    }
+  }
+  const unread = [...declared].filter((name) => !names.has(name)).sort();
+  if (unread.length > 0) {
+    throw new Error(
+      `eve framework tools: ${PROTOCOL_DIR}/ declares the reserved tool name(s) ${JSON.stringify(unread)}, which this ` +
+        `reader does not read. eve added a built-in tool. Add its export to RESERVED_NAME_EXPORTS, so the window ` +
+        `gate classes the new name before a session can hold it.`,
+    );
+  }
+  return [...names].sort();
 }
 
 export async function readTaskToolNames(eveRoot: string): Promise<string[]> {
@@ -79,7 +126,7 @@ export async function readTaskToolNames(eveRoot: string): Promise<string[]> {
     throw new Error(
       `eve framework tools: cannot read ${TASK_TOOLS_PATH} from the installed eve (${String(cause)}). It is ` +
         `eve's own declaration of the task verbs it injects per model call and reserves against an authored ` +
-        `tool. Without it OE's posture tables for \`task_wait\` / \`task_cancel\` read as stale rows and the ` +
+        `tool. Without it OE's posture tables for \`eve__task_wait\` / \`eve__task_cancel\` read as stale rows and the ` +
         `names leave every lint's surface. Find the module's new home and update TASK_TOOLS_PATH.`,
       { cause },
     );
@@ -143,11 +190,11 @@ export function deriveRegistryMountSets(registrations: FrameworkSourceRegistry["
 
 export interface ReadEveFrameworkToolsOptions {
   readonly resolveFrom?: string;
+  readonly eveRoot?: string;
 }
 
 export async function readEveFrameworkTools(options: ReadEveFrameworkToolsOptions = {}): Promise<EveFrameworkTools> {
-  const require = createRequire(options.resolveFrom ?? import.meta.url);
-  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const eveRoot = options.eveRoot ?? dirname(createRequire(options.resolveFrom ?? import.meta.url).resolve("eve/package.json"));
 
   let registry: FrameworkSourceRegistry;
   try {
@@ -192,12 +239,13 @@ export async function readEveFrameworkTools(options: ReadEveFrameworkToolsOption
 
   const optIn = optInDrift === undefined ? [...OPT_IN_SNAPSHOT] : undefined;
 
-  const reserved = readReservedFrameworkToolSlots(eveRoot);
-  if (reserved.length > 0 && !reserved.some((name) => inRegistry.has(name))) {
+  const reserved = await readReservedFrameworkToolNames(eveRoot);
+  const authorable = reserved.filter((name) => inRegistry.has(name) || OPT_IN_SNAPSHOT.includes(name as (typeof OPT_IN_SNAPSHOT)[number]));
+  if (authorable.length > 0) {
     throw new Error(
-      `eve framework tools: ${POLICY_PATH} reserves ${reserved.join(", ")} but ${REGISTRY_PATH} registers none of ` +
-        `them, so nothing mounts the family they belong to. One of the two reads is stale. Guessing would put ` +
-        `names on OE's surface that no session can hold, or take live ones off it, so this throws instead.`,
+      `eve framework tools: ${REGISTRY_PATH} or the opt-in snapshot carries the reserved name(s) ${JSON.stringify(authorable)}. ` +
+        `A reserved name has no slot an app can author at, so it cannot also be a mounted or opt-in tool. One of the ` +
+        `reads is stale; this throws rather than give the name two classes.`,
     );
   }
   const taskTools = await readTaskToolNames(eveRoot);

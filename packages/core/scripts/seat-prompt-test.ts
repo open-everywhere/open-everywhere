@@ -680,7 +680,7 @@ function ok(cond: boolean, label: string): void {
     "🔴 §14: …and that the DISCRIMINATOR is what the person named — the one fact the soak turn did not read",
   );
 
-  ok(seat.includes("**They named a piece of work**") && seat.includes("`task_cancel`"), "🔴 §14: a NAMED piece of work routes to `task_cancel`");
+  ok(seat.includes("**They named a piece of work**") && seat.includes("`eve__task_cancel`"), "🔴 §14: a NAMED piece of work routes to `eve__task_cancel`");
   ok(seat.includes("**They asked you to go quiet**") && seat.includes("call `stand_down`"), "🔴 §14: going quiet still routes to `stand_down`");
   ok(seat.includes("**They asked for everything to stop**") && seat.includes("That is `halt`"), "🔴 §14: only an ask for EVERYTHING routes to `halt`");
 

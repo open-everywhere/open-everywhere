@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { inLaneSandbox, sandboxLaneKey } from "../sandbox/shared-sandbox-lane.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
@@ -30,6 +31,8 @@ import { windowTopologyEnabled } from "../access/capabilities.js";
 import { forwardsToWorkSession, isWorkSessionContext } from "../access/work-session.js";
 import { getConfig } from "../access/config.js";
 import { HOST_OWNED_FILES } from "../memory/host-owned-files.js";
+import { optional } from "./control-refusal.js";
+import { deliveredText } from "./event-reads.js";
 
 const sessionLog = defineState<{ firstMessage?: string }>(
   "open-everywhere.memory.sessionLog",
@@ -268,8 +271,8 @@ type MemorySandbox = Awaited<ReturnType<HookContext["getSandbox"]>>;
 export type MemoryPersistOutcome = "completed" | "failed" | "settled" | "edited" | "write-intent";
 
 const PERSIST_WHERE: Record<MemoryPersistOutcome, string> = {
-  completed: "session.completed",
-  failed: "session.failed",
+  completed: "session.ended completed",
+  failed: "session.ended failed",
   settled: "delegation settlement",
   edited: "turn-end tree edit",
   "write-intent": "in-turn remember-ask",
@@ -321,7 +324,7 @@ export async function persistMemoryNow(ctx: MemoryPersistContext, outcome: Memor
 
   let sandbox: MemorySandbox | null = null;
   try {
-    sandbox = ctx.getSandbox ? await ctx.getSandbox() : null;
+    sandbox = ctx.getSandbox ? inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox()) : null;
   } catch {
     log(`sandbox unavailable at ${where}; persisting host-store state only`);
   }
@@ -562,7 +565,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<readonly string[
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   let rootUnlocked = false;
   const openSandbox = async (): Promise<Awaited<ReturnType<HookContext["getSandbox"]>>> => {
-    sandbox ??= await ctx.getSandbox();
+    sandbox ??= inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox());
     if (!rootUnlocked) {
       try {
         await sandbox.run({ command: memoryRootUnlockCommand() });
@@ -692,7 +695,7 @@ async function provenanceTargets(
   const binding = bindFrom(ctx);
   const plan = planFor(binding, p);
   if (plan.writes.length === 0 || ctx.getSandbox === undefined) return null;
-  return { p, principalId: binding.principalId, modeStamp: auditSurfaceModeStamp(binding), writes: plan.writes, sandbox: await ctx.getSandbox() };
+  return { p, principalId: binding.principalId, modeStamp: auditSurfaceModeStamp(binding), writes: plan.writes, sandbox: inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox()) };
 }
 
 async function captureProvenanceBaseline(ctx: MemoryPersistContext): Promise<void> {
@@ -874,7 +877,7 @@ export async function flushWriteIntentMemory(ctx: MemoryPersistContext): Promise
 
 export default defineHook({
   events: {
-    "session.started": async (_event, ctx) => {
+    "session.started": optional("memory", async (_event, ctx) => {
       if (skipAsSubagentChild(ctx, "session.started")) return;
       const timing = startMemorySyncTiming();
       try {
@@ -917,7 +920,7 @@ export default defineHook({
           timing?.mark("baseline", tBaseline);
         }
         const tSandbox = timing ? timing.now() : 0;
-        const sandbox = await ctx.getSandbox();
+        const sandbox = inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox());
         timing?.mark("sandbox", tSandbox);
         let synced = 0;
         const okReads: typeof plan.reads[number][] = [];
@@ -988,9 +991,9 @@ export default defineHook({
       } catch (err) {
         log(`session.started sync skipped: ${String(err)}`);
       }
-    },
+    }),
 
-    "turn.started": async (_event, ctx) => {
+    "turn.started": optional("memory", async (_event, ctx) => {
       beginMemoryProvenanceTurn(currentTurnId(ctx));
       let resynced: readonly string[] = [];
       if (resyncArmed(ctx)) {
@@ -1006,30 +1009,41 @@ export default defineHook({
         log(`provenance re-base skipped: ${String(err)}`);
       }
       await captureProvenanceBaseline(ctx);
-    },
+    }),
 
-    "message.received": (event, _ctx) => {
+    "delivery.consumed": optional("memory", (event) => {
+      const message = deliveredText(event.data);
       const current = sessionLog.get();
-      if (!current.firstMessage && typeof event.data?.message === "string") {
-        sessionLog.update((s) => ({ ...s, firstMessage: event.data.message }));
+      if (!current.firstMessage && typeof message === "string") {
+        sessionLog.update((s) => ({ ...s, firstMessage: message }));
       }
-      noteWriteIntent(typeof event.data?.message === "string" ? event.data.message : undefined);
-    },
+      noteWriteIntent(message);
+    }),
 
-    "turn.completed": async (_event, ctx) => {
-      await persistEditedTreeAtTurnEnd(ctx, "turn.completed", await markProvenanceForTurn(ctx, "turn.completed"));
-    },
+    "turn.settled": optional("memory", async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+          await persistEditedTreeAtTurnEnd(ctx, "turn.settled completed", await markProvenanceForTurn(ctx, "turn.settled completed"));
+          return;
+        case "failed":
+          await persistEditedTreeAtTurnEnd(ctx, "turn.settled failed", await markProvenanceForTurn(ctx, "turn.settled failed"));
+          return;
+        default:
+          return;
+      }
+    }),
 
-    "turn.failed": async (_event, ctx) => {
-      await persistEditedTreeAtTurnEnd(ctx, "turn.failed", await markProvenanceForTurn(ctx, "turn.failed"));
-    },
-
-    "session.completed": async (_event, ctx) => {
-      await persistMemoryNow(ctx, "completed");
-    },
-
-    "session.failed": async (_event, ctx) => {
-      await persistMemoryNow(ctx, "failed");
-    },
+    "session.ended": optional("memory", async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+          await persistMemoryNow(ctx, "completed");
+          return;
+        case "failed":
+          await persistMemoryNow(ctx, "failed");
+          return;
+        default:
+          return;
+      }
+    }),
   },
 });

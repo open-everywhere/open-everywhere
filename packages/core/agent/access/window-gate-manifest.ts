@@ -16,6 +16,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   get grep() { return fullKit(); },
   get read_file() { return fullKit(); },
   get write_file() { return fullKit(); },
+  get edit_file() { return fullKit(); },
   get web_fetch() { return fullKit(); },
   get checkout_repo() { return fullKit(); },
   get open_pull_request() { return fullKit(); },
@@ -136,30 +137,41 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "web_search",
   "ask_question",
   "ask_room",
-  "load_skill",
-  "connection_tools",
-  "connection_search",
-  "connection_execute",
-  "task_cancel",
-  "task_wait",
+  "eve__skill",
+  "eve__search",
+  "eve__tool",
+  "eve__task_cancel",
+  "eve__task_wait",
+  "eve__reply",
   "fresh_eyes_review",
+  "notion",
+  "slack-as-you",
 ]);
 
 export function withheldFromGrain(grain: WindowGrain): string[] {
   return Object.keys(WINDOW_GATED_TOOLS).filter((name) => !WINDOW_GATED_TOOLS[name].includes(grain));
 }
 
-export type MemoryRecallRoute = "file-tools" | "agent" | "none";
+/**
+ * How a seat reaches its memory files. `file-tools`: the seat opens them itself. `agent` and `work`:
+ * the seat hands a lookup or a save to a worker, and the route names the hand-off verb the seat holds
+ * (`agent` on a work session, `work` on a seat that forwards to its work session). `none`: no road.
+ */
+export type MemoryRecallRoute = "file-tools" | "agent" | "work" | "none";
+
+/** The hand-off verb a delegating seat holds: eve's `agent` on a work session, OE's `work` on a forwarding seat. */
+export type DelegationVerb = "agent" | "work";
 
 export function memoryRecallRouteFor(
   grain: WindowGrain,
   wideHandsGrains: readonly WindowGrain[] = fullKit(),
   armed: boolean = oneshotAgentEnabled(),
   canDelegate: boolean = true,
+  verb: DelegationVerb = "agent",
 ): MemoryRecallRoute {
   if (wideHandsGrains.includes(grain)) return "file-tools";
   if (!canDelegate || !armed) return "none";
-  return WINDOW_GATED_TOOLS.agent.includes(grain) ? "agent" : "none";
+  return WINDOW_GATED_TOOLS[verb].includes(grain) ? verb : "none";
 }
 
 export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
@@ -194,7 +206,7 @@ export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "query_analytics",
   "permission_fit_report",
   "agent_version",
-  "load_skill",
+  "eve__skill",
 ]);
 
 export function withheldFromJobWake(
@@ -341,7 +353,7 @@ export function checkWindowGateManifest(
       } else if (name === "agent") {
         if (kitKeyProviders.has(name)) {
           problems.push(
-            `"agent" is re-provided by a windowGatedKit(...) — it must NOT be: eve's built-in \`agent\` is this deployment's delegation route, and a dynamic tool of that name COLLIDES with it (eve harness/tool-loop.js throws and kills the model call). Delete the kit key; the gate is access/untrusted-projection.ts.`,
+            `"agent" is re-provided by a windowGatedKit(...) — it must NOT be: eve's built-in \`agent\` is this deployment's delegation route, and a dynamic tool of that name COLLIDES with it (eve throws and the model call dies). Delete the kit key. On eve 1.x no file can withhold eve's built-in \`agent\` (seat-cut-test §5).`,
           );
         }
         if (isSentinel) {

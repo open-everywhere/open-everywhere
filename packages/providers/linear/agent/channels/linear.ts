@@ -2,7 +2,6 @@ import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { redactOutboundPreview } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   linearChannel,
-  parseLinearWebhookEvent,
   type LinearAgentSessionEvent,
   type LinearChannelCredentials,
   type LinearChannel,
@@ -11,7 +10,9 @@ import {
   type LinearInboundResult,
 } from "eve/channels/linear";
 import { callLinear, createLinearActivity, linearChannelApi, type LinearApi } from "./linear-graphql.js";
+import { parseLinearWebhookEvent } from "./linear-webhook-event.js";
 import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
+import type { CallRequested } from "eve/events";
 import { buildLinearAuth, linearAuthorFacts, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import {
   linearPromptReAddress,
@@ -946,9 +947,36 @@ function pristineFor(organizationId: string | undefined): LinearChannel {
 export function _resetLinearPristineChannels(): void {
   pristineByOrg.clear();
 }
-type AdapterEventFn = (data: unknown, adapterCtx: unknown, sessionCtx?: unknown) => unknown;
+type AdapterEventFn = (event: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string, organizationId?: string): AdapterEventFn | undefined =>
   (pristineFor(organizationId) as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
+
+const FORWARD_TO_DEFAULT = Symbol("open-everywhere.forward-to-default");
+
+function forwardToDefault(event: unknown): void {
+  return { [FORWARD_TO_DEFAULT]: event } as unknown as void;
+}
+
+function forwardedEvent(result: unknown): { readonly event: unknown } | undefined {
+  if (result === null || typeof result !== "object" || !(FORWARD_TO_DEFAULT in result)) return undefined;
+  return { event: (result as Record<symbol, unknown>)[FORWARD_TO_DEFAULT] };
+}
+
+export function withDefaultForward<C extends object>(channel: C, defaultFor: (name: string, adapterCtx: unknown) => AdapterEventFn | undefined): C {
+  const adapter = (channel as { readonly adapter?: Record<string, unknown> }).adapter;
+  if (adapter === undefined || adapter === null || typeof adapter !== "object") return channel;
+  const wrapped: Record<string, unknown> = { ...adapter };
+  for (const [name, fn] of Object.entries(adapter)) {
+    if (typeof fn !== "function" || !name.includes(".")) continue;
+    wrapped[name] = async (event: unknown, adapterCtx: unknown) => {
+      const result = await (fn as AdapterEventFn)(event, adapterCtx);
+      const forward = forwardedEvent(result);
+      if (forward === undefined) return result;
+      return await defaultFor(name, adapterCtx)?.(forward.event, adapterCtx);
+    };
+  }
+  return { ...channel, adapter: wrapped } as C;
+}
 
 function nativeOrgOf(state: LinearChannelState): string | undefined {
   const stamped = (state as unknown as Record<string, unknown>).oeOrganizationId;
@@ -1071,13 +1099,14 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
     return { auth };
 };
 
-const native: LinearChannel = linearChannel({
+const native: LinearChannel = withDefaultForward(linearChannel({
   api: linearChannelApi(),
   credentials: { ...linearAppActorCredentials, webhookVerifier: linearWebhookVerifier },
   turnPolicy: "queue",
   onAgentSession: linearOnAgentSession,
   events: {
-    async "turn.started"(data, channel, ctx) {
+    async "turn.started"(event, ctx) {
+      const channel = ctx.channel;
       if (!isSupervisorLinearState(channel.state)) {
         const nativeAttrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
         (channel.state as unknown as Record<string, unknown>).oeReplierLabel = replierLabelFromAuthAttributes(nativeAttrs);
@@ -1085,8 +1114,7 @@ const native: LinearChannel = linearChannel({
         if (wakeOrg) (channel.state as unknown as Record<string, unknown>).oeOrganizationId = wakeOrg;
         const wakeTeam = str(nativeAttrs?.team_id);
         if (wakeTeam) (channel.state as unknown as Record<string, unknown>).oeTeamId = wakeTeam;
-        await defaultEvent("turn.started", nativeOrgOf(channel.state))?.(data, channel);
-        return;
+        return forwardToDefault(event);
       }
       const st = channel.state as LinearSupervisorSessionState;
       const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
@@ -1102,47 +1130,49 @@ const native: LinearChannel = linearChannel({
             }
           : undefined;
     },
-    async "actions.requested"(data, channel) {
-      if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested", nativeOrgOf(channel.state))?.(redactLinearActionPreviews(data), channel);
+    async "call.requested"(event, ctx) {
+      const channel = ctx.channel;
+      if (!isSupervisorLinearState(channel.state)) return forwardToDefault(redactLinearCallPreview(event));
     },
-    async "input.requested"(data, channel) {
+    async "interaction.opened"(event, ctx) {
+      const channel = ctx.channel;
       if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("input.requested", nativeOrgOf(channel.state))?.(data, channel);
-        return;
+        return forwardToDefault(event);
       }
-      slog("supervisor turn requested input — unsupported on a judged ambient turn; ignored");
+      slog(
+        event.data.request.kind === "sign-in"
+          ? "supervisor turn requested authorization — there is no agent session to elicit into; ignored"
+          : "supervisor turn requested input — unsupported on a judged ambient turn; ignored",
+      );
     },
-    async "authorization.required"(data, channel, ctx) {
-      if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("authorization.required", nativeOrgOf(channel.state))?.(data, channel, ctx);
-        return;
+    async "interaction.settled"(event, ctx) {
+      const channel = ctx.channel;
+      if (!isSupervisorLinearState(channel.state)) return forwardToDefault(event);
+    },
+    async "content.completed"(event, ctx) {
+      const channel = ctx.channel;
+      const data = event.data;
+      if (data.kind !== "text") {
+        if (!isSupervisorLinearState(channel.state)) return forwardToDefault(event);
       }
-      slog("supervisor turn requested authorization — there is no agent session to elicit into; ignored");
-    },
-    async "authorization.completed"(data, channel, ctx) {
-      if (!isSupervisorLinearState(channel.state)) await defaultEvent("authorization.completed", nativeOrgOf(channel.state))?.(data, channel, ctx);
-    },
-    async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
-        if (data.finishReason === "tool-calls") {
-          const preview = typeof data.message === "string" ? { ...data, message: redactOutboundPreview(data.message) } : data;
-          await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(preview, channel);
-          return;
+        if (data.phase !== "reply") {
+          const preview = typeof data.value === "string" ? { ...event, data: { ...data, value: redactOutboundPreview(data.value) } } : event;
+          return forwardToDefault(preview);
         }
-        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id);
+        const nativeAction = finalMessageActionForTurn(data, event.scope?.turnId ?? ctx.session.turn?.id);
         const nativeReplied = consumeSupervisorReplyMark(ctx);
         if (nativeAction.kind === "silent") {
           await completeNativeLinearSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);
           return;
         }
         const nativeLabel = (channel.state as unknown as Record<string, unknown>).oeReplierLabel as ReplierLabel | undefined;
-        const decided = nativeAction.kind === "post" ? { ...data, message: nativeAction.text } : data;
-        const forwarded = nativeLabel && decided.message !== null ? { ...decided, message: withReplierPrefix(decided.message, nativeLabel) } : decided;
-        await defaultEvent("message.completed", nativeOrgOf(channel.state))?.(forwarded, channel);
-        return;
+        if (nativeAction.kind !== "post") return;
+        const text = nativeLabel ? withReplierPrefix(nativeAction.text, nativeLabel) : nativeAction.text;
+        return forwardToDefault({ ...event, data: { ...data, value: text } });
       }
       const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(data);
       if (action.kind === "buffer-tool-status") return;
       const st = channel.state as LinearSupervisorSessionState;
       const target = st.oeReplyTarget;
@@ -1167,10 +1197,10 @@ const native: LinearChannel = linearChannel({
         log: (m) => slog(m),
       });
     },
-    async "turn.failed"(data, channel) {
-      if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("turn.failed", nativeOrgOf(channel.state))?.(data, channel);
-        return;
+    async "turn.settled"(event, ctx) {
+      const channel = ctx.channel;
+      if (!isSupervisorLinearState(channel.state) || event.data.outcome !== "failed") {
+        return forwardToDefault(event);
       }
       const st = channel.state as LinearSupervisorSessionState;
       slog(`supervisor turn failed on team ${st.oeTeamId ?? "unknown"} (audited, nothing posted)`);
@@ -1180,10 +1210,10 @@ const native: LinearChannel = linearChannel({
         { teamId: st.oeTeamId ?? null },
       );
     },
-    async "session.failed"(data, channel) {
-      if (!isSupervisorLinearState(channel.state)) {
-        await defaultEvent("session.failed", nativeOrgOf(channel.state))?.(data, channel);
-        return;
+    async "session.ended"(event, ctx) {
+      const channel = ctx.channel;
+      if (!isSupervisorLinearState(channel.state) || event.data.outcome !== "failed") {
+        return forwardToDefault(event);
       }
       const st = channel.state as LinearSupervisorSessionState;
       slog(`supervisor session failed on team ${st.oeTeamId ?? "unknown"} (audited)`);
@@ -1194,7 +1224,7 @@ const native: LinearChannel = linearChannel({
       );
     },
   },
-});
+}), (name, adapterCtx) => defaultEvent(name, nativeOrgOf((adapterCtx as { readonly state: LinearChannelState }).state)));
 
 type HttpHandler = HttpRouteDefinition<LinearChannelState>["handler"];
 function wrapRoute(inner: HttpHandler): HttpHandler {
@@ -1240,27 +1270,16 @@ const channel: LinearChannel = { ...native, routes };
 
 export default withEndsTurnFinalChannel(channel);
 
-export function redactLinearActionPreviews<T>(data: T): T {
-  const actions = (data as { actions?: unknown } | null)?.actions;
-  if (!Array.isArray(actions)) return data;
-  let changed = false;
-  const next = actions.map((raw: unknown) => {
-    if (raw === null || typeof raw !== "object") return raw;
-    const a = raw as { description?: unknown; name?: unknown; input?: unknown };
-    let preview = "";
-    if (typeof a.description === "string" && a.description.length > 0) preview = a.description;
-    else if (typeof a.name === "string" && a.name.length > 0) preview = a.name;
-    else if (a.input !== undefined) {
-      try {
-        preview = JSON.stringify(a.input) ?? "";
-      } catch {
-        preview = "";
-      }
-    }
-    const struck = redactOutboundPreview(preview);
-    if (struck === preview) return raw;
-    changed = true;
-    return { ...a, description: struck };
-  });
-  return changed ? ({ ...(data as object), actions: next } as T) : data;
+export function redactLinearCallPreview(event: CallRequested): CallRequested {
+  const input = event.data.input;
+  if (input === undefined) return event;
+  let preview = "";
+  try {
+    preview = JSON.stringify(input) ?? "";
+  } catch {
+    preview = "";
+  }
+  const struck = redactOutboundPreview(preview);
+  if (struck === preview) return event;
+  return { ...event, data: { ...event.data, input: struck } };
 }

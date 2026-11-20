@@ -1,6 +1,6 @@
-export const TASK_TOOL_NAMES: readonly string[] = ["task_wait", "task_cancel"];
+export const TASK_TOOL_NAMES: readonly string[] = ["eve__task_wait", "eve__task_cancel"];
 
-export const TASK_PARENT_TOOL_NAMES: readonly string[] = ["task_wait", "task_cancel"];
+export const TASK_PARENT_TOOL_NAMES: readonly string[] = ["eve__task_wait", "eve__task_cancel"];
 
 export const TERMINAL_TASK_STATUSES: readonly string[] = ["completed", "failed", "cancelled"];
 
@@ -186,7 +186,8 @@ export function taskSettledFailure(settled: TaskSettled | null): TaskSettledFail
     return { errorClass: "", errorText: cap(settled.errorText), parse: "event" };
   }
   if (settled.status === "cancelled" && settled.cancelReason.length > 0) {
-    return { errorClass: settled.cancelReason, errorText: settled.cancelReason, parse: "event" };
+    // eve 1.x's cancel reason is an open string, so it is capped as the failure text is.
+    return { errorClass: cap(settled.cancelReason), errorText: cap(settled.cancelReason), parse: "event" };
   }
   return { errorClass: "", errorText: settled.status, parse: "status" };
 }

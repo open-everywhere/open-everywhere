@@ -1,6 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { routineSilentStamped } from "../routines/routine.js";
 import { clearSilentRoutineTurn, markSilentRoutineTurn } from "../routines/report.js";
+import { optional } from "./control-refusal.js";
 
 function attrsOf(ctx: HookContext): Readonly<Record<string, string | readonly string[]>> | undefined {
   const c = ctx as unknown as {
@@ -24,8 +25,7 @@ function classifyTurn(ctx: HookContext): void {
 
 export default defineHook({
   events: {
-    "turn.started": (_event, ctx) => classifyTurn(ctx),
-    "turn.completed": () => clearSilentRoutineTurn(),
-    "turn.failed": () => clearSilentRoutineTurn(),
+    "turn.started": optional("routine-silence", (_event, ctx) => classifyTurn(ctx)),
+    "turn.settled": optional("routine-silence", () => clearSilentRoutineTurn()),
   },
 });

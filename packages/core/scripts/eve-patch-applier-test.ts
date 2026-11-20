@@ -53,7 +53,11 @@ eq(PATCH_FILE, `eve+${PIN}.patch`, "§1 the packed patch is named for the eve pe
 const realTargets = evePatchTargets(PATCH_BODY);
 ok(realTargets.length > 0, "§2 the committed patch declares at least one target file");
 const realParts = realTargets.flatMap((t) => t.parts);
-ok(realParts.length >= 3, `§2 the committed patch declares at least three named parts (found ${realParts.length}; parts 5 and 6 retired at OPE-2252 and OPE-2251)`);
+ok(realParts.length >= 1, `§2 the committed patch declares at least one named part (found ${realParts.length}; parts 1 and 4 are not carried onto the rc, OPE-2691)`);
+ok(
+  realParts.some((part) => part.ticket === "OPE-2276"),
+  `§2 the committed patch names part 10 (OPE-2276) — found ${realParts.map((part) => part.ticket).join(", ") || "none"}`,
+);
 const tickets = realParts.map((p) => p.ticket);
 eq(new Set(tickets).size, tickets.length, "§2 no part is reported twice");
 for (const part of realParts) {
@@ -91,15 +95,20 @@ eq(
   ["__oeReal"],
   "§3 the `+++ b/…` header is not an added line",
 );
-const toolLoop = realTargets.find((t) => t.insidePackage === "dist/src/harness/tool-loop.js");
-ok(toolLoop !== undefined, "§3 the committed patch targets eve's tool-loop.js");
 ok(
-  toolLoop!.markers.includes("__oeProjectToolSet"),
-  "§3 tool-loop.js's markers include __oeProjectToolSet — the untrusted-projection splice",
+  !realTargets.some((t) => t.insidePackage === "dist/src/harness/tool-loop.js"),
+  "§3 the committed patch does NOT target harness/tool-loop.js — the rc ships no such file, and parts 1 and 4 left with it",
 );
+const boundary = realTargets.find((t) => t.insidePackage === "dist/src/internal/authored-package-boundary.js");
+ok(boundary !== undefined, "§3 the committed patch targets eve's internal/authored-package-boundary.js (part 10)");
 ok(
-  !toolLoop!.markers.includes("__oeForceContinue") && !toolLoop!.markers.includes("__oeCeilTrip"),
-  "§3 no retired symbol is derived as a marker (OPE-172, OPE-407 both left the patch)",
+  boundary!.markers.includes("__oeResolvesThroughInstalledPackage"),
+  "§3 authored-package-boundary.js's markers include __oeResolvesThroughInstalledPackage — the part 10 route",
+);
+const allMarkers = realTargets.flatMap((t) => t.markers);
+ok(
+  !allMarkers.includes("__oeForceContinue") && !allMarkers.includes("__oeCeilTrip") && !allMarkers.includes("__oeProjectToolSet"),
+  "§3 no retired or uncarried symbol is derived as a marker (OPE-172, OPE-407 and part 1 all left the patch)",
 );
 for (const target of realTargets) {
   ok(
@@ -108,8 +117,8 @@ for (const target of realTargets) {
   );
 }
 ok(
-  realTargets.some((t) => t.parts.length === 0),
-  "§3 at least one target declares no named part — the applier prints a line for it anyway",
+  realTargets.every((t) => t.parts.length > 0),
+  "§3 every target of the rc patch declares a named part (protocol/message.d.ts left with part 4)",
 );
 
 eq(
@@ -143,7 +152,7 @@ eq(checkEveApplierPacking({ bin: coreManifest.bin, files: coreManifest.files }),
 ok(EVE_PATCH_DIR === "patches" && coreManifest.files.includes(EVE_PATCH_DIR), "§3b core's files allowlist carries the patch directory");
 
 const declaredMarkers = EVE_PATCH_PARTS.map((part) => part.marker);
-ok(declaredMarkers.length > 0, "§3c EVE_PATCH_PARTS declares at least one part");
+ok(declaredMarkers.length === 0, "§3c EVE_PATCH_PARTS declares no part on eve 1.0.0-rc.18 (OPE-2691)");
 eq(
   checkEvePatchPartTable({ declaredMarkers, patchMarkers: evePatchPartMarkers(PATCH_BODY) }),
   [],
@@ -299,7 +308,10 @@ ok(
   })[0]?.includes("OUTSIDE the project root") === true,
   "§5 `/apple` is not inside `/app`",
 );
-const twoTargets = evePatchTargets(PATCH_BODY).slice(0, 2);
+const twoTargets = [
+  { path: "node_modules/eve/dist/src/a.js", insidePackage: "dist/src/a.js", markers: [], parts: [] },
+  { path: "node_modules/eve/dist/src/b.js", insidePackage: "dist/src/b.js", markers: [], parts: [] },
+];
 eq(
   evePatchSharedTargets(twoTargets, new Map(twoTargets.map((t) => [t.insidePackage, 1]))),
   [],
@@ -509,11 +521,13 @@ try {
   ok(second.out.includes("already applied"), "§6c the second run says the patch is already applied");
 
   reverse();
-  const typesTarget = realTargets.find((t) => t.markers.length === 0)!;
+  const typesTarget = realTargets.find((t) => t.insidePackage === "dist/src/internal/authored-package-boundary.js")!;
   const typesFile = join(eveDir, typesTarget.insidePackage);
   const typesBefore = readFileSync(typesFile, "utf8");
-  ok(typesBefore.includes(" * Stream event emitted after one compaction checkpoint message has been"), "§6g the fixture holds the context line the hunk removes");
-  writeFileSync(typesFile, typesBefore.replace(" * Stream event emitted after one compaction checkpoint message has been", " * changed by a third party"));
+  const removedBytes = "Install it with your package manager";
+  ok(typesBefore.includes(removedBytes), "§6g the fixture holds the bytes the hunk removes");
+  ok(!/__oe[A-Za-z0-9_]/.test(typesBefore), "§6g the unpatched target carries no `__oe` symbol, so a failed apply refuses rather than restores");
+  writeFileSync(typesFile, typesBefore.replace(removedBytes, "changed by a third party"));
   const othersBefore = new Map(realTargets.map((t) => [t.insidePackage, readFileSync(join(eveDir, t.insidePackage), "utf8")]));
   const broken = run();
   eq(broken.code, 1, `§6g the applier exits 1 when a hunk does not apply — output:\n${broken.out}`);

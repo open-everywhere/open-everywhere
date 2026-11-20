@@ -682,15 +682,20 @@ function throwingFetch(): typeof fetch {
     g[key] ??= new AsyncLocalStorage();
     return g[key] as InstanceType<typeof AsyncLocalStorage<unknown>>;
   }
-  const inSession = async <T>(fn: () => T | Promise<T>): Promise<T> => eveContextStorage().run(new FakeSession(), fn);
+  const inSession = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+    const session = new FakeSession();
+    return eveContextStorage().run(Object.assign(session, { context: session, values: new Map<unknown, unknown>() }), fn);
+  };
 
   const hookModule = (await import("../agent/hooks/telemetry.js")) as {
     default: { events: Record<string, (event: unknown, ctx: unknown) => Promise<void>> };
   };
   const events = hookModule.default.events;
-  const stepCompleted = events["step.completed"];
+  const usageRecorded = events["usage.recorded"];
   const turnStarted = events["turn.started"];
-  ok(typeof stepCompleted === "function" && typeof turnStarted === "function", "first-output: the shipped hook really registers turn.started and step.completed");
+  ok(typeof usageRecorded === "function" && typeof turnStarted === "function", "first-output: the shipped hook really registers turn.started and usage.recorded");
+  const stepCompleted = (event: { data: { usage: Record<string, number> } }, c: unknown): Promise<void> =>
+    usageRecorded!({ type: "usage.recorded", data: { kind: "model", owner: { runId: "r" }, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, ...event.data.usage } } }, c);
 
   const ctx = { session: { id: "s-first-output", auth: { current: { attributes: {} } } } };
 

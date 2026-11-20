@@ -220,7 +220,7 @@ the grain's surface, then subtract:
    `web_fetch` under their bare names). Core's `agent/contributions.ts` is the catalogue walked;
    eve's own verbs come off the installed eve.
 3. **The subtraction is the SHIPPED `restrictToolsetForWorkerSeat`** — the same call
-   `access/untrusted-projection.ts` makes on every real worker wake. The withheld names are mounted
+   `access/seat-cut.ts` makes on every real worker wake. The withheld names are mounted
    FIRST and removed by that function, so the cut is observable and the test asserts it ran.
 4. **A drift guard keyed on the computed roster** stops the run on a roster name with no mount arm
    and no skip arm — `buildLeanSeatToolset`'s guard, one roster over.

@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { chainLegs, legLabel, legsForShard, needsSubprocess, SUBPROCESS_LEG_TIMEOUT_MS, type ChainLeg } from "./_legs.js";
 import { resetProcessGlobals } from "./_process-state.js";
+import { freshLegDbEnv } from "./_setup.js";
 import { npmCommand } from "../npm-command.js";
 
 const execFileAsync = promisify(execFile);
@@ -21,10 +22,11 @@ function isSuccessExit(code: number | string | null | undefined): boolean {
   return code === undefined || code === null || code === 0 || code === "0";
 }
 
-async function runLegInSubprocess(leg: ChainLeg): Promise<void> {
+export async function runLegInSubprocess(leg: ChainLeg): Promise<void> {
   try {
     const [cmd, args] = npmCommand(["run", leg.script]);
-    await execFileAsync(cmd, args, { cwd: leg.dir, maxBuffer: 32 * 1024 * 1024 });
+    const env = { ...process.env, ...freshLegDbEnv(legLabel(leg)) };
+    await execFileAsync(cmd, args, { cwd: leg.dir, env, maxBuffer: 32 * 1024 * 1024 });
   } catch (error) {
     const e = error as { stdout?: string; stderr?: string };
     const output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
@@ -33,12 +35,14 @@ async function runLegInSubprocess(leg: ChainLeg): Promise<void> {
 }
 
 export async function runLegInProcess(leg: ChainLeg): Promise<void> {
+  const legDbEnv = freshLegDbEnv(legLabel(leg));
   const envBefore = { ...process.env };
   const cwdBefore = process.cwd();
   const exitBefore = process.exit;
   const exitCodeBefore = process.exitCode;
   const argvBefore = process.argv;
   process.exitCode = undefined;
+  Object.assign(process.env, legDbEnv);
   (process as { exit: unknown }).exit = (code?: number | string | null) => {
     throw new SuiteCalledProcessExit(code);
   };

@@ -1,4 +1,4 @@
-// proves: SEAT-09, SEAT-10
+// proves: SEAT-09, SEAT-10, SEAT-11
 
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
@@ -359,6 +359,141 @@ const FOLLOW_UP = "and what's that plus 6?";
     const res = await noReply.execute({ reason: "addressed_to_other" }, seatCtx());
     ok(res.acknowledged === true, "🔴 refusal: NEGATIVE CONTROL — a STOOD-DOWN issue accepts the reason again");
     ok(consumeNoReplyThisTurn() === "addressed_to_other", "refusal: …and records the silence");
+  });
+}
+
+{
+  const { engagedQuestionWake, NO_REPLY_ON_ENGAGED_QUESTION_ACTION } = await import("@open-everywhere/core/agent/channels/engaged-wake.js");
+  const { engagedQuestionThisTurn } = await import("@open-everywhere/core/agent/channels/engaged-question-signal.js");
+  const { markRepliedThisTurn } = await import("@open-everywhere/core/agent/channels/reply-signal.js");
+  const requesterHook = await import("@open-everywhere/core/agent/hooks/requester-identity.js");
+  const consumed = (requesterHook.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> })
+    .events["delivery.consumed"]!;
+  const notionWake = (text: string, extra: Record<string, unknown> = { threadEngaged: true }): string =>
+    renderWake(
+      buildNotionSupervisorWake({
+        addressing: "channel-watch",
+        pageId: "PAGE",
+        discussionId: "D1",
+        trigger: { from: "human" as const, id: "c9", authorId: "u1", sentAt: NOW(), text, trust: "peer" as const },
+        ...extra,
+      } as never),
+      NOW,
+    ).message;
+
+  ok(engagedQuestionWake(notionWake(FOLLOW_UP)), "🔴 engaged question: an engaged Notion follow-up that asks a question is an engaged question");
+  ok(!engagedQuestionWake(notionWake("thanks, that's great")), "engaged question: NEGATIVE CONTROL — an engaged follow-up that asks nothing is not");
+  ok(!engagedQuestionWake(notionWake(FOLLOW_UP, {})), "engaged question: NEGATIVE CONTROL — an UN-enrolled channel-watch question is not");
+  ok(
+    !engagedQuestionWake(notionWake("see https://example.test/page?id=4 for the numbers")),
+    "engaged question: NEGATIVE CONTROL — a `?` inside a URL query is not a question mark",
+  );
+  ok(!engagedQuestionWake(undefined), "engaged question: NEGATIVE CONTROL — no delivered text is not a question");
+  ok(
+    !engagedQuestionWake(`${notionWake(FOLLOW_UP)}\n\n${notionWake("and what about 7?")}`),
+    "🔴 engaged question: NEGATIVE CONTROL — one message that holds TWO wakes is not one engaged question",
+  );
+  ok(engagedQuestionWake(notionWake("can you check *that?*")), "engaged question: a `?` before closing markdown emphasis still counts");
+
+  const attributes = buildGitHubAuth({
+    owner: "question-org",
+    repo: "question-repo",
+    repositoryFullName: "question-org/question-repo",
+    isPrivate: true,
+    conversationKind: "issue",
+    issueNumber: 11,
+    actorLogin: "dev",
+  }) as unknown as { attributes?: Readonly<Record<string, string>> };
+  const seatCtx = (turn: string) => ({ channel: { kind: "github" as const }, session: { auth: { current: attributes }, turn: { id: turn } } });
+  const part = resolvePartition(seatCtx("t0") as never);
+  const deliver = (turn: string, text: string, deliveryId = `d-${turn}`) =>
+    consumed({ data: { deliveryId, parts: [{ kind: "text", text }], turnId: turn } }, seatCtx(turn));
+  const refusedWith = async (reason: string, turn: string): Promise<string> => {
+    try {
+      await noReply.execute({ reason }, seatCtx(turn));
+      return "";
+    } catch (e) {
+      return String(e);
+    }
+  };
+
+  for (const reason of ["nothing_to_add", "not_relevant", "awaiting_context"]) {
+    await inSession(async () => {
+      const turn = `turn-q-${reason}`;
+      await deliver(turn, notionWake(FOLLOW_UP));
+      ok(engagedQuestionThisTurn(turn), `engaged question: precondition — the delivery.consumed hook marks the turn (${reason})`);
+      const before = (await readAudit({ org: part.org, action: NO_REPLY_ON_ENGAGED_QUESTION_ACTION })).length;
+      const threw = await refusedWith(reason, turn);
+      ok(
+        threw.includes(`\`${reason}\` is not available`),
+        `🔴 engaged question: \`${reason}\` on an engaged follow-up that asks a question is REFUSED — the question is addressed to the agent`,
+      );
+      ok(consumeNoReplyThisTurn() === null, `🔴 engaged question: the refused \`${reason}\` records NO silence — the turn still owes its answer`);
+      ok(
+        threw.includes("`other`") && threw.includes("someone else") && threw.includes("`duplicate`") && threw.includes("`stand_down`"),
+        `engaged question: the \`${reason}\` refusal names the exits that stay open, including \`other\` for a question put to another person`,
+      );
+      ok(
+        (await readAudit({ org: part.org, action: NO_REPLY_ON_ENGAGED_QUESTION_ACTION })).length === before + 1,
+        `engaged question: the \`${reason}\` refusal is AUDITED`,
+      );
+    });
+  }
+
+  await inSession(async () => {
+    await deliver("turn-q-stop", notionWake(FOLLOW_UP));
+    const res = await noReply.execute({ reason: "user_requested_silence" }, seatCtx("turn-q-stop"));
+    ok(res.acknowledged === true, "engaged question: NEGATIVE CONTROL — `user_requested_silence` stays open on an engaged question");
+    ok(consumeNoReplyThisTurn() === "user_requested_silence", "engaged question: …and records the silence");
+  });
+
+  await inSession(async () => {
+    await deliver("turn-q-ack", notionWake("thanks, that's great"));
+    const res = await noReply.execute({ reason: "nothing_to_add" }, seatCtx("turn-q-ack"));
+    ok(res.acknowledged === true, "🔴 engaged question: NEGATIVE CONTROL — `nothing_to_add` on an engaged follow-up that asks NOTHING is accepted");
+    ok(consumeNoReplyThisTurn() === "nothing_to_add", "engaged question: …and records the silence");
+  });
+
+  await inSession(async () => {
+    await deliver("turn-q-old", notionWake(FOLLOW_UP));
+    await deliver("turn-q-new", notionWake("thanks, that's great"));
+    ok(!engagedQuestionThisTurn("turn-q-new"), "🔴 engaged question: a NEW turn that asks nothing clears the earlier turn's mark");
+    const res = await noReply.execute({ reason: "nothing_to_add" }, seatCtx("turn-q-new"));
+    ok(res.acknowledged === true, "engaged question: NEGATIVE CONTROL — the earlier turn's question does not fence the later turn");
+    consumeNoReplyThisTurn();
+  });
+
+  await inSession(async () => {
+    await deliver("turn-q-batch", notionWake(FOLLOW_UP));
+    await deliver("turn-q-batch", "A background task settled. End this turn with `no_reply` (reason `nothing_to_add`).", "d-turn-q-batch-2");
+    ok(!engagedQuestionThisTurn("turn-q-batch"), "🔴 engaged question: a SECOND delivery in the same turn clears the mark");
+    const res = await noReply.execute({ reason: "nothing_to_add" }, seatCtx("turn-q-batch"));
+    ok(res.acknowledged === true, "🔴 engaged question: NEGATIVE CONTROL — a two-delivery turn accepts `nothing_to_add`");
+    consumeNoReplyThisTurn();
+  });
+
+  await inSession(async () => {
+    await deliver("turn-q-refire", notionWake(FOLLOW_UP));
+    await deliver("turn-q-refire", notionWake(FOLLOW_UP));
+    ok(engagedQuestionThisTurn("turn-q-refire"), "🔴 engaged question: a re-run of the hook for the SAME delivery id keeps the mark");
+    const threw = await refusedWith("nothing_to_add", "turn-q-refire");
+    ok(threw.includes("is not available"), "engaged question: …and the fence still refuses `nothing_to_add`");
+    consumeNoReplyThisTurn();
+  });
+
+  await inSession(async () => {
+    await deliver("turn-q-answered", notionWake(FOLLOW_UP));
+    markRepliedThisTurn("turn-q-answered");
+    const res = await noReply.execute({ reason: "nothing_to_add" }, seatCtx("turn-q-answered"));
+    ok(res.acknowledged === true, "🔴 engaged question: NEGATIVE CONTROL — after the turn posted its answer, `nothing_to_add` is accepted");
+    consumeNoReplyThisTurn();
+  });
+
+  await inSession(async () => {
+    await deliver("turn-q-unenrolled", notionWake(FOLLOW_UP, {}));
+    const res = await noReply.execute({ reason: "nothing_to_add" }, seatCtx("turn-q-unenrolled"));
+    ok(res.acknowledged === true, "🔴 engaged question: NEGATIVE CONTROL — `nothing_to_add` on an UN-enrolled channel-watch question is accepted");
+    consumeNoReplyThisTurn();
   });
 }
 

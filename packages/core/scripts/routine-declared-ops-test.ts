@@ -35,7 +35,8 @@ import {
   SCHEDULE_APP_PRINCIPAL_TYPE,
 } from "../agent/identity/binding.js";
 import * as fireToolsetHook from "../agent/hooks/fire-toolset.js";
-import { CONNECTION_REGISTRY_KEY_NAME, declaredOpsForReach, resolveDeclaredOps } from "../agent/hooks/fire-toolset.js";
+import { declaredOpsForReach, resolveDeclaredOps } from "../agent/hooks/fire-toolset.js";
+import { registerMountedConnector, resetConnectorCatalogue } from "../agent/connections/connector-catalogue.js";
 import { CONTRIBUTIONS } from "../agent/contributions.js";
 import { declaredAuditActions } from "../agent/audit/action-registry.js";
 import { readAudit, type AuditEntry } from "../agent/audit/audit.js";
@@ -103,7 +104,7 @@ console.log("§1 the resolution");
   const one = resolveDeclaredConnectorOps({ declared: [QUALIFIED], catalogues: [NOTION] });
   ok(one.resolved.length === 1, "a declared op the connection advertises is resolved");
   ok(one.resolved[0]?.qualifiedName === QUALIFIED, "…under the qualified name the declaration spelled and the fence keys on");
-  ok(one.resolved[0]?.connection === CONNECTION && one.resolved[0]?.tool === OP, "…to the `connection` and `tool` that `connection_execute` takes");
+  ok(one.resolved[0]?.connection === CONNECTION && one.resolved[0]?.tool === OP, "…to the `connection` and `tool` that name the `<connection>__<tool>` entry `eve__tool` calls");
   ok(
     Object.keys(one.resolved[0] ?? {}).sort().join(",") === "connection,qualifiedName,tool",
     "🔴 …and to NAMES ONLY: no description or schema a connector wrote rides into the host-authored block",
@@ -139,7 +140,18 @@ console.log("§1 the resolution");
     declared: ["notion__op with space"],
     catalogues: [{ connection: CONNECTION, ops: [{ name: "op with space" }] }],
   });
-  ok(unsafe.resolved.length === 0 && unsafe.unresolved[0] === "notion__op with space", "🔴 a name that is not a safe `connection_execute` target is reported unresolved, never named");
+  ok(unsafe.resolved.length === 0 && unsafe.unresolved[0] === "notion__op with space", "🔴 a name that is not a safe connector op name is reported unresolved, never named");
+  const dotted = resolveDeclaredConnectorOps({
+    declared: ["notion__API-post.page:v1"],
+    catalogues: [{ connection: CONNECTION, ops: [{ name: "API-post.page:v1" }] }],
+  });
+  ok(dotted.resolved.length === 0 && dotted.unresolved[0] === "notion__API-post.page:v1", "🔴 an op whose connector tool name eve cannot mount (a dot or a colon) is reported unresolved, so the block never names a tool that does not exist");
+  const LONG_OP = `create_${"x".repeat(70)}`;
+  const long = resolveDeclaredConnectorOps({ declared: [`${CONNECTION}__${LONG_OP}`], catalogues: [{ connection: CONNECTION, ops: [{ name: LONG_OP }] }] });
+  ok(long.resolved.length === 1, "🔴 a legal op name over eve's 64-character limit resolves: the mount keys it by its short name, and the block names that key");
+  const { connectorToolKey } = await import("../agent/connections/connector-tool-name.js");
+  const longBlock = renderDeclaredReachBlock(long.resolved);
+  ok(longBlock.includes(connectorToolKey(CONNECTION, LONG_OP)) && connectorToolKey(CONNECTION, LONG_OP).length === 64, "…and the block names the 64-character short name the mount uses, never the long name");
 
   const already = resolveDeclaredConnectorOps({ declared: [QUALIFIED], catalogues: [NOTION], alreadyResolved: [QUALIFIED] });
   ok(already.resolved.length === 0, "an op an earlier turn already resolved is not resolved again — the row would claim a resolution that changed nothing");
@@ -235,6 +247,30 @@ function registry(catalogues: readonly ConnectionCatalogue[], throwFor?: string)
   };
 }
 
+interface CatalogueSource {
+  getConnectionNames(): readonly string[];
+  getClient(name: string): { getToolMetadata(): Promise<readonly unknown[]> };
+}
+
+/**
+ * The OE connector catalogue (`connections/connector-catalogue.ts`) is what the fire hook reads on
+ * eve 1.x. Each source connection mounts with a lister that reads the source's metadata: a throw
+ * is a failed listing (`undefined`), as the connector mount reports one.
+ */
+function useCatalogue(source: CatalogueSource): void {
+  resetConnectorCatalogue();
+  for (const name of source.getConnectionNames()) {
+    registerMountedConnector(name, async () => {
+      try {
+        const metadata = await source.getClient(name).getToolMetadata();
+        return metadata.map((e) => ({ name: String((e as { name?: unknown }).name ?? ""), description: "", inputSchema: { type: "object" }, hasOutputSchema: false }));
+      } catch {
+        return undefined;
+      }
+    });
+  }
+}
+
 function fireAttributes(): Record<string, string> {
   return routineFireAttributes(FIRE_ROUTINE, DEST_ATTRS, "channel", true);
 }
@@ -271,7 +307,7 @@ const { renderScopeMarkdown } = await import("../agent/instructions/access.js");
 
 {
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
 
     const outcome = await resolveDeclaredOps(fireCtx());
     ok(outcome?.resolved.join(",") === QUALIFIED, "🔴 THE POINT OF THE TICKET: a fire whose declared permission names an op resolves that op");
@@ -287,8 +323,8 @@ const { renderScopeMarkdown } = await import("../agent/instructions/access.js");
     const block = renderDeclaredReachBlock(held);
     ok(block.length > 0 && scope.includes(block), "🔴 the turn's instructions carry the declared-op reach block, verbatim");
     ok(
-      block.includes(`\`${CONNECTION_EXECUTE_TOOL}\` with connection \`${CONNECTION}\` and tool \`${OP}\``),
-      "…which names the declared `connection` and `tool` for `connection_execute`",
+      block.includes(`\`${CONNECTION_EXECUTE_TOOL}\` with name \`${CONNECTION}__${OP}\``),
+      "…which names the declared op by its connector tool name, the entry `eve__tool` resolves",
     );
     ok(block.includes(`You need no \`${CONNECTION_SEARCH_TOOL}\` for them`), "…and tells the fire to skip the search hop the live-run fire stopped after");
     ok(!block.includes(UNDECLARED_OP) && !block.includes("notion-search"), "🔴 …and names NO operation the routine did not declare");
@@ -299,7 +335,7 @@ const { renderScopeMarkdown } = await import("../agent/instructions/access.js");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const scope = await renderScopeMarkdown(seatCtx() as never);
     ok(!scope.includes("This routine DECLARED"), "an ordinary member turn's instructions carry no declared-op block");
     ok(renderDeclaredReachBlock([]) === "", "…and the renderer answers empty for no op, so nothing is appended");
@@ -308,7 +344,7 @@ const { renderScopeMarkdown } = await import("../agent/instructions/access.js");
   const revocable: Routine = { ...FIRE_ROUTINE, id: "rtn_REVOKE" };
   await armDeclaredRoutinePermissions({ org: ORG, routine: revocable, declared: [`tool:${QUALIFIED}`], grantedBy: "U_HUMAN", tainted: false, nowIso: new Date().toISOString() });
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const ctx = fireCtx({ [ROUTINE_MARKER.permissionKey]: routinePermissionKey(revocable), [ROUTINE_MARKER.id]: revocable.id });
     await resolveDeclaredOps(ctx);
     ok(declaredOpsForReach().length === 1, "control: the op is named while its row is live");
@@ -322,7 +358,7 @@ const { renderScopeMarkdown } = await import("../agent/instructions/access.js");
 console.log("§3d the audit row");
 {
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const before = (await settledRows()).length;
     ok(typeof (fireToolsetHook.default as { events?: Record<string, unknown> }).events?.["turn.started"] === "function", "🔴 the hook BINDS `turn.started` — a body nothing dispatches to resolves nothing, and no other assertion here would notice");
     await turnStarted(fireCtx());
@@ -337,7 +373,7 @@ console.log("§3d the audit row");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION], CONNECTION));
+    useCatalogue(registry([NOTION], CONNECTION));
     const before = (await settledRows()).length;
     await turnStarted(fireCtx());
     const after = await settledRows();
@@ -358,7 +394,7 @@ console.log("§3d the audit row");
     nowIso: new Date().toISOString(),
   });
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const ctx = fireCtx({ [ROUTINE_MARKER.permissionKey]: routinePermissionKey(mixed), [ROUTINE_MARKER.id]: mixed.id });
     const before = (await settledRows()).length;
     await turnStarted(ctx);
@@ -377,7 +413,7 @@ console.log("§3d the audit row");
     nowIso: new Date().toISOString(),
   });
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const defaultBefore = (await settledRows()).length;
     await turnStarted(fireCtx({ [ROUTINE_MARKER.org]: "acme", [ROUTINE_MARKER.permissionKey]: routinePermissionKey(acme) }));
     const inAcme = await settledRowsFor("acme");
@@ -390,28 +426,28 @@ console.log("§3d the audit row");
 console.log("§3b the negative controls");
 {
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const outcome = await resolveDeclaredOps(seatCtx());
     ok(outcome === undefined, "🔴 an ordinary member turn resolves nothing — this exists for the unattended fire, and a seat has a person who can ask");
     ok(declaredOpsForReach().length === 0, "…and the slot stays empty, so §3 was not a free pass");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const outcome = await resolveDeclaredOps(fireCtx({ [ROUTINE_MARKER.permissionKey]: routinePermissionKey({ id: "rtn_OTHER", promptGeneration: 1 }) }));
     ok(outcome === undefined, "a fire that declared nothing resolves nothing");
     ok(declaredOpsForReach().length === 0, "…and keeps nothing");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION], CONNECTION));
+    useCatalogue(registry([NOTION], CONNECTION));
     const outcome = await resolveDeclaredOps(fireCtx());
-    ok(outcome?.resolved.length === 0, "🔴 a catalogue read that THROWS resolves nothing and does not throw — the fire falls back to `connection_search`");
+    ok(outcome?.resolved.length === 0, "🔴 a catalogue read that THROWS resolves nothing and does not throw — the fire falls back to `eve__search`");
     ok(outcome?.unresolved.join(",") === QUALIFIED, "…and the declaration is reported unresolved, so an operator can see the catalogue was unreadable");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const child = fireCtx() as unknown as { channel?: unknown };
     child.channel = { continuationToken: "subagent:wrun_FIRE:call_ABC" };
     const outcome = await resolveDeclaredOps(child as unknown as HookContext);
@@ -420,16 +456,14 @@ console.log("§3b the negative controls");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const outcome = await resolveDeclaredOps(fireCtx(jobFireAttrs(true)));
-    ok(outcome === undefined, "🔴 a durable JOB's fire resolves nothing — its wake holds no `connection_execute`");
+    ok(outcome === undefined, "🔴 a durable JOB's fire resolves nothing — its wake holds no `eve__tool`");
     ok(declaredOpsForReach().length === 0, "…and its instructions name no operation it cannot call");
   });
 
   await inSession(async (store) => {
-    store.set({
-      name: CONNECTION_REGISTRY_KEY_NAME,
-    }, {
+    useCatalogue({
       getConnectionNames: () => [CONNECTION],
       getClient: () => ({ getToolMetadata: () => new Promise<never>(() => undefined) }),
     });
@@ -444,19 +478,25 @@ console.log("§3b the negative controls");
     getClient: () => ({ getToolMetadata: () => new Promise<readonly unknown[]>((resolve) => setTimeout(() => resolve(NOTION.ops), 120)) }),
   };
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, slowRegistry);
+    useCatalogue(slowRegistry);
     const generous = await resolveDeclaredOps(fireCtx(), 2_000);
     ok(generous?.resolved.join(",") === QUALIFIED, "a catalogue that answers INSIDE the budget resolves");
   });
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, slowRegistry);
+    useCatalogue(slowRegistry);
     const tight = await resolveDeclaredOps(fireCtx(), 10);
     ok(tight?.resolved.length === 0, "🔴 and the SAME catalogue outside the budget does not — the bound really binds");
   });
 
+  // eve 0.x read the catalogue from eve's connection registry in the session context, so no context
+  // meant no resolution. On eve 1.x the catalogue is OE's own connector mount, which needs no eve
+  // context, so the resolution runs and answers. What must hold is that nothing it resolved is held:
+  // only a session holds the declared-ops slot, so the next session starts with an empty reach.
   const outside = await resolveDeclaredOps(fireCtx());
-  ok(outside === undefined, "no eve context ⇒ no resolution, no throw");
-  ok(declaredOpsForReach().length === 0, "…and the reader answers empty outside a session");
+  ok(outside?.resolved.join(",") === QUALIFIED, "no eve context: the 1.x resolution reads OE's connector mount and answers, with no throw");
+  await inSession(async () => {
+    ok(declaredOpsForReach().length === 0, "🔴 …and nothing resolved outside a session is held for the next session's reach");
+  });
 }
 
 console.log("§3e a forwarded fire: the work session's child resolves the declared op");
@@ -478,17 +518,17 @@ function workCtx(asChild: boolean, attributes: Record<string, string> = forwarde
 }
 {
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const outcome = await resolveDeclaredOps(workCtx(true));
     ok(outcome?.resolved.join(",") === QUALIFIED, "🔴 THE POINT OF OPE-2373: the work-session child that runs a forwarded fire resolves the declared op");
     ok(declaredOpsForReach().length === 1 && declaredOpsForReach()[0]?.connection === CONNECTION, "…and keeps it for the child's own instructions");
     const scope = await renderScopeMarkdown(workCtx(true) as never);
     const childBlock = renderDeclaredReachBlock(declaredOpsForReach());
-    ok(childBlock.length > 0 && scope.includes(childBlock), "🔴 …and the child's instructions carry the declared-op reach block — the child is the turn that calls `connection_execute`");
+    ok(childBlock.length > 0 && scope.includes(childBlock), "🔴 …and the child's instructions carry the declared-op reach block — the child is the turn that calls `eve__tool`");
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const before = (await settledRows()).length;
     await turnStarted(workCtx(true));
     const rows = await settledRows();
@@ -497,18 +537,18 @@ function workCtx(asChild: boolean, attributes: Record<string, string> = forwarde
   });
 
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
-    ok((await resolveDeclaredOps(workCtx(false))) === undefined, "🔴 W ITSELF resolves nothing: it relays the job and never calls `connection_execute`");
+    useCatalogue(registry([NOTION]));
+    ok((await resolveDeclaredOps(workCtx(false))) === undefined, "🔴 W ITSELF resolves nothing: it relays the job and never calls `eve__tool`");
     ok(declaredOpsForReach().length === 0, "…and keeps nothing");
   });
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     const { [ROUTINE_MARKER.id]: _marker, ...unmarked } = fireAttributes();
     ok((await resolveDeclaredOps(workCtx(true, forwardedBag(unmarked)))) === undefined, "🔴 a work-session child with NO routine marker resolves nothing, though its bag carries the permission key");
     ok(declaredOpsForReach().length === 0, "…and keeps nothing");
   });
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     await resolveDeclaredOps(workCtx(true));
     ok(declaredOpsForReach().length === 1, "control: the fire's turn named the op");
     const personBag: Record<string, string> = { team_id: "T0FIRE", channel_id: "C0FIRE", channel_type: "channel", oe_grain: "standing", oe_work_request: "wreq_PERSON", oe_requester: "U_HUMAN" };
@@ -527,49 +567,68 @@ console.log("§3c the audit action is declared");
   ok(!("CONNECTION_SEARCH_RESULTS_KEY_NAME" in fireToolsetHook), "🔴 the hook no longer exports eve 0.54's slot name — the seeding is retired, not just unused");
 }
 
-console.log("§4 what eve 0.71.0 does that this design stands on");
+console.log("§4 what eve 1.x does that this design stands on");
 {
   const distSrc = join(eveRoot, "dist/src");
-  const target = readFileSync(join(distSrc, "execution/tools/connection-target.js"), "utf8");
+  const catalog = readFileSync(join(distSrc, "protocol/catalog-tools.js"), "utf8");
   ok(
-    target.includes(`CONNECTION_EXECUTE_TOOL_NAME=\`${CONNECTION_EXECUTE_TOOL}\``),
-    `🔴 eve's connector execute tool is still named \`${CONNECTION_EXECUTE_TOOL}\` — the name the block tells the fire to call`,
+    catalog.includes(`CALL_TOOL_NAME=\`${CONNECTION_EXECUTE_TOOL}\``),
+    `🔴 eve's catalog call tool is still named \`${CONNECTION_EXECUTE_TOOL}\` — the name the block tells the fire to call`,
   );
-  ok(target.includes("function qualifiedToolName(e){return`${e.connection}__${e.tool}`}"), "…and eve re-keys its `{connection, tool}` target to `<connection>__<op>`, the whole name the fence keys on");
-  const tools = readFileSync(join(distSrc, "execution/tools/connection-tools.js"), "utf8");
-  ok(tools.includes("required:[`connection`,`tool`]"), "🔴 `connection_execute` takes `connection` and `tool` — the two names the block gives");
   ok(
-    /getToolMetadata\(\)[^}]*\}catch\(\w+\)\{return await \w+\.handleError\(\w+,\w+\)\}let \w+=\w+\.find\(\w+=>\w+\.name===\w+\.tool\)/.test(tools),
-    "🔴 …and it finds the operation in the connection's LIVE catalogue — no prior `connection_search` in the session is needed, which is what lets the fire skip the hop",
+    catalog.includes(`SEARCH_TOOL_NAME=\`${CONNECTION_SEARCH_TOOL}\``),
+    `🔴 …and eve's catalog search tool is still named \`${CONNECTION_SEARCH_TOOL}\` — the hop the block lets the fire skip`,
   );
-  ok(!existsSync(join(distSrc, "execution/tools/connection-search.js")), "eve's per-op connection-search dynamic stays gone");
-  const approval = readFileSync(join(distSrc, "execution/tools/connection-approval.js"), "utf8");
+  const catalogTools = readFileSync(join(distSrc, "execution/catalog/catalog-tools.js"), "utf8");
   ok(
-    approval.includes("toolInput:n.input,toolName:qualifiedToolName(n)"),
-    "🔴 eve's approval seam calls the connection's OWN policy with the re-keyed `<connection>__<op>` name — the policy §6 drives",
+    catalogTools.includes("function callableByName(e){return e.deferred===!0||"),
+    `🔴 …and \`${CONNECTION_EXECUTE_TOOL}\` calls any DEFERRED entry by name, with no prior \`${CONNECTION_SEARCH_TOOL}\` in the session — a connector tool is deferred, which is what lets the fire skip the hop`,
   );
-  const turn = readFileSync(join(distSrc, "execution/session/turn-event-handler.js"), "utf8");
-  const hooksAt = turn.indexOf("await o.dispatcher.runHooks(l,d)");
-  const instructionsAt = turn.indexOf("await dispatchDynamicInstructionEvent({");
+  ok(!existsSync(join(distSrc, "execution/tools/connection-tools.js")), "eve 0.x's fixed connector tools (`connection_execute`, `connection_search`) are gone, so the block names no 0.x verb");
+
+  // The block tells the fire to call the call tool "with name `<connection>__<op>`" (§2). eve 0.x's
+  // call tool took `connection` and `tool`. The pin below drives eve's real call route, so a rename
+  // of the field the block names makes this leg red, and the block text must change with it.
+  const { catalogTools: catalogRoutes } = (await import(pathToFileURL(join(distSrc, "execution/catalog/catalog-tools.js")).href)) as {
+    catalogTools(
+      catalog: unknown,
+      reach: unknown,
+      announcements: unknown,
+    ): Map<string, { route?: { inputSchema?: { properties?: Record<string, unknown>; required?: readonly string[] }; target?(input: unknown): { name?: string; input?: unknown; issue?: string; path?: string } } }>;
+  };
+  const entries = new Map([[QUALIFIED, { name: QUALIFIED, description: "", deferred: true }] as const]);
+  const routes = catalogRoutes(
+    { deferred: entries, describe: (e: { description: string }) => e.description, registry: undefined, skills: new Map(), connections: [], get: (n: string) => entries.get(n as typeof QUALIFIED) },
+    { connections: false, searchableSkills: false, skills: false, tools: true },
+    { catalog: undefined, skills: undefined },
+  );
+  const callRoute = routes.get(CONNECTION_EXECUTE_TOOL)?.route;
   ok(
-    hooksAt !== -1 && instructionsAt !== -1 && hooksAt < instructionsAt,
-    "🔴 eve AWAITS a turn's hooks BEFORE it resolves dynamic instructions — so the slot the hook fills at `turn.started` is full when the same turn's instructions read it",
+    JSON.stringify(callRoute?.inputSchema?.required) === JSON.stringify(["name"]) &&
+      JSON.stringify(Object.keys(callRoute?.inputSchema?.properties ?? {}).sort()) === JSON.stringify(["input", "name"]),
+    `🔴 \`${CONNECTION_EXECUTE_TOOL}\` takes \`name\` (required) and \`input\` — the two fields the block names`,
   );
-  const lifecycle = readFileSync(join(distSrc, "context/dynamic-instruction-lifecycle.js"), "utf8");
-  ok(lifecycle.includes("case`turn.started`:return TurnDynamicInstructionsKey"), "…and eve keeps a `turn.started` instruction for that turn, so each fire turn re-renders the block from the live slot");
+  const reachBlock = renderDeclaredReachBlock([{ connection: CONNECTION, tool: OP }]);
+  ok(
+    Object.keys(callRoute?.inputSchema?.properties ?? {}).length > 0 &&
+      Object.keys(callRoute?.inputSchema?.properties ?? {}).every((field) => reachBlock.includes(`\`${field}\``)),
+    `🔴 …and the reach block names each field of eve's call route by eve's own key — a rename on either side makes every declared-op call fail at fire time`,
+  );
+  const resolved = callRoute?.target?.({ name: QUALIFIED, input: { title: "x" } });
+  ok(
+    resolved?.name === QUALIFIED && JSON.stringify(resolved.input) === JSON.stringify({ title: "x" }),
+    `🔴 …and eve's call route resolves the deferred entry the block names from \`name\`, and passes \`input\` through to it`,
+  );
+  const legacy = callRoute?.target?.({ connection: CONNECTION, tool: OP, input: { title: "x" } });
+  ok(legacy?.name === undefined && legacy?.path === "name", "NEGATIVE CONTROL: the 0.x `{connection, tool}` pair resolves nothing — eve asks for a `name`");
   const walk = (dir: string): string[] =>
     readdirSync(join(distSrc, dir), { withFileTypes: true }).flatMap((e) =>
       e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith(".js") ? [join(dir, e.name).replaceAll("\\", "/")] : [],
     );
   const naming = walk(".").filter((rel) => readFileSync(join(distSrc, rel), "utf8").includes(RETIRED_SEARCH_RESULTS_KEY_NAME));
   ok(
-    naming.length === 1 && naming[0] === "execution/session/checkpoint-migrations.js",
-    `only eve's checkpoint migration names \`${RETIRED_SEARCH_RESULTS_KEY_NAME}\` (got: ${naming.join(", ")}), to drop it — the retired seeding had no reader`,
-  );
-  const key = readFileSync(join(distSrc, "context/providers/connection-key.js"), "utf8");
-  ok(
-    key.includes(`ContextKey(\`${CONNECTION_REGISTRY_KEY_NAME}\``),
-    `🔴 eve still registers the \`${CONNECTION_REGISTRY_KEY_NAME}\` key — the catalogue read reaches the registry through it`,
+    naming.every((rel) => rel.startsWith("execution/legacy-session/")),
+    `only eve's legacy-session reader names \`${RETIRED_SEARCH_RESULTS_KEY_NAME}\` (got: ${naming.join(", ")}) — the retired seeding has no live reader`,
   );
   const container = readFileSync(join(distSrc, "context/container.js"), "utf8");
   ok(
@@ -598,23 +657,20 @@ console.log("§5 the hook is declared and mounted");
 
 console.log("§6 an op the block names lifts; an op it does not name is refused");
 {
-  const { qualifiedToolName, readExecuteTarget } = (await import(pathToFileURL(join(eveRoot, "dist/src/execution/tools/connection-target.js")).href)) as {
-    qualifiedToolName: (t: { connection: string; tool: string }) => string;
-    readExecuteTarget: (input: unknown) => { connection: string; tool: string } | undefined;
-  };
+  // On eve 1.x the connector op is its own deferred tool, keyed `<connection>__<tool>`, and eve asks
+  // that tool's approval policy under that key (connector-approval-reachability drives eve's gate).
+  const { connectorToolName } = await import("../agent/connections/connector-tool-name.js");
   overrideSettingsForTest({ connectors: { opTiering: true } });
   const fireAuth = { current: { attributes: fireAttributes() } };
   const ask = async (policy: ApprovalPolicy, input: { connection: string; tool: string }): Promise<ApprovalStatus> => {
-    const target = readExecuteTarget({ ...input, input: { title: "x" } });
-    if (target === undefined) throw new Error("eve refused the target shape");
-    const toolName = qualifiedToolName(target);
-    return await policy({ toolName, approvedTools: new Set<string>(), callId: `call-${toolName}`, toolInput: { title: "x" }, session: { id: "wrun_FIRE", auth: fireAuth } } as never);
+    const toolName = connectorToolName(input.connection, input.tool);
+    return await policy({ toolName, callId: `call-${toolName}`, toolInput: { title: "x" }, session: { id: "wrun_FIRE", auth: fireAuth } } as never);
   };
   const denied = (d: ApprovalStatus): boolean => typeof d === "object" && d !== null && d.type === "denied";
 
   let named: readonly { connection: string; tool: string }[] = [];
   await inSession(async (store) => {
-    store.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry([NOTION]));
+    useCatalogue(registry([NOTION]));
     await resolveDeclaredOps(fireCtx());
     named = declaredOpsForReach();
   });
@@ -625,11 +681,9 @@ console.log("§6 an op the block names lifts; an op it does not name is refused"
     ok((await ask(connectorApprovalPolicy(), op)) === "not-applicable", `the op the block names (\`${op.connection}\` / \`${op.tool}\`) is lifted by its live declared row`);
   }
   const undeclared = { connection: CONNECTION, tool: UNDECLARED_OP };
-  ok(denied(await ask(connectorApprovalPolicy(), undeclared)), "🔴 an UNDECLARED op on the SAME connection, called through `connection_execute` on the same fire, is REFUSED");
+  ok(denied(await ask(connectorApprovalPolicy(), undeclared)), "🔴 an UNDECLARED op on the SAME connection, called through `eve__tool` on the same fire, is REFUSED");
   const childAsk = async (policy: ApprovalPolicy, input: { connection: string; tool: string }): Promise<ApprovalStatus> => {
-    const target = readExecuteTarget({ ...input, input: { title: "x" } });
-    if (target === undefined) throw new Error("eve refused the target shape");
-    const toolName = qualifiedToolName(target);
+    const toolName = connectorToolName(input.connection, input.tool);
     return await policy({
       toolName,
       approvedTools: new Set<string>(),

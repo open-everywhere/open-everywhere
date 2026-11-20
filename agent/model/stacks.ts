@@ -46,8 +46,8 @@ export function stackModelIds(stack: ModelStack): readonly string[] {
   return [...new Set(Object.values(stack).map((s) => s.id))].sort();
 }
 
-export function compactionThresholdTokens(contextWindowTokens: number, thresholdPercent: number): number {
-  return Math.max(1, Math.floor(contextWindowTokens * thresholdPercent));
+export function compactionThresholdTokens(contextWindowTokens: number, threshold: number): number {
+  return Math.max(1, Math.floor(contextWindowTokens * threshold));
 }
 
 export const SHIPPED_STACK: StackAlias = "american-closed";

@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import {
   afterThisTest,
   auditCursor,
+  compactionSummariesServed,
   bootAgent,
   discordMentionWake,
   disposeLater,
@@ -34,8 +35,12 @@ function toolResultTextAt(handle: ScriptedHandle, stepIndex: number): string {
   return JSON.stringify(request?.toolResults ?? []);
 }
 
-async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ handle: ScriptedHandle; channelId: string; cursor: AuditCursor }> {
+async function driveOneToolCallTurn(
+  note: string,
+  replyText: string,
+): Promise<{ handle: ScriptedHandle; channelId: string; cursor: AuditCursor; summariesBefore: number }> {
   await bootAgent();
+  const summariesBefore = compactionSummariesServed().length;
   afterThisTest(wrapToolExecute("update_status", () => statusResult(note)));
 
   const handle = disposeLater(
@@ -52,14 +57,15 @@ async function driveOneToolCallTurn(note: string, replyText: string): Promise<{ 
   await discordMentionWake({ channelId, text: `<@9000000000000000001> what has this conversation cost` });
 
   await waitFor(() => handle.requests.find((r) => r.role === "parent" && r.stepIndex === 1), "the step after the compaction trip");
-  return { handle, channelId, cursor };
+  return { handle, channelId, cursor, summariesBefore };
 }
 
 test("a turn whose prompt crosses the compaction threshold completes, and eve compacted its transcript", async () => {
   const replyText = `oe-670-compaction-ok ${randomBytes(4).toString("hex")}`;
-  const { handle, channelId, cursor } = await driveOneToolCallTurn(OVERSIZED_NOTE, replyText);
+  const { handle, channelId, cursor, summariesBefore } = await driveOneToolCallTurn(OVERSIZED_NOTE, replyText);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(compactionSummariesServed().length, "eve 1.x asked the session's model for a compaction summary").toBeGreaterThan(summariesBefore);
 
   const terminalToolResults = toolResultTextAt(handle, 1);
   expect(terminalToolResults).toContain(EVE_TRUNCATION_MARKER);
@@ -77,9 +83,10 @@ test("a turn whose prompt crosses the compaction threshold completes, and eve co
 
 test("a turn UNDER the compaction threshold is not compacted — the marker is absent and the tool result survives whole", async () => {
   const replyText = `oe-670-no-compaction ${randomBytes(4).toString("hex")}`;
-  const { handle, channelId, cursor } = await driveOneToolCallTurn(ORDINARY_NOTE, replyText);
+  const { handle, channelId, cursor, summariesBefore } = await driveOneToolCallTurn(ORDINARY_NOTE, replyText);
 
   expect(handle.requests.filter((r) => r.fault !== undefined)).toEqual([]);
+  expect(compactionSummariesServed().length, "under the threshold eve asks for no compaction summary").toBe(summariesBefore);
 
   const terminalToolResults = toolResultTextAt(handle, 1);
   expect(terminalToolResults).toContain(ORDINARY_NOTE);

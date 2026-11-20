@@ -1,4 +1,5 @@
 import { renderSeatSetupSection } from "../status/agent-setup.js";
+import { memoized } from "../access/window-gated.js";
 import { seatSetupFacts } from "../status/agent-setup-live.js";
 import { publicUrlDisclosed, publicUrlFacts, renderSeatPublicUrlSection } from "../status/public-url.js";
 import { defineDynamic, defineInstructions } from "eve/instructions";
@@ -17,7 +18,7 @@ import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderLanguageSlot, renderLanguageSlotForDomain } from "./language.js";
 import { renderMemoryIndex } from "../memory/listing.js";
-import { CONVERSATIONAL_ROOT_GRAINS, memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
+import { CONVERSATIONAL_ROOT_GRAINS, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { resolveLeanSeatPosture } from "../access/lean-seat.js";
 import { SEAT_RECOVERY_READ_BUDGET } from "../access/seat-read-budget.js";
@@ -53,8 +54,8 @@ import {
   WORK_FORWARD_SECTION,
   WORK_SESSION_SECTION,
 } from "./seat-prompt.js";
-import { forwardsToWorkSession, isWorkSessionContext, seatHoldsDelegationVerb } from "../access/work-session.js";
-import { canDelegateFromSeat } from "../access/delegation-mount.js";
+import { forwardsToWorkSession, isWorkSessionContext, seatHoldsDelegationVerb, seatMemoryRecallRoute } from "../access/work-session.js";
+import { canDelegateFromSeat, resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { domainRoster, type Domain } from "../memory/domain.js";
 import {
   channelPlatform,
@@ -424,7 +425,7 @@ function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallR
     const grain = windowGrainOf(ctx);
     if (grain !== "standing" && grain !== "thread") return "";
     const workerOnly = grain === "thread" ? WORKER_ONLY_TOOLS_THREAD : WORKER_ONLY_TOOLS_STANDING;
-    const asyncVerb = grain === "standing" && recall === "agent" ? ("spawn_thread_session" as const) : undefined;
+    const asyncVerb = grain === "standing" && (recall === "agent" || recall === "work") ? ("spawn_thread_session" as const) : undefined;
     return renderWorkerCapabilityIndex(workerOnly, recall, undefined, asyncVerb);
   } catch {
     return "";
@@ -432,7 +433,10 @@ function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallR
 }
 
 async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
-  const domainName = unifiedDomainFromToken(ctx.channel?.continuationToken);
+  // eve 1.x hands the seat its continuation token with the channel's `unified:` send prefix.
+  // resolveOwnWindowToken strips it, so the domain (and with it the access block, the role and the
+  // memory index) resolves on both token shapes.
+  const domainName = unifiedDomainFromToken(resolveOwnWindowToken(ctx) ?? ctx.channel?.continuationToken);
   const cfg = getConfig();
   const domain = domainName ? cfg.loadDomains().find((d) => d.name === domainName) : undefined;
   const sidEarly = classifySessionId(ctx.channel?.continuationToken);
@@ -442,7 +446,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   let accessMd = "";
   let memoryMd = "";
   let roleMd = "";
-  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, seatHoldsDelegationVerb(ctx));
+  const recall = seatMemoryRecallRoute(ctx);
   if (domain && anchor) {
     try {
       const access = resolveAccess(
@@ -534,7 +538,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, resolvePartition(ctx));
-  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, seatHoldsDelegationVerb(ctx));
+  const recall = seatMemoryRecallRoute(ctx);
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], recall) : "";
   const handleInfo = await surfaceHandleFor(ctx);
   const settlementWakeId = settlementWakeIdFor(ctx);
@@ -602,13 +606,10 @@ export async function renderScopeMarkdown(ctx: BindableContext, opts: { readonly
   return [...(scope.length > 0 ? [scope] : []), ...appended].join("\n\n");
 }
 
-async function resolve(ctx: BindableContext, opts: { readonly liveHalt?: boolean } = {}) {
-  return defineInstructions({ content: await renderScopeMarkdown(ctx, opts), role: "system" });
-}
-
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => resolve(ctx, { liveHalt: false }),
-    "turn.started": (_event, ctx) => resolve(ctx),
-  },
+export default defineDynamic(async (ctx) => {
+  const turnId = ctx.turn?.id ?? null;
+  const rendered = await memoized(ctx, ["access-instructions", ctx.session.id, turnId], () =>
+    renderScopeMarkdown(ctx as unknown as BindableContext, turnId === null ? { liveHalt: false } : {}),
+  );
+  return defineInstructions({ content: rendered, role: "system" });
 });

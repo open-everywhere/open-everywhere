@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { auditSurfaceModeStamp, bindFrom, type BindableContext } from "../identity/binding.js";
 import { resolveRole } from "../access/roles.js";
@@ -7,7 +7,8 @@ import { getConfig } from "../access/config.js";
 import { appendAudit } from "../audit/audit.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
+import { refuseVerbIfStoodDown } from "../channels/stand-down-gate.js";
 import { resolveConnectorOptions, optionLabel, hostWriteHomeAvailable, offerableCredential, type ConnectMode, type ConnectorOption } from "../connections/connector-offer.js";
 import { registeredCredentialHomes } from "../credentials/home.js";
 import { buildConnectCard, renderNonSlackConnect } from "../connections/connector-card.js";
@@ -28,7 +29,7 @@ const connectorEntry = defineTool({
     "NEVER invite anyone to paste a secret/API key into chat — secrets travel only through the posted " +
     "intake UI or an operator, and a pasted key is compromised. " +
     "If the person says they have ALREADY completed a sign-in/authorization, do NOT call this — retry " +
-    "the actual operation instead (the connector's own tools / connection_search); grants land server-side, " +
+    "the actual operation instead (the connector's own tool, found with eve__search and called with eve__tool); grants land server-side, " +
     "so only a fresh attempt can see them, and re-posting connect options reads as a runaround. " +
     "The posted card/message IS the reply — do not add a URL, a summary, or confirmation text after this call.",
   inputSchema: z.object({
@@ -97,6 +98,7 @@ const connectorEntry = defineTool({
       };
     }
 
+    await refuseVerbIfStoodDown(ctx as BindableContext, "connector");
     const partition = resolvePartition(ctx as BindableContext);
     const cardAudit = () =>
       appendAudit({
@@ -193,10 +195,5 @@ const connectorEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("connector", "_single", connectorEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, _ctx) => connectorEntry,
-  },
-});
+export default sessionMountedTool("connector", connectorEntry);

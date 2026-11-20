@@ -323,7 +323,7 @@ for (const armTier of ["read", "write", "destructive"] as const) {
 
 const hookMod = await import("../agent/hooks/connector-audit.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const handler = (hookMod.default as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["action.result"];
+const handler = (await import("./_hook-view.js")).callSettledHandler(hookMod.default);
 const auth = {
   current: {
     principalType: "service",
@@ -333,7 +333,8 @@ const auth = {
   },
 };
 const ctx = { session: { auth }, channel: { kind: "slack" }, agent: { name: "oe" } };
-const ev = (toolName: string) => ({ type: "action.result", data: { status: "success", result: { kind: "tool-result", toolName, isError: false } } });
+// A tool result. `callSettledHandler` builds the v27 `call.settled` event and its view from it.
+const ev = (toolName: string) => ({ data: { status: "success", result: { kind: "tool-result", toolName, isError: false } } });
 
 let auditCalls = 0;
 async function rowFor(toolName: string): Promise<{ detail?: Record<string, unknown> } | undefined> {

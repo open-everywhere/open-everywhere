@@ -1,31 +1,61 @@
-import { defineHook, type HookContext } from "eve/hooks";
+import { defineHook } from "eve/hooks";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { bareTokenFromEveContext, isWorkWindowToken } from "../channels/window-key.js";
 import { isSubagentChildContext, type BindableContext } from "../identity/binding.js";
-import { detectSessionLimitPark, handleSessionLimitPark } from "../channels/session-park.js";
+import { budgetSessionLimitPark, handleSessionLimitPark, type SessionLimitPark } from "../channels/session-park.js";
 import { generationOwedTaskIds } from "../channels/generation-retirement.js";
 import { markWorkSessionDead, requestIdOfWorkSessionLedgerId, retireFailedWorkSession } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
+import { getSettings } from "../settings/settings.js";
+import { optional } from "./control-refusal.js";
+import { usage, type InteractionOpenedData, type SessionView } from "eve/events";
+
+function configuredSessionBudget(): number | undefined {
+  try {
+    return getSettings().agent.sessionInputTokenBudget;
+  } catch {
+    return undefined;
+  }
+}
+
+export function sessionUsageTotalOf(view: unknown): unknown {
+  try {
+    return usage(view as SessionView).total;
+  } catch {
+    return undefined;
+  }
+}
+
+export function sessionLimitParkOf(data: InteractionOpenedData, sessionUsage: unknown): SessionLimitPark | undefined {
+  return budgetSessionLimitPark({
+    interactionId: data.interactionId,
+    requestKind: data.request.kind,
+    relayed: data.origin !== undefined,
+    budget: configuredSessionBudget(),
+    sessionUsage,
+  });
+}
 
 export default defineHook({
   events: {
-    "session.failed": async (event, ctx: HookContext) => {
+    "session.ended": optional("session-park", async (event, ctx) => {
+      if (event.data.outcome !== "failed") return;
       try {
         const token = bareTokenFromEveContext(ctx.channel?.continuationToken);
         if (token === undefined || !isWorkWindowToken(token)) return;
         if (isSubagentChildContext(ctx as unknown as BindableContext)) return;
         const p = resolvePartition(ctx);
-        const code = (event as { data?: { code?: unknown } } | undefined)?.data?.code;
+        const code = event.data.error?.code;
         const out = await retireFailedWorkSession({ org: p.org, token, ...(typeof code === "string" ? { code } : {}) });
         if (out.lostRequestIds.length > 0) await notifyLostWorkRequests({ org: p.org, requestIds: out.lostRequestIds, reason: "work-session failed", workToken: token });
         console.warn(`[open-everywhere:session-park] work session FAILED and was ${out.retired ? "retired" : "already rotated"} (token=${JSON.stringify(token)} lost=${out.lostRequestIds.length})`);
       } catch (err) {
         console.warn(`[open-everywhere:session-park] failed-work-session handling skipped: ${String(err)}`);
       }
-    },
-    "input.requested": async (event, ctx: HookContext) => {
+    }),
+    "interaction.opened": optional("session-park", async (event, ctx) => {
       try {
-        const park = detectSessionLimitPark((event.data as { requests?: unknown } | undefined)?.requests);
+        const park = sessionLimitParkOf(event.data, sessionUsageTotalOf(ctx.view));
         if (!park) return;
         const p = resolvePartition(ctx);
         const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
@@ -60,6 +90,6 @@ export default defineHook({
       } catch (err) {
         console.warn(`[open-everywhere:session-park] park handling skipped: ${String(err)}`);
       }
-    },
+    }),
   },
 });

@@ -108,14 +108,6 @@ const BOOT_ENTRIES: readonly BootEntry[] = [
     floor: 120,
     evalFloor: 120,
   },
-  {
-    module: "agent/connections",
-    why: "eve's connection slot root — the sixth and last generated root (OPE-1450). Same scan-mounted shape; a connection module carries the host-side connector plane's transport and approval wiring, which is the code most likely to CAPTURE a flag into a module const. Its excuse list is deliberately EMPTY: the two reads a standalone boot found (`selectConnectorTransport()` and `connectorApprovalPolicy()` in notion.ts) both captured their answer and were fixed rather than excused, so anything this entry reports next is a genuine regression. 🔴 ITS FLOORS ARE SET LOW ON PURPOSE, AND LOWER THAN THE MEASURED REACH BY A WIDE MARGIN. This root's modules are GENERATED from roster.config.ts and re-export straight into `@open-everywhere/core` — `agent/connections/notion.ts` is one `export { default } from …` line — so what the entry REACHES is the built `packages/core/dist` graph behind that re-export, and it moves with the roster, the build state and the Node version. Measured on this tree: 516 resolutions on Node 24.20.0, 197 on Node 22 with a different dist state — a 2.6x spread, well beyond the 1.27x the resolve-hook version difference explains elsewhere in this file. The EVALUATION count is the stable half (192 and 193 across the same two runs), which is what arm 2 actually watches. So the floors are sized against a BROKEN IMPORT (a failed re-export resolves a handful), not against the healthy figure — a floor set near either measurement would red on a tree that is merely built differently, which is a false alarm on the one gate that must stay trustworthy.",
-    registers: false,
-    slotRoot: true,
-    floor: 120,
-    evalFloor: 120,
-  },
 ];
 
 interface ChildResult {

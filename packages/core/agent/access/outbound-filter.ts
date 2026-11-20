@@ -26,11 +26,12 @@ export const OUTBOUND_INTERNAL_TOOLS: Readonly<Record<string, string>> = {
     "hands a brief to a worker inside this deployment; every sink the worker calls is filtered on its own input, and the two surfaces that SHOW a brief (the Slack task card's title, Linear's action preview) strike it first",
   work: "forwards a job to this conversation's own work session; the worker it starts is filtered at its sinks",
   cancel_work: "names a job to stop; ids only, and the ticket stays in the operational store",
-  task_cancel: "stops a task this session started; ids only",
-  task_wait: "parks a turn on tasks already running; harness-internal",
-  final_output: "returns a structured result to the session that started this one; that session's sinks are filtered",
+  eve__task_cancel: "stops a task this session started; ids only",
+  eve__task_wait: "parks a turn on tasks already running; harness-internal",
+  eve__reply: "returns a structured result to the session that started this one; that session's sinks are filtered",
   read_file: "reads a file in this session's sandbox",
   write_file: "writes a file in this session's sandbox; a later command that sends it is filtered on its own input only",
+  edit_file: "edits a file in this session's sandbox; a later command that sends it is filtered on its own input only",
   glob: "lists files in this session's sandbox",
   grep: "searches files in this session's sandbox",
 };
@@ -208,6 +209,23 @@ export interface OutboundFilterDeps {
   readonly asked?: () => readonly string[];
 }
 
+/**
+ * The outbound decision for ONE tool call's input, outside a schema. It returns the refusal to
+ * throw, or `undefined` when the input may leave. A withhold or hold writes its audit row first.
+ * The schema wrap below calls it, and so does a tool that sends its input itself, such as an
+ * OE-owned connector tool (`connections/connector-tools.ts`), which eve 1.x offers with no
+ * toolset projection to wrap its schema.
+ */
+export async function outboundInputRefusal(name: string, value: unknown, deps: OutboundFilterDeps = {}): Promise<Error | undefined> {
+  if (outboundSinkOf(name) === "internal") return undefined;
+  const record = deps.record ?? recordOutboundRefusal;
+  const asked = deps.asked ?? askedNow;
+  const verdict = decideOutbound(outboundTextOf(value), asked());
+  if (verdict.verdict === "pass") return undefined;
+  await record(refusalOf(name, verdict.verdict, verdict.findings)).catch(() => undefined);
+  return new Error(verdict.verdict === "withhold" ? withheldMessage(name, verdict.findings) : heldMessage(name, verdict.findings));
+}
+
 const replacements = new WeakMap<object, Map<string, unknown>>();
 const ours = new WeakSet<object>();
 
@@ -223,12 +241,8 @@ function filteredSchema(name: string, current: unknown, deps: OutboundFilterDeps
   const asked = deps.asked ?? askedNow;
   const replacement = jsonSchema(advertised as never, {
     validate: async (value: unknown) => {
-      const verdict = decideOutbound(outboundTextOf(value), asked());
-      if (verdict.verdict !== "pass") {
-        await record(refusalOf(name, verdict.verdict, verdict.findings)).catch(() => undefined);
-        const message = verdict.verdict === "withhold" ? withheldMessage(name, verdict.findings) : heldMessage(name, verdict.findings);
-        return { success: false as const, error: new Error(message) };
-      }
+      const refusal = await outboundInputRefusal(name, value, { record, asked });
+      if (refusal !== undefined) return { success: false as const, error: refusal };
       if (typeof original.validate !== "function") return { success: true as const, value };
       return (await original.validate(value)) as { success: true; value: unknown } | { success: false; error: Error };
     },

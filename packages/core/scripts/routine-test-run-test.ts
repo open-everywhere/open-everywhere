@@ -27,7 +27,6 @@ ok(!testRun.testRunFenceMounted(), "mount: before the test-run hook module loads
 await import("../agent/hooks/routine-test-run.js");
 ok(testRun.testRunFenceMounted(), "🔴 mount: loading the test-run hook module marks the fence mounted");
 const { TOOL_CONSEQUENCE } = await import("../agent/access/consequence.js");
-const { fenceToolsetForTestRun } = await import("../agent/access/test-run-fence.js");
 type Routine = import("../agent/routines/routine.js").Routine;
 type TestRunStamp = import("../agent/routines/test-run.js").TestRunStamp;
 
@@ -35,25 +34,25 @@ type TestRunStamp = import("../agent/routines/test-run.js").TestRunStamp;
   for (const name of testRun.TEST_RUN_OPEN_TOOLS) {
     ok(TOOL_CONSEQUENCE[name] !== undefined, `allow list: "${name}" is a real tool row — a renamed tool must not leave a stale name that allows nothing`);
   }
-  for (const read of ["read_thread", "list_routines", "web_search", "connection_search", "reply", "agent"]) {
+  for (const read of ["read_thread", "list_routines", "web_search", "eve__search", "eve__skill", "eve__task_wait", "reply", "agent"]) {
     ok(testRun.testRunToolVerdict(read) === "run", `verdict: "${read}" runs in a test`);
   }
   for (const write of ["post_message", "create_ticket", "set_state", "dm_person", "open_pull_request", "bash", "write_file", "post_file", "ask_room", "subscribe_pr", "report_run_failed", "record_watch_state", "record_job_state", "complete_job", "record_follow_up", "create_routine", "run_routine_now", "test_routine", "react", "edit_reply", "update_status"]) {
     ok(testRun.testRunToolVerdict(write) === "block", `🔴 verdict: "${write}" is blocked in a test`);
   }
   ok(testRun.testRunToolVerdict("brand_new_tool_nobody_listed") === "block", "🔴 verdict: an unknown tool is blocked — the list is default-deny");
-  ok(testRun.testRunToolVerdict("connection_execute", { connection: "notion", tool: "search", input: {} }) === "run", "verdict: a connector READ runs");
-  ok(testRun.testRunToolVerdict("connection_execute", { connection: "notion", tool: "create_page", input: {} }) === "block", "🔴 verdict: a connector WRITE is blocked");
-  ok(testRun.testRunToolVerdict("connection_execute", { connection: "notion", tool: "delete_page", input: {} }) === "block", "verdict: a connector DELETE is blocked");
-  ok(testRun.testRunToolVerdict("connection_execute", { nonsense: true }) === "block", "verdict: an unreadable connector target is blocked");
+  ok(testRun.testRunToolVerdict("notion__search") === "run", "verdict: a connector READ runs");
+  ok(testRun.testRunToolVerdict("notion__create_page") === "block", "🔴 verdict: a connector WRITE is blocked");
+  ok(testRun.testRunToolVerdict("notion__delete_page") === "block", "verdict: a connector DELETE is blocked");
+  ok(testRun.testRunToolVerdict("connection_execute", { connection: "notion", tool: "search", input: {} }) === "block", "verdict: eve 0.x's `connection_execute` is no longer read as a connector call, so it is blocked like any unknown tool");
   ok(testRun.testRunToolVerdict("grant__owner__read") === "block", "🔴 verdict: a reserved grant name is blocked whatever verb it spells");
   ok(testRun.testRunToolVerdict("notion__update_page") === "block" && testRun.testRunToolVerdict("notion__fetch") === "run", "verdict: a qualified connector name is tiered by its verb");
 
   const post = testRun.describeBlockedCall("post_message", { text: "Morning digest:\n3 incidents open", channel: "C0SECRETID" });
   ok(post.what === "post message: “Morning digest: 3 incidents open”", "describe: a post reads as its words and a one-line quote of its text");
   ok(!post.what.includes("C0SECRETID"), "describe: no raw id from the call reaches the person");
-  const page = testRun.describeBlockedCall("connection_execute", { connection: "notion", tool: "create-pages", input: { title: "Weekly notes" } });
-  ok(page.what === "create pages on notion: “Weekly notes”", "describe: a connector call names the operation and the connection, with the inner input's quote");
+  const page = testRun.describeBlockedCall("notion__create-pages", { title: "Weekly notes" });
+  ok(page.what === "create pages on notion: “Weekly notes”", "describe: a connector call names the operation and the connection, with the input's quote");
   const long = testRun.describeBlockedCall("post_message", { text: "x".repeat(400) });
   ok(long.what.length < 160 && long.what.endsWith("…”"), "describe: a long quote is cut and the cut is shown");
 
@@ -102,57 +101,58 @@ type TestRunStamp = import("../agent/routines/test-run.js").TestRunStamp;
 }
 
 const STAMP: TestRunStamp = { testId: "t-0000aaaa", routineId: "r-digest", surfaceKey: "slack/T1/C-TEST", org: "acme" };
-{
-  const ran: string[] = [];
-  const recorded: string[] = [];
-  const toolset: Record<string, { execute: (...a: unknown[]) => Promise<unknown> }> = {
-    post_message: { execute: async () => void ran.push("post_message") },
-    read_thread: { execute: async () => (ran.push("read_thread"), "thread text") },
-    connection_execute: { execute: async (input) => (ran.push(`connection_execute:${String((input as { tool?: string }).tool)}`), "ok") },
-  };
-  const fenced = fenceToolsetForTestRun(toolset, STAMP, async (_s, name) => void recorded.push(name));
-  ok(fenced.includes("post_message") && !fenced.includes("read_thread"), "fence: the write is fenced and the read is left alone");
-  const workflowSet: Record<string, unknown> = { ask_question: { description: "a workflow tool" }, web_search: { type: "provider" } };
-  fenceToolsetForTestRun(workflowSet, STAMP, async () => undefined);
-  ok(workflowSet["ask_question"] === undefined, "🔴 fence: a blocked tool with no execute (a workflow tool) is removed — a stub could never be reached");
-  ok(workflowSet["web_search"] !== undefined, "fence: an allowed tool with no execute is left alone");
-
-  let message = "";
-  try {
-    await toolset.post_message!.execute({ text: "hello" });
-  } catch (e) {
-    message = String(e);
-  }
-  ok(!ran.includes("post_message"), "🔴 fence: the blocked tool's REAL execute never ran");
-  ok(message.includes("TEST RUN") && message.includes("did NOT run"), "fence: the model is told the call did not run");
-  ok(recorded.includes("post_message"), "🔴 fence: the blocked call is recorded for the summary");
-  ok((await toolset.read_thread!.execute({})) === "thread text" && ran.includes("read_thread"), "fence: a read still runs");
-  ok((await toolset.connection_execute!.execute({ connection: "notion", tool: "search", input: {} })) === "ok", "fence: a connector read reaches the real execute");
-  let connectorBlocked = false;
-  try {
-    await toolset.connection_execute!.execute({ connection: "notion", tool: "create_page", input: { title: "x" } });
-  } catch {
-    connectorBlocked = true;
-  }
-  ok(connectorBlocked && !ran.includes("connection_execute:create_page"), "🔴 fence: a connector write never reaches the real execute");
-}
 
 const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
-const { projectToolSet } = await import("../agent/access/untrusted-projection.js");
+const { driveEveToolCall } = await import("./_eve-tool-path.js");
+const { defineTool } = await import("eve/tools");
+const { z } = await import("zod");
 const { markTestRunSession, currentTestRun } = await import("../agent/access/test-run-state.js");
 {
-  const run = async (marked: boolean): Promise<boolean> => {
-    let ran = false;
+  // The eve 1.x path: the roster shim `seatCut(name, tool)`, eve's own input check, then execute.
+  // `bypass` skips the seat cut: the NEGATIVE CONTROL that shows the seat cut is the fence's caller.
+  const run = async (name: string, marked: boolean, bypass = false): Promise<{ ran: boolean; error: string | undefined; offered: boolean }> =>
     await inEveContext(new FakeEveContext(), async () => {
       if (marked) markTestRunSession(STAMP);
-      const toolset: Record<string, unknown> = { post_message: { execute: async () => void (ran = true) } };
-      projectToolSet(toolset);
-      await (toolset.post_message as { execute: () => Promise<unknown> }).execute().catch(() => undefined);
+      const authored = defineTool({ description: name, inputSchema: z.object({ text: z.string() }), execute: async () => "ok" });
+      const call = await driveEveToolCall(name, authored as never, { text: "hello" }, { bypassSeatCut: bypass });
+      return { ran: call.ran, error: call.error, offered: call.offered };
     });
+  ok((await run("post_message", false)).ran === true, "eve 1.x: control — outside a test the tool runs");
+  const fenced = await run("post_message", true);
+  ok(fenced.ran === false, "🔴 eve 1.x: inside a test session the seat cut fences the write");
+  ok(fenced.error !== undefined && fenced.error.includes("TEST RUN"), "eve 1.x: the model is told the call did not run");
+  ok((await run("post_message", true, true)).ran === true, "NEGATIVE CONTROL: without the seat cut the write runs — eve 1.x itself fences nothing");
+  ok((await run("read_thread", true)).ran === true, "eve 1.x: a read still runs inside a test session");
+  ok((await run("notion__search", true)).ran === true && (await run("notion__create_page", true)).ran === false, "🔴 eve 1.x: a tool whose name follows the connector-op pattern runs as a read and is fenced as a write (a mounted connector op is fenced the same way: connector-mount-test §14)");
+
+  const decidedAtCall = await inEveContext(new FakeEveContext(), async () => {
+    const { resolveThroughSeatCut } = await import("./_eve-tool-path.js");
+    let ran = false;
+    const resolved = (await resolveThroughSeatCut("post_message", defineTool({ description: "p", inputSchema: z.object({}), execute: async () => void (ran = true) }))) as { execute: (i: unknown, o: unknown) => Promise<unknown> };
+    markTestRunSession(STAMP);
+    await resolved.execute({}, { toolCallId: "c1" }).catch(() => undefined);
     return ran;
-  };
-  ok((await run(false)) === true, "projection: control — outside a test the tool runs");
-  ok((await run(true)) === false, "🔴 projection: inside a test session the projection fences the write");
+  });
+  ok(decidedAtCall === false, "🔴 eve 1.x: the fence reads the test-run stamp at the call, so a tool resolved before the stamp is still fenced");
+
+  const workflowDropped = await inEveContext(new FakeEveContext(), async () => {
+    markTestRunSession(STAMP);
+    const { transformAuthoredTool } = await import("../agent/access/authored-tool-transforms.js");
+    return transformAuthoredTool("post_message", { description: "p", inputSchema: z.object({}), execute: async () => "ok", [Symbol.for("eve:workflow-tool-brand")]: true });
+  });
+  ok(workflowDropped === null, "🔴 eve 1.x: inside a test session a blocked workflow tool (no execute to fence) is withheld from the seat");
+
+  const recorded: string[] = [];
+  const recordedRan = await inEveContext(new FakeEveContext(), async () => {
+    markTestRunSession(STAMP);
+    const { transformAuthoredTool } = await import("../agent/access/authored-tool-transforms.js");
+    let ran = false;
+    const tool = transformAuthoredTool("post_message", { description: "p", inputSchema: z.object({}), execute: async () => void (ran = true) }, { recordBlocked: async (_s, name) => void recorded.push(name) }) as { execute: (i: unknown) => Promise<unknown> };
+    await tool.execute({ text: "hello" }).catch(() => undefined);
+    return ran;
+  });
+  ok(recordedRan === false && recorded.includes("post_message"), "🔴 eve 1.x: the blocked call is recorded for the summary, and its real execute never ran");
+  ok(currentTestRun() === null, "eve 1.x: the stamp stays inside its session");
 }
 
 const { registerSlackTestBridge, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
@@ -186,7 +186,7 @@ const { routineFireAttributes } = await import("../agent/routines/fire-auth.js")
   const fireAttrs = routineFireAttributes(ROUTINE, { team_id: "T0FENCE", channel_id: "C0FENCE", channel_type: "channel" }, "channel", true);
   const ask = async (attrs: Record<string, string>, recorded: string[]) => {
     const fence = withUnattendedConnectorFence(() => "user-approval", { grantExists: async () => true, recordTestBlocked: async (_s, name) => void recorded.push(name) });
-    return fence({ toolName: "notion__create_page", approvedTools: new Set<string>(), callId: "c1", toolInput: { title: "x" }, session: { id: "s1", auth: { current: { attributes: attrs } } } } as never);
+    return fence({ toolName: "notion__create_page", callId: "c1", toolInput: { title: "x" }, session: { id: "s1", auth: { current: { attributes: attrs } } } } as never);
   };
   const control: string[] = [];
   ok((await ask(fireAttrs, control)) === "not-applicable", "connector: control — an ordinary fire's declared write is lifted");
@@ -367,17 +367,17 @@ function fireTurnCtx(attrs: Record<string, string>): never {
   ok(marked !== null && (marked as TestRunStamp).testId === stamp.testId, "🔴 hook: a test turn marks its session for the fence");
 
   await recordBlockedCall(stamp, "post_message", { text: "3 incidents open" });
-  await recordBlockedCall(stamp, "connection_execute", { connection: "linear", tool: "create_issue", input: { title: "Follow up" } });
+  await recordBlockedCall(stamp, "linear__create_issue", { title: "Follow up" });
   const postsBefore = slackPosts.length;
   await inEveContext(session, async () => {
-    await testHook.events!["turn.completed"]!({} as never, ctx);
+    await testHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
   const summary = slackPosts.slice(postsBefore).find((p) => p.thread === testThread);
   ok(summary !== undefined, "🔴 hook: the turn end posts the summary into the test thread");
   ok(summary!.text.includes("post message: “3 incidents open”") && summary!.text.includes("create issue on linear: “Follow up”"), "🔴 hook: the summary lists the writes it blocked");
   ok(!summary!.text.includes("r-digest") && !summary!.text.includes(stamp.testId), "hook: the summary names no raw id");
   await inEveContext(session, async () => {
-    await testHook.events!["turn.completed"]!({} as never, ctx);
+    await testHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
   ok(slackPosts.slice(postsBefore).filter((p) => p.thread === testThread).length === 1, "hook: a second turn end posts no second summary");
 
@@ -399,7 +399,7 @@ function fireTurnCtx(attrs: Record<string, string>): never {
   await inEveContext(new FakeEveContext(), async () => {
     await testHook.events!["turn.started"]!({} as never, fireTurnCtx(plain));
     plainMarked = currentTestRun();
-    await testHook.events!["turn.completed"]!({} as never, fireTurnCtx(plain));
+    await testHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "completed" } } as never, fireTurnCtx(plain));
   });
   ok(plainMarked === null && slackPosts.length === plainPosts, "hook: control — an ordinary fire is neither marked nor summarised");
 }
@@ -410,7 +410,7 @@ const { ROUTINE_AUDIT } = await import("../agent/routines/fire-audit.js");
   const fold = async (attrs: Record<string, string>): Promise<void> => {
     await inEveContext(new FakeEveContext(), async () => {
       await outcomeHook.events!["turn.started"]!({} as never, fireTurnCtx(attrs));
-      await outcomeHook.events!["turn.failed"]!({} as never, fireTurnCtx(attrs));
+      await outcomeHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "failed" } } as never, fireTurnCtx(attrs));
     });
   };
   const firesFor = async () => (await readAudit({ org: ORG, action: ROUTINE_AUDIT.fire })).filter((r) => (r.detail as Record<string, unknown>)?.["routineId"] === "r-digest").length;
@@ -614,12 +614,12 @@ const { registerRoutineDispatch } = await import("../agent/schedules/routine-dis
   await routineStore.removeRoutine({ org: ORG, surfaceKey: AC_SURFACE } as never, "r-acme");
   const before1 = armPosts.length;
   await inEveContext(hookSession, async () => {
-    await testHook.events!["turn.completed"]!({} as never, fireTurnCtx(hookAttrs));
+    await testHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "completed" } } as never, fireTurnCtx(hookAttrs));
   });
   ok(armPosts.length === before1, "surface: a turn end whose routine row cannot be read posts no summary");
   await routineStore.addRoutine({} as never, kept);
   await inEveContext(hookSession, async () => {
-    await testHook.events!["turn.completed"]!({} as never, fireTurnCtx(hookAttrs));
+    await testHook.events!["turn.settled"]!({ type: "turn.settled", data: { turnId: "t1", outcome: "completed" } } as never, fireTurnCtx(hookAttrs));
   });
   ok(armPosts.slice(before1).some((p) => p.anchor === "m-1" && p.text.startsWith("🧪 Test run of")), "🔴 surface: …and the next turn end of the same test session posts it");
 
@@ -632,3 +632,4 @@ rmSync(dir, { recursive: true, force: true });
 console.log(`✓ routine-test-run: ${passed} assertions passed`);
 
 // proves: TOOL-test_routine
+// proves: AP-MOD-core-access-authored-tool-transforms

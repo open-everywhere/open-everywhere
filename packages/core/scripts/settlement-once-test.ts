@@ -6,6 +6,8 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
+import { v27Hooks } from "./_hook-view.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -95,13 +97,13 @@ interface Armed {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
-const armReply = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]!({}, ctx) as Armed | null;
+const armReply = (ctx: unknown): Armed | null => _dynamicResolverForTest(replyTool)({}, ctx) as Armed | null;
 
-const hooks = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-const startedHook = hooks["task.started"]!;
-const requestedHook = hooks["actions.requested"]!;
-const turnStarted = hooks["turn.started"]!;
-const settlementWake = hooks["task.settled"]!;
+const hooks = v27Hooks(hub.default);
+const startedHook = hooks.taskStarted;
+const requestedHook = hooks.callRequested;
+const turnStarted = hooks.turnStarted;
+const settlementWake = hooks.taskCallSettled;
 
 const settledNote = (taskId: string, result: string) => ({ callId: `call_${taskId}`, kind: "agent", name: "agent", output: result, status: "completed", taskId, turnId: "turn_settle" });
 const receipt = (callId: string, taskId: string) => ({ callId, kind: "agent", name: "agent", taskId, turnId: "turn_dispatch" });
@@ -423,5 +425,479 @@ const selfPost = (e: { readonly id: string; readonly wake: string; readonly plat
     "§5/CONTROL: and a 4xx is still definitive by status, so §5 is not asserting a blanket verdict",
   );
 }
+
+{
+  // §6: a step re-run that the workflow host reports as attempt 1 dispatches `task.started` again for
+  // the same task start (the optimistic `step_started` path). The start edge claims the task start
+  // once, so the second dispatch mints no second task wake. (For a re-run of the opening call,
+  // `noteTaskStarted` writes no second start row even without the claim, so this section asserts on the
+  // wake. §6b covers the continuation call, where the row does repeat.)
+  const { taskWakeKey } = await import("../agent/channels/task-wake.js");
+  const inTurn = newSession();
+  const wAsk = await wakeOn(CHAN, "940.1");
+  const TASK = "agent-2803rerun";
+  const CALL = "call_2803";
+  await inTurn(async () => {
+    await turnStarted({}, ctxFor(wAsk, "turn_2803"));
+    await dispatchTask(wAsk, "turn_2803", CALL, TASK);
+    const first = await store.getTaskResult(ORG, taskWakeKey(TASK));
+    ok(first !== undefined && first !== null, "§6/REACHABILITY: the first start minted the task's wake, so a second mint is visible");
+
+    await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, "turn_2803"));
+    const second = await store.getTaskResult(ORG, taskWakeKey(TASK));
+    ok(second === first, "🔴 §6: a second dispatch of one task start mints no second task wake — the start edge ran once");
+  });
+}
+
+{
+  // §6b: the same re-run for a continuation call. eve publishes `call.started` for the second call of an
+  // open task. `noteTaskStarted` reads that call as a continuation, not a replay, so without the claim a
+  // second dispatch writes a second `delegation.task_started` row.
+  const { viewOf, ev } = await import("./_hook-view.js");
+  const { TASK_STARTED_ACTION } = hub;
+  const continuedHook = hooks.bound("call.started");
+  const inTurn = newSession();
+  const wAsk = await wakeOn(CHAN, "941.1");
+  const TASK = "agent-2803cont";
+  const TURN = "turn_2803b";
+  await inTurn(async () => {
+    await turnStarted({}, ctxFor(wAsk, TURN));
+    await dispatchTask(wAsk, TURN, "call_2803_open", TASK);
+    const view = viewOf([
+      ev("session.started", {}),
+      ev("turn.started", { turnId: TURN, cause: { policy: "test" }, follows: null }, { turnId: TURN }),
+      ev("model.requested", { runId: "r1", owner: { turnId: TURN } }, { turnId: TURN, runId: "r1" }),
+      ev("call.requested", { callId: "call_2803_open", owner: { runId: "r1" }, capability: { kind: "agent", name: "agent" } }, { turnId: TURN, runId: "r1" }),
+      ev("task.started", { taskId: TASK, kind: "agent", name: "agent", startedBy: { callId: "call_2803_open" } }, { turnId: TURN }),
+      ev("call.started", { callId: "call_2803_open", taskId: TASK }, { turnId: TURN }),
+      ev("model.requested", { runId: "r2", owner: { turnId: TURN } }, { turnId: TURN, runId: "r2" }),
+      ev("call.requested", { callId: "call_2803_cont", owner: { runId: "r2" }, capability: { kind: "agent", name: "agent" } }, { turnId: TURN, runId: "r2" }),
+      ev("call.started", { callId: "call_2803_cont", taskId: TASK }, { turnId: TURN }),
+    ]);
+    const ctx = Object.assign(ctxFor(wAsk, TURN) as object, { view });
+    const event = { type: "call.started", data: { callId: "call_2803_cont", taskId: TASK }, scope: { turnId: TURN } };
+    const rows = async (): Promise<number> => {
+      await new Promise((r) => setTimeout(r, 20));
+      return (await detailsFor(TASK_STARTED_ACTION)).filter((d) => d.task === TASK && d.call === "call_2803_cont").length;
+    };
+    await continuedHook(event, ctx);
+    const once = await rows();
+    ok(once === 1, "§6b/REACHABILITY: the continuation call's first start wrote one start row");
+    await continuedHook(event, ctx);
+    ok((await rows()) === 1, "🔴 §6b: a second dispatch of one continuation start writes no second start row — the start edge ran once");
+  });
+}
+
+// §6c–§6e: a step re-run in the turn state the re-run actually has. The dead attempt's writes to the eve
+// session slots die with it, so each re-run below starts from a fresh session state, and the claim skips
+// the start edge. The skipped edge re-arms the turn state from the durable rows. It also writes the
+// durable rows that a dead first run did not write, each with the value the first run writes (§6d, §6g).
+const { taskWakeKey } = await import("../agent/channels/task-wake.js");
+const { pendingDelegationsOwing, delegationPendingRefusalMessage } = await import("../agent/access/pending-delegation-signal.js");
+const { claimTasksForAddressedWake } = await import("../agent/access/dispatch-origin-signal.js");
+const { liveTaskIds, treeIsDirty } = await import("../agent/hooks/settlement-flush.js");
+const { outboundKey } = await import("../agent/operational/post-once.js");
+const { taskCallLink } = await import("../agent/access/task-call-link.js");
+const { generationOfTask, generationOwedTaskIds, generationOwedDelegation } = await import("../agent/channels/generation-retirement.js");
+const { readTaskOpening } = await import("../agent/channels/task-provenance.js");
+const owedCount = async (task: string): Promise<number> => (await generationOwedTaskIds(ORG, TOKEN)).filter((t) => t === task).length;
+/** Waits for a first run to reach its kill point, and fails (never hangs) when it does not. */
+const untilKilled = (start: (died: () => void) => void): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("the first run never reached the kill point")), 5000);
+    start(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+const rerunEnvelope = (wake: string): string => `<wake wake-id="${wake}"><channel><message from="human" author-id="U1" trigger="true">delegate</message></channel></wake>`;
+async function enterTurn(wake: string, turnId: string): Promise<void> {
+  await turnStarted({}, ctxFor(wake, turnId));
+  recordDeliveredWakes(turnId, rerunEnvelope(wake));
+  recordRequesterIdentity(ctxFor(wake, turnId), turnId, rerunEnvelope(wake));
+}
+const rowsOf = async (action: string, task: string): Promise<number> => {
+  await new Promise((r) => setTimeout(r, 20));
+  return (await detailsFor(action)).filter((d) => d.task === task).length;
+};
+const turnStateOf = (turnId: string, taskId: string, wake: string, addressed: string | undefined) => ({
+  owing: pendingDelegationsOwing(turnId, wake, addressed),
+  live: liveTaskIds().includes(taskId),
+  dirty: treeIsDirty(),
+});
+
+{
+  // §6c: the first run arms the turn state; a later continuation start of the same task overwrites the
+  // task-wide wake row; the re-run of the FIRST start still re-arms its own wakes, read per call.
+  const { TASK_STARTED_ACTION } = hub;
+  const { viewOf, ev } = await import("./_hook-view.js");
+  const continuedHook = hooks.bound("call.started");
+  const wAsk = await wakeOn(CHAN, "942.1");
+  const wLater = await wakeOn(CHAN, "942.5");
+  const wOther = await wakeOn(CHAN, "942.9");
+  const TASK = "agent-2815rerun";
+  const CALL = "call_2815";
+  const LATER = "call_2815_later";
+  const TURN = "turn_2815";
+  const state = () => turnStateOf(TURN, TASK, wAsk, wOther);
+
+  let rowAfterFirst: string | null = null;
+  let rowAfterLater: string | null = null;
+  let firstState: ReturnType<typeof state> | undefined;
+  let firstTasks: readonly { taskId: string; wakeId: string }[] = [];
+  await newSession()(async () => {
+    await turnStarted({}, ctxFor(wAsk, TURN));
+    await dispatchTask(wAsk, TURN, CALL, TASK);
+    rowAfterFirst = await store.getTaskResult(ORG, taskWakeKey(TASK));
+    firstState = state();
+    firstTasks = claimTasksForAddressedWake(TURN, wOther);
+  });
+  const mintedWake = rowAfterFirst === null ? undefined : (JSON.parse(rowAfterFirst) as { wakeId?: string }).wakeId;
+  ok(typeof mintedWake === "string" && mintedWake.length > 0, "§6c/REACHABILITY: the first run minted the task's wake");
+  ok(
+    JSON.stringify(firstState) === JSON.stringify({ owing: [TASK], live: true, dirty: true }),
+    `§6c/CONTROL: the first run arms the pending delegation ONCE, under its dispatch wake, with the live task and the dirty tree (got ${JSON.stringify(firstState)})`,
+  );
+  ok(
+    JSON.stringify(firstTasks) === JSON.stringify([{ taskId: TASK, wakeId: mintedWake }]),
+    `§6c/CONTROL: the first run notes the minted task wake once for the turn (got ${JSON.stringify(firstTasks)})`,
+  );
+  ok((await rowsOf(TASK_STARTED_ACTION, TASK)) === 1, "§6c/CONTROL: the first run writes ONE start row");
+
+  // A later turn continues the task from another wake. Its start overwrites the task-wide wake row.
+  const LATER_TURN = "turn_2815_later";
+  await newSession()(async () => {
+    await enterTurn(wLater, LATER_TURN);
+    await requestedHook({ data: { actions: [{ kind: "subagent-call", callId: LATER, subagentName: "agent" }] } }, ctxFor(wLater, LATER_TURN));
+    const view = viewOf([
+      ev("session.started", {}),
+      ev("turn.started", { turnId: TURN, cause: { policy: "test" }, follows: null }, { turnId: TURN }),
+      ev("model.requested", { runId: "r8", owner: { turnId: TURN } }, { turnId: TURN, runId: "r8" }),
+      ev("call.requested", { callId: CALL, owner: { runId: "r8" }, capability: { kind: "agent", name: "agent" } }, { turnId: TURN, runId: "r8" }),
+      ev("task.started", { taskId: TASK, kind: "agent", name: "agent", startedBy: { callId: CALL } }, { turnId: TURN }),
+      ev("call.started", { callId: CALL, taskId: TASK }, { turnId: TURN }),
+      ev("turn.started", { turnId: LATER_TURN, cause: { policy: "test" }, follows: null }, { turnId: LATER_TURN }),
+      ev("model.requested", { runId: "r9", owner: { turnId: LATER_TURN } }, { turnId: LATER_TURN, runId: "r9" }),
+      ev("call.requested", { callId: LATER, owner: { runId: "r9" }, capability: { kind: "agent", name: "agent" } }, { turnId: LATER_TURN, runId: "r9" }),
+      ev("call.started", { callId: LATER, taskId: TASK }, { turnId: LATER_TURN }),
+    ]);
+    await continuedHook({ type: "call.started", data: { callId: LATER, taskId: TASK }, scope: { turnId: LATER_TURN } }, Object.assign(ctxFor(wLater, LATER_TURN) as object, { view }));
+    rowAfterLater = await store.getTaskResult(ORG, taskWakeKey(TASK));
+  });
+  const laterRow = rowAfterLater === null ? undefined : (JSON.parse(rowAfterLater) as { wakeId?: string; callId?: string });
+  ok(
+    laterRow?.callId === LATER && laterRow.wakeId !== mintedWake,
+    `§6c/REACHABILITY: the later start overwrote the task-wide wake row, so a per-task read-back would name the wrong call (got ${JSON.stringify(laterRow)})`,
+  );
+
+  await newSession()(async () => {
+    await enterTurn(wAsk, TURN);
+    ok(
+      JSON.stringify(state()) === JSON.stringify({ owing: [], live: false, dirty: false }),
+      "§6c/SETUP: the re-run starts from a session state with no trace of the first run's turn state",
+    );
+    await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+    ok((await store.getTaskResult(ORG, taskWakeKey(TASK))) === rowAfterLater, "🔴 §6c: the re-run mints no wake and rewrites no wake row — the claim still holds the durable edge");
+    ok((await rowsOf(TASK_STARTED_ACTION, TASK)) === 2, "§6c: …and writes no start row beyond the two starts (the first start and the later continuation)");
+    const rerun = state();
+    ok(
+      JSON.stringify(rerun.owing) === JSON.stringify([TASK]),
+      `🔴 §6c: the re-run turn holds the pending delegation under its OWN dispatch wake, so the reply gate and the closeout see the task (got ${JSON.stringify(rerun.owing)})`,
+    );
+    ok(rerun.live && rerun.dirty, "🔴 §6c: the re-run turn arms the live task and marks the tree dirty, so the settlement flush holds for it");
+    const refused = await callReply(wAsk, TURN, wAsk, "The retry ceiling is 5.", true);
+    ok(
+      refused.error?.includes(delegationPendingRefusalMessage()) === true,
+      `🔴 §6c: a final \`reply\` in the re-run turn is refused with \`delegation-pending\` (got ${JSON.stringify(refused).slice(0, 160)})`,
+    );
+    const rerunTasks = claimTasksForAddressedWake(TURN, wOther);
+    ok(
+      JSON.stringify(rerunTasks) === JSON.stringify([{ taskId: TASK, wakeId: mintedWake }]),
+      `🔴 §6c: the re-run turn notes the first start's OWN minted wake, read back per call (got ${JSON.stringify(rerunTasks)})`,
+    );
+  });
+}
+
+{
+  // §6d: the first run died after the claim and before it advanced the call's authority. The claim key is
+  // held, the authority row still names the dispatch wake, and no wake was minted for the task. The re-run
+  // arms the pending delegation under the dispatch wake and notes no minted wake.
+  const { TASK_STARTED_ACTION } = hub;
+  const wAsk = await wakeOn(CHAN, "943.1");
+  const wOther = await wakeOn(CHAN, "943.9");
+  const TASK = "agent-2815died";
+  const CALL = "call_2815_died";
+  const TURN = "turn_2815d";
+  await store.deleteTaskResult(ORG, `oe-gen-owes:${TOKEN}`);
+  await newSession()(async () => {
+    await enterTurn(wAsk, TURN);
+    await requestedHook({ data: { actions: [{ kind: "subagent-call", callId: CALL, subagentName: "agent" }] } }, ctxFor(wAsk, TURN));
+    const claimKey = outboundKey({ surface: "delegation", action: "task.start", stableId: `${TASK}:${CALL}`, payload: "settlement-once-test" });
+    ok(await store.markEventSeen(ORG, claimKey, new Date().toISOString(), 60 * 60 * 1000), "§6d/SETUP: the dead first run holds the start claim");
+    await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+    ok((await store.getTaskResult(ORG, taskWakeKey(TASK))) === null, "§6d: the claim held — the re-run minted no task wake");
+    ok(
+      (await rowsOf(TASK_STARTED_ACTION, TASK)) === 1 && (await taskCallLink(ORG, TASK))?.callId === CALL,
+      "🔴 §6d: the re-run writes the call link and the ONE start row that the dead first run owed, so the settlement reads the task's child session",
+    );
+    ok((await readTaskOpening(ORG, "settlement-once-test", TASK))?.openingCallId === CALL, "🔴 §6d: …the task's opening, under the dispatch wake");
+    ok(
+      (await generationOfTask(ORG, TASK)) === TOKEN && (await owedCount(TASK)) === 1,
+      `🔴 §6d: …and the record that the seat's generation owes the task (generation ${String(await generationOfTask(ORG, TASK))}, owed ${await owedCount(TASK)})`,
+    );
+    const rerun = turnStateOf(TURN, TASK, wAsk, wOther);
+    ok(
+      JSON.stringify(rerun) === JSON.stringify({ owing: [TASK], live: true, dirty: true }),
+      `🔴 §6d: the re-run arms the pending delegation under the dispatch wake the authority row still names (got ${JSON.stringify(rerun)})`,
+    );
+    const tasks = claimTasksForAddressedWake(TURN, wOther);
+    ok(tasks.length === 0, `🔴 §6d: …and notes no minted wake, because the first run minted none that the task uses (got ${JSON.stringify(tasks)})`);
+  });
+}
+
+{
+  // §6e: a unified window with no dispatch authority. The first run arms nothing (the edge refuses the
+  // dispatch), and the re-run that the claim skips arms nothing either.
+  const { DISPATCH_UNAUTHORIZED_ACTION } = hub;
+  const wAsk = await wakeOn(CHAN, "944.1");
+  const TASK = "agent-2815noauth";
+  const CALL = "call_2815_noauth";
+  const TURN = "turn_2815e";
+  const run = (): Promise<ReturnType<typeof turnStateOf>> =>
+    newSession()(async () => {
+      await enterTurn(wAsk, TURN);
+      await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+      return turnStateOf(TURN, TASK, wAsk, undefined);
+    });
+  const first = await run();
+  ok((await rowsOf(DISPATCH_UNAUTHORIZED_ACTION, TASK)) === 1, "§6e/REACHABILITY: the first run reached the edge and refused the dispatch");
+  ok(JSON.stringify(first) === JSON.stringify({ owing: [], live: false, dirty: false }), `§6e/CONTROL: the first run arms no turn state (got ${JSON.stringify(first)})`);
+  const rerun = await run();
+  ok((await rowsOf(DISPATCH_UNAUTHORIZED_ACTION, TASK)) === 1, "§6e: the claim held — the re-run did not run the edge again");
+  ok(JSON.stringify(rerun) === JSON.stringify({ owing: [], live: false, dirty: false }), `🔴 §6e: the re-run arms no turn state either, as the first run did (got ${JSON.stringify(rerun)})`);
+}
+
+{
+  // §6f: the re-run cannot read the call's start-wake row (the store read fails). A failed read proves
+  // neither "advanced" nor "not advanced", so the re-run arms no pending delegation. It must not fall back
+  // to the authority row, which the first run's advance already pointed at the minted wake.
+  const wAsk = await wakeOn(CHAN, "945.1");
+  const TASK = "agent-2815unread";
+  const CALL = "call_2815_unread";
+  const TURN = "turn_2815f";
+  await newSession()(async () => {
+    await turnStarted({}, ctxFor(wAsk, TURN));
+    await dispatchTask(wAsk, TURN, CALL, TASK);
+    ok(JSON.stringify(turnStateOf(TURN, TASK, wAsk, undefined).owing) === JSON.stringify([TASK]), "§6f/CONTROL: the first run arms the pending delegation");
+  });
+  const live = store as unknown as { getTaskResult: (...a: unknown[]) => Promise<unknown> };
+  const get = live.getTaskResult;
+  let failedReads = 0;
+  live.getTaskResult = async function (this: unknown, ...a: unknown[]) {
+    if (typeof a[1] === "string" && a[1].startsWith("oe-task-start-wake:")) {
+      failedReads++;
+      throw new Error("the store read failed");
+    }
+    return await get.apply(this, a);
+  };
+  try {
+    const rerun = await newSession()(async () => {
+      await enterTurn(wAsk, TURN);
+      await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+      return turnStateOf(TURN, TASK, wAsk, undefined);
+    });
+    ok(failedReads === 1, `§6f/REACHABILITY: the re-run reached the start-wake read, and it failed (reads: ${failedReads})`);
+    ok(
+      JSON.stringify(rerun) === JSON.stringify({ owing: [], live: false, dirty: false }),
+      `🔴 §6f: a failed read arms no pending delegation under a wake it cannot prove (got ${JSON.stringify(rerun)})`,
+    );
+  } finally {
+    live.getTaskResult = get;
+  }
+}
+
+// §6g–§6h: the durable half of a re-run (OPE-2819). A first run that dies after the claim and before
+// `noteGenerationDelegation` leaves no record that the seat's generation owes the task, so the OPE-1620
+// guard can retire that generation while the task is still live. The re-run that the claim skips writes
+// the record, exactly once. The kill is a store read that never returns: the first run stops at the
+// record's first read, as a dead process stops, and its promise is abandoned.
+const GEN_KEYS = ["oe-gen-owes:", "oe-task-gen:"];
+const genWrites = { count: 0 };
+const liveStore = store as unknown as {
+  getTaskResult: (...a: unknown[]) => Promise<unknown>;
+  putTaskResult: (...a: unknown[]) => Promise<unknown>;
+};
+const realGet = liveStore.getTaskResult;
+const realPut = liveStore.putTaskResult;
+let killAtRecord: (() => void) | undefined;
+liveStore.getTaskResult = function (this: unknown, ...a: unknown[]) {
+  if (killAtRecord !== undefined && typeof a[1] === "string" && a[1].startsWith("oe-gen-owes:")) {
+    const died = killAtRecord;
+    killAtRecord = undefined;
+    died();
+    return new Promise<never>(() => undefined);
+  }
+  return realGet.apply(this, a);
+};
+liveStore.putTaskResult = function (this: unknown, ...a: unknown[]) {
+  if (typeof a[1] === "string" && GEN_KEYS.some((k) => (a[1] as string).startsWith(k))) genWrites.count++;
+  return realPut.apply(this, a);
+};
+
+{
+  // §6g: the first run dies between the claim and the owed-generation record.
+  await store.deleteTaskResult(ORG, `oe-gen-owes:${TOKEN}`);
+  const wAsk = await wakeOn(CHAN, "946.1");
+  const TASK = "agent-2819died";
+  const CALL = "call_2819_died";
+  const TURN = "turn_2819";
+  let rowAfterFirst: string | null = null;
+  await untilKilled((died) => {
+    killAtRecord = died;
+    void newSession()(async () => {
+      await turnStarted({}, ctxFor(wAsk, TURN));
+      await dispatchTask(wAsk, TURN, CALL, TASK);
+    });
+  });
+  rowAfterFirst = await store.getTaskResult(ORG, taskWakeKey(TASK));
+  ok(rowAfterFirst !== null, "§6g/REACHABILITY: the first run passed the claim and minted the task's wake before it died");
+  ok(
+    (await generationOfTask(ORG, TASK)) === undefined && (await owedCount(TASK)) === 0,
+    "§6g/REACHABILITY: the first run died before it wrote the owed-generation record",
+  );
+  const writesBefore = genWrites.count;
+  const rerun = await newSession()(async () => {
+    await enterTurn(wAsk, TURN);
+    await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+    return turnStateOf(TURN, TASK, wAsk, undefined);
+  });
+  ok((await store.getTaskResult(ORG, taskWakeKey(TASK))) === rowAfterFirst, "§6g: the claim held — the re-run minted no second task wake");
+  ok(JSON.stringify(rerun) === JSON.stringify({ owing: [TASK], live: true, dirty: true }), `§6g: the re-run re-arms the turn state (got ${JSON.stringify(rerun)})`);
+  ok(
+    (await generationOfTask(ORG, TASK)) === TOKEN && (await owedCount(TASK)) === 1,
+    `🔴 §6g: the re-run writes the record that the seat's generation owes the task (generation ${String(await generationOfTask(ORG, TASK))}, owed ${await owedCount(TASK)})`,
+  );
+  ok((await generationOwedDelegation(ORG, TOKEN)) === "owed", "🔴 §6g: …so the retirement guard reads the generation as owing a live delegation");
+  ok(genWrites.count - writesBefore === 2, `§6g: the repair writes the owed list and the task's generation row once each (writes: ${genWrites.count - writesBefore})`);
+  const writesAfterRepair = genWrites.count;
+  await newSession()(async () => {
+    await enterTurn(wAsk, TURN);
+    await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+  });
+  ok(
+    genWrites.count === writesAfterRepair && (await owedCount(TASK)) === 1,
+    `🔴 §6g: a second re-run writes the record no second time (writes: ${genWrites.count - writesAfterRepair}, owed ${await owedCount(TASK)})`,
+  );
+}
+
+{
+  // §6h: the negative control. A clean first run writes the record once, and a re-run writes nothing to it.
+  await store.deleteTaskResult(ORG, `oe-gen-owes:${TOKEN}`);
+  const wAsk = await wakeOn(CHAN, "947.1");
+  const TASK = "agent-2819clean";
+  const CALL = "call_2819_clean";
+  const TURN = "turn_2819h";
+  const before = genWrites.count;
+  await newSession()(async () => {
+    await turnStarted({}, ctxFor(wAsk, TURN));
+    await dispatchTask(wAsk, TURN, CALL, TASK);
+  });
+  ok(
+    genWrites.count - before === 2 && (await owedCount(TASK)) === 1 && (await generationOfTask(ORG, TASK)) === TOKEN,
+    `§6h/CONTROL: a clean first run writes the record once (writes: ${genWrites.count - before}, owed ${await owedCount(TASK)})`,
+  );
+  const afterFirst = genWrites.count;
+  const rerun = await newSession()(async () => {
+    await enterTurn(wAsk, TURN);
+    await startedHook({ data: receipt(CALL, TASK) }, ctxFor(wAsk, TURN));
+    return turnStateOf(TURN, TASK, wAsk, undefined);
+  });
+  ok(JSON.stringify(rerun.owing) === JSON.stringify([TASK]), "§6h/CONTROL: the re-run reached the re-arm");
+  ok(
+    genWrites.count === afterFirst && (await owedCount(TASK)) === 1,
+    `🔴 §6h: the re-run after a clean first run writes the record no second time (writes: ${genWrites.count - afterFirst})`,
+  );
+}
+{
+  // §6i: a continuation call's claim row. The continuation's commit writes this turn's claim, and the start
+  // edge marks it dispatched with the call. A re-run after a clean first run writes the claim row no second
+  // time. A first run that died before the mark leaves the commit's claim, and the re-run marks it.
+  const { viewOf, ev } = await import("./_hook-view.js");
+  const continuedHook = hooks.bound("call.started");
+  const wAsk = await wakeOn(CHAN, "948.1");
+  const wLater = await wakeOn(CHAN, "948.5");
+  const TASK = "agent-2819claim";
+  const OPEN = "call_2819_open";
+  const CONT = "call_2819_cont";
+  const TURN = "turn_2819i";
+  const LATER_TURN = "turn_2819i_later";
+  const claimKey = `oe-task-claim:settlement-once-test:${TASK}:0`;
+  await newSession()(async () => {
+    await turnStarted({}, ctxFor(wAsk, TURN));
+    await dispatchTask(wAsk, TURN, OPEN, TASK);
+  });
+  const view = viewOf([
+    ev("session.started", {}),
+    ev("turn.started", { turnId: TURN, cause: { policy: "test" }, follows: null }, { turnId: TURN }),
+    ev("model.requested", { runId: "r1", owner: { turnId: TURN } }, { turnId: TURN, runId: "r1" }),
+    ev("call.requested", { callId: OPEN, owner: { runId: "r1" }, capability: { kind: "agent", name: "agent" } }, { turnId: TURN, runId: "r1" }),
+    ev("task.started", { taskId: TASK, kind: "agent", name: "agent", startedBy: { callId: OPEN } }, { turnId: TURN }),
+    ev("call.started", { callId: OPEN, taskId: TASK }, { turnId: TURN }),
+    ev("turn.started", { turnId: LATER_TURN, cause: { policy: "test" }, follows: null }, { turnId: LATER_TURN }),
+    ev("model.requested", { runId: "r2", owner: { turnId: LATER_TURN } }, { turnId: LATER_TURN, runId: "r2" }),
+    ev("call.requested", { callId: CONT, owner: { runId: "r2" }, capability: { kind: "agent", name: "agent" } }, { turnId: LATER_TURN, runId: "r2" }),
+    ev("call.started", { callId: CONT, taskId: TASK }, { turnId: LATER_TURN }),
+  ]);
+  const event = { type: "call.started", data: { callId: CONT, taskId: TASK }, scope: { turnId: LATER_TURN } };
+  const ctx = (): unknown => Object.assign(ctxFor(wLater, LATER_TURN) as object, { view });
+  await newSession()(async () => {
+    await enterTurn(wLater, LATER_TURN);
+    await requestedHook({ data: { actions: [{ kind: "subagent-call", callId: CONT, subagentName: "agent" }] } }, ctxFor(wLater, LATER_TURN));
+    await continuedHook(event, ctx());
+  });
+  const claimAfterFirst = await store.getTaskResult(ORG, claimKey);
+  ok(
+    claimAfterFirst !== null && JSON.parse(claimAfterFirst).call === CONT && JSON.parse(claimAfterFirst).turn === LATER_TURN,
+    `§6i/CONTROL: the clean first run marks this turn's claim dispatched with the call (got ${String(claimAfterFirst)})`,
+  );
+  let claimWrites = 0;
+  liveStore.putTaskResult = function (this: unknown, ...a: unknown[]) {
+    if (a[1] === claimKey) claimWrites++;
+    return realPut.apply(this, a);
+  };
+  try {
+    await newSession()(async () => {
+      await enterTurn(wLater, LATER_TURN);
+      await continuedHook(event, ctx());
+    });
+    ok(claimWrites === 0, `🔴 §6i: a re-run after a clean first run writes the claim row no second time (writes: ${claimWrites})`);
+    await store.putTaskResult(ORG, claimKey, JSON.stringify({ turn: LATER_TURN }), new Date().toISOString(), 60 * 60 * 1000);
+    claimWrites = 0;
+    await newSession()(async () => {
+      await enterTurn(wLater, LATER_TURN);
+      await continuedHook(event, ctx());
+    });
+    const repaired = await store.getTaskResult(ORG, claimKey);
+    ok(
+      claimWrites === 1 && repaired !== null && JSON.parse(repaired).call === CONT,
+      `🔴 §6i: a first run that died before the mark leaves the commit's claim, and the re-run marks it with the call (writes: ${claimWrites}, got ${String(repaired)})`,
+    );
+    const other = JSON.stringify({ turn: "turn_2819i_other" });
+    await store.putTaskResult(ORG, claimKey, other, new Date().toISOString(), 60 * 60 * 1000);
+    claimWrites = 0;
+    await newSession()(async () => {
+      await enterTurn(wLater, LATER_TURN);
+      await continuedHook(event, ctx());
+    });
+    ok(
+      claimWrites === 0 && (await store.getTaskResult(ORG, claimKey)) === other,
+      `🔴 §6i: the re-run never marks ANOTHER turn's claim (writes: ${claimWrites})`,
+    );
+  } finally {
+    liveStore.putTaskResult = realPut;
+  }
+}
+liveStore.getTaskResult = realGet;
+liveStore.putTaskResult = realPut;
 
 console.log(`settlement-once: ${passed} assertions passed`);

@@ -8,7 +8,8 @@ const { withOeConnectorCard } = await import("../agent/connections/connector-aut
 const { connectorOpArgsFromOffer } = await import("../agent/approvals/connector-op.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { CONNECTOR_OP_CARD_KIND, CONNECTOR_REPLAY_INPUT_KEY, CONNECTOR_INPUT_PREVIEW_CAP } = await import("../agent/approvals/connector-op-offer.js");
-const { projectToolSet } = await import("../agent/access/untrusted-projection.js");
+const { defineConnectorTool } = await import("../agent/connections/connector-tools.js");
+const { fakeMcpServer } = await import("./_fake-mcp-server.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { deploymentOrg } = await import("../agent/identity/binding.js");
 const { registerSettings, resetSettingsForTest } = await import("../agent/settings/settings.js");
@@ -27,17 +28,29 @@ const org = deploymentOrg();
 const reasonOf = (d: unknown): string => String((d as { reason?: unknown } | undefined)?.reason ?? "");
 const isDenied = (d: unknown): boolean => typeof d === "object" && d !== null && (d as { type?: unknown }).type === "denied";
 
+// The vendor side: a fake MCP server behind the OE connector tool (connections/connector-tools.ts),
+// the tool eve 1.x runs for a connector op. Each `tools/call` the server receives is one execute.
+const server = fakeMcpServer({ toolResult: { content: [{ type: "text", text: "vendor-ok" }] } });
 const executed: { input: unknown; callId: string }[] = [];
-const toolset: Record<string, { execute: (i: unknown, o: { toolCallId: string }) => unknown; toModelOutput?: unknown }> = {
-  connection_execute: {
-    execute: async (i: unknown, o: { toolCallId: string }) => {
-      executed.push({ input: i, callId: o.toolCallId });
-      return "vendor-ok";
-    },
+const appAuth = async () => ({ principalType: "app" as const, async getToken() { return { token: "t" }; } });
+const executeTool = {
+  async execute(call: { connection: string; tool: string; input: unknown }, o: { toolCallId: string }): Promise<unknown> {
+    const tool = defineConnectorTool(
+      { connection: call.connection, url: "https://mcp.example.test/mcp", auth: appAuth as never, client: { fetch: server.fetch } },
+      { name: call.tool, description: call.tool, inputSchema: { type: "object" }, hasOutputSchema: false },
+    ) as unknown as { execute(i: unknown, c: unknown): Promise<unknown> };
+    const before = server.seen.length;
+    try {
+      return await tool.execute(call.input, { callId: o.toolCallId, session: { id: "replay-session", auth: undefined } });
+    } finally {
+      for (const r of server.seen.slice(before)) {
+        if (r.body?.["method"] !== "tools/call") continue;
+        const params = r.body["params"] as { name: string; arguments: unknown };
+        executed.push({ input: { connection: call.connection, tool: params.name, input: params.arguments }, callId: o.toolCallId });
+      }
+    }
   },
 };
-projectToolSet(toolset);
-const executeTool = toolset["connection_execute"]!;
 
 async function driveCall(input: {
   readonly key: string;
@@ -58,7 +71,7 @@ async function driveCall(input: {
       return { outcome: "carded", pendingId: "pending-from-offer", where: "in this conversation" };
     },
   });
-  const decision = await seam({ toolName: `notion__${input.op}`, approvedTools: new Set<string>(), callId: input.callId, toolInput: input.opInput } as never);
+  const decision = await seam({ toolName: `notion__${input.op}`, callId: input.callId, toolInput: input.opInput } as never);
   if (decision !== "not-applicable") return { decision, ran: false };
   const before = executed.length;
   try {
@@ -196,7 +209,7 @@ for (const key of [DM_KEY, THREAD_KEY]) {
   const crashed = await raiseCard(DM_KEY, "create_page", { title: "crash before execute" });
   await approve(crashed.id);
   const seamOnly = withOeConnectorCard(() => "user-approval", { store, grantScope: () => ({ key: DM_KEY, reach: "call" }) as never, tainted: () => false });
-  ok((await seamOnly({ toolName: "notion__create_page", approvedTools: new Set<string>(), callId: "crash-1", toolInput: replayOf(crashed.id) } as never)) === "not-applicable", "§6 fixture: the approval admits the replay, and then the step crashes");
+  ok((await seamOnly({ toolName: "notion__create_page", callId: "crash-1", toolInput: replayOf(crashed.id) } as never)) === "not-applicable", "§6 fixture: the approval admits the replay, and then the step crashes");
   ok("input" in (await storedArgs(crashed.id)).args, "§6 the input stays on the card between the approval and the execute");
   const sameId = await driveCall({ key: DM_KEY, op: "create_page", opInput: replayOf(crashed.id), callId: "crash-1" });
   ok(sameId.decision === "not-applicable" && sameId.ran, `§6 eve's re-run of the SAME call id runs the stored input (${reasonOf(sameId.decision)} ${sameId.error ?? ""})`);
@@ -205,7 +218,7 @@ for (const key of [DM_KEY, THREAD_KEY]) {
 
   const lost = await raiseCard(DM_KEY, "create_page", { title: "lost to a restart" });
   await approve(lost.id);
-  await seamOnly({ toolName: "notion__create_page", approvedTools: new Set<string>(), callId: "lost-1", toolInput: replayOf(lost.id) } as never);
+  await seamOnly({ toolName: "notion__create_page", callId: "lost-1", toolInput: replayOf(lost.id) } as never);
   const before = executed.length;
   const reminted = await driveCall({ key: DM_KEY, op: "create_page", opInput: replayOf(lost.id), callId: "lost-2" });
   ok(isDenied(reminted.decision) && reasonOf(reminted.decision).includes("taken by another call") && reasonOf(reminted.decision).includes("may already have run"), `§6 🔴 a re-minted call id reads that another call took the approval (${reasonOf(reminted.decision)})`);
@@ -268,6 +281,50 @@ for (const key of [DM_KEY, THREAD_KEY]) {
   ok(error.includes("did not admit this call") && executed.length === 0, `§4 a replay the seam did not admit never reaches the vendor (${error})`);
   await executeTool.execute({ connection: "notion", tool: "search_pages", input: { query: "q" } }, { toolCallId: "plain-1" });
   assert.deepEqual(executed.at(-1)?.input, { connection: "notion", tool: "search_pages", input: { query: "q" } });
+  passed++;
+}
+
+// §7 A card id BESIDE an argument, on an op whose schema allows extra keys. eve's check takes such
+// an input (the op's own branch of the wrapper admits extra keys), so only OE's two replay checks
+// stand between it and a run: the seam (`decideConnectorReplay`) and the execute's resolver
+// (`resolveConnectorReplay`). Each must refuse it on its own, with an approved, unspent card.
+{
+  const { createRequire } = await import("node:module");
+  const { dirname, join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const { toInputSchema } = (await import(pathToFileURL(join(eveRoot, "dist/src/tools/schema.js")).href)) as {
+    toInputSchema(s: unknown): { "~standard": { validate(v: unknown): Promise<{ issues?: unknown[] }> | { issues?: unknown[] } } };
+  };
+  executed.length = 0;
+  const card = await raiseCard(DM_KEY, "append_note", { title: "approved note" });
+  await approve(card.id);
+  const mixed = { ...replayOf(card.id), title: "a different note" };
+
+  const openTool = defineConnectorTool(
+    { connection: "notion", url: "https://mcp.example.test/mcp", auth: appAuth as never, client: { fetch: server.fetch } },
+    { name: "append_note", description: "append_note", inputSchema: { type: "object" }, hasOutputSchema: false },
+  ) as unknown as { inputSchema: unknown };
+  ok((await toInputSchema(openTool.inputSchema)["~standard"].validate(mixed)).issues === undefined, "§7 setup: eve's check takes a card id beside an argument on an open-schema op");
+
+  const seamCall = await driveCall({ key: DM_KEY, op: "append_note", opInput: mixed, callId: "mixed-seam-1" });
+  ok(isDenied(seamCall.decision) && reasonOf(seamCall.decision).includes("must be the only key"), `🔴 §7 the seam refuses a card id beside an argument (${reasonOf(seamCall.decision)})`);
+  ok(executed.length === 0, "🔴 §7 …and nothing reached the vendor");
+
+  // The seam admits the clean replay for this call id. The execute then receives the mixed input,
+  // so the resolver alone stands between it and a run.
+  const seamOnly = withOeConnectorCard(() => "user-approval", { store, grantScope: () => ({ key: DM_KEY, reach: "call" }) as never, tainted: () => false });
+  ok((await seamOnly({ toolName: "notion__append_note", callId: "mixed-exec-1", toolInput: replayOf(card.id) } as never)) === "not-applicable", "§7 setup: the seam admits the clean replay for this call id");
+  let error = "";
+  try {
+    await executeTool.execute({ connection: "notion", tool: "append_note", input: mixed }, { toolCallId: "mixed-exec-1" });
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+  ok(error.includes("not a well-formed replay"), `🔴 §7 the execute's resolver refuses a card id beside an argument, though the call id is admitted (${error})`);
+  ok(executed.length === 0, "🔴 §7 …and nothing reached the vendor");
+  await executeTool.execute({ connection: "notion", tool: "append_note", input: replayOf(card.id) }, { toolCallId: "mixed-exec-1" });
+  assert.deepEqual(executed.at(-1)?.input, { connection: "notion", tool: "append_note", input: { title: "approved note" } }, "§7 control: the clean replay of the same admitted call runs the stored input");
   passed++;
 }
 

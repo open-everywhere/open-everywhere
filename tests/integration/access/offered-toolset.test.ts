@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { randomBytes } from "node:crypto";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
+import { setSeatToolsetStubForTest } from "@open-everywhere/core/agent/access/seat-cut.js";
 import {
   armSettlement,
   auditCursor,
@@ -129,10 +130,11 @@ test("lean channel seat and delegated worker — and the worker may write (OPE-2
   const worker = firstCall(dispatched, "child");
   assertShape("delegatedWorker", worker);
   expect(READ_ONLY_SHAPES.has("delegatedWorker")).toBe(false);
-  expect(FILE_WRITE_TOOLS.filter((n) => worker!.tools.includes(n))).toEqual(["bash", "checkout_repo", "write_file"]);
+  expect(FILE_WRITE_TOOLS.filter((n) => worker!.tools.includes(n))).toEqual(["bash", "checkout_repo", "edit_file", "write_file"]);
   expect(fileWritesOffered("leanChannelSeat", worker!.tools)).toEqual([
     'leanChannelSeat: read-only seat offered file-write tool "bash"',
     'leanChannelSeat: read-only seat offered file-write tool "checkout_repo"',
+    'leanChannelSeat: read-only seat offered file-write tool "edit_file"',
     'leanChannelSeat: read-only seat offered file-write tool "write_file"',
   ]);
 });
@@ -172,17 +174,16 @@ test("halted worker — the halt adds no tool and takes no other", async () => {
   }
 });
 
-test("NEGATIVE CONTROL (OPE-2687) — a tool added to every toolset shows in both recorded lists, as one clear diff per shape", async () => {
+test("NEGATIVE CONTROL (OPE-2687) — a tool added to every toolset shows in both recorded lists, as one clear diff line per shape", async () => {
   const EXTRA = "ots_control_extra_tool";
-  const g = globalThis as { __oeToolResultProjection?: (toolset: Record<string, unknown>) => unknown };
-  const original = g.__oeToolResultProjection;
-  expect(typeof original).toBe("function");
-  g.__oeToolResultProjection = (toolset: Record<string, unknown>) => {
-    const out = original!(toolset);
-    const donor = toolset["reply"] ?? Object.values(toolset)[0];
-    if (donor !== undefined) toolset[EXTRA] = donor;
-    return out;
-  };
+  // The extra tool goes in through the seat cut's stub seam, on the `reply` slot, which both shapes
+  // hold. The slot then resolves to a map, so eve mounts the extra tool under its own name.
+  const original = setSeatToolsetStubForTest(undefined);
+  setSeatToolsetStubForTest((slug, toolset) => {
+    original?.(slug, toolset);
+    const donor = toolset["reply"];
+    if (slug === "reply" && donor !== undefined) toolset[EXTRA] = donor;
+  });
   try {
     const { dispatched } = await forward("ots-extra", [{ delayMs: 120_000, say: "the job is done" }], 0);
     for (const [shape, request] of [
@@ -191,10 +192,13 @@ test("NEGATIVE CONTROL (OPE-2687) — a tool added to every toolset shows in bot
     ] as const) {
       expect(request, `${shape}: no model call was recorded`).toBeDefined();
       expect(request!.tools).toContain(EXTRA);
-      expect(diffOffered(shape, request!.tools)).toEqual([`${shape}: offered "${EXTRA}", which the expected list does not hold`]);
+      // The control proves its own line only: exactly one diff line names the extra tool, and it is
+      // the "offered" line, whatever else the shape's row already disagrees on.
+      const line = `${shape}: offered "${EXTRA}", which the expected list does not hold`;
+      expect(diffOffered(shape, request!.tools).filter((l) => l.includes(EXTRA))).toEqual([line]);
     }
   } finally {
-    g.__oeToolResultProjection = original;
+    setSeatToolsetStubForTest(original);
   }
 });
 
@@ -241,9 +245,10 @@ test("wide seat and untrusted-remote window (window.topology off), with and with
     assertNoFault([halted]);
     halted.dispose();
     assertShape("haltedWideSeatNoOneshot", request);
+    // The halt's `web_search` arm cannot show here: eve offers no `web_search` to the scripted
+    // model's provider. `test:seat-cut` §6 pins that arm through the model-call cut.
     expect(diffOffered("haltedWideSeatNoOneshot", EXPECTED_OFFERED.wideSeatNoOneshot)).toEqual([
       'haltedWideSeatNoOneshot: offered "web_fetch", which the expected list does not hold',
-      'haltedWideSeatNoOneshot: offered "web_search", which the expected list does not hold',
     ]);
   } finally {
     await store.clearHalt("default", { orgWide: true }, { clearedBy: "U-operator" });

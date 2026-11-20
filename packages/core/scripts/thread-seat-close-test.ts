@@ -14,7 +14,7 @@ import { unifiedThreadRef, type UnifiedWakeOrigin } from "../agent/channels/unif
 import { formatWindowToken, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { unifiedDomainSessionKey } from "../agent/channels/unified-supervisor.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
-import { completionPostFor, completeThreadNote, THREAD_DONE_LINE } from "../agent/tools/complete_thread.js";
+import { completionPostFor, completeThreadNote, THREAD_DONE_LINE, THREAD_STOOD_DOWN_NOTE } from "../agent/tools/complete_thread.js";
 import { renderThreadSeatBrief } from "../agent/tools/spawn_thread_session.js";
 import { leanSeatRefusal } from "../agent/access/window-gated.js";
 import { readThreadSeatNote } from "../agent/tools/read_thread_seat.js";
@@ -80,7 +80,7 @@ console.log("1. a completed close: record, release, hand back to the LIVE parent
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId: "C1", threadTs: "170.5" };
   const { ref, seat } = await openSeat(origin, 1, T0);
   const rec = recorder();
-  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Shipped the fix in #42.", origin, seatToken: seat }, deps("2026-10-01T12:00:00.000Z", rec));
+  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Shipped the fix in #42.", origin, seatToken: seat, threadStoodDown: false }, deps("2026-10-01T12:00:00.000Z", rec));
   eq(out, { recorded: true, closedNow: true, foreign: false, cleared: true, handedBack: true, reaction: "placed", priorState: "open" }, "the close did every step");
   eq((await store.getThreadSeatState(ORG, ref.channelKey, ref.threadKey))?.state, "completed", "the record reads completed");
   eq(await resolveThreadOwner(store, ORG, ref), null, "the thread is released: later messages wake the standing seat");
@@ -96,7 +96,7 @@ console.log("1. a completed close: record, release, hand back to the LIVE parent
   ok(!JSON.stringify(rec.audits[0].detail).includes("Shipped the fix"), "audit: no report TEXT in the row");
 
   const again = recorder();
-  const second = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "a later, different report", origin, seatToken: seat }, deps("2026-10-01T13:00:00.000Z", again));
+  const second = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "a later, different report", origin, seatToken: seat, threadStoodDown: false }, deps("2026-10-01T13:00:00.000Z", again));
   eq(second.closedNow, false, "3. a second close finds the record already closed");
   eq(again.handBacks.length + again.reactions.length, 0, "3. …and hands nothing back and reacts nothing");
   eq((await store.getThreadSeatState(ORG, ref.channelKey, ref.threadKey))?.report, "Shipped the fix in #42.", "3. …and the FIRST close's report stands");
@@ -107,7 +107,7 @@ console.log("2. 🔴 the hand-back is host-written: no report still tells the pa
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId: "C1", threadTs: "171.5" };
   const { ref, seat } = await openSeat(origin, 1, T0);
   const rec = recorder();
-  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", origin, seatToken: seat }, deps("2026-10-01T12:00:00.000Z", rec));
+  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", origin, seatToken: seat, threadStoodDown: false }, deps("2026-10-01T12:00:00.000Z", rec));
   eq(out.handedBack, true, "a completion with NO report still hands the thread back");
   ok(rec.handBacks[0].message.includes("The seat left no report."), "…and says so in the host's own words");
   eq(rec.audits[0].detail.hasReport, false, "audit: hasReport=false");
@@ -143,7 +143,7 @@ console.log("5. a host `closed` close carries no done reaction:");
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId: "C3", threadTs: "300.1" };
   const { ref, seat } = await openSeat(origin, 1, T0);
   const rec = recorder();
-  const out = await closeThreadSeat({ org: ORG, ref, reason: "closed", seatToken: seat }, deps("2026-10-01T12:00:00.000Z", rec));
+  const out = await closeThreadSeat({ org: ORG, ref, reason: "closed", seatToken: seat, threadStoodDown: false }, deps("2026-10-01T12:00:00.000Z", rec));
   eq(out.reaction, "not-owed", "a host close owes no done mark");
   eq(rec.reactions.length, 0, "…and places none");
   ok(rec.handBacks[0].message.includes("could no longer reach it"), "the hand-back says the host closed it");
@@ -154,11 +154,11 @@ console.log("6. 🔴 a late close by an OLD seat never touches the thread a NEWE
 {
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId: "C4", threadTs: "400.1" };
   const { ref, seat: seatA } = await openSeat(origin, 1, T0);
-  await closeThreadSeat({ org: ORG, ref, reason: "expired", seatToken: seatA }, deps("2026-10-05T00:00:00.000Z", recorder()));
+  await closeThreadSeat({ org: ORG, ref, reason: "expired", seatToken: seatA, threadStoodDown: false }, deps("2026-10-05T00:00:00.000Z", recorder()));
   const { seat: seatB } = await openSeat(origin, 2, "2026-10-05T01:00:00.000Z");
   ok(seatB !== seatA, "fixture guard: B is a different seat token from A");
   const rec = recorder();
-  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "A's late report", origin, seatToken: seatA }, deps("2026-10-05T02:00:00.000Z", rec));
+  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "A's late report", origin, seatToken: seatA, threadStoodDown: false }, deps("2026-10-05T02:00:00.000Z", rec));
   eq({ closedNow: out.closedNow, foreign: out.foreign, cleared: out.cleared }, { closedNow: false, foreign: true, cleared: false }, "A's close changes nothing: the record names B");
   const row = await store.getThreadSeatState(ORG, ref.channelKey, ref.threadKey);
   eq([row?.state, row?.seatToken, row?.report], ["open", seatB, undefined], "🔴 B's record stays OPEN, naming B, with no report from A");
@@ -173,8 +173,8 @@ console.log("6b. two RACING closes close the record once and hand back once:");
   const rec = recorder();
   const d = deps("2026-10-01T12:00:00.000Z", rec);
   const [a, b] = await Promise.all([
-    closeThreadSeat({ org: ORG, ref, reason: "closed", seatToken: seat }, d),
-    closeThreadSeat({ org: ORG, ref, reason: "closed", seatToken: seat }, d),
+    closeThreadSeat({ org: ORG, ref, reason: "closed", seatToken: seat, threadStoodDown: false }, d),
+    closeThreadSeat({ org: ORG, ref, reason: "closed", seatToken: seat, threadStoodDown: false }, d),
   ]);
   eq([a.closedNow, b.closedNow].filter(Boolean).length, 1, "🔴 exactly one of two concurrent closes closed the record");
   eq(rec.handBacks.length, 1, "🔴 …and the parent hears it once");
@@ -183,8 +183,8 @@ console.log("6b. two RACING closes close the record once and hand back once:");
   const rec2 = recorder();
   const d2 = deps("2026-10-01T12:00:00.000Z", rec2);
   await Promise.all([
-    closeThreadSeat({ org: ORG, ref: s2.ref, reason: "expired", seatToken: s2.seat }, d2),
-    closeThreadSeat({ org: ORG, ref: s2.ref, reason: "completed", report: "done", origin: o2, seatToken: s2.seat }, d2),
+    closeThreadSeat({ org: ORG, ref: s2.ref, reason: "expired", seatToken: s2.seat, threadStoodDown: false }, d2),
+    closeThreadSeat({ org: ORG, ref: s2.ref, reason: "completed", report: "done", origin: o2, seatToken: s2.seat, threadStoodDown: false }, d2),
   ]);
   eq((await store.getThreadSeatState(ORG, s2.ref.channelKey, s2.ref.threadKey))?.state, "completed", "sweep vs completion: the seat's completion is the final state, whichever lands first");
   ok(rec2.handBacks.length >= 1 && rec2.handBacks.length <= 2, "…with at most two hand-backs (the second one replaces the first)");
@@ -194,22 +194,22 @@ console.log("6c. a seat that finishes AFTER the idle sweep still hands its repor
 {
   const origin: UnifiedWakeOrigin = { platform: "slack", channelId: "C6", threadTs: "600.1" };
   const { ref, seat } = await openSeat(origin, 1, T0);
-  await closeThreadSeat({ org: ORG, ref, reason: "expired", seatToken: seat }, deps("2026-10-05T00:00:00.000Z", recorder()));
+  await closeThreadSeat({ org: ORG, ref, reason: "expired", seatToken: seat, threadStoodDown: false }, deps("2026-10-05T00:00:00.000Z", recorder()));
   const rec = recorder();
-  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Long job done: #77.", origin, seatToken: seat }, deps("2026-10-05T03:00:00.000Z", rec));
+  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Long job done: #77.", origin, seatToken: seat, threadStoodDown: false }, deps("2026-10-05T03:00:00.000Z", rec));
   eq(out.closedNow, true, "🔴 the seat's own completion supersedes the host's expiry");
   const row = await store.getThreadSeatState(ORG, ref.channelKey, ref.threadKey);
   eq([row?.state, row?.report], ["completed", "Long job done: #77."], "…the record reads completed, with the seat's report kept");
   ok(rec.handBacks.length === 1 && rec.handBacks[0].message.includes("replaces that earlier hand-back") && rec.handBacks[0].message.includes("Long job done: #77."), "…the parent is told, and told it replaces the quiet-thread hand-back");
   eq(rec.reactions.length, 1, "…and the finished thread gets its done mark");
   const again = recorder();
-  const rerun = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Long job done: #77.", origin, seatToken: seat }, deps("2026-10-05T04:00:00.000Z", again));
+  const rerun = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Long job done: #77.", origin, seatToken: seat, threadStoodDown: false }, deps("2026-10-05T04:00:00.000Z", again));
   eq([rerun.closedNow, rerun.priorState, again.handBacks.length, again.reactions.length], [false, "completed", 0, 0], "a second completion by the same seat closes nothing and tells nobody twice");
   eq(completeThreadNote(rerun, "seat"), "This thread is already complete and handed back. Nothing more to do.", "🔴 …and the seat is told it is done, never asked to post again");
   const origin2: UnifiedWakeOrigin = { platform: "slack", channelId: "C6", threadTs: "600.2" };
   const s2 = await openSeat(origin2, 1, T0);
-  await closeThreadSeat({ org: ORG, ref: s2.ref, reason: "closed", seatToken: s2.seat }, deps("2026-10-05T00:00:00.000Z", recorder()));
-  const late = await closeThreadSeat({ org: ORG, ref: s2.ref, reason: "completed", report: "too late", origin: origin2, seatToken: s2.seat }, deps("2026-10-05T03:00:00.000Z", recorder()));
+  await closeThreadSeat({ org: ORG, ref: s2.ref, reason: "closed", seatToken: s2.seat, threadStoodDown: false }, deps("2026-10-05T00:00:00.000Z", recorder()));
+  const late = await closeThreadSeat({ org: ORG, ref: s2.ref, reason: "completed", report: "too late", origin: origin2, seatToken: s2.seat, threadStoodDown: false }, deps("2026-10-05T03:00:00.000Z", recorder()));
   eq(late.closedNow, false, "a completion after a HOST close does not reopen it");
   ok(completeThreadNote(late, "seat").includes("already closed this thread before you finished") && completeThreadNote(late, "seat").includes("not delivered"), "🔴 …and complete_thread tells the seat its summary was NOT delivered");
   ok(completeThreadNote({ recorded: true, closedNow: false, foreign: true, cleared: false, handedBack: false, reaction: "not-owed" }, "seat").includes("A newer thread seat holds this thread"), "…and names the newer-seat case");
@@ -237,5 +237,33 @@ ok(!leanSeatRefusal("bash", "thread").includes("spawn_thread_session"), "🔴 OP
 ok(leanSeatRefusal("bash", "standing").includes("spawn_thread_session"), "negative control: a standing seat's refusal names both sides of the decision");
 ok(readThreadSeatNote("closed", false, true).includes("could no longer reach it"), "read_thread_seat names a host close");
 ok(readThreadSeatNote("completed", false, true).includes("finished the thread"), "read_thread_seat names a completion");
+
+console.log("9. OPE-2812: a completed close in a thread that stood down places no done reaction:");
+{
+  const origin: UnifiedWakeOrigin = { platform: "slack", channelId: "C9", threadTs: "990.1" };
+  const { ref, seat } = await openSeat(origin, 1, T0);
+  const rec = recorder();
+  const out = await closeThreadSeat({ org: ORG, ref, reason: "completed", report: "Done.", origin, seatToken: seat, threadStoodDown: true }, deps("2026-10-01T12:00:00.000Z", rec));
+  eq(rec.reactions, [], "🔴 no done reaction reaches the platform in a thread that stood down");
+  eq(out.reaction, "withheld", "…and the outcome says the reaction was withheld");
+  eq(out.closedNow && out.cleared && out.handedBack, true, "…while the seat is still recorded, released and handed back (none of that is visible in the thread)");
+  ok(rec.handBacks[0]?.message.includes("The thread stood down") === true && !rec.handBacks[0]?.message.includes("carries a done reaction"), "…and the hand-back tells the parent the thread stood down, not that it carries a done reaction");
+  eq(rec.audits[0]?.detail.reaction, "withheld", "audit: the reaction outcome is withheld");
+  ok(completeThreadNote(out, "withheld").includes(THREAD_STOOD_DOWN_NOTE.trim()), "complete_thread tells the seat nothing was posted and no reaction placed");
+  ok(completeThreadNote(out, "withheld", true).includes("post it with `reply`") && !completeThreadNote(out, "withheld", false).includes("post it with `reply`"), "…and names `reply` only for the turn that holds the acknowledgement");
+
+  const foreign = completeThreadNote({ recorded: true, closedNow: false, foreign: true, cleared: false, handedBack: false, reaction: "not-owed" }, "withheld");
+  ok(foreign.includes("A newer thread seat") && !foreign.includes("`reply`"), "🔴 a withheld completion never steers the seat to `reply` in the stopped thread, even on the newer-seat path");
+
+  const repeat = completeThreadNote({ recorded: true, closedNow: false, foreign: false, cleared: false, handedBack: false, reaction: "not-owed", priorState: "completed" }, "withheld");
+  ok(repeat.startsWith("This thread is already complete"), "a repeat completion in a stopped thread says the thread is already complete");
+  ok(completeThreadNote({ recorded: false, closedNow: false, foreign: false, cleared: false, handedBack: false, reaction: "withheld" }, "withheld").startsWith("Thread marked done (no active ownership row"), "a withheld completion that cleared no owner does not claim a release");
+
+  const ctl = await openSeat({ platform: "slack", channelId: "C9", threadTs: "990.2" }, 1, T0);
+  const ctlRec = recorder();
+  const ctlOut = await closeThreadSeat({ org: ORG, ref: ctl.ref, reason: "completed", origin: { platform: "slack", channelId: "C9", threadTs: "990.2" }, seatToken: ctl.seat, threadStoodDown: false }, deps("2026-10-01T12:00:00.000Z", ctlRec));
+  eq(ctlRec.reactions.length, 1, "negative control: a thread that did not stand down still gets its done reaction");
+  eq(ctlOut.reaction, "placed", "negative control: …and the outcome says placed");
+}
 
 console.log(`thread-seat-close-test: ${n} assertions passed`);

@@ -30,7 +30,6 @@ const { markWakeRepliedThisTurn, markWakeDeclinedThisTurn } = await import("../a
 const { readAudit } = await import("../agent/audit/audit.js");
 const { WAKE_ACCOUNTING_SKIPPED_AUDIT_ACTION, UNACCOUNTED_WAKES_AUDIT_ACTION } = await import("../agent/channels/wake-accounting.js");
 const { auditUnaccountedWakesForTurn, auditLabels } = await import("../agent/channels/unified.js");
-const { SESSION_LIMIT_CONTINUATION_TOOL_NAME } = await import("../agent/channels/session-park.js");
 const wakeAccountingTurnModule = await import("../agent/hooks/wake-accounting-turn.js");
 const wakeAccountingTurnHook = wakeAccountingTurnModule.default;
 const { requestsHoldTheWorkerOpen } = wakeAccountingTurnModule;
@@ -68,15 +67,20 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 async function inSession<T>(fn: () => T | Promise<T>): Promise<T> {
-  return eveContextStorage().run(new FakeSession(), fn);
+  const session = new FakeSession();
+  return eveContextStorage().run(Object.assign(session, { context: session, values: new Map<unknown, unknown>() }), fn);
 }
 
 const EVENTS = wakeAccountingTurnHook.events as unknown as Record<string, (e: unknown, c: unknown) => unknown>;
+const { interactionView } = await import("./_hook-view.js");
 const fire = async (type: string, ctx: unknown, data?: unknown): Promise<void> => {
   const handler = EVENTS[type];
   if (typeof handler !== "function") throw new Error(`wake-accounting-turn does not bind ${type}`);
   await handler({ type, ...(data === undefined ? {} : { data }) }, ctx);
 };
+const settle = (ctx: unknown, turnId: string, outcome: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => fire("turn.settled", ctx, { turnId, outcome });
+const pause = (ctx: unknown, turnId: string, kind: "question" | "budget"): Promise<void> =>
+  fire("turn.paused", { ...(ctx as object), view: interactionView(kind, `i-${kind}`, undefined, turnId) }, { turnId, awaiting: [{ interactionId: `i-${kind}` }] });
 
 function hookCtx(token: string, turnId: string, wakeId: string | undefined): unknown {
   return {
@@ -95,15 +99,12 @@ async function wakeAt(token: string, channelId: string, atIso: string, opts: { r
   await registerUnifiedWakeTarget(store, ORG, id, { platform: "slack", channelId }, atIso, token, true, opts.addressing);
   return id;
 }
-const questionRequest = { requests: [{ requestId: "req-1", action: { toolName: "ask_question", input: { question: "which repo?" } } }] };
-const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { toolName: SESSION_LIMIT_CONTINUATION_TOOL_NAME, input: { kind: "input" } } }] };
 
 {
-  for (const e of ["turn.started", "input.requested", "authorization.required", "turn.completed", "turn.cancelled", "turn.failed", "session.failed"]) {
+  for (const e of ["turn.started", "turn.paused", "turn.settled", "session.ended"]) {
     ok(typeof EVENTS[e] === "function", `§1: the hook binds ${e}`);
   }
-  eq(EVENTS["session.completed"], undefined, "🔴 §1/NEGATIVE CONTROL: session.completed is NOT bound — it never reaches an authored hook on a conversation-mode session");
-  eq(EVENTS["message.completed"], undefined, "§1: message.completed is NOT bound here — that call site stays channels/unified.ts's own");
+  eq(EVENTS["content.completed"], undefined, "§1: content.completed is NOT bound here — that call site stays channels/unified.ts's own");
 }
 
 {
@@ -115,12 +116,12 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
   await inSession(async () => {
     await fire("turn.started", hookCtx(TOKEN, turnId, turnWake));
     markWakeDeclinedThisTurn(turnId, turnWake);
-    await fire("turn.completed", hookCtx(TOKEN, turnId, turnWake));
+    await settle(hookCtx(TOKEN, turnId, turnWake), turnId);
   });
 
   const rows = await readAudit({ org: ORG, action: UNACCOUNTED_WAKES_AUDIT_ACTION });
   const row = rows.find((r) => r.detail?.turnId === turnId);
-  ok(row !== undefined, "§2: turn.completed alone (no message.completed call) still produces the unaccounted-wakes row");
+  ok(row !== undefined, "§2: turn.settled alone (no reply call) still produces the unaccounted-wakes row");
   const unaccounted = (row?.detail?.unaccounted as { wakeId: string }[] | undefined) ?? [];
   ok(unaccounted.some((w) => w.wakeId === ignored), "§2: …naming the wake this turn never touched");
   ok(!unaccounted.some((w) => w.wakeId === turnWake), "§2/CONTROL: …but not the turn's own wake — turnStarted cleared the pause gate, so accounting ran");
@@ -139,7 +140,7 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
   await inSession(async () => {
     await auditUnaccountedWakesForTurn(ORG, workspace, surface, TOKEN, turnId, turnWake, false);
     await fire("turn.started", hookCtx(TOKEN, turnId, turnWake));
-    await fire("turn.completed", hookCtx(TOKEN, turnId, turnWake));
+    await settle(hookCtx(TOKEN, turnId, turnWake), turnId);
   });
 
   const rows = (await readAudit({ org: ORG, action: UNACCOUNTED_WAKES_AUDIT_ACTION })).filter((r) => r.detail?.turnId === turnId);
@@ -156,15 +157,14 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
   const before = (await readAudit({ org: ORG })).length;
   await inSession(async () => {
     await fire("turn.started", hookCtx(TOKEN, turnId, turnWake));
-    await fire("input.requested", hookCtx(TOKEN, turnId, turnWake), questionRequest);
-    await fire("turn.completed", hookCtx(TOKEN, turnId, turnWake));
+    await pause(hookCtx(TOKEN, turnId, turnWake), turnId, "question");
   });
   const after = (await readAudit({ org: ORG })).length;
-  eq(after, before, "🔴 §4/NEGATIVE CONTROL: a turn paused on a real question writes NO row at turn.completed — the pass did not run prematurely");
+  eq(after, before, "🔴 §4/NEGATIVE CONTROL: a turn paused on a real question writes NO row at turn.paused — the pass did not run prematurely");
 
   await inSession(async () => {
     await fire("turn.started", hookCtx(TOKEN, turnId, turnWake));
-    await fire("turn.completed", hookCtx(TOKEN, turnId, turnWake));
+    await settle(hookCtx(TOKEN, turnId, turnWake), turnId);
   });
   const rows = (await readAudit({ org: ORG, action: UNACCOUNTED_WAKES_AUDIT_ACTION })).filter((r) => r.detail?.turnId === turnId);
   ok(rows.length === 1, "§4/POSITIVE CONTROL: …the same turn, with no pause, IS accounted for");
@@ -178,25 +178,25 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
 
   await inSession(async () => {
     await fire("turn.started", hookCtx(TOKEN, turnId, turnWake));
-    await fire("input.requested", hookCtx(TOKEN, turnId, turnWake), parkRequest);
-    await fire("turn.completed", hookCtx(TOKEN, turnId, turnWake));
+    await pause(hookCtx(TOKEN, turnId, turnWake), turnId, "budget");
   });
   const rows = (await readAudit({ org: ORG, action: UNACCOUNTED_WAKES_AUDIT_ACTION })).filter((r) => r.detail?.turnId === turnId);
-  ok(rows.length === 1, "§5: a session-limit park does NOT hold this hook's gate open — accounting still ran at turn.completed");
+  ok(rows.length === 1, "§5: a turn paused only on eve's budget prompt does NOT hold this hook's gate open — accounting runs at turn.paused, because nothing ever answers that prompt");
 }
 
 {
-  for (const [label, event] of [["cancelled", "turn.cancelled"] as const, ["turn-failed", "turn.failed"] as const, ["failed", "session.failed"] as const]) {
+  for (const [label, outcome] of [["cancelled", "cancelled"] as const, ["turn-failed", "failed"] as const, ["failed", "session-failed"] as const]) {
     const TOKEN = unifiedSupervisorToken(DOMAIN, 6);
     const turnId = `turn_600_${label}`;
     await wakeAt(TOKEN, `C_TURN6_${label}`, t(-3000));
     const turnWake = await wakeAt(TOKEN, `C_TURN6_${label}`, t(-1000));
     await inSession(async () => {
       await fire("turn.started", hookCtx(TOKEN, turnId, turnWake));
-      await fire(event, hookCtx(TOKEN, turnId, turnWake));
+      if (outcome === "session-failed") await fire("session.ended", hookCtx(TOKEN, turnId, turnWake), { outcome: "failed" });
+      else await settle(hookCtx(TOKEN, turnId, turnWake), turnId, outcome);
     });
     const rows = (await readAudit({ org: ORG, action: UNACCOUNTED_WAKES_AUDIT_ACTION })).filter((r) => r.detail?.turnId === turnId);
-    ok(rows.length === 1, `§6: ${event} runs accounting exactly like turn.completed`);
+    ok(rows.length === 1, `§6: ${outcome} runs accounting exactly like a completed turn`);
   }
 }
 
@@ -234,23 +234,16 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
 }
 
 {
-  const park = { action: { toolName: "session_limit_continuation" } };
-  const question = { action: { toolName: "ask_question" } };
+  eq(requestsHoldTheWorkerOpen(["budget"]), false, "§8: a lone budget prompt does NOT hold the turn open — nothing ever answers it");
+  eq(requestsHoldTheWorkerOpen(["budget", "budget"]), false, "§8: …nor do several of them");
 
-  eq(requestsHoldTheWorkerOpen([park]), false, "§8: a lone session-limit park does NOT hold the turn open — nothing ever answers it");
-  eq(requestsHoldTheWorkerOpen([park, park]), false, "§8: …nor do several of them");
+  eq(requestsHoldTheWorkerOpen(["question"]), true, "§8: a real question HOLDS the turn open");
+  eq(requestsHoldTheWorkerOpen(["budget", "question"]), true, "🔴 §8: a budget prompt BESIDE a real question still holds — `some` is the right quantifier, and `every` would strand the question");
+  eq(requestsHoldTheWorkerOpen(["question", "budget"]), true, "§8: …in either order");
+  eq(requestsHoldTheWorkerOpen(["approval"]), true, "§8: an approval holds");
 
-  eq(requestsHoldTheWorkerOpen([question]), true, "§8: a real question HOLDS the turn open");
-  eq(requestsHoldTheWorkerOpen([park, question]), true, "🔴 §8: a park BESIDE a real question still holds — `some` is the right quantifier, and `every` would strand the question");
-  eq(requestsHoldTheWorkerOpen([question, park]), true, "§8: …in either order");
-
-  eq(requestsHoldTheWorkerOpen([]), true, "🔴 §8 FAIL-SOFT: an EMPTY request list holds the turn open — no evidence it finished deciding");
-  eq(requestsHoldTheWorkerOpen(undefined), true, "🔴 §8 FAIL-SOFT: undefined holds");
-  eq(requestsHoldTheWorkerOpen(null), true, "🔴 §8 FAIL-SOFT: null holds");
-  eq(requestsHoldTheWorkerOpen("not-an-array"), true, "🔴 §8 FAIL-SOFT: a non-array holds");
-  eq(requestsHoldTheWorkerOpen([{}]), true, "§8 FAIL-SOFT: a request with no `action` holds — an unrecognised shape is not a park");
-  eq(requestsHoldTheWorkerOpen([null]), true, "§8 FAIL-SOFT: a null ENTRY holds");
-  eq(requestsHoldTheWorkerOpen([{ action: { toolName: 42 } }]), true, "§8 FAIL-SOFT: a non-string toolName holds");
+  eq(requestsHoldTheWorkerOpen([]), true, "🔴 §8 FAIL-SOFT: an EMPTY awaiting list holds the turn open — no evidence it finished deciding");
+  eq(requestsHoldTheWorkerOpen([undefined]), true, "🔴 §8 FAIL-SOFT: an interaction the view cannot name holds — an unrecognised kind is not a budget prompt");
 }
 
 {
@@ -280,17 +273,17 @@ const parkRequest = { requests: [{ requestId: "s-limit:input:900000", action: { 
   const before = await skipCount();
   await inSession(async () => {
     await fire("turn.started", noWindowCtx("turn_1000"));
-    await fire("turn.failed", noWindowCtx("turn_1000"));
-    await fire("session.failed", noWindowCtx("turn_1000"));
+    await settle(noWindowCtx("turn_1000"), "turn_1000", "failed");
+    await fire("session.ended", noWindowCtx("turn_1000"), { outcome: "failed" });
   });
   eq((await skipCount()) - before, 1, "🔴 §10: turn.failed then session.failed for ONE turn writes ONE skip row — the pass ran once");
 
   const mid = await skipCount();
   await inSession(async () => {
     await fire("turn.started", noWindowCtx("turn_1001"));
-    await fire("turn.failed", noWindowCtx("turn_1001"));
+    await settle(noWindowCtx("turn_1001"), "turn_1001", "failed");
     await fire("turn.started", noWindowCtx("turn_1002"));
-    await fire("turn.failed", noWindowCtx("turn_1002"));
+    await settle(noWindowCtx("turn_1002"), "turn_1002", "failed");
   });
   eq((await skipCount()) - mid, 2, "§10 NEGATIVE CONTROL: two turns in one session write one skip row EACH — turn.started clears the guard");
 }

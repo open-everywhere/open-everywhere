@@ -7,6 +7,23 @@ import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+// eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+// projection. A direct call carries an empty view.
+const v27Completed = (adapter: object) => async (event: unknown, ctx: unknown): Promise<void> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (adapter as Record<string, (e: unknown, c: unknown) => Promise<unknown>>)["content.completed"]!;
+  await handler(event, { ...(ctx as object), view: fold.emptySessionView() });
+};
+// eve 1.x delivers a final message as `content.completed` (a text part in the "reply" phase).
+const asV27Content = (f: { readonly finishReason: string; readonly message: string | null; readonly turnId?: string }) => ({
+  type: "content.completed" as const,
+  ...(f.turnId !== undefined ? { scope: { turnId: f.turnId } } : {}),
+  data: { partId: "part-1", kind: "text", phase: f.finishReason === "stop" ? "reply" : "narration", value: f.message ?? "" },
+});
+
 
 const dir = join(tmpdir(), `open-everywhere-no-reply-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -298,7 +315,7 @@ await inSession(async () => {
   const unified = (await import("../agent/channels/unified.js")).default as unknown as {
     readonly adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   };
-  const onCompleted = unified.adapter["message.completed"]!;
+  const onCompleted = v27Completed(unified.adapter);
   const WINDOW_TOKEN = "oe-dom:e2e-unified:oe-sup:g1-bd552c";
   const windowChannel = { continuation: { token: WINDOW_TOKEN }, state: {} };
   const inWindowTurn = (sessionId: string, wakeId: string, turnId: string) => {
@@ -316,7 +333,7 @@ await inSession(async () => {
     setSilenceAuditForTest(false);
     try {
       const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
-      await onCompleted({ finishReason: "stop", message: "" }, windowChannel);
+      await onCompleted(asV27Content({ finishReason: "stop", message: "" }), windowChannel);
       const rows = await readAudit({ org: "default", action: "turn.bare_stop" });
       ok(rows.length - before === 1, "unified bare stop: an empty final message with no reply/react/no_reply writes ONE turn.bare_stop row with the silence-audit switch OFF");
       ok(rows[0]?.detail?.sessionId === "wrun_bare", "unified bare stop: the row names the session so it joins to the transcript");
@@ -330,14 +347,14 @@ await inSession(async () => {
   await inWindowTurn("wrun_reacted", "wake-reacted-1", "turn-reacted")(async () => {
     const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
     markReactedThisTurn();
-    await onCompleted({ finishReason: "stop", message: "" }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: "" }), windowChannel);
     const after = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
     ok(after === before, "unified bare stop: a turn that reacted is NOT a bare stop — no row");
   });
 
   await inWindowTurn("wrun_sentinel", "wake-sentinel-1", "turn-sentinel")(async () => {
     const before = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
-    await onCompleted({ finishReason: "stop", message: NO_REPLY_SENTINEL }, windowChannel);
+    await onCompleted(asV27Content({ finishReason: "stop", message: NO_REPLY_SENTINEL }), windowChannel);
     const after = (await readAudit({ org: "default", action: "turn.bare_stop" })).length;
     ok(after === before, "unified bare stop: the NO_REPLY sentinel route is a stated silence — no row");
   });

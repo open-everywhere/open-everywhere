@@ -1,7 +1,7 @@
 import type {
-  SlackInputResponseContext,
-  SlackInputResponseResult,
-  SlackInputResponseSubmission,
+  SlackAnswerContext,
+  SlackAnswerResult,
+  SlackAnswerSubmission,
 } from "eve/channels/slack";
 import {
   admitInputResponse,
@@ -16,7 +16,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackClickerIsGuest } from "./slack-events.js";
 
-function slackAuthTeamId(auth: SlackInputResponseContext["defaultAuth"]): string | undefined {
+function slackAuthTeamId(auth: SlackAnswerContext["defaultAuth"]): string | undefined {
   const v = auth.attributes?.["team_id"];
   if (typeof v === "string" && v.length > 0) return v;
   if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
@@ -31,11 +31,11 @@ export interface SlackInputResponseDeps {
 }
 
 export async function admitSlackInputResponse(
-  ctx: SlackInputResponseContext,
-  submission: SlackInputResponseSubmission,
+  ctx: SlackAnswerContext,
+  submission: SlackAnswerSubmission,
   deps: SlackInputResponseDeps = {},
-): Promise<SlackInputResponseResult> {
-  const allow: SlackInputResponseResult = { auth: ctx.defaultAuth };
+): Promise<SlackAnswerResult> {
+  const allow: SlackAnswerResult = { auth: ctx.defaultAuth };
   try {
     const bindable = {
       channel: { kind: "slack" },
@@ -66,7 +66,7 @@ export async function admitSlackInputResponse(
       surface: p.surface,
       surfaceKey: p.surfaceKey,
       principalId: submission.user.id,
-      responses: submission.inputResponses.length,
+      responses: submission.answers.length,
       ...(answererIsGuest === undefined ? {} : { answererIsGuest }),
     });
     if (verdict.ok) return allow;

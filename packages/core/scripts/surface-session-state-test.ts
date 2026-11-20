@@ -11,6 +11,7 @@ import {
 import { noteSessionAttention } from "../agent/status/attention.js";
 import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { busyView, callEvents, ev, idleView, turnEvents, viewOf } from "./_hook-view.js";
 
 registerSlackFixtureMapper();
 
@@ -59,7 +60,7 @@ console.log("§2 the turn-anchor hook drives it");
     inEveContext(session, async () => {
       await hook.events["turn.started"]!({ type: "turn.started", data: { turnId } }, ctx);
       if (report) noteSessionAttention(report);
-      await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctx);
+      await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(ctx as object), view: idleView() } as never);
     });
 
   await turn("t1", "needs_input");
@@ -83,7 +84,7 @@ console.log("§2 the turn-anchor hook drives it");
   const ctxB = { ...ctx, session: { ...ctx.session, auth: { current: { ...ctx.session.auth.current, attributes: { ...DM_ATTRS, agent_session_ts: "1700159720.000200" } } } } };
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "s1" } }, ctx);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctxB);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(ctxB as object), view: idleView() } as never);
   });
   eq(
     steered,
@@ -97,14 +98,32 @@ console.log("§2 the turn-anchor hook drives it");
   steered.length = 0;
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "s2" } }, ctx);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctx);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(ctx as object), view: idleView() } as never);
   });
   eq(steered.map((c) => c.status), ["processing", "active"], "one delivery: the park settles its session once, not twice");
+  steered.length = 0;
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "s2b" } }, ctx);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d-answer", outcome: "applied" } }, { ...(ctx as object), view: busyView("s2b") } as never);
+  });
+  eq(steered.map((c) => c.status), ["processing"], "🔴 an approval answer settles its delivery while the turn runs on: the session is NOT parked mid-turn");
+  steered.length = 0;
+  const turnOverTaskWorking = viewOf([
+    ev("session.started", {}),
+    ...turnEvents("s2c"),
+    ...callEvents({ callId: "c-worker", name: "worker", kind: "agent", taskId: "task_bg", turnId: "s2c" }),
+    ev("turn.settled", { turnId: "s2c", outcome: "completed" }, { turnId: "s2c" }),
+  ]);
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "s2c" } }, ctx);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d-bg", outcome: "handled" } }, { ...(ctx as object), view: turnOverTaskWorking } as never);
+  });
+  eq(steered.map((c) => c.status), ["processing", "active"], "🔴 a turn that ended while its background task still works DOES park — the park follows the turn, not the whole session's idleness");
   steered.length = 0;
   const ctxStamped = { ...ctx, session: { ...ctx.session, auth: { current: { ...ctx.session.auth.current, attributes: { ...DM_ATTRS, oe_wake: "w-later" } } } } };
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "s3" } }, ctx);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctxStamped);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(ctxStamped as object), view: idleView() } as never);
   });
   eq(steered.map((c) => c.status), ["processing", "active"], "one conversation whose attribute bag gained a stamp: the park settles it once");
   registerSurfaceSessionState("slack", async (attributes, status) => {
@@ -120,7 +139,7 @@ console.log("§2 the turn-anchor hook drives it");
   eq(isWorkSessionContext(work as never), true, "(precondition) the fixture is the work session's own context");
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "w1" } }, work);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, work);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(work as object), view: idleView() } as never);
   });
   eq(calls, [], "the work session's turn sets no conversation state");
 
@@ -132,7 +151,7 @@ console.log("§2 the turn-anchor hook drives it");
   eq(isSubagentChildContext(child as never), true, "(precondition) the fixture is a subagent child's context");
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "c1" } }, child);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, child);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(child as object), view: idleView() } as never);
   });
   eq(calls, [], "a subagent child's turn sets no conversation state");
 }
@@ -154,7 +173,7 @@ console.log("§3 a platform with no setter touches no session state");
   const container = new FakeEveContext();
   await inEveContext(container, async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "d1" } }, discordCtx);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, discordCtx);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(discordCtx as object), view: idleView() } as never);
   });
   eq(KEYS.filter((k) => container.has({ name: k })), [], "a Discord session's turn and park create none of the feature's slot keys");
   const slackContainer = new FakeEveContext();
@@ -164,7 +183,7 @@ console.log("§3 a platform with no setter touches no session state");
   };
   await inEveContext(slackContainer, async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "k1" } }, slackCtx);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, slackCtx);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(slackCtx as object), view: idleView() } as never);
   });
   eq(KEYS.filter((k) => slackContainer.has({ name: k })).length, 2, "(positive control) a Slack session that passes the gate carries both keys");
 }
@@ -193,13 +212,13 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
     channel: { kind: "slack", continuationToken: "D1:oe-dm:g1" },
     session: { id: "sess-surface-fail", auth: { current: { principalId: "U7", principalType: "slack-user", attributes: DM_ATTRS } } },
   };
-  const ACTIONS = [{ kind: "tool-call", toolName: "read_thread", callId: "c1" }];
+  const ACTIONS = [{ callId: "c1", owner: { runId: "r1" }, capability: { kind: "tool", name: "read_thread" } }];
 
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f1" } }, ctx);
-    await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "f1", actions: ACTIONS } }, ctx);
-    await hook.events["turn.failed"]!({ type: "turn.failed", data: { turnId: "f1", message: "model refused" } }, ctx);
-    await hook.events["session.failed"]!({ type: "session.failed", data: { message: "model refused", code: "MODEL_CALL_FAILED" } }, ctx);
+    await hook.events["call.requested"]!({ type: "call.requested", data: ACTIONS[0], scope: { turnId: "f1" } }, ctx);
+    await hook.events["turn.settled"]!({ type: "turn.settled", data: { turnId: "f1", outcome: "failed", error: { code: "x", message: "model refused" } } }, ctx);
+    await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "failed", error: { message: "model refused", code: "MODEL_CALL_FAILED" } } }, ctx);
   });
   eq(
     settled,
@@ -211,11 +230,41 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
   );
   eq(steps, [{ session: "1700159720.000500", actions: ACTIONS }], "the step's actions reach the stepper, with the delivery's attributes");
 
+  const CUT = { type: "delivery.settled", data: { deliveryId: "d-cut", outcome: "failed", reason: "session-ended" } };
+  settled.length = 0;
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f1c" } }, ctx);
+    await hook.events["delivery.settled"]!(CUT, { ...(ctx as object), view: idleView() } as never);
+    await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "failed", error: { message: "x", code: "MODEL_CALL_FAILED" } } }, ctx);
+  });
+  eq(
+    settled.map((c) => [c.status, c.end]),
+    [["processing", undefined], ["active", { failed: true }]],
+    "🔴 a failed session end cuts its open delivery first: that cut does not park, and session.ended parks ONCE with { failed: true } (OPE-2793)",
+  );
+  settled.length = 0;
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f1d" } }, ctx);
+    await hook.events["delivery.settled"]!(CUT, { ...(ctx as object), view: idleView() } as never);
+    await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "completed" } }, ctx);
+  });
+  eq(
+    settled.map((c) => [c.status, c.end]),
+    [["processing", undefined], ["active", undefined]],
+    "🔴 a session that ends any other way with a delivery open: the deferred park runs at session.ended, once and plain, so the sign never stays on",
+  );
+  settled.length = 0;
+  await inEveContext(new FakeEveContext(), async () => {
+    await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f1e" } }, ctx);
+    await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "completed" } }, ctx);
+  });
+  eq(settled.map((c) => c.status), ["processing"], "§4/CONTROL: a plain session end with no cut delivery parks nothing — the deferral is what arms it");
+
   settled.length = 0;
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f2" } }, ctx);
     noteSessionAttention("needs_input");
-    await hook.events["session.failed"]!({ type: "session.failed", data: { message: "x", code: "MODEL_CALL_FAILED" } }, ctx);
+    await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "failed", error: { message: "x", code: "MODEL_CALL_FAILED" } } }, ctx);
   });
   eq(settled.map((c) => [c.status, c.end]), [["processing", undefined], ["suspended", { failed: true }]], "a failed turn that waits on its person settles suspended, with the failure sign");
 
@@ -223,7 +272,7 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
   const ctxB = { ...ctx, session: { ...ctx.session, auth: { current: { ...ctx.session.auth.current, attributes: { ...DM_ATTRS, agent_session_ts: "1700159720.000600" } } } } };
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "f3" } }, ctx);
-    await hook.events["session.failed"]!({ type: "session.failed", data: { message: "x", code: "MODEL_CALL_FAILED" } }, ctxB);
+    await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "failed", error: { message: "x", code: "MODEL_CALL_FAILED" } } }, ctxB);
   });
   eq(
     settled,
@@ -238,7 +287,7 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
   settled.length = 0;
   await inEveContext(new FakeEveContext(), async () => {
     await hook.events["turn.started"]!({ type: "turn.started", data: { turnId: "p1" } }, ctx);
-    await hook.events["session.waiting"]!({ type: "session.waiting", data: {} }, ctx);
+    await hook.events["delivery.settled"]!({ type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled" } }, { ...(ctx as object), view: idleView() } as never);
   });
   eq(settled, [{ status: "processing", session: "1700159720.000500" }, { status: "active", session: "1700159720.000500" }], "an ordinary park passes no end");
 
@@ -252,15 +301,15 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
   };
   for (const other of [work, child]) {
     await inEveContext(new FakeEveContext(), async () => {
-      await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n1", actions: ACTIONS } }, other);
-      await hook.events["session.failed"]!({ type: "session.failed", data: { message: "x", code: "MODEL_CALL_FAILED" } }, other);
+      await hook.events["call.requested"]!({ type: "call.requested", data: ACTIONS[0], scope: { turnId: "n1" } }, other);
+      await hook.events["session.ended"]!({ type: "session.ended", data: { outcome: "failed", error: { message: "x", code: "MODEL_CALL_FAILED" } } }, other);
     });
   }
   eq([settled, steps], [[], []], "the work session's and a child's steps and failures touch no conversation");
 
   registerSurfaceSessionState("slack", async () => "x");
   await inEveContext(new FakeEveContext(), async () => {
-    await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n2", actions: ACTIONS } }, ctx);
+    await hook.events["call.requested"]!({ type: "call.requested", data: ACTIONS[0], scope: { turnId: "n2" } }, ctx);
   });
   let threw = 0;
   registerSurfaceSessionState("slack", async () => "x", undefined, async () => {
@@ -268,7 +317,7 @@ console.log("§4 a failed turn's settle, and the step labels (OPE-2632)");
     throw new Error("vendor down");
   });
   await inEveContext(new FakeEveContext(), async () => {
-    await hook.events["actions.requested"]!({ type: "actions.requested", data: { turnId: "n3", actions: ACTIONS } }, ctx);
+    await hook.events["call.requested"]!({ type: "call.requested", data: ACTIONS[0], scope: { turnId: "n3" } }, ctx);
   });
   eq(threw, 1, "the stepper ran, threw, and the throw never escaped the hook");
 }

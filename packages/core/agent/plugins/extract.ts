@@ -64,27 +64,27 @@ function mapModel(raw: string | undefined, fallback: string): string {
   return MODEL_ALIASES[raw.toLowerCase()] ?? fallback;
 }
 
-function skillPackageFromMarkdown(md: string, name: string): { description: string; markdown: string } {
+function skillPackageFromMarkdown(md: string, name: string): SkillPackageDefinition {
   const { data, body } = parseFrontmatter(md);
   const description =
     typeof data.description === "string" && data.description
       ? data.description
       : `Use when the task relates to "${name}".`;
-  return { description, markdown: `${body.trim()}\n` };
+  return { description, content: `${body.trim()}\n` };
 }
 
-function skillPackageFromCommand(cmd: ParsedCommand): { description: string; markdown: string } {
+function skillPackageFromCommand(cmd: ParsedCommand): SkillPackageDefinition {
   const description = cmd.description ?? `Use when the user asks to run the "${cmd.slug}" workflow.`;
-  const markdown =
+  const content =
     "> Adapted from the `" +
     cmd.slug +
     "` slash command. There is no slash invocation here — treat the requester's " +
     "message as `$ARGUMENTS` (and `$1`, `$2`… as its whitespace-separated parts).\n\n" +
     `${cmd.body.trim()}\n`;
-  return { description, markdown };
+  return { description, content };
 }
 
-function skillContentEntry(pkg: { description: string; markdown: string }, files?: readonly { relPath: string; content: string }[]): SkillPackageDefinition {
+function skillContentEntry(pkg: SkillPackageDefinition, files?: readonly { relPath: string; content: string }[]): SkillPackageDefinition {
   const fileMap: Record<string, string> = {};
   for (const f of files ?? []) fileMap[f.relPath] = f.content;
   return Object.keys(fileMap).length ? { ...pkg, files: fileMap } : { ...pkg };
@@ -95,44 +95,51 @@ function connectionFile(slug: string, server: ParsedMcpServer): string {
   const description =
     server.description ?? `MCP connector "${slug}" (extracted from a plugin). Review and refine this description.`;
   return `// GENERATED from a plugin MCP server by scripts/extract-plugin.ts — review before trusting.
-// Eve connection (host-side connector plane). Two gates are wired by default, matching
-// the one MCP connection builder (agent/connections/mcp-server-connection.ts): the per-surface HARD gate (assertConnectorGranted) inside
-// getToken, and \`connectorApprovalPolicy()\` on \`approval\` — the duplicate-approval guard,
-// then the unattended fence, then per-op read/write tiering where the deployment arms it.
-// 🔴 The fence is why this is not a bare \`once()\`: a connector WRITE on an unattended fire
-// must REFUSE, not mint an approval card nobody is there to click, which parks the fire
-// forever (OPE-1274). A scaffolded connection that kept \`once()\` would re-open that stall in
-// a self-hoster's tree. \`auth\` is the resolver form (eve#299): Eve hands the caller's session
-// context to the resolver once per execution step, so the gate reads the caller identity
-// straight off \`ctx.session.auth\` — no ALS reach needed. Swap getToken for a real credential
-// source in a real deployment.
+// An OE connector mount (packages/core/agent/connections/connector-mount.ts), the same form the
+// one MCP connection builder (agent/connections/mcp-server-connection.ts) uses. It is a
+// defineDynamic tool file: it lists the server's ops and offers each one as a deferred tool named
+// <connection>__<op>, whose result reaches the model inside the connector-result fence. It is NOT an
+// eve \`defineMcpClientConnection\`: eve's MCP connection runtime has no per-result transform, so
+// its results reach the model unfenced, and eve refuses these tool names while a connection of the
+// same name is mounted.
 //
-// 🔴 The two gate imports are PACKAGE specifiers, never relative ones (OPE-1337). This file
-// lands in a self-hoster's \`agent/connections/\`, which holds neither module and declares no
-// path alias, so \`./connector-auth.js\` resolves only inside packages/core. Outside it the
-// scaffold fails typecheck, and the likely repair — deleting the import and the gate with it —
-// re-opens the OPE-1274 unattended stall this scaffold exists to close. Both paths are in
+// Three gates are wired by default:
+// - the per-surface HARD gate (assertConnectorGranted) inside getToken;
+// - \`connectorApprovalPolicy()\` on \`approval\`: the duplicate-approval guard,
+//   then the unattended fence, then per-op read/write tiering where the deployment arms it.
+//   🔴 The fence is why this is not a bare \`once()\`: a connector WRITE on an unattended fire
+//   must REFUSE, not mint an approval card nobody is there to click, which parks the fire forever;
+// - \`seatCut\`, which decides before every model call which ops this seat holds.
+// \`auth\` is the resolver form: the gate reads the caller identity straight off
+// \`ctx.session.auth\`. Swap getToken for a real credential source in a real deployment.
+//
+// 🔴 The imports are PACKAGE specifiers, never relative ones. This file lands in a self-hoster's
+// \`agent/tools/\`, which holds none of these modules and declares no path alias. Every path is in
 // core's exports map, so a consumer that depends on the published package resolves them.
-import { defineMcpClientConnection } from "eve/connections";
 import type { SessionContext } from "eve/context";
+import { defineConnectorMount } from "@open-everywhere/core/agent/connections/connector-mount.js";
 import { connectorApprovalPolicy } from "@open-everywhere/core/agent/connections/connector-auth.js";
 import { assertConnectorGranted } from "@open-everywhere/core/agent/access/connector-scope.js";
+import { seatCut } from "@open-everywhere/core/agent/access/seat-cut.js";
+import { isListingTokenRequest } from "@open-everywhere/core/agent/connections/connector-listing.js";
 
-export default defineMcpClientConnection({
+export default seatCut(${JSON.stringify(slug)}, defineConnectorMount({
+  connection: ${JSON.stringify(slug)},
   url: ${JSON.stringify(server.url)},
   description: ${JSON.stringify(description)},
-  auth: (ctx: SessionContext) => ({
+  auth: async (ctx: SessionContext) => ({
     principalType: "app",
-    async getToken() {
-      // Refuse surfaces this connector isn't granted to (bundle/resolver decides).
-      await assertConnectorGranted(${JSON.stringify(slug)}, ctx.session.auth);
+    async getToken(o: unknown) {
+      // Refuse surfaces this connector isn't granted to (bundle/resolver decides). A listing
+      // probe (before each model call) runs the same gate and writes no audit row: no op ran.
+      await assertConnectorGranted(${JSON.stringify(slug)}, ctx.session.auth, { audit: !isListingTokenRequest(o) });
       const token = process.env.${envVar};
       if (!token) throw new Error('connection "${slug}": ${envVar} is not set');
       return { token };
     },
   }),
   approval: connectorApprovalPolicy(),
-});
+}));
 `;
 }
 
@@ -269,12 +276,15 @@ export function extractPlugin(
         kind: "mcp",
         name: srv.slug,
         reason:
-          "stdio/command MCP server (no url): Eve connections are HTTP/SSE only. Host it " +
+          "stdio/command MCP server (no url): a connector mount speaks Streamable HTTP only. Host it " +
           "behind a url, or run it as a sandbox tool instead.",
       });
       continue;
     }
-    files.push({ path: `agent/connections/${slug}.ts`, content: connectionFile(slug, srv) });
+    files.push({ path: `agent/tools/${slug}.ts`, content: connectionFile(slug, srv) });
+    report.notes.push(
+      `MCP server "${srv.slug}" mounts as a connector mount, which speaks Streamable HTTP only. A server that speaks only the legacy SSE transport lists no op: host it behind a Streamable HTTP endpoint.`,
+    );
     report.connectors.push(slug);
   }
 

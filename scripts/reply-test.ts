@@ -11,6 +11,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { assertCoreDistFresh } from "./core-dist-freshness.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 const dir = join(tmpdir(), `open-everywhere-reply-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -153,7 +154,7 @@ interface ArmedTool {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<Record<string, unknown>>;
 }
 const armReply = (react: unknown, ctx: unknown): ArmedTool | null =>
-  (react as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as ArmedTool | null;
+  _dynamicResolverForTest(react)({}, ctx) as ArmedTool | null;
 
 ok(armReply(reply, { channel: { kind: "slack" } }) !== null, "reply arms on a Slack session");
 ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a Discord session");

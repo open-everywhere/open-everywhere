@@ -78,7 +78,7 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
   ok(content("file-tools").includes("re-read a path with your file tools"), "delta route file-tools: names the file tools");
   ok(index("file-tools").includes("re-read the relevant path"), "index-delta route file-tools: names a plain re-read");
 
-  for (const [route, verb] of [["agent", "`agent`"]] as const) {
+  for (const [route, verb] of [["agent", "`agent`"], ["work", "`work`"]] as const) {
     const c = content(route);
     const i = index(route);
     ok(c.includes("this seat has no file tools") && c.includes(verb), `delta route ${route}: disowns the file tools and names ${verb}`);
@@ -89,13 +89,15 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
   const none = content("none");
   ok(none.includes("CANNOT open these files") && none.includes("say you can't check memory"), "delta route none: refuses rather than inviting a bluff");
   ok(!none.includes("delegate a lookup"), "delta route none: does not name a delegation verb the seat lacks");
-  for (const r of ["agent", "none"] as const) {
+  for (const r of ["agent", "work", "none"] as const) {
     ok(content(r).includes("this conversation does not already hold the answer"), `🔴 delta route ${r}: no lookup or refusal for what the conversation already holds (OPE-2601)`);
     ok(index(r).includes("this conversation does not already hold the answer"), `🔴 index-delta route ${r}: no lookup or refusal for what the conversation already holds (OPE-2601)`);
   }
 
-  ok(content(undefined) === content(memoryRecallRouteFor("standing")), "delta default: is the STANDING seat's route, not file-tools-by-assumption");
-  ok(index(undefined) === index(memoryRecallRouteFor("standing")), "index-delta default: is the STANDING seat's route");
+  const forwardingSeat = memoryRecallRouteFor("standing", undefined, undefined, true, "work");
+  ok(content(undefined) === content(forwardingSeat), "delta default: is the STANDING (forwarding) seat's route, not file-tools-by-assumption");
+  ok(index(undefined) === index(forwardingSeat), "index-delta default: is the STANDING (forwarding) seat's route");
+  ok(!content(undefined).includes("`agent`") && !index(undefined).includes("`agent`"), "🔴 delta default: a forwarding seat is never told to look up with `agent`, which its verdict refuses (OPE-2795)");
   ok(!content(undefined).includes("your file tools"), "delta default: a standing seat is never told it holds file tools");
 }
 

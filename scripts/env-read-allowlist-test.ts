@@ -134,7 +134,11 @@ function main(): void {
       "settings-lever": 0,
       "root-of-trust": 4,
       "store-bootstrap": 5,
-      platform: 23,
+      // OPE-2700: +4 (MICROSOFT_APP_PASSWORD, TEAMS_APP_PASSWORD, MICROSOFT_TENANT_ID, TEAMS_TENANT_ID).
+      // eve 1.0 no longer exports its Teams resolvers, so the Teams provider reads the names eve defines
+      // itself. They are platform (a vendor-defined name), not operator secrets: eve's own Teams channel
+      // reads them from the environment, so a db-store copy would split the two token mints.
+      platform: 27,
       "per-run-seam": 4,
       "pending-migration": 0,
     };
@@ -144,9 +148,9 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 36, `the allowlist holds 36 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 40, `the allowlist holds 40 names (found ${ENV_READ_ALLOWLIST.size})`);
     const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
-    ok(survivors.length === 36, `the allowlist holds 36 survivors (found ${survivors.length})`);
+    ok(survivors.length === 40, `the allowlist holds 40 survivors (found ${survivors.length})`);
     const OPERATOR_SECRET_NAMES = [
       "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DISCORD_BOT_TOKEN", "OE_RELAY_SECRET", "GITHUB_APP_PRIVATE_KEY",
       "GITHUB_WEBHOOK_SECRET", "GITHUB_TOKEN", "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY",

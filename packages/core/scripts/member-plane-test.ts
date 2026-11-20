@@ -178,7 +178,7 @@ const UNRESOLVABLE_SURFACE = surfaceIs(undefined, undefined);
 
 registerSettings({ connectors: { opTiering: true } });
 const ctxFor = (toolName: string, attrs: Record<string, unknown> = {}) =>
-  ({ toolName, approvedTools: new Set<string>(), session: { auth: auth(attrs) } }) as never;
+  ({ toolName, session: { auth: auth(attrs) } }) as never;
 
 {
   const policy = connectorOpApproval({ boundCredential: async () => memberBinding, dmPrincipal: IN_CHANNEL });

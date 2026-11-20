@@ -7,6 +7,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 let passed = 0;
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-routine-permission-card-"));
@@ -83,7 +86,7 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 async function inSession<T>(fn: () => T | Promise<T>): Promise<T> {
-  return eveContextStorage().run(new FakeSession(), fn);
+  return eveContextStorage().run(asEveStore(new FakeSession()), fn);
 }
 
 const ORG = "acme";

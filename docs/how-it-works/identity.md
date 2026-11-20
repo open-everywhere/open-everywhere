@@ -314,6 +314,13 @@ code-back — a directory link with the strictness knob off, or a claim from a s
 — the paragraph above is the whole of the guarantee, and the human reading the named account is the
 check that matters.
 
+**The claim hook's posts to the claimant are attributed to the claim wake.** The hook runs when the claim
+message is delivered, which is before the turn starts (`wake.turn_start`). The code-back and every
+refusal notice it posts therefore stand before the turn. Each one writes a `reply.post` row that
+names the claim wake (`claimantNoticeAudit`, `hooks/link-claim.ts`), so a reader can attribute the
+post to the wake that caused it. A claim with no captured wake still gets its post, and writes no row. The notice the hook
+sends to the initiator's DM writes no `reply.post` row.
+
 If a notice never arrives at all — a Slack bot missing `im:write`, a provider outage, or a platform
 with no DM delivery arm, where it is never attempted — the flow still completes on the person's next
 DM turn, and the missing delivery lands on an `identity.link.notice_undeliverable` audit row instead

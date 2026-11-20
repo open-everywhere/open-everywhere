@@ -313,9 +313,14 @@ for (const [label, err] of [
   const linearChannelModule = (await import("../agent/channels/linear.js")).default as unknown as {
     adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   };
-  const turnStarted = (ctx: unknown) => linearChannelModule.adapter["turn.started"]!({}, ctx);
+  const { emptySessionView: rawEmptyView } = await import(abs("dist/src/protocol/session-projection/fold.js"));
+  const adapterCtx = (ctx: unknown) => ({ ...(ctx as object), view: rawEmptyView() });
+  const turnStarted = (ctx: unknown) => linearChannelModule.adapter["turn.started"]!({ type: "turn.started", data: { turnId: "t1" } }, adapterCtx(ctx));
   const completed = (message: string | null, ctx: unknown) =>
-    linearChannelModule.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
+    linearChannelModule.adapter["content.completed"]!(
+      { type: "content.completed", scope: { turnId: "t1" }, data: { partId: "p1", kind: "text", phase: "reply", value: message ?? "" } },
+      adapterCtx(ctx),
+    );
 
   const supervisorState = () => ({
     agentSessionId: null,
@@ -563,7 +568,12 @@ for (const [label, err] of [
     {
       const state = supervisorState();
       gql = [];
-      await inSession(() => linearChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state }));
+      await inSession(() =>
+        linearChannelModule.adapter["turn.settled"]!(
+          { type: "turn.settled", scope: { turnId: "t1" }, data: { turnId: "t1", outcome: "failed", error: { code: "test", message: "boom" } } },
+          adapterCtx({ state }),
+        ),
+      );
       ok(gql.length === 0, "a failed supervisor turn posts NOTHING");
       const { readAudit, deploymentOrg } = await import("@open-everywhere/core/agent/adapter-api.js");
       const fails = await readAudit({ org: deploymentOrg(), action: "linear.supervisor_turn_failed" });

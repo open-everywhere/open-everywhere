@@ -85,7 +85,8 @@ type BindableContext = import("../agent/identity/binding.js").BindableContext;
   const { SessionKey } = await import(absUrl("dist/src/context/keys.js"));
 
   const hooks = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-  const dispatchHook = hooks["action.result"]!;
+  const settledHook = hooks["call.settled"]!;
+  const { callView, callSettled } = await import("./_hook-view.js");
   const startedHook = hooks["task.started"]!;
   const turnStarted = hooks["turn.started"]!;
 
@@ -109,15 +110,15 @@ type BindableContext = import("../agent/identity/binding.js").BindableContext;
   container.set(SessionKey, { sessionId: "delegation-floor-test", auth: null, turn: 1, parent: undefined });
   await contextStorage.run(container, async () => {
     await turnStarted({}, ctxFor("turn_floor_a"));
-    await dispatchHook(
-      { data: { result: { callId: "call_a", kind: "tool-result", toolName: "remember", output: { ok: true } } } },
-      ctxFor("turn_floor_a"),
-    );
+    await settledHook(callSettled("call_a", "completed", "turn_floor_a", { ok: true }), {
+      ...(ctxFor("turn_floor_a") as object),
+      view: callView({ callId: "call_a", name: "remember", turnId: "turn_floor_a", outcome: "completed", output: { ok: true } }),
+    });
     check("🔴 §3 a turn that answered with ONE call of its own leaves NO `delegation.*` row — the assertion OPE-1766 asks for", (await delegationRows()) === 0);
 
     await turnStarted({}, ctxFor("turn_floor_b"));
     await startedHook(
-      { data: { callId: "call_b", kind: "agent", name: DELEGATION_TOOL_NAME, taskId: "agent-floorbbbbcccc", turnId: "turn_floor_b" } },
+      { type: "task.started", data: { taskId: "agent-floorbbbbcccc", startedBy: { callId: "call_b" }, kind: "agent", name: DELEGATION_TOOL_NAME }, scope: { turnId: "turn_floor_b" } },
       ctxFor("turn_floor_b"),
     );
     check("🔴 §3/CONTROL: a real `agent` dispatch through `task.started` DOES write one — so the leg above measures the floor, not a dead hook", (await delegationRows()) > 0);

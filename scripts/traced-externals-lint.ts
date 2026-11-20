@@ -2,7 +2,10 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const AGENT_CONFIG = "agent/agent.ts";
-const EVE_PLUGIN = "node_modules/eve/dist/src/internal/nitro/host/optional-engine-dependency-plugin.js";
+// eve 1.x keeps the optional-engine table in host-traced-dependencies.js, and its externals policy
+// (externals-policy.js) externalises every optional engine that is not the configured backend.
+const EVE_PLUGIN = "node_modules/eve/dist/src/internal/host-traced-dependencies.js";
+const EVE_EXTERNALS_POLICY = "node_modules/eve/dist/src/internal/nitro/host/externals-policy.js";
 const ROOT_PACKAGE = "package.json";
 const CODE_ROOTS = ["agent", "packages"];
 
@@ -26,6 +29,18 @@ function optionalEnginePackages(): string[] {
         `Update this gate rather than deleting it; the failure it guards (OPE-225) is a dead lambda, not a degraded feature.`,
     );
     return [];
+  }
+  let policy = "";
+  try {
+    policy = readFileSync(EVE_EXTERNALS_POLICY, "utf8");
+  } catch {
+    reds.push(`UNREADABLE: ${EVE_EXTERNALS_POLICY} is missing. Re-read how eve externalises the optional engines before trusting this gate.`);
+  }
+  if (policy !== "" && !/Object\.entries\(OPTIONAL_ENGINE_PACKAGES_BY_BACKEND_NAME\)\.filter\(\(\[\w+\]\)=>!\w+\.has\(\w+\)\)/.test(policy)) {
+    reds.push(
+      `UNREADABLE: ${EVE_EXTERNALS_POLICY} no longer externalises the optional engines that are not the configured backend. ` +
+        `eve changed the rule this gate depends on (OPE-225); re-read it before trusting this gate.`,
+    );
   }
   const names = [...table[1].matchAll(/[:]\s*[`"']([^`"']+)[`"']/g)].map((m) => m[1]);
   if (names.length === 0) {

@@ -12,12 +12,15 @@ export interface FakeMcpTool {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: unknown;
+  readonly annotations?: Record<string, unknown>;
 }
 
 export interface FakeMcpServerOptions {
   readonly toolResult?: unknown;
   readonly tools?: readonly FakeMcpTool[];
   readonly failWithStatus?: number;
+  /** While this returns true, every POST answers HTTP 401 (a server that needs sign-in). */
+  readonly unauthorized?: () => boolean;
 }
 
 export interface FakeMcpServer {
@@ -42,6 +45,7 @@ export function fakeMcpServer(opts: FakeMcpServerOptions = {}): FakeMcpServer {
     if (method === "GET") return new Response(null, { status: 405 });
     if (method === "DELETE") return new Response(null, { status: 200 });
     if (opts.failWithStatus !== undefined) return new Response("upstream is unwell", { status: opts.failWithStatus });
+    if (opts.unauthorized?.() === true) return new Response("sign in first", { status: 401, headers: { "www-authenticate": 'Bearer realm="fake"' } });
     const rpc = raw ?? {};
     const id = rpc["id"];
     if (rpc["method"] === "initialize") {
@@ -64,7 +68,7 @@ export function fakeMcpServer(opts: FakeMcpServerOptions = {}): FakeMcpServer {
       return json({
         id,
         jsonrpc: "2.0",
-        result: { tools: (opts.tools ?? []).map((t) => ({ description: t.description ?? "", inputSchema: t.inputSchema ?? { type: "object" }, name: t.name })) },
+        result: { tools: (opts.tools ?? []).map((t) => ({ description: t.description ?? "", inputSchema: t.inputSchema ?? { type: "object" }, name: t.name, ...(t.annotations === undefined ? {} : { annotations: t.annotations }) })) },
       });
     }
     if (rpc["method"] === "tools/call") {

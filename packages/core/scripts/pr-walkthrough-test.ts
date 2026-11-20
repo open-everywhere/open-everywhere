@@ -649,7 +649,7 @@ const NARRATION: WalkthroughNarration = {
     [],
     "🔴 EVERY file in fresh_eyes_review/tools/ is a `disableTool()` sentinel — the narrator holds no bash, no read_file, no web_fetch, so an instruction embedded in the diff cannot make it fetch the proposer's context",
   );
-  for (const must of ["bash", "read_file", "web_fetch", "web_search", "write_file", "load_skill"]) {
+  for (const must of ["bash", "read_file", "web_fetch", "web_search", "write_file", "edit_file"]) {
     ok(files.includes(`${must}.ts`), `…including a sentinel for ${must} (the ones that could reach the parent's world)`);
   }
   const instructions = readFileSync(join(repoRoot, "agent", "subagents", "fresh_eyes_review", "instructions.md"), "utf8");

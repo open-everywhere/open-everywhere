@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   allAtWriteTier,
   allAttributedToRoutine,
@@ -52,6 +52,7 @@ import type { HaltOwnershipHandle } from "../packages/core/scripts/e2e/control-w
 import { EGRESS_POLICY_ACTION, findCredentialedWriteHost, notionBlockPhrases, notionPageLinks, quotedPagePhrase } from "../packages/core/scripts/e2e/egress-evidence.js";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
+import { printedSource } from "./printed-source.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -164,6 +165,7 @@ const {
 const {
   SCENARIOS, skipCategory, skipReason, ScenarioSkip, FixtureMissing, isFillerAck, isPendingWorkHandoff, expensiveReasonError, delegationHasReturned,
   handoffReplyWaitMs,
+  answerRowWaitMs,
   seedWriteWaitMs,
   DELEGATED_TURN_SURFACE_ACTIONS,
   DELEGATED_TURN_DELEGATION_ACTIONS,
@@ -192,9 +194,12 @@ const {
   awaitReplyPostRows,
   awaitRepliesForAdmittedWakes,
   awaitStandDownVerdict,
+  describeEngagedFollowUp,
+  diagnoseEngagedFollowUp,
   dispatchAddressings,
   isAmbientLegAddressing,
   dispatchedAction,
+  NO_REPLY_OBSERVED_ACTION,
   replyPostCount,
   replyPostSurfaces,
   reportedDirectMention,
@@ -586,6 +591,41 @@ const { parseAppMentionEvent } = await import(
 }
 
 {
+  // The source pins below read a scenario's code through printedSource, never through
+  // `run.toString()`: tsx and vite's SSR transform (the batched chain) print the same function in
+  // different shapes, and a pin must hold the same claim under both runners.
+  const tsxShape = 'async ctx=>{const f=__name(async r=>r.id===x.id,"f");function g(){return 1}__name(g,"g");const m=await import("node:fs").then(s=>{const e="default";return s[e]&&typeof s[e]=="object"&&"__esModule"in s[e]?s[e]:s});if(!ctx.a){ctx.skip("a \\u2014 b")}return claim(fixture,{op:OP},m)}';
+  const viteShape = [
+    "async (ctx) => {",
+    "\tconst f = async (r) => r.id === x.id;",
+    "\tfunction g() {",
+    "\t\treturn 1;",
+    "\t}",
+    '\tconst m = await __vite_ssr_dynamic_import__("node:fs");',
+    "\tif (!ctx.a) {",
+    '\t\tctx.skip("a \u2014 b");',
+    "\t};",
+    "\treturn (0,__vite_ssr_import_61__.claim)(fixture, { op: __vite_ssr_import_3__.OP }, m);",
+    "}",
+  ].join("\n");
+  ok(printedSource(tsxShape) === printedSource(viteShape), `🔴 printedSource gives ONE text for the tsx and the vite SSR print of the same function (tsx ${printedSource(tsxShape)} / vite ${printedSource(viteShape)})`);
+  ok(
+    printedSource(viteShape).includes("claim(fixture,{op:OP},m)") && printedSource(viteShape).includes("const f=async r=>r.id===x.id;") && printedSource(viteShape).includes('await import("node:fs");'),
+    "🔴 …and that text is the tsx whitespace shape the pins are written in, with the import namespaces, the keepNames wrappers and the interop callback gone",
+  );
+  ok(
+    printedSource(viteShape.replace("x.id", "y.id")) !== printedSource(tsxShape),
+    "NEGATIVE CONTROL: a real code change still changes the printed text — the printer drops only the runner's own additions",
+  );
+  ok(
+    printedSource("ctx=>{while(x);if(a);else b()}") === printedSource("(ctx) => {\n\twhile (x);\n\tif (a);\n\telse b();\n}"),
+    "🔴 an empty statement as a loop or `if` body survives the print — only a stray `;` in a statement list is dropped",
+  );
+  const residue = SCENARIOS.filter((s) => /__vite_ssr_|\b__name\(|"__esModule"in/u.test(printedSource(s.run))).map((s) => s.id);
+  ok(SCENARIOS.length > 100 && residue.length === 0, `🔴 no scenario's printed source carries a runner's own residue under THIS runner (residue in: ${residue.join(",") || "none"})`);
+}
+
+{
   const { ROUTINE_CONNECTOR_WRITE_OP: OP, routineConnectorFixture, routineConnectorFixtureClaim, NOTION_MCP_HOST } = await import(
     "../packages/core/scripts/e2e/routine-connector-fixture.js"
   );
@@ -594,7 +634,7 @@ const { parseAppMentionEvent } = await import(
   const { loadBundles } = await import("../agent/access/bundles.js");
   const { declaredPermissionKinds } = await import("../packages/core/agent/routines/declared-permissions.js");
   const { unattendedArmRoad, fireSessionIds, workerRowsOfFire, FIRE_ATTRS_SEEN_ACTION } = await import("../packages/core/scripts/e2e/gate-joins.js");
-  const body = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString();
+  const body = printedSource(SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run);
 
   ok(OP === "notion__notion-create-pages", `🔴 the leg drives the tool the hosted Notion MCP server declares (${OP}) — the name connector-approval-reachability-test.ts drives too`);
   ok(classifyConnectorOpTier(OP) === "write", `🔴 classifyConnectorOpTier puts ${OP} in the WRITE tier (got ${classifyConnectorOpTier(OP)}) — the only tier the fence's lift arm lifts; destructive would make arm B unbuildable`);
@@ -647,7 +687,7 @@ const { parseAppMentionEvent } = await import(
     action: "worker.toolset",
     detail: { worker: id, parentSession: parent, rootSession: root, grain: "task", tools, toolCount: tools.length, namesTruncated: false },
   });
-  const creationWorker = worker("wrun_2092CREATE", SEAT, SEAT, ["bash", "load_skill", "read_file", "reply"]);
+  const creationWorker = worker("wrun_2092CREATE", SEAT, SEAT, ["bash", "eve__skill", "read_file", "reply"]);
 
   ok(
     JSON.stringify(fireSessionIds([seen, seen, { ...seen, detail: { sessionId: null } }, creationWorker])) === JSON.stringify([FIRE]),
@@ -662,7 +702,7 @@ const { parseAppMentionEvent } = await import(
   );
   ok(nRh.verdict === "unexplained" && nRh.road.workers === 0, "🔴 …and the creation roster no longer buys the arm a NOT PROVEN: the empty plane stays HARD");
 
-  const fireWorker = worker("wrun_2092FIREW", FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
+  const fireWorker = worker("wrun_2092FIREW", FIRE, FIRE, ["bash", "eve__skill", "read_file", "reply"]);
   const own = unattendedArmRoad({ planeRows: 0, workerRows: [creationWorker, fireWorker], fireSessions: [FIRE], op: OP });
   ok(own.verdict === "not-proven" && own.road.workers === 1, "NEGATIVE CONTROL: the FIRE's own worker without the op still explains the road — NOT PROVEN, one worker counted");
   const nested = worker("wrun_2092NESTED", "wrun_2092FIREW", FIRE, ["bash", OP]);
@@ -689,8 +729,8 @@ const { parseAppMentionEvent } = await import(
     `🔴 OPE-2110: the fire's own step is the delegation, and the worker's instruction is quoted verbatim (got: ${steps})`,
   );
   ok(
-    steps.includes(`"Call \`connection_search\` for the Notion page-creation operation, then call \`${OP}\` with `),
-    "🔴 OPE-2097: the quoted instruction names connection_search and then the op, as a fact",
+    steps.includes(`"Call \`eve__search\` for the Notion page-creation operation, then call \`eve__tool\` with name \`${OP}\` and `),
+    "🔴 OPE-2097: the quoted instruction names eve__search and then the op through eve__tool, as a fact",
   );
   const FORBIDS_SKILL = /do not (load|use) (any|the) skill|do not use the notion-rest/iu;
   ok(FORBIDS_SKILL.exec(steps) === null, `🔴 OPE-2177: the quoted instruction forbids no skill (got: ${steps})`);
@@ -742,38 +782,38 @@ const { parseAppMentionEvent } = await import(
 
   const { fireOpCalls } = await import("../packages/core/scripts/e2e/gate-joins.js");
   const tev = (index: number, type: string, data: unknown) => ({ index, at: null, type, data });
-  const search = tev(1, "actions.requested", { actions: [{ toolName: "connection_search", callId: "c1", input: { query: "notion create page" } }] });
-  const found = tev(2, "action.result", { result: { callId: "c1", kind: "tool-result", toolName: "connection_search", output: { tools: [{ name: OP, inputSchema: {} }] } } });
-  const skill = tev(3, "actions.requested", { actions: [{ toolName: "load_skill", callId: "c2", input: { name: "notion-rest" } }] });
-  const failed = tev(4, "actions.requested", { actions: [{ toolName: "report_run_failed", callId: "c3", input: { reason: `the required one-shot ${OP} call was not made` } }] });
+  const search = tev(1, "call.requested", { callId: "c1", owner: { runId: "r1" }, capability: { kind: "tool", name: "eve__search" }, input: { query: "notion create page" } });
+  const found = tev(2, "call.settled", { callId: "c1", outcome: "completed", output: { tools: [{ name: OP, inputSchema: {} }] } });
+  const skill = tev(3, "call.requested", { callId: "c2", owner: { runId: "r1" }, capability: { kind: "tool", name: "eve__skill" }, input: { name: "notion-rest" } });
+  const failed = tev(4, "call.requested", { callId: "c3", owner: { runId: "r1" }, capability: { kind: "tool", name: "report_run_failed" }, input: { reason: `the required one-shot ${OP} call was not made` } });
   const nRj = [search, found, skill, failed];
   ok(fireOpCalls(nRj, OP).discovered === true && fireOpCalls(nRj, OP).called === false, "the measured shape reads discovered=true, called=false");
-  const skillText = tev(6, "action.result", { result: { callId: "c2", kind: "tool-result", toolName: "load_skill", output: `a 'notion' MCP connector (${OP}) acts as the subject on its grant` } });
+  const skillText = tev(6, "call.settled", { callId: "c2", outcome: "completed", output: `a 'notion' MCP connector (${OP}) acts as the subject on its grant` });
   ok(
     fireOpCalls([search, skillText, failed], OP).discovered === false,
-    "NEGATIVE CONTROL: a tool RESULT that names the op but is not connection_search's (the skill text) is not a discovery",
+    "NEGATIVE CONTROL: a tool RESULT that names the op but is not eve__search's (the skill text) is not a discovery",
   );
   const fireT = (events: unknown[]) => [{ sessionId: FIRE, role: "fire" as const, events: events as never }];
   const disc = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, transcripts: fireT(nRj) });
   ok(
-    disc.note === `the fire discovered the op (connection_search returned ${OP}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (fire session(s) ${JSON.stringify([FIRE])})`,
+    disc.note === `the fire discovered the op (eve__search returned ${OP}) and made no op call, and delegated to no worker — the road was open and the fire did not take it (fire session(s) ${JSON.stringify([FIRE])})`,
     `🔴 OPE-2097: the evidence line names "discovered, not called" (got: ${disc.note})`,
   );
   ok(disc.verdict === "unexplained", "🔴 …and it stays a HARD red");
   const noRoad = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, transcripts: fireT([skill, failed]) });
   ok(noRoad.note.startsWith("the fire called no connector tool and delegated to no worker") && noRoad.verdict === "unexplained", "NEGATIVE CONTROL: no discovery ⇒ the \"no road\" line, still HARD");
-  const calledOp = tev(5, "actions.requested", { actions: [{ toolName: OP, callId: "c4", input: {} }] });
+  const calledOp = tev(5, "call.requested", { callId: "c4", owner: { runId: "r1" }, capability: { kind: "tool", name: OP }, input: {} });
   const called = unattendedArmRoad({ planeRows: 0, workerRows: [], fireSessions: [FIRE], op: OP, transcripts: fireT([search, found, calledOp]) });
   ok(called.note.startsWith(`fire ${FIRE} CALLED ${OP} and the connector plane carries no row`) && called.verdict === "unexplained", "an op call with no plane row names the calling session and the fence recording nothing, HARD");
 
   const { workerSessionIdsOfFire, transcriptTookRestRoad, attendedRowsForOp } = await import("../packages/core/scripts/e2e/gate-joins.js");
   const W = "wrun_41MBA5EMBG0GTKFMFFCJBSW0XA";
-  const restWorker = worker(W, FIRE, FIRE, ["bash", "load_skill", "read_file", "reply"]);
+  const restWorker = worker(W, FIRE, FIRE, ["bash", "eve__skill", "read_file", "reply"]);
   ok(
     JSON.stringify(workerSessionIdsOfFire([creationWorker, restWorker, restWorker], [FIRE])) === JSON.stringify([W]),
     "the fire's worker ids come from its own worker.toolset rows, deduplicated; the creation turn's worker is not one",
   );
-  const pageCreate = tev(7, "actions.requested", { actions: [{ toolName: "bash", callId: "c5", input: { command: "node skills/notion-rest/notion.mjs page create --title 'OE e2e rcwa-71582'" } }] });
+  const pageCreate = tev(7, "call.requested", { callId: "c5", owner: { runId: "r1" }, capability: { kind: "tool", name: "bash" }, input: { command: "node skills/notion-rest/notion.mjs page create --title 'OE e2e rcwa-71582'" } });
   ok(transcriptTookRestRoad([skill]) && transcriptTookRestRoad([pageCreate]), "a notion-rest skill load, or a bash run of its script, is the REST road");
   ok(!transcriptTookRestRoad([search, found, calledOp]), "NEGATIVE CONTROL: the connector road is not the REST road");
   const both = (workerEvents: unknown[]) => [...fireT([]), { sessionId: W, role: "worker" as const, events: workerEvents as never }];
@@ -785,7 +825,7 @@ const { parseAppMentionEvent } = await import(
   );
   const wDisc = unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, transcripts: both([search, found, skill]) });
   ok(
-    wDisc.note.includes(`worker ${W} discovered the op (connection_search returned ${OP}) and no session called it`),
+    wDisc.note.includes(`worker ${W} discovered the op (eve__search returned ${OP}) and no session called it`),
     `🔴 OPE-2110: "discovered, not called" names the WORKER that discovered (got: ${wDisc.note})`,
   );
   const wCalled = unattendedArmRoad({ planeRows: 0, workerRows: [restWorker], fireSessions: [FIRE], op: OP, transcripts: both([search, found, calledOp]) });
@@ -853,7 +893,7 @@ const { parseAppMentionEvent } = await import(
   ok(readsAsSpendRefusalReport("I raised this channel's monthly spend cap to $2,558 USD.") === false, "NEGATIVE CONTROL: a post that claims it raised the cap is NOT the refusal report");
   ok(readsAsSpendRefusalReport("The request was refused.") === false, "NEGATIVE CONTROL: a refusal that does not name the spend cap is NOT the report");
 
-  const body = SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run.toString();
+  const body = printedSource(SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run);
   const flat = body.replace(/\s+/g, "");
   ok(flat.includes("join=fireReportJoin([...sent,...joinRows])"), "🔴 WIRING: the fire wait reads the fire's report through fireReportJoin");
   ok(flat.includes("readsAsSpendRefusalReport(reportText)"), "🔴 WIRING: the content gate reads the joined report");
@@ -876,12 +916,12 @@ const { parseAppMentionEvent } = await import(
   ok(suspendedModule.slackVendorTimestamp("999999999999999999.1") === undefined, "NEGATIVE CONTROL: an out-of-range Slack timestamp is refused, not thrown");
   for (const surface of ["discord", "teams", "linear"]) {
     const sc = SCENARIOS.find((s) => s.id === `S-SUSPENDED-${surface}`)!;
-    const body = sc.run.toString();
+    const body = printedSource(sc.run);
     ok(!body.includes("S-EVE-BRIDGE") && body.includes("S-SUSPENDED-slack's card road") && body.includes("op.connector card"), `🔴 OPE-2362: S-SUSPENDED-${surface}'s fixture message names the card road, not the retired bridge`);
     ok(!sc.title.includes("SUSPENDED turn") && sc.title.includes("Approval card"), `OPE-2362: S-SUSPENDED-${surface}'s title names the card (got ${sc.title})`);
   }
   const gh = SCENARIOS.find((s) => s.id === "S-SUSPENDED-github")!;
-  ok(!gh.run.toString().includes("eve-HITL") && !gh.title.includes("eve-HITL") && gh.run.toString().includes("op.connector card"), "🔴 OPE-2362: S-SUSPENDED-github names the card road and no longer claims an eve-HITL site exists");
+  ok(!printedSource(gh.run).includes("eve-HITL") && !gh.title.includes("eve-HITL") && printedSource(gh.run).includes("op.connector card"), "🔴 OPE-2362: S-SUSPENDED-github names the card road and no longer claims an eve-HITL site exists");
   const ghScope = LAUNCH_RELEASE_SCOPE.find((r) => r.id === "S-SUSPENDED-github");
   ok(ghScope?.requirement === "NON_LAUNCH" && ghScope.reason?.includes("op.connector card") === true && !/Eve-native/i.test(ghScope.reason ?? ""), "OPE-2362: the GitHub row's NON_LAUNCH reason names the card road");
 }
@@ -921,7 +961,7 @@ const { parseAppMentionEvent } = await import(
   ok(fireReportJoin([sent, forward, foreignRequest, seatTurn, report]).workSessionIds.length === 0, "NEGATIVE CONTROL: a dispatch row for another request does not join");
 
   ok(FIRE_REPORT_JOIN_ACTIONS.includes("work.forwarded") && FIRE_REPORT_JOIN_ACTIONS.includes("delegation.task_started"), "🔴 WIRING: the fire-report read asks for work.forwarded and delegation.task_started");
-  const flat = SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
+  const flat = printedSource(SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run).replace(/\s+/g, "");
   ok(flat.includes("actions:FIRE_REPORT_JOIN_ACTIONS"), "🔴 WIRING: S-UNATTENDED-DENY reads FIRE_REPORT_JOIN_ACTIONS");
   ok(flat.includes("fireSessions=fireSettleSessionIds(fireReport.join)"), "🔴 WIRING: the settle gate follows the forward");
 }
@@ -968,7 +1008,7 @@ const { parseAppMentionEvent } = await import(
   const stray = fireReportJoin([sent, turn, handoff, row(SETTLEMENT_REPORT_POSTED_ACTION, "2026-06-03T02:42:30.000Z", { task: "task_other", wake: "other-wake" }, 8)]);
   ok(stray.reportRoad === "last-post" && stray.report?.detail?.id === "1780453341.000100", `NEGATIVE CONTROL: a stray settlement row names no fire post (got ${String(stray.reportRoad)})`);
 
-  const flat = (await import("../packages/core/scripts/e2e/scenarios.js")).SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run.toString().replace(/\s+/g, "");
+  const flat = printedSource((await import("../packages/core/scripts/e2e/scenarios.js")).SCENARIOS.find((s) => s.id === "S-UNATTENDED-DENY")!.run).replace(/\s+/g, "");
   const { FIRE_REPORT_JOIN_ACTIONS: joinActions } = await import("../packages/core/scripts/e2e/gate-joins.js");
   ok(
     flat.includes("actions:FIRE_REPORT_JOIN_ACTIONS") && joinActions.includes("reply.post") && joinActions.includes(SETTLEMENT_REPORT_POSTED_ACTION),
@@ -1465,7 +1505,7 @@ const { parseAppMentionEvent } = await import(
   ok(!answersNumber("ref teams-engaged-13", 13, "teams-engaged-13"), "🔴 NEGATIVE CONTROL: an exact echo of a marker whose digits are 13 cannot pass for the answer");
   ok(answersNumber("13, ref teams-engaged-13", 13, "teams-engaged-13"), "…and the strip does not remove a real answer beside that marker");
 
-  const body = SCENARIOS.find((s) => s.id === "J-ENGAGED-teams")!.run.toString();
+  const body = printedSource(SCENARIOS.find((s) => s.id === "J-ENGAGED-teams")!.run);
   const flat = body.replace(/\s+/g, "");
   ok(!flat.includes("contains:markerE"), "🔴 WIRING: no J-ENGAGED-teams wait keys on the marker any more");
   ok(flat.includes("afterFollowUp(m)&&answersNumber(m.text,13,markerE)"), "🔴 WIRING: the follow-up wait ends on a reply that answers 13");
@@ -3417,7 +3457,7 @@ const { parseAppMentionEvent } = await import(
   ok((afterHandoff ?? 0) > MEASURED_ASK_TO_ANSWER_MS, `🔴 OPE-2105: the delegated wait covers a live run's measured ask→answer of ${MEASURED_ASK_TO_ANSWER_MS}ms`);
   ok(handoffReplyWaitMs(uniXAnswer) === undefined, "OPE-2105 NEGATIVE CONTROL: a substantive first reply yields undefined — the leg accepts it");
   const uniX = SCENARIOS.find((s) => s.id === "J-UNI-X")!;
-  const uniXSrc = uniX.run.toString().replace(/\s+/g, "");
+  const uniXSrc = printedSource(uniX.run).replace(/\s+/g, "");
   ok(uniXSrc.includes("handoffReplyWaitMs(firstAck.text)"), "🔴 OPE-2105: J-UNI-X leg 1 chooses its second wait from the first Slack reply");
   ok(uniXSrc.includes("handoffReplyWaitMs(firstReply.body)"), "🔴 OPE-2105: J-UNI-X leg 2 chooses its second wait from the first GitHub comment");
   ok(
@@ -3482,7 +3522,7 @@ const { parseAppMentionEvent } = await import(
   ok(decodeSlackEphemeralText('{"text":42}') === '{"text":42}', "a non-string text field passes through unchanged — the decode answers the envelope's text or the body, never a coerced number");
   ok(decodeSlackEphemeralText("") === "", "an empty body stays empty, so it still reaches the parser as the no-facts case");
 
-  const statusRun = SCENARIOS.find((s) => s.id === "S-OE-STATUS")!.run.toString().replace(/\s+/gu, "");
+  const statusRun = printedSource(SCENARIOS.find((s) => s.id === "S-OE-STATUS")!.run).replace(/\s+/gu, "");
   ok(
     statusRun.includes("decodeSlackEphemeralText(res.body)"),
     "S-OE-STATUS decodes the envelope BEFORE it parses — deleting that one call is exactly what a live run was",
@@ -3533,6 +3573,27 @@ const { parseAppMentionEvent } = await import(
   );
   ok(/rowForReplyChunkSet\(/.test(provBody), "🔴 S-PROVENANCE-DM joins the provenance row over the reply's CHUNK SET, not the first chunk's ts alone (OPE-2008)");
   ok(!/^\s*optional:\s*true/mu.test(provBody), "S-PROVENANCE-DM declares no `optional: true` field");
+  // A live run on eve 1.x: the seat posted a hand-off (reply.post done=false) at T+0 s, the worker
+  // settled at T+115 s, the carriage row landed at T+140 s and the answer's provenance row at T+142 s.
+  // The leg had read the rows 60 s after its read-tier connector.op row and judged 0 carriage rows.
+  const MEASURED_HANDOFF_TO_PROVENANCE_MS = 142_000;
+  ok(answerRowWaitMs(true) === 420_000, `🔴 a hand-off first reply gives the answer's audit rows the delegated budget, FILE_REPLY_WAIT (got ${answerRowWaitMs(true)})`);
+  ok(answerRowWaitMs(true) > MEASURED_HANDOFF_TO_PROVENANCE_MS, "🔴 the delegated row wait covers the measured hand-off-to-provenance-row gap of a live eve 1.x run");
+  ok(answerRowWaitMs(false) === 60_000, "NEGATIVE CONTROL: a first reply that is the answer keeps the short audit-row wait");
+  const provSrc = printedSource(SCENARIOS.find((x) => x.id === "S-PROVENANCE-DM")!.run).replace(/\s+/g, "");
+  ok(
+    provSrc.includes("answerRowWaitMs(handedOff)") && provSrc.includes("replyIsPendingWorkHandoff(ctx,runStart)(answer.ts,answer.text)"),
+    "🔴 S-PROVENANCE-DM chooses its row wait from the first reply's reply.post done flag",
+  );
+  ok(
+    (provSrc.match(/timeoutMs:answerWait/g) ?? []).length === 2 && !/timeoutMs:AUDIT_ROW_WAIT,what:`(a connector\.op|the \$\{REPLY_PROVENANCE_ACTION\})/.test(provSrc),
+    "🔴 S-PROVENANCE-DM's connector.op wait and provenance-row wait both use the hand-off-aware wait — a 60 s wait after a hand-off judges the interim post",
+  );
+  const provLeg = SCENARIOS.find((x) => x.id === "S-PROVENANCE-DM")!;
+  ok(
+    provLeg.timeoutMs >= 420_000 * 4 + 60_000,
+    `🔴 S-PROVENANCE-DM's budget covers two delegated asks and two delegated row waits (got ${provLeg.timeoutMs})`,
+  );
   ok(
     /needs E2E_TARGET_URL \+ E2E_CONTROL_READ_TOKEN/.test(provBody) && !/ctx\.skip\(\s*\n?\s*"needs E2E_TARGET_URL/.test(provBody),
     "🔴 the missing-credential branch is a GATE, not a skip — the control-read pair is a HARNESS input, so its absence is a run configured wrong and never a fact about the deployment",
@@ -3638,7 +3699,7 @@ const { parseAppMentionEvent } = await import(
   const parentChannelWaits: string[] = [];
   const AMBIENT_CHANNEL_WAIT_LEGS = new Set(["S-AMBIENT-discord"]);
   for (const s of SCENARIOS) {
-    const body = s.run.toString();
+    const body = printedSource(s.run);
     for (const w of discordWaits(body)) {
       totalWaits++;
       if (/\.channelId$/.test(w.channelArg) && !AMBIENT_CHANNEL_WAIT_LEGS.has(s.id)) parentChannelWaits.push(`${s.id}: discord.${w.method}(${w.channelArg}, …)`);
@@ -3648,7 +3709,7 @@ const { parseAppMentionEvent } = await import(
     const leg = SCENARIOS.find((sc) => sc.id === id);
     ok(leg !== undefined, `OPE-1479: the channel-wait exemption names a leg that exists (${id})`);
     ok(
-      leg !== undefined && !/discord\.mention\(/.test(leg.run.toString()),
+      leg !== undefined && !/discord\.mention\(/.test(printedSource(leg.run)),
       `🔴 OPE-1479: ${id} is exempt from the thread-wait rule ONLY because it addresses nobody — a body that mentions the bot auto-threads, and waiting in the channel would then be the bug this arm catches`,
     );
   }
@@ -3660,7 +3721,7 @@ const { parseAppMentionEvent } = await import(
       `leg dies on its full timeout while the product is right. Found ${parentChannelWaits.length}: ${parentChannelWaits.join("; ")}`,
   );
 
-  const grantBody = SCENARIOS.find((s) => s.id === "S-DISCORD-GRANT")!.run.toString();
+  const grantBody = printedSource(SCENARIOS.find((s) => s.id === "S-DISCORD-GRANT")!.run);
   function threadBindings(body: string): ReadonlyMap<string, string> {
     const bound = new Map<string, string>();
     for (const m of body.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*await\s+discord\.awaitThread\(/g)) {
@@ -4150,7 +4211,7 @@ const { parseAppMentionEvent } = await import(
   );
 
   for (const id of ["S-DM-NOTION", "S-NOTION-WRITE", "S-CONNECTOR-TIER", "S24"]) {
-    const src = SCENARIOS.find((s) => s.id === id)!.run.toString();
+    const src = printedSource(SCENARIOS.find((s) => s.id === id)!.run);
     ok(src.includes("watchConnectorArming("), `🔴 REACHABILITY — ${id} opens an arming watch (a leg that dropped the call keeps every assertion above green)`);
     const judgeGates = (src.match(/judgePass\(/g) ?? []).length;
     const rechecks = (src.match(/\.recheck\(\)/g) ?? []).length;
@@ -4166,7 +4227,7 @@ const { parseAppMentionEvent } = await import(
   }
 
   {
-    const src = SCENARIOS.find((s) => s.id === "S-DM-NOTION")!.run.toString();
+    const src = printedSource(SCENARIOS.find((s) => s.id === "S-DM-NOTION")!.run);
     ok(
       src.includes("dm.collectBotMessagesAfter("),
       "🔴 OPE-1027 — S-DM-NOTION polls the merged thread+top-level geometry (collectBotMessagesAfter), not a thread-only read",
@@ -4310,7 +4371,7 @@ const { parseAppMentionEvent } = await import(
   }
 
   {
-    const src = SCENARIOS.find((s) => s.id === "S24")!.run.toString();
+    const src = printedSource(SCENARIOS.find((s) => s.id === "S24")!.run);
     ok(
       /Run the search live against Notion/.test(src),
       "🔴 OPE-1492 — S24's ask demands a LIVE read of the connected workspace, so a prose answer is no longer the path of least resistance",
@@ -4324,7 +4385,7 @@ const { parseAppMentionEvent } = await import(
       "🔴 OPE-1492 — S24's ask closes the prose exits (memory / backscroll / web), which is what let the old lenient ask pass with a silent audit",
     );
     ok(
-      !/connection_search|notion__/.test(src),
+      !/connection_search|eve__search|notion__/.test(src),
       "🔴 OPE-1492 (row 16's lesson) — S24's ask names NO tool the lean seat cannot hold: the seat must delegate, not refuse",
     );
 
@@ -4515,10 +4576,13 @@ const { parseAppMentionEvent } = await import(
   ok(linForge.ok && linForge.cfg.webhookSecret === "lin-whsec", "linear cfg carries the optional forge secret when present");
 
   const { signLinearBody, buildAgentSessionEvent } = await import("../packages/core/scripts/e2e/linear-driver.js");
-  const { signLinearWebhookBody } = await import(`${pathToFileURL(eveRootDir).href}/dist/src/public/channels/linear/verify.js`);
+  const { signLinearWebhookBody, verifyLinearWebhookDelivery, LINEAR_SIGNATURE_HEADER } = await import("@open-everywhere/provider-linear/agent/channels/linear-webhook-verify.js");
   const secret = "lin-e2e-secret";
   const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_000_000_000 });
-  ok(signLinearBody(secret, raw) === signLinearWebhookBody(raw, secret), "the linear forge signer matches eve's own signLinearWebhookBody (hex, no prefix)");
+  ok(signLinearBody(secret, raw) === signLinearWebhookBody(raw, secret), "the linear forge signer matches the provider's signLinearWebhookBody (hex, no prefix)");
+  const forged = new Headers({ [LINEAR_SIGNATURE_HEADER]: signLinearBody(secret, raw) });
+  ok(verifyLinearWebhookDelivery(forged, raw, { primarySecret: secret, nowMs: 1_720_000_000_000 }), "the provider's webhook verifier ACCEPTS a forged delivery signed with the same secret");
+  ok(!verifyLinearWebhookDelivery(forged, raw, { primarySecret: "another-secret", nowMs: 1_720_000_000_000 }), "…and REFUSES it under another secret");
   ok(!/^sha256=/.test(signLinearBody(secret, raw)), "the linear signature carries NO sha256= prefix (unlike github/notion)");
   const ev = buildAgentSessionEvent({ action: "created", organizationId: "org1", sessionId: "s1", issueId: "i1", issueIdentifier: "OE-1", teamId: "t1", creatorId: "u1", nowMs: 1_720_000_000_000 });
   ok(ev.type === "AgentSessionEvent" && ev.webhookTimestamp === 1_720_000_000_000, "forged AgentSessionEvent carries the type + the ±60s webhookTimestamp field");
@@ -4689,13 +4753,13 @@ const { parseAppMentionEvent } = await import(
   ok(transcriptPath("wrun_abc") === "/control/v1/session/wrun_abc/transcript", "transcript path is /control/v1/session/<id>/transcript with no query when bare");
   ok(transcriptPath("wr un/x", { startIndex: 0 }) === "/control/v1/session/wr%20un%2Fx/transcript?startIndex=0", "transcript path URL-encodes the sessionId + appends the query");
   const events = [
-    { index: 0, at: "2026-03-15T23:30:00Z", type: "message.received", data: { message: "hi" } },
-    { index: 1, at: "2026-03-15T23:30:01Z", type: "actions.requested", data: { actions: [{ toolName: "memory_read" }] } },
-    { index: 2, at: "2026-03-15T23:30:02Z", type: "message.completed", data: { message: "answer" } },
+    { index: 0, at: "2026-03-15T23:30:00Z", type: "delivery.consumed", data: { message: "hi" } },
+    { index: 1, at: "2026-03-15T23:30:01Z", type: "call.requested", data: { callId: "c1", owner: { runId: "r1" }, capability: { kind: "tool", name: "memory_read" } } },
+    { index: 2, at: "2026-03-15T23:30:02Z", type: "content.completed", data: { text: "answer" } },
   ];
-  ok(findEvents(events, "message.completed").length === 1, "findEvents locates events by type");
-  ok(findEvents(events, "actions.requested", (e) => JSON.stringify(e.data).includes("memory_read")).length === 1, "findEvents supports a predicate (did the turn call a tool?)");
-  ok(findEvents(events, "reasoning.completed").length === 0, "findEvents returns empty for an absent type");
+  ok(findEvents(events, "content.completed").length === 1, "findEvents locates events by type");
+  ok(findEvents(events, "call.requested", (e) => JSON.stringify(e.data).includes("memory_read")).length === 1, "findEvents supports a predicate (did the turn call a tool?)");
+  ok(findEvents(events, "interaction.opened").length === 0, "findEvents returns empty for an absent type");
 }
 
 {
@@ -4706,11 +4770,11 @@ const { parseAppMentionEvent } = await import(
   const wake = (index: number, trigger: string, context: readonly string[]) => ({
     index,
     at: "2026-05-14T11:35:00Z",
-    type: "message.received",
+    type: "delivery.consumed",
     data: { message: `<channel><message>${context.join("</message><message>")}</message></channel>\n<trigger>${trigger}</trigger>` },
   });
   const earlier = wake(0, STALE, []);
-  const reply = { index: 2, at: "2026-05-14T11:35:02Z", type: "message.completed", data: { message: `the token was ${IDLE}` } };
+  const reply = { index: 2, at: "2026-05-14T11:35:02Z", type: "content.completed", data: { text: `the token was ${IDLE}` } };
 
   const healthy = seatCatchUpWake([earlier, wake(1, TRIG, [IDLE]), reply], { trigger: TRIG, caughtUp: IDLE, stale: [STALE] });
   ok(healthy.wakeIndex === 1, "seatCatchUpWake locates the wake by its TRIGGER marker, not by position — the earlier wake in the same stream is not it");
@@ -4757,35 +4821,44 @@ const { parseAppMentionEvent } = await import(
   );
   const { summariseTimings } = await import("../packages/core/scripts/e2e/timings-record.js");
 
+  const t1 = { turnId: "t1" };
+  const r0 = { turnId: "t1", runId: "r0" };
+  const r1 = { turnId: "t1", runId: "r1" };
   const worker = [
-    { index: 0, at: "2026-03-29T01:10:08.677Z", type: "session.started", data: { runtime: { modelId: "m" } } },
-    { index: 1, at: "2026-03-29T01:10:10.903Z", type: "turn.started", data: { turnId: "t1", sequence: 0 } },
-    { index: 2, at: "2026-03-29T01:10:10.917Z", type: "message.received", data: { message: "<wake .../>", turnId: "t1" } },
-    { index: 3, at: "2026-03-29T01:10:10.918Z", type: "step.started", data: { turnId: "t1", stepIndex: 0 } },
-    { index: 4, at: "2026-03-29T01:10:16.951Z", type: "reasoning.appended", data: { turnId: "t1", stepIndex: 0, reasoningDelta: "a" } },
-    { index: 5, at: "2026-03-29T01:10:17.010Z", type: "reasoning.appended", data: { turnId: "t1", stepIndex: 0, reasoningDelta: "b" } },
-    { index: 6, at: "2026-03-29T01:10:17.079Z", type: "actions.requested", data: { turnId: "t1", stepIndex: 0, actions: [{ callId: "c1", kind: "tool-call", toolName: "read_file", input: {} }] } },
-    { index: 7, at: "2026-03-29T01:10:17.169Z", type: "action.result", data: { turnId: "t1", stepIndex: 0, status: "completed", result: { callId: "c1", kind: "tool-result", toolName: "read_file", output: "x" } } },
-    { index: 8, at: "2026-03-29T01:10:17.222Z", type: "step.completed", data: { turnId: "t1", stepIndex: 0, finishReason: "tool-calls", usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 }, providerMetadata: { gateway: { generationId: "gen_1" } } } },
-    { index: 9, at: "2026-03-29T01:10:17.625Z", type: "step.started", data: { turnId: "t1", stepIndex: 1 } },
-    { index: 10, at: "2026-03-29T01:10:24.504Z", type: "message.appended", data: { turnId: "t1", stepIndex: 1, messageDelta: "done" } },
-    { index: 11, at: "2026-03-29T01:10:24.625Z", type: "step.completed", data: { turnId: "t1", stepIndex: 1, finishReason: "stop", usage: { inputTokens: 200, outputTokens: 30, costUsd: 0.002 } } },
-    { index: 12, at: "2026-03-29T01:10:24.700Z", type: "turn.completed", data: { turnId: "t1", sequence: 1 } },
-    { index: 13, at: "2026-03-29T01:10:24.800Z", type: "session.waiting", data: { continuationToken: "ct", wait: "next-user-message" } },
+    { index: 0, at: "2026-03-29T01:10:08.677Z", type: "session.started", data: { runtime: { agentId: "a", eveVersion: "1.0.0" } } },
+    { index: 1, at: "2026-03-29T01:10:10.903Z", type: "turn.started", data: { turnId: "t1", cause: { deliveryId: "d1" }, follows: null } },
+    { index: 1, at: "2026-03-29T01:10:10.917Z", type: "delivery.consumed", data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: "<wake .../>" }] } },
+    { index: 2, at: "2026-03-29T01:10:10.918Z", type: "model.started", data: { runId: "r0", modelId: "m", attempt: 1 }, scope: r0 },
+    { index: 3, at: "2026-03-29T01:10:10.918Z", type: "content.delta", data: { partId: "p0", kind: "reasoning", delta: "a" }, scope: r0 },
+    { index: 4, at: "2026-03-29T01:10:10.918Z", type: "content.delta", data: { partId: "p0", kind: "reasoning", delta: "b" }, scope: r0 },
+    { index: 5, at: "2026-03-29T01:10:17.079Z", type: "call.requested", data: { callId: "c1", owner: { runId: "r0" }, capability: { kind: "tool", name: "read_file" }, input: {} }, scope: r0 },
+    { index: 6, at: "2026-03-29T01:10:17.169Z", type: "call.settled", data: { callId: "c1", outcome: "completed", output: "x" }, scope: t1 },
+    { index: 7, at: "2026-03-29T01:10:17.222Z", type: "model.settled", data: { runId: "r0", outcome: "completed", finishReason: "tool-calls", generationId: "gen_1" }, scope: r0 },
+    { index: 7, at: "2026-03-29T01:10:17.222Z", type: "usage.recorded", data: { owner: { runId: "r0" }, kind: "model", usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.001 } }, scope: r0 },
+    { index: 8, at: "2026-03-29T01:10:17.625Z", type: "model.started", data: { runId: "r1", modelId: "m", attempt: 1 }, scope: r1 },
+    { index: 9, at: "2026-03-29T01:10:17.625Z", type: "content.delta", data: { partId: "p1", kind: "text", delta: "done" }, scope: r1 },
+    { index: 10, at: "2026-03-29T01:10:24.625Z", type: "model.settled", data: { runId: "r1", outcome: "completed", finishReason: "stop" }, scope: r1 },
+    { index: 10, at: "2026-03-29T01:10:24.625Z", type: "usage.recorded", data: { owner: { runId: "r1" }, kind: "model", usage: { inputTokens: 200, outputTokens: 30, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.002 } }, scope: r1 },
+    { index: 10, at: "2026-03-29T01:10:24.625Z", type: "usage.recorded", data: { owner: { callId: "c1" }, kind: "model", usage: { inputTokens: 9000, outputTokens: 900, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0.5 } }, scope: r1 },
+    { index: 10, at: "2026-03-29T01:10:24.630Z", type: "model.started", data: { runId: "rc", modelId: "m", attempt: 1 }, scope: { turnId: "t1", runId: "rc", changeId: "k9" } },
+    { index: 10, at: "2026-03-29T01:10:24.640Z", type: "model.settled", data: { runId: "rc", outcome: "completed", finishReason: "stop" }, scope: { turnId: "t1", runId: "rc", changeId: "k9" } },
+    { index: 10, at: "2026-03-29T01:10:24.640Z", type: "usage.recorded", data: { owner: { runId: "rc" }, kind: "model", usage: { inputTokens: 7, outputTokens: 7, cacheReadTokens: 0, cacheWriteTokens: 0 } }, scope: { turnId: "t1", runId: "rc", changeId: "k9" } },
+    { index: 11, at: "2026-03-29T01:10:24.700Z", type: "turn.settled", data: { turnId: "t1", outcome: "completed" } },
+    { index: 11, at: "2026-03-29T01:10:24.800Z", type: "delivery.settled", data: { deliveryId: "d1", outcome: "handled", turnId: "t1" } },
   ];
 
   const s = decomposeSession(worker);
   ok(s.bootMs === 2226, `boot = session.started → first turn.started (the whole session.started hook chain — a CEILING, not a sandbox or memory number); got ${s.bootMs}`);
-  ok(s.turns.length === 1 && s.turns[0].outcome === "completed", "one turn, terminal outcome read off turn.completed");
-  ok(s.turns[0].preflightMs === 15, `preflight = turn.started → first step.started (the turn.started hook chain); got ${s.turns[0].preflightMs}`);
-  ok(s.turns[0].steps.length === 2, "two model calls in the turn, keyed by (turnId, stepIndex)");
-  ok(s.turns[0].steps[0].ttftMs === 6033, `ttft = step.started → the step's FIRST delta (later deltas must not overwrite it); got ${s.turns[0].steps[0].ttftMs}`);
-  ok(s.turns[0].steps[1].ttftMs === 6879, "the second step gets its OWN ttft — stepIndex is per-turn, not global");
-  ok(s.turns[0].steps[0].generationId === "gen_1", "the gateway generationId is projected — the join key into the AI Gateway inference log (the only record of the upstream provider)");
-  ok(s.turns[0].toolCalls.length === 1 && s.turns[0].toolCalls[0].wallMs === 90, `tool call paired actions.requested → action.result by callId; got ${s.turns[0].toolCalls[0]?.wallMs}`);
-  ok(s.turns[0].toolCalls[0].status === "completed" && s.turns[0].toolCalls[0].name === "read_file", "tool call carries its eve status + tool name");
-  ok(s.totals.tokens === 350 && s.totals.costUsd === 0.003, "step usage totals sum across steps");
-  ok(s.coverage.events === 14 && s.coverage.withAt === 14 && s.coverage.unpairedCalls === 0, "coverage counts every event and every paired call — the deterministic observability gate");
+  ok(s.turns.length === 1 && s.turns[0].outcome === "completed", "one turn, terminal outcome read off turn.settled's outcome");
+  ok(s.turns[0].preflightMs === 15, `preflight = turn.started → first model.started (the turn.started hook chain); got ${s.turns[0].preflightMs}`);
+  ok(s.turns[0].steps.length === 2, "two model calls in the turn — one per model run (runId), numbered in order within the turn");
+  ok(s.turns[0].steps.every((x) => x.ttftMs === null), "🔴 no ttft on v27: a content.delta is a progress record whose meta.at is the PRECEDING event line's time, so a first-token time read off it would be a false near-zero");
+  ok(s.turns[0].steps.length === 2 && s.totals.tokens === 350, "🔴 a delegated task's usage (owner callId) and a compaction's own run (scope changeId) add no step and no tokens to the turn — the worker's transcript and the context change carry them");
+  ok(s.turns[0].steps[0].generationId === "gen_1", "the gateway generationId is projected off model.settled — the join key into the AI Gateway inference log (the only record of the upstream provider)");
+  ok(s.turns[0].toolCalls.length === 1 && s.turns[0].toolCalls[0].wallMs === 90, `tool call paired call.requested → call.settled by callId; got ${s.turns[0].toolCalls[0]?.wallMs}`);
+  ok(s.turns[0].toolCalls[0].status === "completed" && s.turns[0].toolCalls[0].name === "read_file", "tool call carries its eve outcome + tool name (capability.name)");
+  ok(s.totals.tokens === 350 && s.totals.costUsd === 0.003, "usage.recorded totals sum across model runs");
+  ok(s.coverage.events === worker.length && s.coverage.withAt === worker.length && s.coverage.unpairedCalls === 0, "coverage counts every event and every paired call — the deterministic observability gate");
 
   const untimed = decomposeSession([{ index: 0, at: null, type: "session.started", data: {} }, { index: 1, at: null, type: "turn.started", data: { turnId: "t1" } }]);
   ok(untimed.bootMs === null, "a missing meta.at yields a NULL duration, not 0 — an unknown is not a zero");
@@ -4816,7 +4889,7 @@ const { parseAppMentionEvent } = await import(
   ok(d.wallMs === 19500, `wall = delegation.task_started → delegation.task_settled (what the caller waits out); got ${d.wallMs}`);
   ok(d.dispatchMs === 2677, `dispatch = spawn row → the worker's first recorded event (workflow cold-start); got ${d.dispatchMs}`);
   ok(d.bootMs === 2226, "boot carries the worker's whole session.started hook-chain window through to the delegation view (a ceiling — the sandbox create inside it is ≤5.7s measured, OPE-126)");
-  ok(d.ttftMs === 6033, "ttft is the worker's FIRST model call's time to first token — the number a 'viable in a conversational turn?' argument is about");
+  ok(d.ttftMs === null, "ttft is unknown on v27 (no per-delta arrival time), and the delegation says so rather than inventing one");
   ok(d.workMs === 13797, `work = worker turn.started → last turn end; got ${d.workMs}`);
   ok(d.returnMs === 700, `return = worker's last recorded event → the settle row (result persist + caller wake); got ${d.returnMs}`);
   ok(d.unaccountedMs === 100, `phases + unaccounted reconstruct the wall exactly; got ${d.unaccountedMs}`);
@@ -4909,37 +4982,36 @@ const { parseAppMentionEvent } = await import(
   const compacting = [
     { index: 0, at: "2026-04-22T08:30:00.000Z", type: "session.started", data: {} },
     { index: 1, at: "2026-04-22T08:30:01.000Z", type: "turn.started", data: { turnId: "t1" } },
-    { index: 2, at: "2026-04-22T08:30:02.000Z", type: "compaction.requested", data: { sessionId: "wrun_dense", turnId: "t1" } },
-    { index: 3, at: "2026-04-22T08:30:03.000Z", type: "compaction.completed", data: { sessionId: "wrun_dense", turnId: "t1", modelId: "m", reduced: true } },
-    { index: 4, at: "2026-04-22T08:30:04.000Z", type: "compaction.requested", data: { sessionId: "wrun_dense", turnId: "t1" } },
-    { index: 5, at: "2026-04-22T08:30:05.000Z", type: "compaction.completed", data: { sessionId: "wrun_dense", turnId: "t1", modelId: "m", reduced: false } },
-    { index: 6, at: "2026-04-22T08:30:06.000Z", type: "compaction.completed", data: { sessionId: "wrun_dense", turnId: "t1", modelId: "m" } },
-    { index: 7, at: "2026-04-22T08:30:07.000Z", type: "turn.completed", data: { turnId: "t1" } },
+    { index: 2, at: "2026-04-22T08:30:02.000Z", type: "context.started", data: { changeId: "k1", kind: "compaction", turnId: "t1" } },
+    { index: 3, at: "2026-04-22T08:30:03.000Z", type: "context.settled", data: { changeId: "k1", kind: "compaction", outcome: "completed" } },
+    { index: 4, at: "2026-04-22T08:30:04.000Z", type: "context.started", data: { changeId: "k2", kind: "compaction", turnId: "t1" } },
+    { index: 5, at: "2026-04-22T08:30:05.000Z", type: "context.settled", data: { changeId: "k2", kind: "compaction", outcome: "completed" } },
+    { index: 6, at: "2026-04-22T08:30:06.000Z", type: "context.settled", data: { changeId: "k3", kind: "compaction", outcome: "completed" } },
+    { index: 6, at: "2026-04-22T08:30:06.100Z", type: "context.settled", data: { changeId: "k4", kind: "compaction", outcome: "failed" } },
+    { index: 6, at: "2026-04-22T08:30:06.200Z", type: "context.settled", data: { changeId: "k5", kind: "clear", outcome: "completed" } },
+    { index: 7, at: "2026-04-22T08:30:07.000Z", type: "turn.settled", data: { turnId: "t1", outcome: "completed" } },
   ];
   const c = decomposeSession(compacting);
   ok(c.compaction.requested === 2 && c.compaction.completed === 3, `compaction passes are counted off the transcript; got ${c.compaction.requested} requested / ${c.compaction.completed} completed`);
-  ok(c.compaction.reduced === 1, `a pass stamped reduced:true counts as REAL work; got ${c.compaction.reduced}`);
-  ok(c.compaction.noOp === 1, `a pass stamped reduced:false counts as a NO-OP; got ${c.compaction.noOp}`);
-  ok(c.compaction.unstamped === 1, `a pass with NO reduced field is UNDECIDABLE and gets its own bucket — folding it into either side would hide a real defect or invent one; got ${c.compaction.unstamped}`);
+  ok(c.compaction.reduced === 0 && c.compaction.noOp === 0 && c.compaction.unstamped === 3, `🔴 eve v1's context.settled carries no \`reduced\` stamp, so every completed pass is left undecided — never guessed as work or as a no-op; got ${JSON.stringify(c.compaction)}`);
   ok(c.compaction.reduced + c.compaction.noOp + c.compaction.unstamped === c.compaction.completed, "the three buckets partition the completed passes exactly — no pass is dropped and none is double-counted");
-  ok(c.sessionId === "wrun_dense", "…and the compaction events still harvest the sessionId, the behaviour that existed before the split");
+  ok(c.compaction.completed === 3, "…and a FAILED compaction or a context CLEAR is no completed compaction pass");
+  ok(c.sessionId === null, "v27 events carry no session id, so the decomposition names none — the caller labels the session it read");
 
-  const noOpLine = renderCompaction(c.compaction)!;
-  ok(noOpLine.includes("NO-OP"), `a no-op pass is NAMED in the rendered line, not buried in a count; got ${JSON.stringify(noOpLine)}`);
-  ok(noOpLine.startsWith("⚠"), `…and carries the ⚠ marker this file uses for a broken measurement, so it reads as a fault; got ${JSON.stringify(noOpLine)}`);
-  ok(noOpLine.includes("OPE-689"), "…and names the defect shape, so a reader can act on it without archaeology");
-  ok(noOpLine.includes("UNDECIDABLE"), "…and reports the unstamped pass as undecidable rather than silently as a pass or a no-op");
-  ok(renderSessionTiming(c, "session wrun_dense").some((l) => l.includes("NO-OP")), "the no-op reaches renderSessionTiming — the render scenarios.ts actually logs, not an internal field");
+  const undecidedLine = renderCompaction(c.compaction)!;
+  ok(undecidedLine.includes("not reported as work or as a no-op"), `the line says eve v1 does not report whether a pass shrank the context; got ${JSON.stringify(undecidedLine)}`);
+  ok(!undecidedLine.startsWith("⚠"), `…and an undecided pass carries no ⚠ fault marker; got ${JSON.stringify(undecidedLine)}`);
+  ok(renderSessionTiming(c, "session wrun_dense").some((l) => l.includes("compaction: 3 pass(es)")), "the compaction line reaches renderSessionTiming — the render scenarios.ts actually logs, not an internal field");
 
   const healthy = decomposeSession([
     { index: 0, at: "2026-04-22T08:30:00.000Z", type: "session.started", data: {} },
-    { index: 1, at: "2026-04-22T08:30:01.000Z", type: "compaction.requested", data: { sessionId: "wrun_ok" } },
-    { index: 2, at: "2026-04-22T08:30:02.000Z", type: "compaction.completed", data: { sessionId: "wrun_ok", modelId: "m", reduced: true } },
+    { index: 1, at: "2026-04-22T08:30:01.000Z", type: "context.started", data: { changeId: "k1", kind: "compaction" } },
+    { index: 2, at: "2026-04-22T08:30:02.000Z", type: "context.settled", data: { changeId: "k1", kind: "compaction", outcome: "completed" } },
   ]);
-  ok(healthy.compaction.reduced === 1 && healthy.compaction.noOp === 0 && healthy.compaction.unstamped === 0, `a reduced:true pass is EXPLICITLY not a no-op (noOp === 0, not merely absent); got ${JSON.stringify(healthy.compaction)}`);
+  ok(healthy.compaction.completed === 1 && healthy.compaction.noOp === 0 && healthy.compaction.unstamped === 1, `a single completed pass counts once, undecided; got ${JSON.stringify(healthy.compaction)}`);
   const healthyLine = renderCompaction(healthy.compaction)!;
-  ok(!healthyLine.includes("NO-OP") && !healthyLine.startsWith("⚠"), `…and real work is never flagged: no NO-OP text, no ⚠ marker; got ${JSON.stringify(healthyLine)}`);
-  ok(healthyLine.includes("1 did compaction work"), `…the healthy line still REPORTS the pass, so "how many compactions ran" is answerable; got ${JSON.stringify(healthyLine)}`);
+  ok(!healthyLine.includes("NO-OP —") && !healthyLine.startsWith("⚠"), `…and is never flagged as a fault; got ${JSON.stringify(healthyLine)}`);
+  ok(healthyLine.includes("1 pass(es)"), `…the line still REPORTS the pass, so "how many compactions ran" is answerable; got ${JSON.stringify(healthyLine)}`);
 
   ok(s.compaction.completed === 0 && s.compaction.requested === 0, "a session with no compaction events counts zero, not null");
   ok(renderCompaction(s.compaction) === null, "…and renders NO line at all, so the line's presence is itself the signal");
@@ -4947,7 +5019,7 @@ const { parseAppMentionEvent } = await import(
 
   const sum = summariseTimings([{ scenarioId: "X", label: "l", capturedAt: "2026-03-29T01:11:00.000Z", sessions: [{ sessionId: "wrun_worker", timing: s }], delegations: [d] }]);
   ok(sum.delegations === 1 && sum.delegationsFullyJoined === 1, "the run summary counts delegations and how many decomposed end-to-end");
-  ok(sum.delegationWallMs.p50 === 19500 && sum.bootMsP50 === 2226 && sum.ttftMsP50 === 6033, "the run summary carries p50 wall / boot / ttft — the recorded series, never a threshold");
+  ok(sum.delegationWallMs.p50 === 19500 && sum.bootMsP50 === 2226 && sum.ttftMsP50 === null, "the run summary carries p50 wall / boot (ttft is null on v27) — the recorded series, never a threshold");
   ok(sum.compaction.passes === 0 && sum.compaction.noOp === 0, "a run whose sessions never compacted rolls up to zero passes");
   ok(summariseTimings([]).delegationWallMs.p50 === null, "an empty run summarises to nulls, not zeros");
 
@@ -4962,8 +5034,8 @@ const { parseAppMentionEvent } = await import(
     delegations: [dupeDelegation],
   }]);
   ok(dupeSum.compaction.passes === 3, `the run rollup counts each session ONCE, by session id; got ${dupeSum.compaction.passes} (6 would mean the overlap is double-counted)`);
-  ok(dupeSum.compaction.noOp === 1 && dupeSum.compaction.reduced === 1 && dupeSum.compaction.unstamped === 1, `…and the no-op survives to the run summary, which is the line that always prints; got ${JSON.stringify(dupeSum.compaction)}`);
-  ok(renderDelegationTiming(dupeDelegation).some((l) => l.includes("NO-OP")), "a delegated WORKER's no-op is named in the delegation render too — a worker is where a dense session actually compacts");
+  ok(dupeSum.compaction.noOp === 0 && dupeSum.compaction.reduced === 0 && dupeSum.compaction.unstamped === 3, `…and the undecided passes survive to the run summary, which is the line that always prints; got ${JSON.stringify(dupeSum.compaction)}`);
+  ok(renderDelegationTiming(dupeDelegation).some((l) => l.includes("compaction: 3 pass(es)")), "a delegated WORKER's compaction is named in the delegation render too — a worker is where a dense session actually compacts");
 }
 
 {
@@ -5444,6 +5516,23 @@ const { parseAppMentionEvent } = await import(
   }
 
   {
+    // OPE-2850: J2 and S24 wait for the wake's done:true answer through the own-wake wait, never the first thread reply.
+    const src = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+    const legOf = (id: string): string => {
+      const at = src.indexOf(`id: "${id}",`);
+      return at < 0 ? "" : src.slice(at, src.indexOf("\n  {\n    id: ", at + 1));
+    };
+    const j2 = legOf("J2");
+    ok(j2.split("await awaitOwnWakeReply(ctx, ").length - 1 === 5, "🔴 J2's five judged waits (two teach acks, the miss, two recalls) use the own-wake wait, which ends on the done:true answer");
+    ok(!/awaitThreadReply\((?:teachTs|missTs|dayTs|hitTs)\b/.test(j2), "🔴 no judged J2 wait is back on awaitThreadReply's first-reply rule");
+    ok(j2.split("threadOnly: true").length - 1 === 5, "🔴 J2's five waits stay thread-only without an audit reader, so a top-level bot post in the channel never ends them");
+    const ownWait = src.slice(src.indexOf("async function awaitOwnWakeReply("), src.indexOf("const { teamId } = await driver.identity();"));
+    ok(/if \(opts\.threadOnly\) \{\s*return driver\.awaitThreadReply\(threadRoot,/.test(ownWait), "🔴 the own-wake wait's degraded branch reads the thread only when the leg sets threadOnly");
+    ok(legOf("S24").includes("awaitOwnWakeReply(ctx, notion, askTs"), "🔴 S24's judged Notion search reply uses the own-wake wait, which ends on the done:true answer");
+    ok(legOf("S24").includes('awaitOwnWakeReply(ctx, notion, askTs, { what: "S24", threadOnly: true,'), "🔴 S24's wait stays thread-only without an audit reader, so a top-level bot post in the Notion channel never ends it");
+  }
+
+  {
     const HUMAN = "U0EXOWNER";
     const DM = "D0EXDMCH001";
     const SK = `slack/T0EXAMPLE/${DM}`;
@@ -5527,7 +5616,7 @@ const { parseAppMentionEvent } = await import(
       "(c5): a hand-off note after the write is not the answer",
     );
 
-    const body = SCENARIOS.find((sc) => sc.id === "S-SUSPENDED-slack")!.run.toString();
+    const body = printedSource(SCENARIOS.find((sc) => sc.id === "S-SUSPENDED-slack")!.run);
     ok(body.includes("connectorCardRequest(") && body.includes("connectorCardRun("), "🔴 (c5): S-SUSPENDED-slack gates on the card road");
     ok(!body.includes("suspendedApprovalRequest(") && !body.includes('dm.post("Approve")'), "🔴 (c5): …and no longer waits for the bridged eve line or types Approve");
     ok(/decision:\s*"reject"/.test(body) && body.includes("!decided"), "🔴 (c5): an undecided card is rejected by the asking human in the teardown");
@@ -5778,13 +5867,13 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 
   const note = slackDmSystemNote({ viewedRoom: "C0VIEWED" }) ?? "";
   ok(note.includes(viewedRoomNotePhrase("C0VIEWED")), "the leg's note phrase is the real side-panel note's wording");
-  const received = (at: string, message: string) => ({ index: 0, at, type: "message.received", data: { message, sequence: 0, turnId: "t1" } });
+  const received = (at: string, message: string) => ({ index: 0, at, type: "delivery.consumed", data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: message }] } });
   const sinceMs = Date.parse("2026-06-18T09:30:00.000Z");
   ok(noteNamesViewedRoom([received("2026-06-18T09:30:05.000Z", `<system-note>${note}</system-note> hi`)], "C0VIEWED", sinceMs), "noteNamesViewedRoom: a wake carrying the note passes");
   ok(!noteNamesViewedRoom([received("2026-06-18T09:30:05.000Z", "hi")], "C0VIEWED", sinceMs), "noteNamesViewedRoom: a plain DM wake fails (the room never reached the seat)");
   ok(!noteNamesViewedRoom([received("2026-06-18T09:29:00.000Z", note)], "C0VIEWED", sinceMs), "noteNamesViewedRoom: a note from before the ask does not count");
   ok(!noteNamesViewedRoom([received("2026-06-18T09:30:05.000Z", slackDmSystemNote({ viewedRoom: "C0OTHER" }) ?? "")], "C0VIEWED", sinceMs), "noteNamesViewedRoom: a note naming another room does not count");
-  ok(!noteNamesViewedRoom([{ index: 0, at: "2026-06-18T09:30:05.000Z", type: "message.completed", data: { text: note } }], "C0VIEWED", sinceMs), "noteNamesViewedRoom: only the wake the seat read counts, never the seat's own output");
+  ok(!noteNamesViewedRoom([{ index: 0, at: "2026-06-18T09:30:05.000Z", type: "content.completed", data: { partId: "p1", kind: "text", phase: "reply", text: note } }], "C0VIEWED", sinceMs), "noteNamesViewedRoom: only the wake the seat read counts, never the seat's own output");
 
   const row = (action: string, detail: Record<string, unknown>, surface: string | null = "slack/T1/D0DM"): AuditWireEntry => ({ ts: "2026-06-18T09:30:06.000Z", org: "default", platform: "slack", workspace: "T1", ...(surface === null ? {} : { surface }), action, detail });
   const rows = [
@@ -5814,10 +5903,19 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(viewedRoomRows([row("connector.read", {}, "slack/T1/C0VIEWED")], "C0VIEWED").length === 1, "viewedRoomRows: a surface key naming the room is caught");
   ok(viewedRoomRows(turn.filter((r) => r.action !== "e2e.linked_row"), "C0VIEWED").length === 0, "viewedRoomRows: a turn that never names the room passes");
 
-  const requested = (at: string, actions: readonly Record<string, unknown>[]) => ({ index: 0, at, type: "actions.requested", data: { actions } });
+  // eve 1.x: one `call.requested` per call, and a `call.settled` names its tool only through the callId join.
+  let callSeq = 0;
+  const requested = (at: string, actions: readonly { toolName: string; input?: unknown }[]) =>
+    ({ index: 0, at, type: "call.requested", data: { callId: `rq${++callSeq}`, owner: { runId: "r1" }, capability: { kind: "tool", name: actions[0]!.toolName }, input: actions[0]!.input ?? {} } });
   const later = "2026-06-18T09:30:07.000Z";
   const viewedRoom = { id: "C0VIEWED", name: "e2e-viewed" };
-  const result = (at: string, toolName: string, output: Record<string, unknown>) => ({ index: 0, at, type: "action.result", data: { result: { toolName, output } } });
+  const result = (at: string, toolName: string, output: Record<string, unknown>) => {
+    const callId = `rs${++callSeq}`;
+    return [
+      { index: 0, at, type: "call.requested", data: { callId, owner: { runId: "r1" }, capability: { kind: "tool", name: toolName }, input: {} } },
+      { index: 0, at, type: "call.settled", data: { callId, outcome: "completed", output } },
+    ];
+  };
   ok(toolCallsNamingRoom([requested(later, [{ toolName: "search", input: { query: "in:<#C0VIEWED> latest" } }])], viewedRoom, sinceMs).join() === "search", "toolCallsNamingRoom: a search over the room by id is caught");
   ok(toolCallsNamingRoom([requested(later, [{ toolName: "search", input: { query: "in:#E2E-Viewed latest" } }])], viewedRoom, sinceMs).join() === "search", "toolCallsNamingRoom: a search over the room by name (any case) is caught");
   ok(toolCallsNamingRoom([requested(later, [{ toolName: "search", input: { query: "in:#e2e-viewed-archive" } }])], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: a longer name that only starts with the room's name is another room");
@@ -5827,9 +5925,9 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(toolCallsNamingRoom([requested(later, [{ toolName: "reply", input: { text: "You have <#C0VIEWED> open." } }])], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: the answer naming the room is not a read");
   ok(toolCallsNamingRoom([requested(later, [{ toolName: "look_up", input: { ids: ["C0VIEWED"] } }])], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: a name lookup of the room is not a read");
   ok(toolCallsNamingRoom([requested("2026-06-18T09:29:00.000Z", [{ toolName: "search", input: { query: "C0VIEWED" } }])], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: a call from before the ask does not count");
-  ok(toolCallsNamingRoom([result(later, "read_channel", { platform: "slack", channel: "slack/T1/C0VIEWED", count: 1 })], viewedRoom, sinceMs).length === 1, "toolCallsNamingRoom: a no-target read that returns the viewed room is caught");
-  ok(toolCallsNamingRoom([result(later, "read_channel", { platform: "slack", channel: "slack/T1/D0DM", count: 1, messages: [{ text: "<#C0VIEWED>" }] })], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: a read of the DM itself passes, whatever its messages say");
-  ok(toolCallsNamingRoom([received(later, note), { index: 1, at: later, type: "message.completed", data: { text: "<#C0VIEWED>" } }, result(later, "search", { hits: ["C0VIEWED"] })], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: the host note, the seat's own text and another tool's result never count");
+  ok(toolCallsNamingRoom([...result(later, "read_channel", { platform: "slack", channel: "slack/T1/C0VIEWED", count: 1 })], viewedRoom, sinceMs).length === 1, "toolCallsNamingRoom: a no-target read that returns the viewed room is caught");
+  ok(toolCallsNamingRoom([...result(later, "read_channel", { platform: "slack", channel: "slack/T1/D0DM", count: 1, messages: [{ text: "<#C0VIEWED>" }] })], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: a read of the DM itself passes, whatever its messages say");
+  ok(toolCallsNamingRoom([received(later, note), { index: 1, at: later, type: "content.completed", data: { partId: "p2", kind: "text", phase: "reply", text: "<#C0VIEWED>" } }, ...result(later, "search", { hits: ["C0VIEWED"] })], viewedRoom, sinceMs).length === 0, "toolCallsNamingRoom: the host note, the seat's own text and another tool's result never count");
 }
 
 {
@@ -6859,6 +6957,54 @@ await removeTempDir(dir);
   ok(reportedThreadFollow([dispatched("thread-follow")], "discord"), "reportedThreadFollow names the ENGAGED addressing");
   ok(!reportedThreadFollow([dispatched("channel-watch")], "discord"), "NEGATIVE: channel-watch is AMBIENT room chatter — treating it as engaged is exactly the confusion these journeys exist to end");
   ok(!reportedThreadFollow([], "discord"), "VACUITY: a surface that reports nothing reports no thread-follow — callers must log, not pass");
+
+  {
+    const { declaredAuditActions } = await import("@open-everywhere/core/agent/audit/action-registry.js");
+    ok(declaredAuditActions().includes(NO_REPLY_OBSERVED_ACTION), "NO_REPLY_OBSERVED_ACTION is the action the product's no_reply tool writes — a renamed product action fails here, not as a silent miss on a live board");
+    const nrow = (action: string, detail: Record<string, unknown>) => ({ ts: "2000-01-01T00:00:00.000Z", org: "o", platform: "notion", workspace: "w", action, detail });
+    const pageRowFollow = nrow("notion.dispatched", { addressing: "thread-follow", wakeId: "wake-follow" });
+    const nameDrop = nrow("notion.dispatched", { addressing: "direct", wakeId: "wake-drop" });
+    const silent = nrow(NO_REPLY_OBSERVED_ACTION, { reason: "nothing_to_add", wakeId: "wake-follow" });
+    const answered = nrow("reply.post", { wakeId: "wake-follow" });
+    const dropAnswer = nrow("reply.post", { wakeId: "wake-drop" });
+    const d = diagnoseEngagedFollowUp([nameDrop, dropAnswer, pageRowFollow, silent], "notion");
+    ok(
+      d.kind === "admitted-silent" && d.reasons.join(",") === "nothing_to_add" && d.wakeIds.join(",") === "wake-follow",
+      "🔴 a page-row follow-up that the seat answered with no_reply is ADMITTED-SILENT — the J-ENGAGED-notion red whose rows read thread-follow then no_reply_observed is a seat-judgement red, not an admission red",
+    );
+    ok(
+      describeEngagedFollowUp(d, "notion").includes("NOT an admission red") && describeEngagedFollowUp(d, "notion").includes("reason=nothing_to_add"),
+      "the admitted-silent line names the silence reason and says the admission held",
+    );
+    ok(diagnoseEngagedFollowUp([pageRowFollow, answered], "notion").kind === "answered", "a reply.post carrying the admitted wake id is ANSWERED");
+    ok(
+      diagnoseEngagedFollowUp([nameDrop, dropAnswer, pageRowFollow], "notion").kind === "admitted-unsettled",
+      "NEGATIVE: the name-drop's own reply.post does not answer the follow-up — the join is by the ADMITTED wake id, not by any reply in the window",
+    );
+    const offRoad = diagnoseEngagedFollowUp([nrow("notion.dispatched", { addressing: "channel-watch", wakeId: "wake-x" })], "notion");
+    ok(offRoad.kind === "not-admitted" && offRoad.seen.join(",") === "channel-watch", "NEGATIVE: a channel-watch dispatch is NOT the engaged road — that is the admission red, and it names what it saw");
+    ok(diagnoseEngagedFollowUp([silent, answered], "notion").kind === "unreported", "VACUITY: no dispatch row means the rows cannot speak to admission — never \"not admitted\", because Slack writes no dispatch row at all");
+    ok(
+      diagnoseEngagedFollowUp([nrow("notion.dispatched", { addressing: "thread-follow" }), silent], "notion").kind === "admitted-unjoined",
+      "NEGATIVE: a thread-follow row with no wake id is still the engaged road, but no silence row can join it — never \"not admitted\" and never \"admitted-silent\"",
+    );
+    const src = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
+    const fnAt = src.indexOf("async function gateEngagedWake(");
+    const fn = fnAt < 0 ? "" : src.slice(fnAt, src.indexOf("\n}\n", fnAt));
+    const fnLog = fn.indexOf("await logEngagedFollowUp(ctx, opts)");
+    ok(
+      fnLog > 0 && fnLog < fn.indexOf("ctx.gate("),
+      "🔴 gateEngagedWake logs the follow-up diagnosis BEFORE its first ctx.gate — ctx.gate throws on a red, so a diagnosis placed after it never runs on the silent-seat red it exists to explain",
+    );
+    const legAt = src.indexOf('id: "J-ENGAGED-notion"');
+    const leg = legAt < 0 ? "" : src.slice(legAt, src.indexOf("\n  {\n    id: ", legAt + 1));
+    const legLog = leg.indexOf("if (second === undefined) await logEngagedFollowUp(");
+    const legGate = leg.indexOf("second !== undefined && second.id !== first?.id");
+    ok(
+      legLog > 0 && legGate > 0 && legLog < legGate,
+      "🔴 J-ENGAGED-notion logs the diagnosis when no follow-up reply came, BEFORE the gate that throws on that red",
+    );
+  }
   ok(reportedDirectMention([dispatched("direct-mention")], "discord") && reportedDirectMention([dispatched("direct")], "discord"), "reportedDirectMention accepts BOTH spellings — Discord's native path stamps `direct`, every other surface `direct-mention`");
   ok(!reportedDirectMention([dispatched("name-drop")], "discord"), "NEGATIVE: a name-drop is not an @mention");
   ok(reportedNameDrop([dispatched("name-drop")], "discord"), "reportedNameDrop names the name-drop addressing");
@@ -6902,7 +7048,7 @@ await removeTempDir(dir);
     "🔴 …and the seated row is STILL not a thread-follow: the two predicates stay distinct, so a leg that accepts both has to say so at its own call site",
   );
 
-  const engagedDiscordBody = SCENARIOS.find((s) => s.id === "J-ENGAGED-discord")!.run.toString().replace(/\s+/g, "");
+  const engagedDiscordBody = printedSource(SCENARIOS.find((s) => s.id === "J-ENGAGED-discord")!.run).replace(/\s+/g, "");
   ok(
     (engagedDiscordBody.match(/seatedChannelWatchRoom:threadId/g) ?? []).length === 1,
     `OPE-1745: J-ENGAGED-discord asks for the seated spelling EXACTLY ONCE — on its follow-up leg, never on its mention leg (found ${(engagedDiscordBody.match(/seatedChannelWatchRoom:threadId/g) ?? []).length})`,
@@ -6912,7 +7058,7 @@ await removeTempDir(dir);
     "🔴 OPE-1745: and it pins the AUTO-THREAD's own id — any other value (the parent channel, a constant) would put the gate back on a room the leg did not drive",
   );
   const otherLegsAskingForIt = SCENARIOS.filter(
-    (s) => s.id !== "J-ENGAGED-discord" && s.run.toString().replace(/\s+/g, "").includes("seatedChannelWatchRoom"),
+    (s) => s.id !== "J-ENGAGED-discord" && printedSource(s.run).replace(/\s+/g, "").includes("seatedChannelWatchRoom"),
   ).map((s) => s.id);
   ok(
     otherLegsAskingForIt.length === 0,
@@ -6925,7 +7071,7 @@ await removeTempDir(dir);
   ok(!isAmbientLegAddressing("name-drop"), "NEGATIVE: a name-drop is the addressed leg too");
   ok(!isAmbientLegAddressing(undefined) && !isAmbientLegAddressing(7), "a row with no addressing, or a non-string one, names no leg — never coerced");
 
-  const selfLoopBody = SCENARIOS.find((s) => s.id === "J-LIN")!.run.toString().replace(/\s+/g, "");
+  const selfLoopBody = printedSource(SCENARIOS.find((s) => s.id === "J-LIN")!.run).replace(/\s+/g, "");
   ok(
     !selfLoopBody.includes('addressing==="channel-watch"'),
     '🔴 OPE-1578: J-LIN filters its dispatch rows through `isAmbientLegAddressing`, never the literal `"channel-watch"` — the literal stops matching the moment the issue is engaged, which this leg\'s own @mention makes it',
@@ -7063,7 +7209,7 @@ await removeTempDir(dir);
   ok(wakeIngressIds([ingress("w1", "C1")], { container: "C1" }).join(",") === "w1", "an UNSLASHED surface key matches its container by equality — the last-segment arm is not the only one");
   ok(wakeIngressIds([ingress("w1", "CZ")], { container: "C1" }).length === 0, "NEGATIVE: …and an unslashed key naming ANOTHER container matches nothing — the equality arm is a join, not a fallback that admits everything");
 
-  const engagedSlackBody = SCENARIOS.find((s) => s.id === "J-ENGAGED-slack")!.run.toString().replace(/\s+/g, "");
+  const engagedSlackBody = printedSource(SCENARIOS.find((s) => s.id === "J-ENGAGED-slack")!.run).replace(/\s+/g, "");
   ok(
     (engagedSlackBody.match(/gateOneSeatAcrossNameDrops\(/g) ?? []).length === 1,
     `OPE-1748: J-ENGAGED-slack drives the one-seat proof EXACTLY ONCE, over the window its FIRST name-drop opened (found ${(engagedSlackBody.match(/gateOneSeatAcrossNameDrops\(/g) ?? []).length})`,
@@ -7078,7 +7224,7 @@ await removeTempDir(dir);
   );
   const bareTopLevelPost = /\.post\((["`])(?:(?!\1).)*\1\)/g;
   for (const id of ["J-ENGAGED-slack", "S9"]) {
-    const body = SCENARIOS.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+    const body = printedSource(SCENARIOS.find((s) => s.id === id)!.run).replace(/\s+/g, "");
     const bare = body.match(bareTopLevelPost) ?? [];
     ok(bare.length === 0, `🔴 OPE-2111: ${id} posts no unsalted top-level fixture line (found ${bare.join(" ")})`);
     ok((body.match(/\.post\(fixtureLine\(/g) ?? []).length >= 2, `OPE-2111: ${id} salts its negative control AND its name-drop with fixtureLine (the scan above is not vacuous)`);
@@ -7086,7 +7232,7 @@ await removeTempDir(dir);
   ok('slack.post("hasanyoneseenthereleasechecklist?")'.match(bareTopLevelPost)?.length === 1, "negative control: the scan matches a bare top-level string post");
   ok("slack.post(`hasanyoneasked${ENGAGED_NAME}aboutit?`)".match(bareTopLevelPost)?.length === 1, "negative control: the scan matches a bare top-level template post");
   ok('slack.post("andwhat\'sthatplus6?",rootTs)'.match(bareTopLevelPost) === null, "negative control: a threaded post (second argument) is not a top-level line");
-  const catchUpLegs = SCENARIOS.filter((s) => s.run.toString().includes("gateSeatCatchUp(")).map((s) => s.id).sort();
+  const catchUpLegs = SCENARIOS.filter((s) => printedSource(s.run).includes("gateSeatCatchUp(")).map((s) => s.id).sort();
   ok(
     catchUpLegs.join(",") === "J-ENGAGED-discord,J-ENGAGED-github,J-ENGAGED-linear,J-ENGAGED-notion,J-ENGAGED-slack,J-ENGAGED-teams",
     `🔴 OPE-1754: the catch-up leg runs on EVERY non-Slack engaged journey. Discord and Notion joined the five when \`wake.e2eDrivers\` gave the pack's bot and integration driver identities a named way into the seat — before that the default \`wide\` admission dropped them before the envelope and a leg there red on a healthy deployment. 🔴 SLACK IS NO LONGER OUT (OPE-1836). It was held out because its catch-up shipped with OPE-1695 (b) and its journey drove the second name-drop instead — which is a claim about where the CODE came from, not about what any deployment was shown to do. The coverage audit counted it as the gap it is: the read had live proof on five surfaces and none on the one carrying most of the product's traffic. J-ENGAGED-slack now drives step (e) through the same helper (saw ${JSON.stringify(catchUpLegs)})`,
@@ -7106,7 +7252,7 @@ await removeTempDir(dir);
   );
   const deploymentSettingsSrc = readFileSync(fileURLToPath(new URL("../agent/settings/settings.ts", import.meta.url)), "utf-8");
   for (const surface of ["discord", "notion"]) {
-    const body = SCENARIOS.find((s) => s.id === `J-ENGAGED-${surface}`)!.run.toString();
+    const body = printedSource(SCENARIOS.find((s) => s.id === `J-ENGAGED-${surface}`)!.run);
     ok(
       new RegExp(`gateSeatCatchUp\\([\\s\\S]{0,400}?platform:\\s*"${surface}"`).test(body),
       `🔴 OPE-1754: J-ENGAGED-${surface} drives its catch-up gate on its OWN platform — the leg the driver-identity carve-out exists to unblock`,
@@ -7117,7 +7263,7 @@ await removeTempDir(dir);
     );
   }
   for (const id of catchUpLegs) {
-    const body = SCENARIOS.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+    const body = printedSource(SCENARIOS.find((s) => s.id === id)!.run).replace(/\s+/g, "");
     ok(/stale:\[[A-Za-z]/.test(body), `${id}: its catch-up leg passes a STALE marker — without one the bound is unasserted and a read that returns the whole container every wake passes`);
     const stopAt = Math.max(body.indexOf("gateStandDownMarked("), body.indexOf("STOOD_DOWN_ACTION"));
     ok(
@@ -7347,7 +7493,7 @@ await removeTempDir(dir);
       ok(seedWriteWaitMs({ kind: "inline" }) === 60_000, `OPE-2100 NEGATIVE CONTROL: an INLINE seed turn keeps AUDIT_ROW_WAIT (got ${seedWriteWaitMs({ kind: "inline" })}ms)`);
       ok(seedWriteWaitMs(undefined) === 60_000, "OPE-2100 NEGATIVE CONTROL: an UNJOINED seed route keeps AUDIT_ROW_WAIT too");
       ok(seedWriteWaitMs({ kind: "cut" }) === delegatedWait, "🔴 OPE-2039: a CUT seed page cannot say the seat wrote inline, so it takes the delegated budget — the 60-s bound is the one that redded a live run on a delegated turn");
-      const memReadSrc = SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run.toString().replace(/\s+/g, "");
+      const memReadSrc = printedSource(SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run).replace(/\s+/g, "");
       ok(
         memReadSrc.includes("NOSETTLEMENTwithin${seedWriteWaitMs(delegated)/1e3}s") || memReadSrc.includes("NOSETTLEMENTwithin${seedWriteWaitMs(delegated)/1000}s"),
         "🔴 OPE-2100: the no-settlement red names the bound the poll actually used",
@@ -7360,7 +7506,7 @@ await removeTempDir(dir);
     }
 
     {
-      const memRead = SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run.toString().replace(/\s+/g, "");
+      const memRead = printedSource(SCENARIOS.find((s) => s.id === "S-MEM-READ")!.run).replace(/\s+/g, "");
       const purgeAt = memRead.indexOf('leg:"canary-purge"');
       const seedAt = memRead.indexOf("rememberthisfortheteam:theOPE121canarycodeis");
       ok(purgeAt >= 0, "🔴 OPE-1977: S-MEM-READ drives a canary purge — without it the silo stacks one OPE121 canary per board and the recall red is a fixture, not the product");
@@ -7370,8 +7516,8 @@ await removeTempDir(dir);
         "🔴 OPE-1977: the recall gate names any PREVIOUS board's canary the reply chose instead — a best-effort purge can leave the stack, and the red must then read as accumulation rather than as a seat that cannot open its memory",
       );
       ok(
-        memRead.includes("extractMemoryPathReads(windowed)"),
-        "🔴 OPE-1977: leg 3 extracts reads from the RECALL-WINDOWED events, never the whole replay — otherwise leg 0's purge turn satisfies the one gate this scenario exists for",
+        memRead.includes("extractMemoryPathReads(windowed,events)") && !/extractMemoryPathReads\((?!windowed,)/u.test(memRead),
+        "🔴 OPE-1977: leg 3 extracts reads from the RECALL-WINDOWED events, never the whole replay — otherwise leg 0's purge turn satisfies the one gate this scenario exists for (the whole replay rides only as the second argument, the lineage that names delegated calls, and no call site passes it first)",
       );
       ok(
         /constat=e\.at===null\?Number\.NaN:Date\.parse\(e\.at\);returnNumber\.isFinite\(at\)&&at>=askStartMs/.test(memRead),
@@ -7683,7 +7829,7 @@ await removeTempDir(dir);
       });
       ok(otherRoom === undefined, "NEGATIVE: a reply.post row on a DIFFERENT Slack room does not satisfy J-MPIM's gate — the bare-id scope is exact equality, not a suffix match");
 
-      const mpimBody = SCENARIOS.find((s) => s.id === "J-MPIM")!.run.toString().replace(/\s+/g, "");
+      const mpimBody = printedSource(SCENARIOS.find((s) => s.id === "J-MPIM")!.run).replace(/\s+/g, "");
       ok(
         mpimBody.includes("awaitReplyPostRows("),
         "🔴 OPE-1682: J-MPIM takes the shared waiter, which owns the bare-segment comparison — not a hand-rolled poll of its own",
@@ -8415,10 +8561,10 @@ await removeTempDir(dir);
           ? [
               event(0, "session.started", { turnId: "t1" }),
               event(1, "turn.started", { turnId: "t1" }),
-              event(2, "actions.requested", { turnId: "t1", stepIndex: 0, calls: [{ name: "bash", input: { command: "rg -n 'obsidian-' memory/e2e-ambient-brain/MEMORY.md memory/e2e-ambient-brain/notes.md" } }] }),
-              event(3, "turn.completed", { turnId: "t1" }),
+              event(2, "call.requested", { callId: "c1", owner: { runId: "r1" }, capability: { kind: "tool", name: "bash" }, input: { command: "rg -n 'obsidian-' memory/e2e-ambient-brain/MEMORY.md memory/e2e-ambient-brain/notes.md" } }),
+              event(3, "turn.settled", { turnId: "t1", outcome: "completed" }),
             ]
-          : [event(0, "turn.started", { turnId: "s1" }), event(1, "turn.completed", { turnId: "s1" })];
+          : [event(0, "turn.started", { turnId: "s1" }), event(1, "turn.settled", { turnId: "s1", outcome: "completed" })];
       },
       gate(pass: boolean, label: string) {
         gateLabels.push(label);
@@ -8518,7 +8664,7 @@ await removeTempDir(dir);
 }
 
 {
-  const body = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString().replace(/\s+/g, "");
+  const body = printedSource(SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run).replace(/\s+/g, "");
   ok(body.includes("unattendedArmRoad("), "🔴 the leg calls the SHARED road rule rather than re-deriving one per arm");
   ok((body.match(/armRoad\("A",/g) ?? []).length === 1 && (body.match(/armRoad\("B",/g) ?? []).length === 1, "…once for EACH arm — arm B reading it is the whole of OPE-2021");
 
@@ -8534,7 +8680,7 @@ await removeTempDir(dir);
   ok(armABranch > armBBranch, `🔴 OPE-2130: arm B's code comes FIRST and arm A's follows it (arm B branch at ${armBBranch}, arm A branch at ${armABranch})`);
 
   ok(
-    SCENARIOS.filter((s) => s.run.toString().includes("unattendedArmRoad(")).map((s) => s.id).join(",") === "S-ROUTINE-CONNECTOR-WRITE",
+    SCENARIOS.filter((s) => printedSource(s.run).includes("unattendedArmRoad(")).map((s) => s.id).join(",") === "S-ROUTINE-CONNECTOR-WRITE",
     "negative control: exactly ONE leg reads this rule, so the checks above cannot be passing on another leg's body",
   );
 }
@@ -8547,7 +8693,7 @@ await removeTempDir(dir);
   const { routinePermissionGeneration } = await import("../packages/core/agent/routines/routine.js");
   const { newRoutineId } = await import("../packages/core/agent/routines/store.js");
   const { ScenarioSkip, FixtureMissing, GateFailure } = await import("../packages/core/scripts/e2e/scenarios.js");
-  const flat = SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run.toString().replace(/\s+/g, "");
+  const flat = printedSource(SCENARIOS.find((s) => s.id === "S-ROUTINE-CONNECTOR-WRITE")!.run).replace(/\s+/g, "");
 
   ok(flat.includes('for(const[arm,run]of[["B",runArmB],["A",runArmA]])'), "🔴 OPE-2130: the leg runs arm B FIRST, then arm A, from one loop");
   ok(/constverdict=routineConnectorArmVerdict\(outcomes\);if\(verdict!==(void0|undefined)\)throwverdict\.error;/u.test(flat), "🔴 …and throws the chosen arm verdict only after both arms ran");
@@ -8729,9 +8875,9 @@ await removeTempDir(dir);
   const scenariosText = readFileSync(fileURLToPath(new URL("../packages/core/scripts/e2e/scenarios.ts", import.meta.url)), "utf-8");
   ok(!/archive the Notion page/i.test(scenariosText), "🔴 no leg asks the seat to archive a Notion page — the seat's Notion tools have no archive operation");
   ok(!scenariosText.includes("archiveNotionPageFromDm"), "…and the DM-ask teardown helper is gone");
-  const suspended = SCENARIOS.find((s) => s.id === "S-SUSPENDED-slack")!.run.toString();
+  const suspended = printedSource(SCENARIOS.find((s) => s.id === "S-SUSPENDED-slack")!.run);
   ok(suspended.includes("archiveNotionPageOverRest(") && !/dm\.post\([^)]*archive/i.test(suspended), "S-SUSPENDED-slack tears its page down over REST and posts no archive ask");
-  const restLegs = SCENARIOS.filter((s) => s.run.toString().includes("archiveNotionPageOverRest(")).map((s) => s.id).sort().join(",");
+  const restLegs = SCENARIOS.filter((s) => printedSource(s.run).includes("archiveNotionPageOverRest(")).map((s) => s.id).sort().join(",");
   ok(restLegs === "S-EVE-CARD,S-SUSPENDED-slack", `negative control: exactly the two page-creating DM legs use the REST teardown (got ${restLegs})`);
 }
 
@@ -8774,7 +8920,7 @@ await removeTempDir(dir);
   const marks = scenariosSrc.match(/const highWater = await auditedSilenceMark\(ctx, \{ platform: "(slack|discord|github|linear|notion)"/g) ?? [];
   ok(marks.length === 5, `each journey takes its mark with auditedSilenceMark (found ${marks.length})`);
   for (const id of ["J-ENGAGED-slack", "J-ENGAGED-github"]) {
-    const body = legs.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+    const body = printedSource(legs.find((s) => s.id === id)!.run).replace(/\s+/g, "");
     const at = body.indexOf("auditedSilenceMark(");
     const probe = body.indexOf('fixtureLine("andwhat\'s5plus5?")');
     ok(at > 0 && probe > at, `${id} takes the mark BEFORE it posts the probe (mark at ${at}, probe at ${probe})`);
@@ -8787,10 +8933,10 @@ await removeTempDir(dir);
   const [x, y] = [...probe.text.matchAll(/what's (\d+) plus (\d+)\?/g)].map((m) => [Number(m[1]), Number(m[2])])[0] ?? [NaN, NaN];
   ok(x + y === probe.sum, `the sum the leg logs matches the question it asked (${x} + ${y} = ${probe.sum})`);
   ok(supervisorAsk("sup-69520").text === probe.text, "the ask is a pure function of the token (reproducible from the leg log)");
-  const jsup = legs.find((s) => s.id === "J-SUP")!.run.toString();
+  const jsup = printedSource(legs.find((s) => s.id === "J-SUP")!.run);
   ok(jsup.includes("supervisorAsk(marker)") && !jsup.includes("what's a good one-line summary of what this channel is for"), "J-SUP posts the per-run question, and the fixed one is gone");
 
-  const evecard = legs.find((s) => s.id === "S-EVE-CARD")!.run.toString();
+  const evecard = printedSource(legs.find((s) => s.id === "S-EVE-CARD")!.run);
   ok(evecard.includes("connectorCardRequest(") && evecard.includes("connectorCardRun("), "S-EVE-CARD joins ask → forward → op.connector card → approved write → seat reply");
   ok(evecard.includes("clickBlockAction(") && !/synthetic\.click\(\{\s*pendingId:\s*card\.pendingId,\s*org:\s*card\.org,\s*decision:\s*"approve"/.test(evecard), "🔴 S-EVE-CARD approves by replaying the card's own button, not by building the action from the pending id");
   ok(evecard.includes('"approval.eve_settled"') && evecard.includes('"tool-approval"'), "S-EVE-CARD asserts the native approval plane stayed silent");
@@ -8836,7 +8982,7 @@ await removeTempDir(dir);
   ok(asked.every((a) => a.actions.length === 1 && a.actions[0] === CONTROL_SERVICE_CALL_ACTION), "the mark read asks for the route's own self-audit row only");
   ok(Date.parse(asked[0]!.sinceIso) === Date.parse("2026-06-11T20:29:48.700Z") - STORE_MARK_LOOKBACK_MS, "the page bound reaches back STORE_MARK_LOOKBACK_MS, so the read holds its own row under any small skew");
 
-  const body = (id: string) => legs.find((s) => s.id === id)!.run.toString().replace(/\s+/g, "");
+  const body = (id: string) => printedSource(legs.find((s) => s.id === id)!.run).replace(/\s+/g, "");
   const teams = body("J-ENGAGED-teams");
   ok(teams.includes("auditStoreMark(ctx,") && teams.includes("rowsAboveStoreMark(awaitdispatchedOn(root.id"), "🔴 J-ENGAGED-teams: the post-stop dispatch absence counts from the store mark");
   ok(teams.includes("!beforeQuiet.has(m.id)") && !teams.includes('(m.createdDateTime??"")>quietFrom'), "🔴 J-ENGAGED-teams: the post-stop reply absence is a vendor-id join, never a driver-clock compare");
@@ -8846,8 +8992,8 @@ await removeTempDir(dir);
   const rcw = body("S-ROUTINE-CONNECTOR-WRITE");
   ok(rcw.includes("connectorRows(b)") && rcw.includes("connectorRows(a)") && rcw.includes("arm.mark"), "🔴 S-ROUTINE-CONNECTOR-WRITE: both arms' no-refusal / no-lift absences count from the arm's own store mark");
   ok(!rcw.includes("connectorRows(a.sinceIso)"), "CONTROL: arm A no longer reads its connector rows off a driver-clock window");
-  const browser = legs.find((s) => s.run.toString().includes("snapshot-first kit: NO browser.evaluate row"));
-  const browserBody = browser === undefined ? "" : browser.run.toString().replace(/\s+/g, "");
+  const browser = legs.find((s) => printedSource(s.run).includes("snapshot-first kit: NO browser.evaluate row"));
+  const browserBody = browser === undefined ? "" : printedSource(browser.run).replace(/\s+/g, "");
   ok(browserBody.includes('auditStoreMark(ctx,"browser-QA")') && (browserBody.match(/\}\),browserMark,?\)/g) ?? []).length === 2, "🔴 browser-QA: the settle wait and the no-evaluate absence both count from the store mark");
   ok(teams.indexOf("auditStoreMark(ctx,") > 0 && teams.indexOf("auditStoreMark(ctx,") < teams.indexOf('postReply(root.id,"(onemorenote'), "J-ENGAGED-teams takes the mark BEFORE it posts the probe");
 

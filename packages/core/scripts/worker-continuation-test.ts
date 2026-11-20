@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { asSchema } from "ai";
+import { installedEveRoot, readEveSchemaHelpers } from "./eve-tool-schema.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-worker-continuation-")), "ops.sqlite3");
 
@@ -34,15 +35,12 @@ const eq = (a: unknown, b: unknown, label: string) => {
 const require = createRequire(import.meta.url);
 const eveRoot = require.resolve("eve/package.json").replace(/package\.json$/, "");
 const eveRootUrl = pathToFileURL(eveRoot).href;
-const agentContract = (await import(`${eveRootUrl}dist/src/tools/framework/agent-contract.js`)) as { SUBAGENT_TOOL_INPUT_SCHEMA: unknown };
+const agentContract = { SUBAGENT_TOOL_INPUT_SCHEMA: (await import("eve/tools/agent")).default.inputSchema as unknown };
 const taskIdInput = (await import(`${eveRootUrl}dist/src/execution/tasks/task-id-input.js`)) as { withTaskIdSchema(schema: unknown): unknown; TASK_ID_INPUT: string };
 const askQuestion = (await import(`${eveRootUrl}dist/src/tools/provided/ask-question.js`)) as { ASK_QUESTION_INPUT_SCHEMA: unknown };
 const taskCancel = (await import(`${eveRootUrl}dist/src/tools/provided/task-cancel.js`)) as { taskCancelTool: { name: string; inputSchema: unknown } };
 const taskTools = (await import(`${eveRootUrl}dist/src/protocol/task-tools.js`)) as { TASK_CANCEL_TOOL_NAME: string };
-const toolSchema = (await import(`${eveRootUrl}dist/src/tools/schema.js`)) as {
-  serializeInputSchema(schema: unknown): unknown;
-  toInputSchema(schema: unknown): unknown;
-};
+const toolSchema = await readEveSchemaHelpers(installedEveRoot(import.meta.url));
 
 const rehydrated = (schema: unknown) => toolSchema.toInputSchema(toolSchema.serializeInputSchema(schema));
 const agentSchema = () => rehydrated(taskIdInput.withTaskIdSchema(agentContract.SUBAGENT_TOOL_INPUT_SCHEMA));
@@ -56,15 +54,22 @@ ok("taskId" in advertised(agentSchema()), "§0 eve's agent schema really does ad
 ok(!("agentId" in advertised(agentSchema())), "§0 …and no `agentId`: the OPE-593 refusal's field is gone at eve 0.70, which is why the refusal had gone inert");
 ok(!("taskId" in advertised(plainSchema())), "§0 an eve tool schema that is not a task tool has no `taskId`, so the no-op arm below checks a real difference");
 eq(taskCancel.taskCancelTool.name, taskTools.TASK_CANCEL_TOOL_NAME, "§0 eve's cancel tool is the one its protocol names");
-eq(taskTools.TASK_CANCEL_TOOL_NAME, "task_cancel", "§0 …and it is still spelled `task_cancel` — the name the stop-only pass keys on");
-ok("taskId" in advertised(cancelSchema()), "🔴 §0 eve's `task_cancel` schema DOES carry `taskId`, so an affordance-keyed guard alone would wrap it (OPE-2290)");
+eq(taskTools.TASK_CANCEL_TOOL_NAME, "eve__task_cancel", "§0 …and it is still spelled `eve__task_cancel` — the name the stop-only pass keys on");
+ok("taskId" in advertised(cancelSchema()), "🔴 §0 eve's `eve__task_cancel` schema DOES carry `taskId`, so an affordance-keyed guard alone would wrap it (OPE-2290)");
 
 const eveDist = dirname(require.resolve("eve/package.json"));
 const { ContextContainer, contextStorage } = (await import(pathToFileURL(join(eveDist, "dist/src/context/container.js")).href)) as {
   ContextContainer: new () => unknown;
   contextStorage: { run<T>(store: unknown, fn: () => T): T };
 };
-const inSession = <T>(fn: () => T): T => contextStorage.run(new ContextContainer(), fn);
+const { setNativeDelegationSeat } = await import("../agent/access/native-delegation-state.js");
+// Every session below models one whose per-wake `agent` verdict admits native delegation (a work
+// session). §13 pins the verdict's own gate.
+const inSession = <T>(fn: () => T): T =>
+  contextStorage.run(new ContextContainer(), () => {
+    setNativeDelegationSeat("allow");
+    return fn();
+  });
 
 const original = agentSchema();
 const plainOriginal = plainSchema();
@@ -74,13 +79,13 @@ const toolset: Record<string, { inputSchema: unknown }> = {
   agent: { inputSchema: original },
   fresh_eyes_review: { inputSchema: reviewerOriginal },
   ask_question: { inputSchema: plainOriginal },
-  task_cancel: { inputSchema: cancelOriginal },
+  eve__task_cancel: { inputSchema: cancelOriginal },
   cancel_work: { inputSchema: cancelSchema() },
 };
 const cancelWorkOriginal = toolset.cancel_work.inputSchema;
-eq(guardTaskContinuations(toolset), ["agent", "fresh_eyes_review"], "🔴 §1 every tool eve gave a `taskId` is guarded — a NAMED subagent too, not only the built-in `agent` — except the stop-only `task_cancel` (OPE-2290) and `cancel_work` (OPE-2338, D15)");
+eq(guardTaskContinuations(toolset), ["agent", "fresh_eyes_review"], "🔴 §1 every tool eve gave a `taskId` is guarded — a NAMED subagent too, not only the built-in `agent` — except the stop-only `eve__task_cancel` (OPE-2290) and `cancel_work` (OPE-2338, D15)");
 ok(toolset.cancel_work.inputSchema === cancelWorkOriginal, "🔴 §1 OPE-2338 D15: the forwarding seat's stop `cancel_work` is not wrapped either — it continues nothing, and its own D10 check decides who may stop the job");
-ok(toolset.task_cancel.inputSchema === cancelOriginal, "🔴 §1 OPE-2290: `task_cancel` keeps eve's own schema object, identity included — a stop continues nothing, so the fence does not wrap it");
+ok(toolset.eve__task_cancel.inputSchema === cancelOriginal, "🔴 §1 OPE-2290: `eve__task_cancel` keeps eve's own schema object, identity included — a stop continues nothing, so the fence does not wrap it");
 ok(toolset.agent.inputSchema !== original, "§1 the `agent` schema object is replaced in place");
 ok(toolset.ask_question.inputSchema === plainOriginal, "🔴 §1 NEGATIVE CONTROL: a tool with no `taskId` keeps its schema object, identity included");
 eq(advertised(toolset.agent.inputSchema), advertised(original), "🔴 §1 the ADVERTISED bytes are eve's own — `taskId` stays taught, nothing is hidden");
@@ -263,10 +268,152 @@ const badShape = await viaValidate("turn-v-shape", "wake-cont-b", { taskId: TASK
 eq((badShape as { error?: Error }).error?.message, TASK_CONTINUATION_REFUSAL_MESSAGE, "§2 the fence runs BEFORE eve's own validation, so a refused call never reaches it");
 
 {
+  const { continuationGuardedTool, taskContinuationApproval } = await import("../agent/access/worker-continuation.js");
+  const { readFileSync } = await import("node:fs");
+  const agentApproval = (await import(`${eveRootUrl}dist/src/approval/agent.js`)) as { withAgentApprovalOnEntries(entries: Map<string, unknown>, approval: unknown): Map<string, { approval?: unknown }> };
+  const approvalEval = (await import(`${eveRootUrl}dist/src/approval/evaluation.js`)) as { evaluateApproval(policy: unknown, ctx: Record<string, unknown>): Promise<{ denied: boolean; reason?: string; awaitsPerson?: boolean }> };
+  const approvalDef = (await import(`${eveRootUrl}dist/src/approval/definition.js`)) as { resolveApprovalPolicy(a: unknown): unknown };
+  const eveAgentTool = (await import("eve/tools/agent")).default as unknown;
+
+  eq(continuationGuardedTool("agent", { message: "m", taskId: "t" }), "delegation", "§11 an `agent` call by `taskId` is guarded");
+  eq(continuationGuardedTool("agent", { message: "m" }), undefined, "🔴 §11 NEGATIVE CONTROL: a fresh `agent` call is not judged here — on eve 1.x the `call.requested` hook joins it to its job");
+  eq(continuationGuardedTool("agent", { message: "m", taskId: "" }), undefined, "§11 a blank `taskId` is not a continuation");
+  eq(continuationGuardedTool("fresh_eyes_review", { message: "m", taskId: "t" }), "task", "§11 a named subagent's `taskId` call is guarded");
+  eq(continuationGuardedTool("fresh_eyes_review", { message: "m" }), undefined, "§11 NEGATIVE CONTROL: a named subagent's fresh call is not");
+  eq(continuationGuardedTool("eve__task_cancel", { taskId: "t" }), undefined, "§11 a stop is not a continuation (OPE-2290)");
+  eq(continuationGuardedTool("cancel_work", { taskId: "t" }), undefined, "§11 `cancel_work` is not guarded (OPE-2338 D15)");
+  eq(continuationGuardedTool("work", { message: "m", taskId: "t" }), undefined, "§11 `work` fences its own continuation");
+  eq(continuationGuardedTool("tracker__get_task", { taskId: "t" }), undefined, "🔴 §11 a connector op whose own schema names `taskId` is not a continuation");
+
+  // eve's own merge: the root agent's `approval` reaches `agent`, and never a `frameworkAction` task tool.
+  const entries = new Map<string, unknown>([["agent", eveAgentTool], [taskTools.TASK_CANCEL_TOOL_NAME, taskCancel.taskCancelTool]]);
+  const wired = agentApproval.withAgentApprovalOnEntries(entries, taskContinuationApproval);
+  const unwired = agentApproval.withAgentApprovalOnEntries(entries, undefined);
+  ok(typeof wired.get("agent")?.approval === "function", "🔴 §11 eve puts the root agent's policy on its own `agent` tool — the eve 1.x seam of this fence");
+  eq(wired.get(taskTools.TASK_CANCEL_TOOL_NAME)?.approval, undefined, "🔴 §11 TRIPWIRE: eve keeps the root policy OFF `eve__task_cancel` (frameworkAction), so the cancel fence has no seam here (OPE-2778). If this goes red, eve now offers one.");
+  eq(unwired.get("agent")?.approval, undefined, "§11 with no root policy, `agent` carries none: the wiring below is the only thing that fences it");
+
+  const TASK11 = "agent-ope2767";
+  await recordTaskOpening({ org: ORG, parentSessionId: SEAT, taskId: TASK11, callId: "call-open-11", tool: "agent", wakeId: "wake-open-a" });
+  await noteTaskProvenanceSettled(ORG, SEAT, TASK11);
+  const viaEve = async (turnId: string, wakeId: string | undefined, toolInput: Record<string, unknown>): Promise<{ denied: boolean; reason?: string; awaitsPerson?: boolean }> =>
+    await inSession(async () => {
+      noteContinuationTurn(unifiedCtx(turnId) as never);
+      if (wakeId !== undefined) claimTasksForAddressedWake(turnId, wakeId);
+      const approval = wired.get("agent")?.approval;
+      return await approvalEval.evaluateApproval(approvalDef.resolveApprovalPolicy(approval), { callId: `c-${turnId}`, toolName: "agent", toolInput, abortSignal: new AbortController().signal });
+    });
+  const cross = await viaEve("turn-11-cross", "wake-cont-b", { message: "carry on", taskId: TASK11 });
+  eq(cross, { denied: true, reason: TASK_CONTINUATION_REFUSAL_MESSAGE }, "🔴 §11 through eve's approval path: a cross-room continuation is DENIED with OE's refusal");
+  const same = await viaEve("turn-11-same", "wake-cont-a2", { message: "carry on", taskId: TASK11 });
+  eq(same.denied, false, "🔴 §11 NEGATIVE CONTROL: a same-room continuation passes eve's approval");
+  ok(same.awaitsPerson !== true, "§11 …and the policy never asks a person");
+  await noteTaskProvenanceSettled(ORG, SEAT, TASK11);
+  const fresh11 = await viaEve("turn-11-fresh", undefined, { message: "a new job" });
+  eq(fresh11.denied, false, "§11 a fresh `agent` call is never fenced");
+  const noTurn11 = await inSession(async () => await taskContinuationApproval({ toolName: "agent", toolInput: { message: "carry on", taskId: TASK11 } }));
+  eq(noTurn11, { type: "denied", reason: TASK_CONTINUATION_UNAVAILABLE_MESSAGE }, "§11 no recorded turn ⇒ denied, never read as \"this room\"");
+  eq(await taskContinuationApproval({ toolName: "read_channel", toolInput: { channel: "x" } }), undefined, "§11 any other tool ⇒ no opinion (eve's own decision stands)");
+
+  for (const rel of ["agent/agent.ts", "packages/create/template/agent/agent.ts"]) {
+    const src = readFileSync(new URL(`../../../${rel}`, import.meta.url), "utf8");
+    ok(/^\s*approval: taskContinuationApproval,$/m.test(src), `🔴 §11 ${rel} hands eve the continuation fence as the root agent's \`approval\``);
+    ok(/import \{ taskContinuationApproval \} from "@open-everywhere\/core\/agent\/access\/worker-continuation\.js";/.test(src), `§11 ${rel} imports it from core`);
+  }
+}
+
+{
+  const { taskContinuationApproval } = await import("../agent/access/worker-continuation.js");
+  const work = await import("../agent/channels/work.js");
+  const turnState = await import("../agent/access/work-request-turn.js");
+  const { recordDeliveredWakes } = await import("../agent/access/dispatch-origin-signal.js");
+  const { registerContinuationRefusalNotifier, WORK_CONTINUATION_RETURNED_MESSAGE } = await import("../agent/access/work-refusal-notice.js");
+  const { readContinuationWake } = await import("../agent/channels/task-provenance.js");
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const readContinuationWakeOf = async (session: string, callId: string) => (await readContinuationWake(ORG, session, callId))?.wakeId;
+  const { AuthKey } = (await import(pathToFileURL(join(eveDist, "dist/src/context/keys.js")).href)) as { AuthKey: unknown };
+
+  const W12 = "sess-work-2767";
+  const T_A = "agent-w2767a";
+  const T_B = "agent-w2767b";
+  const at = "2026-10-08T02:00:00.000Z";
+  await seedWake("req-2767-a", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2767-a-follow", ORIGIN_A, "U_ALICE");
+  await seedWake("req-2767-b-follow", ORIGIN_B, "U_BOB");
+  await seedWake("req-2767-cross", ORIGIN_B, "U_BOB");
+  await recordTaskOpening({ org: ORG, parentSessionId: W12, taskId: T_A, callId: "call-2767-a", tool: "agent", wakeId: "req-2767-a" });
+  await recordTaskOpening({ org: ORG, parentSessionId: W12, taskId: T_B, callId: "call-2767-b", tool: "agent", wakeId: "req-2767-cross" });
+  await noteTaskProvenanceSettled(ORG, W12, T_A);
+  await noteTaskProvenanceSettled(ORG, W12, T_B);
+
+  type Job = { readonly requestId: string; readonly brief: string; readonly origin: typeof ORIGIN_A | typeof ORIGIN_B; readonly taskId?: string };
+  const FRESH_A: Job = { requestId: "req-2767-a", brief: "draft the summary for room A", origin: ORIGIN_A };
+  const FOLLOW_A: Job = { requestId: "req-2767-a-follow", brief: "add the totals", origin: ORIGIN_A, taskId: T_A };
+  const FOLLOW_B: Job = { requestId: "req-2767-b-follow", brief: "post it here", origin: ORIGIN_B, taskId: T_B };
+  const CROSS: Job = { requestId: "req-2767-cross", brief: "carry on from room B", origin: ORIGIN_B, taskId: T_A };
+
+  const returned: string[] = [];
+  registerContinuationRefusalNotifier(async (n: { requestId: string }) => {
+    returned.push(n.requestId);
+    return true;
+  });
+  const step = <T>(turn: string, jobs: readonly Job[], stamp: string, fn: () => Promise<T>): Promise<T> => {
+    const c = new ContextContainer() as { set(key: unknown, value: unknown): void };
+    c.set(AuthKey, { attributes: { [work.OE_WORK_REQUEST_ATTR]: stamp } });
+    return contextStorage.run(c, async () => {
+      setNativeDelegationSeat("allow");
+      noteContinuationTurn({ channel: { kind: "unified" }, session: { id: W12, turn: { id: turn } } } as never);
+      for (const j of jobs) {
+        const message = work.renderWorkRequest({ requestId: j.requestId, brief: j.brief, origin: j.origin as never, nowIso: at, ...(j.taskId !== undefined ? { taskId: j.taskId } : {}) });
+        recordDeliveredWakes(turn, message);
+        turnState.recordWorkRequestsThisTurn(turn, message);
+      }
+      return await fn();
+    });
+  };
+  const rows = async (action: string, task: string) => {
+    for (let i = 0; i < 50; i++) {
+      const got = (await readAudit({ org: ORG, action, detailEquals: { task, session: W12 } })) as readonly { detail?: Record<string, unknown> }[];
+      if (got.length > 0) return got;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return [];
+  };
+  const policy = (message: string, taskId: string) => taskContinuationApproval({ toolName: "agent", toolInput: { message, taskId } });
+
+  const admitted = await step("w12-same", [FRESH_A, FOLLOW_A], FOLLOW_A.requestId, async () => await policy(FOLLOW_A.brief, T_A));
+  eq(admitted, undefined, "🔴 §12 a work session's continuation that its joined job NAMES, from the task's own room, is admitted");
+  eq(await readContinuationWakeOf(W12, "call-2767-a"), FOLLOW_A.requestId, "🔴 §12 …under that job's wake: the worker's authority row is re-pointed at the follow-up");
+  ok((await rows("delegation.continuation_admitted", T_A)).length >= 1, "🔴 §12 …and the work session writes its own `delegation.continuation_admitted` row");
+  ok(!turnState.workCallClaimed("w12-same", FOLLOW_A.brief), "§12 the policy takes no claim: the `call.requested` hook owns the join on eve 1.x");
+  await noteTaskProvenanceSettled(ORG, W12, T_A);
+
+  const cross = await step("w12-cross", [FRESH_A, CROSS], CROSS.requestId, async () => await policy(CROSS.brief, T_A));
+  eq(cross, { type: "denied", reason: WORK_CONTINUATION_RETURNED_MESSAGE }, "🔴 §12 a forwarded follow-up that names a task opened in ANOTHER room is denied, and the job goes back to the seat");
+  eq(returned, [CROSS.requestId], "🔴 §12 …the refusal notice names exactly that job");
+  const refusedRows = await rows("delegation.continuation_refused", T_A);
+  ok(refusedRows.some((r) => r.detail?.reason === "cross-room"), "🔴 §12 …and the work session writes `delegation.continuation_refused` with reason `cross-room`");
+
+  const started = await step("w12-started", [FRESH_A, FOLLOW_A], FOLLOW_A.requestId, async () => {
+    turnState.noteWorkRequestStarted("w12-started", FOLLOW_A.requestId);
+    return await policy(FOLLOW_A.brief, T_A);
+  });
+  eq(started, { type: "denied", reason: turnState.WORK_REQUEST_ALREADY_STARTED_MESSAGE }, "🔴 §12 OPE-2613: a continuation of a job that already started in this turn is denied");
+
+  returned.length = 0;
+  const mismatch = await step("w12-mismatch", [FRESH_A, FOLLOW_B], FRESH_A.requestId, async () => await policy(FRESH_A.brief, T_B));
+  ok(mismatch !== undefined && mismatch.type === "denied", `🔴 §12 a call that joins job A (by its brief) but names job B's task is DENIED — it never takes B's room (got ${JSON.stringify(mismatch)})`);
+  eq(mismatch?.reason, TASK_CONTINUATION_UNAVAILABLE_MESSAGE, "§12 …as `no-continuing-wake`: the turn holds two jobs and the joined job names no such task");
+  eq(returned, [], "§12 …and no job is returned, because the joined job does not name the task");
+  eq(await readContinuationWakeOf(W12, "call-2767-b"), undefined, "🔴 §12 …and B's worker row is NOT re-pointed");
+  registerContinuationRefusalNotifier(undefined);
+}
+
+{
   const { approvalDecisionBody } = await import("../agent/approvals/decision-wake.js");
   const brake = approvalDecisionBody({ origin: ORIGIN_A, wakeId: "wake-decision", summaryLine: "spend 10", outcome: "rejected", pendingId: "pa-2290" });
   ok(brake.includes(`(\`${taskTools.TASK_CANCEL_TOOL_NAME}\`)`), "§2 precondition: the decision wake names eve's own cancel tool — the call the brake depends on");
-  const cancelValidate = asSchema(toolset.task_cancel.inputSchema as never).validate!;
+  const cancelValidate = asSchema(toolset.eve__task_cancel.inputSchema as never).validate!;
   const cancelVia = async (turnId: string, wakeId: string | undefined, input: Record<string, unknown>) =>
     await inSession(async () => {
       noteContinuationTurn(unifiedCtx(turnId) as never);
@@ -277,14 +424,14 @@ eq((badShape as { error?: Error }).error?.message, TASK_CONTINUATION_REFUSAL_MES
   const claimBefore = await store.getTaskResult(ORG, await claimKey());
   eq(JSON.parse(claimBefore ?? "null"), { turn: "turn-v-same" }, "§2 precondition: the claim the brake meets is a stale one a continuation could take over");
   const sameRoom = await cancelVia("turn-brake-same", "wake-cont-a2", { taskId: TASK });
-  eq(sameRoom.success, true, "🔴 §2 OPE-2290: the brake's `task_cancel` from the SAME room passes the fence — before the fix it was refused as `tool-mismatch`");
+  eq(sameRoom.success, true, "🔴 §2 OPE-2290: the brake's `eve__task_cancel` from the SAME room passes the fence — before the fix it was refused as `tool-mismatch`");
   eq((sameRoom as { value?: unknown }).value, { taskId: TASK }, "…and reaches eve with its `taskId` intact");
   eq(await store.getTaskResult(ORG, await claimKey()), claimBefore, "🔴 §2 OPE-2290: the cancel took NO claim — the stale claim is byte-identical after it");
   const crossRoom = await cancelVia("turn-brake-cross", "wake-cont-b", { taskId: TASK });
-  eq(crossRoom.success, true, "🔴 §2 OPE-2290: a `task_cancel` from ANOTHER room passes too — a stop carries no input in and no content out");
+  eq(crossRoom.success, true, "🔴 §2 OPE-2290: a `eve__task_cancel` from ANOTHER room passes too — a stop carries no input in and no content out");
   await noteTaskClaimDispatched(ORG, SEAT, TASK, "call-brake-holder", "turn-brake-holder");
   const whileWorking = await cancelVia("turn-brake-working", "wake-cont-a2", { taskId: TASK });
-  eq(whileWorking.success, true, "🔴 §2 OPE-2290: a `task_cancel` while the task WORKS passes — that is the brake's whole case: a worker still running toward the act");
+  eq(whileWorking.success, true, "🔴 §2 OPE-2290: a `eve__task_cancel` while the task WORKS passes — that is the brake's whole case: a worker still running toward the act");
   eq(JSON.parse((await store.getTaskResult(ORG, await claimKey())) ?? "null"), { turn: "turn-brake-holder", call: "call-brake-holder" }, "§2 …and the working call still holds its claim");
   eq((await cancelVia("turn-brake-none", undefined, {})).success, false, "§2 NEGATIVE CONTROL: eve's own validation still refuses a cancel with no `taskId`");
   const continuationStillRefused = await viaValidate("turn-brake-cont", "wake-cont-b", { message: "carry on", taskId: TASK });
@@ -609,12 +756,80 @@ eq(noMessage.success, false, "🔴 §4 NEGATIVE CONTROL: eve's own `message` req
   eq(oneStart.settled, { first: true, jobs: 1 }, "🔴 §9 OPE-2613: once every job of the turn has started, the turn is settled");
   eq(oneStart.settledAgain, { first: false, jobs: 1 }, "§9 …and the ending is reported once");
   eq(oneStart.tier, "settled", "🔴 §9 …and the step resolver's boundary serves the `settled` stub tier");
-  eq(oneStart.withCancel, undefined, "🔴 §9 NEGATIVE CONTROL: a relayed cancel waiting for its `task_cancel` keeps W's model live");
-  eq(oneStart.afterCancel, { first: true, jobs: 1 }, "§9 …and once W made the `task_cancel`, the turn is settled again, as a new ending");
+  eq(oneStart.withCancel, undefined, "🔴 §9 NEGATIVE CONTROL: a relayed cancel waiting for its `eve__task_cancel` keeps W's model live");
+  eq(oneStart.afterCancel, { first: true, jobs: 1 }, "§9 …and once W made the `eve__task_cancel`, the turn is settled again, as a new ending");
   eq(oneStart.withNext, undefined, "🔴 §9 NEGATIVE CONTROL: a new job steered into the turn keeps W's model live");
   eq(await wStep("w-turn-2613-none", [], JOB.requestId, async () => turnState.workTurnSettled("w-turn-2613-none")), undefined, "§9 NEGATIVE CONTROL: a turn that holds no job is never settled (inert off a work session)");
+}
+
+
+{
+  // §13 the per-wake `agent` verdict, enforced at call time. On eve 1.x eve mounts its built-in
+  // `agent` on every root session, so the seat cut cannot withhold it; the root `approval` policy
+  // refuses the call instead, before any task starts.
+  const { taskContinuationApproval } = await import("../agent/access/worker-continuation.js");
+  const { nativeAgentRefusal, NATIVE_AGENT_REFUSED_MESSAGE } = await import("../agent/access/native-delegation-gate.js");
+  const agentApproval = (await import(`${eveRootUrl}dist/src/approval/agent.js`)) as { withAgentApprovalOnEntries(entries: Map<string, unknown>, approval: unknown): Map<string, { approval?: unknown }> };
+  const approvalEval = (await import(`${eveRootUrl}dist/src/approval/evaluation.js`)) as { evaluateApproval(policy: unknown, ctx: Record<string, unknown>): Promise<{ denied: boolean; reason?: string; awaitsPerson?: boolean }> };
+  const approvalDef = (await import(`${eveRootUrl}dist/src/approval/definition.js`)) as { resolveApprovalPolicy(a: unknown): unknown };
+  const eveAgentTool = (await import("eve/tools/agent")).default as unknown;
+  const wired = agentApproval.withAgentApprovalOnEntries(new Map<string, unknown>([["agent", eveAgentTool]]), taskContinuationApproval);
+  type Verdict = "allow" | "leaf" | "no-seat" | "unclassified" | undefined;
+  const fresh = async (verdict: Verdict, toolName = "agent") =>
+    await contextStorage.run(new ContextContainer(), async () => {
+      if (verdict !== undefined) setNativeDelegationSeat(verdict);
+      return await approvalEval.evaluateApproval(approvalDef.resolveApprovalPolicy(wired.get("agent")?.approval), {
+        callId: `c13-${String(verdict)}-${toolName}`,
+        toolName,
+        toolInput: { message: "a new job" },
+        abortSignal: new AbortController().signal,
+      });
+    });
+  eq(await fresh("no-seat"), { denied: true, reason: NATIVE_AGENT_REFUSED_MESSAGE }, "🔴 §13 a seat whose verdict is `no-seat` (a channel seat that forwards with `work`): a fresh `agent` call is DENIED through eve's approval path");
+  eq(await fresh("leaf"), { denied: true, reason: NATIVE_AGENT_REFUSED_MESSAGE }, "🔴 §13 a subagent child (`leaf`): denied");
+  eq(await fresh("unclassified"), { denied: true, reason: NATIVE_AGENT_REFUSED_MESSAGE }, "🔴 §13 an unclassified wake: denied (fail-closed, as the seat cut was)");
+  eq(await fresh(undefined), { denied: true, reason: NATIVE_AGENT_REFUSED_MESSAGE }, "🔴 §13 no verdict recorded at all: denied (fail-closed)");
+  const allowed = await fresh("allow");
+  eq(allowed.denied, false, "🔴 §13 NEGATIVE CONTROL: a work session whose verdict is `allow` starts its `agent` call");
+  ok(allowed.awaitsPerson !== true, "§13 …and the gate never asks a person");
+  eq((await fresh("no-seat", "fresh_eyes_review")).denied, false, "🔴 §13 NEGATIVE CONTROL: a declared subagent is not judged by the `agent` verdict");
+  eq(nativeAgentRefusal("agent", () => false), NATIVE_AGENT_REFUSED_MESSAGE, "§13 the pure gate refuses `agent` without the verdict");
+  eq(nativeAgentRefusal("agent", () => true), undefined, "§13 …and admits it with the verdict");
+  eq(nativeAgentRefusal("read_channel", () => false), undefined, "§13 NEGATIVE CONTROL: no other tool is judged");
+
+  // §14 the seat-cut backstop. The model-call cut hides each tool eve mounts outside a seat-cut slot,
+  // but eve runs a call against the session's whole catalog. So the same policy refuses a call to a
+  // name the seat cut withholds, whenever eve passes that call to the policy.
+  const { setLeanSeatWake, setWorkTierWake } = await import("../agent/access/lean-seat-state.js");
+  const { seatCutCallRefusal } = await import("../agent/access/seat-cut.js");
+  const subagent = { description: "fresh eyes", inputSchema: { type: "object", properties: {} }, execute: async () => "ok" };
+  const wiredSub = agentApproval.withAgentApprovalOnEntries(new Map<string, unknown>([["fresh_eyes_review", subagent]]), taskContinuationApproval);
+  const call = async (lean: boolean) =>
+    await contextStorage.run(new ContextContainer(), async () => {
+      setNativeDelegationSeat("no-seat");
+      if (lean) {
+        setWorkTierWake("forwards");
+        setLeanSeatWake(true, false);
+      }
+      return await approvalEval.evaluateApproval(approvalDef.resolveApprovalPolicy(wiredSub.get("fresh_eyes_review")?.approval), {
+        callId: `c14-${String(lean)}`,
+        toolName: "fresh_eyes_review",
+        toolInput: { message: "review this" },
+        abortSignal: new AbortController().signal,
+      });
+    });
+  const refused = await call(true);
+  ok(refused.denied && (refused.reason ?? "").includes("does not hold this tool") && (refused.reason ?? "").includes("NOT started"), "🔴 §14 a lean seat's call to a declared subagent it does not hold is DENIED through eve's approval path");
+  eq((await call(false)).denied, false, "🔴 §14 NEGATIVE CONTROL: a wide seat that holds the subagent starts the call");
+  eq(seatCutCallRefusal("eve__tool", { workTier: "none", jobWake: "restricted", lean: false, dmSeat: false, worker: true, invoker: "unattended-fire", halted: false, agentAllowed: false }), undefined, "§14 a catalog route is never refused by name: its reach is cut entry by entry");
+  ok(
+    seatCutCallRefusal("notion__update_page", { workTier: "none", jobWake: "restricted", lean: false, dmSeat: false, worker: true, invoker: "unattended-fire", halted: false, agentAllowed: false }) !== undefined &&
+      seatCutCallRefusal("notion__search", { workTier: "none", jobWake: "restricted", lean: false, dmSeat: false, worker: true, invoker: "unattended-fire", halted: false, agentAllowed: false }) === undefined,
+    "🔴 §14 a restricted job wake: the backstop refuses a write-op name and admits a read-op name",
+  );
 }
 
 console.log(`worker-continuation: ${n} assertions passed`);
 
 // proves: AP-MOD-core-access-worker-continuation
+// proves: AP-MOD-core-access-native-delegation-gate

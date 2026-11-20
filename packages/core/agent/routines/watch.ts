@@ -3,6 +3,7 @@ import { hashState, MAX_CONSECUTIVE_FAILURES, shouldPostOnDiff } from "./lifecyc
 import { renderPolicyBlock } from "./policy.js";
 import { renderCollectedBlock, type CollectedInput } from "./collector.js";
 import { renderFollowUpsBlock } from "./follow-ups.js";
+import { connectorToolKey } from "../connections/connector-tool-name.js";
 
 export const WATCH_SILENCE_SENTINEL = "NO_REPLY";
 
@@ -12,7 +13,7 @@ export const WATCH_STATE_TOOL = "record_watch_state";
 
 export const RUN_FAILED_TOOL = "report_run_failed";
 
-export const CONNECTION_SEARCH_TOOL = "connection_search";
+export const CONNECTION_SEARCH_TOOL = "eve__search";
 
 export function firePreamble(r: Pick<Routine, "id" | "createdAt" | "lastRunAt">): string {
   const last = r.lastRunAt ? `previous run: ${r.lastRunAt}` : "previous run: none — this is the FIRST run";
@@ -70,7 +71,7 @@ export function renderReachBlock(reach: FireReach): string {
   );
 }
 
-export const CONNECTION_EXECUTE_TOOL = "connection_execute";
+export const CONNECTION_EXECUTE_TOOL = "eve__tool";
 
 export interface DeclaredReachOp {
   readonly connection: string;
@@ -79,12 +80,12 @@ export interface DeclaredReachOp {
 
 export function renderDeclaredReachBlock(ops: readonly DeclaredReachOp[]): string {
   if (ops.length === 0) return "";
-  const lines = ops.map((op) => `- \`${CONNECTION_EXECUTE_TOOL}\` with connection \`${op.connection}\` and tool \`${op.tool}\``);
+  const lines = ops.map((op) => `- \`${CONNECTION_EXECUTE_TOOL}\` with name \`${connectorToolKey(op.connection, op.tool)}\``);
   return [
     `[reach] This routine DECLARED the connector operations below, and a human armed each one for ` +
       `this routine. You need no \`${CONNECTION_SEARCH_TOOL}\` for them: call \`${CONNECTION_EXECUTE_TOOL}\` ` +
-      `directly, with the operation's arguments in \`input\`. If an argument is wrong, the call ` +
-      `returns what was wrong; correct it and call again. Report what came back.`,
+      `directly, with \`name\` set to the operation below and the operation's arguments in \`input\`. If an ` +
+      `argument is wrong, the call returns what was wrong; correct it and call again. Report what came back.`,
     ...lines,
   ].join("\n");
 }

@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-email",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Open Everywhere email provider — the agent's own inboxes on the org's domains: allowed senders in, threaded replies out.",
   "keywords": [
     "agent",
@@ -100,11 +100,11 @@
     "test:email-post-arm": "NODE_NO_WARNINGS=1 tsx scripts/email-post-arm-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.10.0",
+    "@open-everywhere/core": "0.11.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.71.0"
+    "eve": "1.0.0-rc.18"
   },
   "devDependencies": {
     "@types/node": "latest",

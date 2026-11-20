@@ -117,6 +117,7 @@ import replyTool from "@open-everywhere/core/agent/tools/reply.js";
 import type { RouteHandlerArgs } from "eve/channels";
 import { overrideSettingsForTest } from "@open-everywhere/core/agent/settings/settings.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -1658,7 +1659,7 @@ overrideSettingsForTest({ window: { topology: false } });
   interface Armed {
     readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
   }
-  const arm = (def: unknown, ctx: unknown): Armed | null => (def as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+  const arm = (def: unknown, ctx: unknown): Armed | null => _dynamicResolverForTest(def)({}, ctx) as Armed | null;
 
   const unifiedCtx = (platform: string, wakeId?: string): BindableContext => ({
     channel: { kind: "channel:unified" },

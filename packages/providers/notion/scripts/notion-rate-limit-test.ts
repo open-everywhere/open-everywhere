@@ -1,3 +1,4 @@
+import { SessionNotActiveError } from "eve/sessions";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { RateLimitExhaustedError } from "@open-everywhere/core/agent/adapter-api.js";
@@ -320,7 +321,7 @@ function recorder() {
     },
     retry: { sleep: async (ms: number) => void deliverySlept.push(ms) },
     dispatch: async () => {},
-    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+    attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
   });
   ok(deliveryFetches > 0, "11c positive control: the delivery DID reach the injected fetch, so the sequence below is a real one");
   eq(

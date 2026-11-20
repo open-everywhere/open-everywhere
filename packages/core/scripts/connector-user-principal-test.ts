@@ -7,6 +7,9 @@ import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
 import { setPlatformStandInForTest } from "../agent/identity/binding.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 registerSlackFixtureMapper();
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-user-"));
@@ -155,6 +158,68 @@ registerSettings({ connectors: { userPrincipal: false } });
 ok(!connectorUserPrincipalEnabled(), "connectors.userPrincipal: false → OFF (the opt-out)");
 resetSettingsForTest();
 
+// OPE-2749: a connector mount's LISTING probe starts no sign-in. It runs before every model call,
+// for every mounted connection, so a card, a link mint or a turn mark here would reach a person for
+// a connector the task never touched.
+await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
+  const { listingTokenRequest, isConnectorSignInRequiredError } = await import("../agent/connections/connector-listing.js");
+  const m = makeMinter("auth-required");
+  const s = makeStarter("ok", "https://connect.vercel.com/auth/LISTING-LINK");
+  const cards: unknown[] = [];
+  const notes: unknown[] = [];
+  const resolver = userAwareProviderToken(
+    { connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" },
+    {
+      mintUser: m.mint,
+      startAuth: s.start as never,
+      workChild: () => true,
+      deliverSignIn: async (o) => {
+        cards.push(o);
+        return true;
+      },
+      rememberSignIn: async (_ctx, note) => {
+        notes.push(note);
+        return true;
+      },
+    },
+  );
+  const provider = await resolver({ session: { auth: dmAuth } } as never);
+  const getTok = provider.getToken as (o: unknown) => Promise<unknown>;
+  let listingErr: unknown;
+  try {
+    await getTok(listingTokenRequest({ principal: { type: "app" }, connection: { url: "https://mcp.notion.com/mcp" } }));
+  } catch (e) {
+    listingErr = e;
+  }
+  ok(isConnectorSignInRequiredError(listingErr), "🔴 OPE-2749: a listing probe that needs sign-in throws the tagged sign-in error, so the mount lists anonymously");
+  ok(cards.length === 0 && notes.length === 0, "🔴 OPE-2749: the listing probe delivers NO sign-in card and records no sign-in note");
+  ok(s.calls.length === 0, "🔴 OPE-2749: the listing probe mints NO authorization link");
+  let callErr = "";
+  try {
+    await getTok(undefined);
+  } catch (e) {
+    callErr = e instanceof Error ? e.message : String(e);
+  }
+  ok(callErr.startsWith("needs-sign-in:") && cards.length === 1 && s.calls.length === 1, "OPE-2749: the listing set no turn mark — the CALL that follows still runs the sign-in, once (negative control)");
+});
+
+// OPE-2749: a listing probe that the gate admits writes no `connector.use` row: no op ran. The call
+// that follows writes one.
+await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
+  const { listingTokenRequest } = await import("../agent/connections/connector-listing.js");
+  const { readAudit } = await import("../agent/audit/audit.js");
+  const uses = async (): Promise<number> => (await readAudit({ org: deploymentOrg(), action: "connector.use" })).length;
+  const m = makeMinter("ok");
+  const resolver = userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" }, { mintUser: m.mint, startAuth: notInjectedStarter.start as never });
+  const provider = await resolver({ session: { auth: dmAuth } } as never);
+  const getTok = provider.getToken as (o: unknown) => Promise<unknown>;
+  const before = await uses();
+  await getTok(listingTokenRequest({ principal: { type: "app" }, connection: { url: "https://mcp.notion.com/mcp" } }));
+  ok((await uses()) === before, "🔴 OPE-2749: a listing probe writes no connector.use row");
+  await getTok(undefined);
+  ok((await uses()) === before + 1, "OPE-2749: the call writes one (negative control)");
+});
+
 {
   const m = makeMinter("ok");
   const r = await getToken(dmAuth, m);
@@ -191,7 +256,7 @@ resetSettingsForTest();
   ok(s.calls.length === 1, "the URL mint was attempted exactly once before degrading");
 }
 
-await eveContextStorage().run(new FakeSession(), async () => {
+await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
   const m = makeMinter("auth-required");
   const s = makeStarter("ok", "https://connect.vercel.com/auth/ONE-SHOT");
   const r1 = await getToken(dmAuth, m, s);
@@ -203,7 +268,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   ok(m.calls.length === 1, "memo: the token mint was NOT re-hit on the short-circuited retry");
 });
 
-await eveContextStorage().run(new FakeSession(), async () => {
+await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
   const m = makeMinter("auth-required");
   const s = makeStarter("ok", "https://connect.vercel.com/auth/CHILD-LINK");
   const cards: { recipientId: string; connector: string; url: string; sameConversation?: boolean; resumes?: boolean; fromContainer: string }[] = [];

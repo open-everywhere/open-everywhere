@@ -211,7 +211,7 @@ console.log("§3 the PR");
   network = 0;
   await rejects(
     () => executeMcpServerPropose({ ...args, declaration: { ...FULLSTORY, name: "notion" } }, "U2", { config: baseConfig, resolveToken: async () => (network++, "t"), getBranchSha: (async () => { network++; throw new Error("network reached"); }) as never }),
-    'a connection named "notion" is already mounted',
+    'a connection or tool named "notion" is already mounted',
     "§3 a name a core connection already mounts is refused, because oe build would refuse it after the merge",
   );
   ok(network === 0, "§3 …before any network");

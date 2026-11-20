@@ -23,6 +23,24 @@ import {
   type BindableContext,
   type Routine,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
+// eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+// projection. A direct call carries an empty view.
+const v27Completed = (adapter: object) => async (event: unknown, ctx: unknown): Promise<void> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (adapter as Record<string, (e: unknown, c: unknown) => Promise<unknown>>)["content.completed"]!;
+  await handler(event, { ...(ctx as object), view: fold.emptySessionView() });
+};
+// eve 1.x delivers a final message as `content.completed` (a text part in the "reply" phase).
+const asV27Content = (f: { readonly finishReason: string; readonly message: string | null; readonly turnId?: string }) => ({
+  type: "content.completed" as const,
+  ...(f.turnId !== undefined ? { scope: { turnId: f.turnId } } : {}),
+  data: { partId: "part-1", kind: "text", phase: f.finishReason === "stop" ? "reply" : "narration", value: f.message ?? "" },
+});
+
 
 const dir = join(tmpdir(), `open-everywhere-teams-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -100,7 +118,7 @@ interface ArmedTool {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<Record<string, unknown>>;
 }
 const armReply = (tool: unknown, ctx: unknown): ArmedTool | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as ArmedTool | null;
+  _dynamicResolverForTest(tool)({}, ctx) as ArmedTool | null;
 
 assert.deepStrictEqual(
   capabilitiesForPlatform("teams"),
@@ -168,7 +186,7 @@ await inSession(async () => {
   const teamsChannel = (await import("@open-everywhere/provider-teams/agent/channels/teams.js")).default as unknown as {
     adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   };
-  const completed = (message: string | null, ctx: unknown) => inChatSession(() => teamsChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
+  const completed = (message: string | null, ctx: unknown) => inChatSession(() => v27Completed(teamsChannel.adapter)(asV27Content({ finishReason: "stop", message }), ctx));
   const auditCtx = {
     state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel", serviceUrl: "https://smba.trafficmanager.net", replyToActivityId: "act-root-1" },
     thread: { post: async () => undefined },
@@ -506,4 +524,94 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   }
 }
 
-console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom, attended-mention spend gate, engaged-seam admission on the native gate)`);
+{
+  const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
+  const { roomEngagementAddress, readStandDownAck } = await import("@open-everywhere/core/agent/channels/engagement.js");
+  const { markTeamsRoomWatched } = await import("@open-everywhere/provider-teams/agent/channels/teams-engagement.js");
+  const standDown = (await import("@open-everywhere/core/agent/tools/stand_down.js")).default as unknown as {
+    readonly execute: (input: { reason?: string }, ctx: unknown) => Promise<{ standingDown: boolean; note: string }>;
+  };
+  const store = getOperationalStore();
+  const roomCtx = (channelId: string, conversationId: string, sessionId: string, turnId: string) => {
+    const base = teamsCtx(conversationId);
+    const attrs = { ...base.session.auth.current.attributes, tenant_id: "TEN-ROOM", channel_id: channelId };
+    return { ...base, session: { id: sessionId, turn: { id: turnId }, auth: { current: { ...base.session.auth.current, attributes: attrs } } } };
+  };
+  const STOPPED_ROOM = "19:room-stopped@thread.tacv2";
+  const OPEN_ROOM = "19:room-open@thread.tacv2";
+  const stopperCtx = roomCtx(STOPPED_ROOM, `${STOPPED_ROOM};messageid=1`, "room-stop-session", "turn_room_stop");
+  const workerCtx = roomCtx(STOPPED_ROOM, `${STOPPED_ROOM};messageid=2`, "room-worker-session", "turn_room_worker");
+  const controlCtx = roomCtx(OPEN_ROOM, `${OPEN_ROOM};messageid=1`, "room-worker-session", "turn_room_control");
+  ok(bindFrom(workerCtx as never).roomEngagementKey === STOPPED_ROOM, "OPE-2806 precondition: the Teams binding publishes the channel as its room-grain anchor");
+
+  const stoppedPart = resolvePartition(stopperCtx as never);
+  const stoppedRoom = roomEngagementAddress(stoppedPart);
+  const openRoom = roomEngagementAddress(resolvePartition(controlCtx as never));
+  await markTeamsRoomWatched(stoppedPart, "2026-01-01T00:00:00Z");
+  await markTeamsRoomWatched(resolvePartition(controlCtx as never), "2026-01-01T00:00:00Z");
+
+  const res = await inSession(() => standDown.execute({ reason: "asked me to stop" }, stopperCtx));
+  ok(res.standingDown === true && res.note.includes("anywhere in this room"), "OPE-2806 precondition: the conversation grain holds no row, so stand_down stops the ROOM");
+  ok((await store.getEngagement(stoppedPart.org, stoppedPart.surfaceKey, `${STOPPED_ROOM};messageid=1`)) === null, "OPE-2806 precondition: …and the reply chain holds no stop of its own");
+  ok((await store.getEngagement(stoppedRoom.partition.org, stoppedRoom.partition.surfaceKey, stoppedRoom.anchor))?.stopped === true, "OPE-2806 precondition: …the stop lives on the room row");
+  ok((await store.getEngagement(openRoom.partition.org, openRoom.partition.surfaceKey, openRoom.anchor))?.stopped === false, "OPE-2806 precondition: the control room is watched and NOT stopped");
+
+  calls = [];
+  teamsResponse = { status: 200, body: { id: "teams-room-activity" } };
+  fakeHttp();
+  const activities = () => calls.filter((c) => c.url.includes("/v3/conversations/") && c.url.includes("/activities")).length;
+  const attempt = async (ctx: unknown, text: string): Promise<{ posted?: unknown; error?: string }> =>
+    inSession(async () => {
+      try {
+        return await armReply(reply, ctx)!.execute({ text }, ctx);
+      } catch (e) {
+        return { error: String((e as Error).message) };
+      }
+    });
+  try {
+    const worker = await attempt(workerCtx, "the worker's finding");
+    ok(typeof worker.error === "string" && /stand down/i.test(worker.error), "🔴 OPE-2806: a worker reply into a room that stood down at ROOM grain is REFUSED with the stand-down steer");
+    ok(activities() === 0, "🔴 OPE-2806: …and nothing reached the stopped room");
+
+    const ack = await attempt(stopperCtx, "Standing down here.");
+    ok(ack.posted === true, "OPE-2806: the turn that stood down still posts its ONE acknowledgement, read from the room-grain row");
+    ok(activities() === 1, "OPE-2806: …and that one post reached the room");
+    const spent = await readStandDownAck(stoppedRoom.partition, stoppedRoom.anchor);
+    ok(spent.kind === "held" && spent.spent === true, "OPE-2806: …and it spent the acknowledgement at the room address");
+    const again = await attempt(stopperCtx, "One more thing.");
+    ok(typeof again.error === "string" && /stand down/i.test(again.error), "🔴 OPE-2806: the stander's SECOND post into the stopped room is refused");
+    ok(activities() === 1, "OPE-2806: …so the stopped room received exactly ONE message");
+
+    const control = await attempt(controlCtx, "the worker's finding");
+    ok(control.posted === true && control.error === undefined, "OPE-2806 NEGATIVE CONTROL: the same worker's reply into a room that did NOT stand down still posts");
+    ok(activities() === 2, "OPE-2806 NEGATIVE CONTROL: …and it reached that room");
+
+    const editTool = (await import("@open-everywhere/core/agent/tools/edit_reply.js")).default;
+    const updates = () => calls.filter((c) => c.method === "PUT" && c.url.includes("/activities/")).length;
+    const edit = async (ctx: unknown): Promise<{ edited?: unknown; error?: string }> =>
+      inSession(async () => {
+        try {
+          return await armReply(editTool, ctx)!.execute({ message_id: "teams-room-activity", text: "corrected" }, ctx);
+        } catch (e) {
+          return { error: String((e as Error).message) };
+        }
+      });
+    const { recordOwnPost } = await import("@open-everywhere/core/agent/channels/own-post-ledger.js");
+    const { replyEditLocus } = await import("@open-everywhere/core/agent/channels/reply-post.js");
+    const workerLocus = replyEditLocus(resolveReplyTarget(workerCtx as never)!);
+    ok(workerLocus !== undefined && workerLocus !== null, "OPE-2808 precondition: the worker's conversation has an edit locus");
+    await recordOwnPost(stoppedPart.org, workerLocus!, "teams-room-activity");
+    const workerEdit = await edit(workerCtx);
+    ok(typeof workerEdit.error === "string" && /stand down/i.test(workerEdit.error), `🔴 OPE-2808: a worker's edit_reply in a room that stood down at ROOM grain is REFUSED with the stand-down steer (${workerEdit.error ?? "edited"})`);
+    const standerEdit = await edit(stopperCtx);
+    ok(typeof standerEdit.error === "string" && /stand down/i.test(standerEdit.error), "🔴 OPE-2808: …and so is the stander's own edit after its acknowledgement");
+    ok(updates() === 0, "🔴 OPE-2808: …so no message in the stopped room changed");
+    const controlEdit = await edit(controlCtx);
+    ok(controlEdit.edited === true && controlEdit.error === undefined, `OPE-2808 NEGATIVE CONTROL: an edit in a room that did NOT stand down still lands (${controlEdit.error ?? "edited"})`);
+    ok(updates() === 1, "OPE-2808 NEGATIVE CONTROL: …and it reached that room");
+  } finally {
+    restoreHttp();
+  }
+}
+
+console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom, attended-mention spend gate, engaged-seam admission on the native gate, a room-grain stand-down refuses a worker reply and an edit)`);

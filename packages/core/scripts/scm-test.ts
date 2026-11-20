@@ -615,9 +615,9 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   const merged = mergeRepoSkills(state, new Set(["payments-api--code-reviewer-granted"]), (m) => warns.push(m));
   const reviewer = merged["payments-api--code-reviewer"];
   ok(!!reviewer && reviewer.description === "Reviews diffs for bugs.", "an agent surfaces as <repoSlug>--<name> with ITS description (the when-to-delegate signal)");
-  ok(reviewer.markdown.startsWith(delegationHeader("acme/payments-api")), "the skill content starts with the trusted delegation header (repo interpolated)");
-  ok(reviewer.markdown.includes("call the `agent` tool") && reviewer.markdown.endsWith("You are a meticulous reviewer.\n"), "header explains the agent-tool mapping; persona body rides verbatim after it");
-  ok(!reviewer.markdown.includes("haiku"), "frontmatter model is dropped from the skill content (ignored at runtime; per-domain routing applies)");
+  ok(reviewer.content.startsWith(delegationHeader("acme/payments-api")), "the skill content starts with the trusted delegation header (repo interpolated)");
+  ok(reviewer.content.includes("call the `agent` tool") && reviewer.content.endsWith("You are a meticulous reviewer.\n"), "header explains the agent-tool mapping; persona body rides verbatim after it");
+  ok(!reviewer.content.includes("haiku"), "frontmatter model is dropped from the skill content (ignored at runtime; per-domain routing applies)");
   ok(merged["payments-api--deploy"].description === "Ship it." && warns.some((w) => w.includes("the skill wins")), "on a same-repo skill/agent name clash the SKILL wins, agent dropped with a warn");
   ok(merged["payments-api--no-desc"].description.includes("Delegation persona"), "a description-less agent gets a provenance fallback description");
 

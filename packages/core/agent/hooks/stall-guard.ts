@@ -1,19 +1,20 @@
 import { defineHook } from "eve/hooks";
+import { call } from "eve/events";
 import { recordActionRequest, recordActionResult } from "../stall/guard.js";
+import { optional } from "./control-refusal.js";
 
 export default defineHook({
   events: {
-    "actions.requested": async (event) => {
-      const turnId = event.data.turnId;
-      for (const action of event.data.actions) {
-        if (action.kind === "tool-call") recordActionRequest(turnId, action.callId, action.toolName, action.input);
-      }
-    },
-    "action.result": async (event) => {
-      const result = event.data.result;
-      if (result.kind === "tool-result" && event.data.status !== "rejected") {
-        recordActionResult(event.data.turnId, result.callId, result.toolName, result.output);
-      }
-    },
+    "call.requested": optional("stall-guard", (event, ctx) => {
+      if (event.data.capability.kind !== "tool") return;
+      const turnId = event.scope?.turnId ?? call(ctx.view, event.data.callId)?.turnId;
+      recordActionRequest(turnId ?? null, event.data.callId, event.data.capability.name, event.data.input);
+    }),
+    "call.settled": optional("stall-guard", (event, ctx) => {
+      if (event.data.outcome === "rejected") return;
+      const observed = call(ctx.view, event.data.callId);
+      if (observed === undefined || observed.kind !== "tool") return;
+      recordActionResult(observed.turnId ?? event.scope?.turnId ?? null, event.data.callId, observed.name, event.data.output);
+    }),
   },
 });

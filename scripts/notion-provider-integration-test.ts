@@ -11,6 +11,7 @@ import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/r
 import { isOperatorSecretName } from "@open-everywhere/core/agent/ops/operator-secret-roster.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { setRegisteredConnectorCredentials, capabilitiesForPlatform, readAudit } from "@open-everywhere/core/agent/adapter-api.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 const dir = join(tmpdir(), `open-everywhere-notion-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -94,7 +95,7 @@ interface ArmedTool {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<Record<string, unknown>>;
 }
 const armReply = (tool: unknown, ctx: unknown): ArmedTool | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as ArmedTool | null;
+  _dynamicResolverForTest(tool)({}, ctx) as ArmedTool | null;
 
 assert.deepStrictEqual(
   capabilitiesForPlatform("notion"),

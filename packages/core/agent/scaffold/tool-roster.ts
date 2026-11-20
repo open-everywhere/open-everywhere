@@ -11,8 +11,10 @@ export function classifyPrimitiveSource(source: string): PrimitiveClassification
   return SENTINEL.test(source) ? PRIMITIVE_DISABLED : PRIMITIVE_MOUNTED;
 }
 
+const SEAT_CUT_IMPORT = /import\s+tool\s+from\s*["']([^"']+)["']/u;
+
 export function reexportSpecifierOf(source: string): string | undefined {
-  return REEXPORT.exec(source)?.[1];
+  return REEXPORT.exec(source)?.[1] ?? SEAT_CUT_IMPORT.exec(source)?.[1];
 }
 
 export interface RosterEntry {

@@ -16,4 +16,4 @@ IN  relay message M131 · guild G13 channel C13 (type 0) · from U_TALK13 · pla
   ⇠ 200 ok
 EVT turn.started on discord:C13
 ACT reply tool posts on discord:C13 (reply-signal armed)
-EVT message.completed on discord:C13 {"finishReason":"stop","message":"Rolled back with `oe deploy --to v42`."}
+EVT content.completed on discord:C13 {"partId":"part-1","kind":"text","phase":"reply","value":"Rolled back with `oe deploy --to v42`."}

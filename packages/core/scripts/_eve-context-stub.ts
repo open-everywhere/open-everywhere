@@ -33,5 +33,6 @@ export function eveContextStorage(): AsyncLocalStorage<unknown> {
 }
 
 export async function inEveContext<T>(container: FakeEveContext, fn: () => Promise<T>): Promise<T> {
-  return await eveContextStorage().run(container, fn);
+  const store = Object.assign(container, { context: container, values: new Map<unknown, unknown>() });
+  return await eveContextStorage().run(store, fn);
 }

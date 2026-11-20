@@ -123,7 +123,8 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 async function inTurn<T>(sessionId: string, turnId: string, fn: () => T | Promise<T>): Promise<T> {
-  return eveContextStorage().run(new FakeSession(), async () => {
+  const session = new FakeSession();
+  return eveContextStorage().run(Object.assign(session, { context: session, values: new Map<unknown, unknown>() }), async () => {
     const events = telemetryHook.events as unknown as Record<string, (e: unknown, c: unknown) => unknown>;
     const started = events["turn.started"];
     if (typeof started !== "function") throw new Error("hooks/telemetry.ts does not bind turn.started");

@@ -182,6 +182,17 @@ try {
     };
     linearModule._resetLinearPristineChannels();
     const adapter = linearModule.default.adapter;
+    const { emptySessionView: rawEmptyView } = (await import(abs("dist/src/protocol/session-projection/fold.js"))) as { emptySessionView: () => unknown };
+    const raw = (state: unknown) => ({ state, view: rawEmptyView() });
+    const started = (state: unknown) => adapter["turn.started"]!({ type: "turn.started", data: { turnId: "t1" } }, raw(state));
+    const text = (phase: "reply" | "narration", value: string, state: unknown) =>
+      adapter["content.completed"]!({ type: "content.completed", scope: { turnId: "t1" }, data: { partId: `p-${phase}`, kind: "text", phase, value } }, raw(state));
+    let callSeq = 0;
+    const call = (name: string, input: unknown, state: unknown) =>
+      adapter["call.requested"]!(
+        { type: "call.requested", scope: { turnId: "t1" }, data: { callId: `c-${++callSeq}`, owner: { turnId: "t1" }, capability: { kind: "tool", name }, input } },
+        raw(state),
+      );
 
     const nativeState = () => ({ agentSessionId: "sess-native", organizationId: null, pendingToolCallMessage: null });
 
@@ -190,8 +201,8 @@ try {
     reset();
     const soakState = nativeState();
     await inSession(async () => {
-      await adapter["turn.started"]!({}, { state: soakState });
-      await adapter["message.completed"]!({ finishReason: "stop", message: "here is the answer" }, { state: soakState });
+      await started(soakState);
+      await text("reply", "here is the answer", soakState);
     }, { organization_id: SOAK_ORG, agent_session_id: "sess-native", issue_id: "ISS-EVE" });
     ok(bearers.length >= 2, `eve's OWN defaults really ran — ${bearers.length} Agent-Activity calls went out (progress + the answer)`);
     ok(
@@ -206,8 +217,8 @@ try {
     reset();
     const primaryState = nativeState();
     await inSession(async () => {
-      await adapter["turn.started"]!({}, { state: primaryState });
-      await adapter["message.completed"]!({ finishReason: "stop", message: "here is the answer" }, { state: primaryState });
+      await started(primaryState);
+      await text("reply", "here is the answer", primaryState);
     }, { agent_session_id: "sess-native", issue_id: "ISS-EVE" });
     ok(bearers.length >= 2, "negative control: eve's defaults ran on this drive too");
     ok(
@@ -217,7 +228,7 @@ try {
 
     ok(
       (soakState as unknown as Record<string, unknown>).oeOrganizationId === SOAK_ORG,
-      "turn.started stamps the wake's workspace onto the session state — message.completed has no auth ctx of its own to read",
+      "turn.started stamps the wake's workspace onto the session state — content.completed has no auth ctx of its own to read",
     );
     ok(
       (primaryState as unknown as Record<string, unknown>).oeOrganizationId === undefined,
@@ -229,11 +240,11 @@ try {
     reset();
     const strikeState = nativeState();
     await inSession(async () => {
-      await adapter["turn.started"]!({}, { state: strikeState });
-      await adapter["message.completed"]!({ finishReason: "tool-calls", message: `Saving card ${CARD} to a file` }, { state: strikeState });
-      await adapter["actions.requested"]!({ actions: [{ kind: "tool-call", toolName: "write_file", input: { path: "a.txt", content: `card ${CARD}` } }] }, { state: strikeState });
-      await adapter["actions.requested"]!({ actions: [{ kind: "tool-call", toolName: "write_file", input: { path: "b.txt", content: `card ${CARD}` } }] }, { state: strikeState });
-      await adapter["message.completed"]!({ finishReason: "stop", message: `Done: the card is ${CARD}.` }, { state: strikeState });
+      await started(strikeState);
+      await text("narration", `Saving card ${CARD} to a file`, strikeState);
+      await call("write_file", { path: "a.txt", content: `card ${CARD}` }, strikeState);
+      await call("write_file", { path: "b.txt", content: `card ${CARD}` }, strikeState);
+      await text("reply", `Done: the card is ${CARD}.`, strikeState);
     }, { agent_session_id: "sess-native", issue_id: "ISS-EVE" });
     ok(bodies.length >= 4, `the native drive posted its previews and its answer (${bodies.length} activities)`);
     ok(!sent().includes("4539") && !sent().includes("6467"), `🔴 no Agent Activity carries the card number — the closing text, the tool-call preview and the action preview are all struck (${sent().slice(0, 300)})`);

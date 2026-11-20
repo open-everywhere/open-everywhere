@@ -1268,8 +1268,24 @@ export interface OperationalStore {
 
   putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<void>;
   putTaskResultIfAbsent(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<boolean>;
+  /**
+   * Compare-and-set on one task-result row. With `expected` null, it writes only when no row exists.
+   * Otherwise it writes only when the row's stored JSON equals `expected`, byte for byte. It returns
+   * true when it wrote. A caller that read the row, changed it and lost the race gets false, reads
+   * again and retries, so the change of another compare-and-set writer is never overwritten. A plain
+   * `putTaskResult` on the same key still replaces the row.
+   */
+  casTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, expected: string | null): Promise<boolean>;
   getTaskResult(org: string, taskId: string): Promise<string | null>;
   deleteTaskResult(org: string, taskId: string): Promise<boolean>;
+  deleteTaskResultIf(org: string, taskId: string, expectedJson: string): Promise<boolean>;
+  /**
+   * Deletes the row only while it still equals `expectedJson` AND the `thread_engagement` row
+   * (`org`, `surfaceKey`, `threadTs`) is not stopped. It is ONE statement, so a stop that lands
+   * between a caller's read of the flag and this delete keeps the row: the stand-down hold of a new
+   * stop survives a late re-invitation's clear. A missing engagement row counts as not stopped.
+   */
+  deleteTaskResultIfUnstopped(org: string, taskId: string, expectedJson: string, surfaceKey: string, threadTs: string): Promise<boolean>;
 
   putMeetingData(org: string, key: string, valueJson: string, at: string, expiresAt: string): Promise<void>;
   putMeetingDataIfAbsent(org: string, key: string, valueJson: string, at: string, expiresAt: string): Promise<boolean>;

@@ -651,7 +651,11 @@ class Policies {
     "real-r5: the workflow-discovery card's propose is exempt, and it states why",
   );
   ok(attended.filter((a) => a.exempt && a.file.endsWith("personal-watch/propose.ts")).length === 2 && attended.filter((a) => a.file.endsWith("personal-watch/propose.ts")).every((a) => (a.exemptReason ?? "").length >= 12), "real-r5: the person's and the room's proposal card are both exempt, and each states why");
-  ok(attended.filter((a) => a.exempt).length === 7, "real-r5: exactly seven exemptions exist — the non-tool checkpoint, the routine permission card, the routine check-in card, the person's and the room's routine proposal cards, requestApproval's own default site, and the pass-through duplicate guard. An eighth is a decision, not a detail");
+  ok(attended.filter((a) => a.exempt).length === 8, "real-r5: exactly eight exemptions exist — the non-tool checkpoint, the routine permission card, the routine check-in card, the person's and the room's routine proposal cards, requestApproval's own default site, the pass-through duplicate guard, and the connector tools' pass-through outbound filter. A ninth is a decision, not a detail");
+  ok(
+    at("connections/connector-tools.ts")?.exempt === true && (at("connections/connector-tools.ts")?.exemptReason ?? "").length >= 12,
+    "real-r5: the connector tools' pass-through outbound filter is exempt, and it states why",
+  );
   ok(at("access/approval-dedupe.ts")?.exempt === true && (at("access/approval-dedupe.ts")?.exemptReason ?? "").length >= 12, "real-r5: the pass-through duplicate guard is exempt, and it states why");
   const eveSites = attended.filter((a) => a.shape === "eve-approval");
   ok(eveSites.length >= 4, `real-r5E: the eve ApprovalPolicy inventory is non-empty (${eveSites.length}) — zero would mean the detector went blind, not that the tree stopped authoring policies`);

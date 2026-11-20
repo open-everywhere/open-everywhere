@@ -4069,6 +4069,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
+    async casTaskResult(org, taskId, resultJson, at, ttlMs, expected) {
+      if (expected === null) {
+        const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+        await client.query("DELETE FROM task_result WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
+        const inserted = await client.query(
+          `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES ($1, $2, $3, $4)
+           ON CONFLICT (org_id, task_id) DO NOTHING RETURNING task_id`,
+          [org, taskId, resultJson, at],
+        );
+        return inserted.rows.length > 0;
+      }
+      const { rows } = await client.query(
+        "UPDATE task_result SET result_json = $1, created_at = $2 WHERE org_id = $3 AND task_id = $4 AND result_json = $5 RETURNING task_id",
+        [resultJson, at, org, taskId, expected],
+      );
+      return rows.length > 0;
+    },
+
     async getTaskResult(org, taskId) {
       const { rows } = await client.query("SELECT result_json FROM task_result WHERE org_id = $1 AND task_id = $2", [org, taskId]);
       const r = (rows as { result_json: string }[])[0];
@@ -4077,6 +4095,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async deleteTaskResult(org, taskId) {
       const { rows } = await client.query("DELETE FROM task_result WHERE org_id = $1 AND task_id = $2 RETURNING task_id", [org, taskId]);
+      return rows.length > 0;
+    },
+
+    async deleteTaskResultIf(org, taskId, expectedJson) {
+      const { rows } = await client.query(
+        "DELETE FROM task_result WHERE org_id = $1 AND task_id = $2 AND result_json = $3 RETURNING task_id",
+        [org, taskId, expectedJson],
+      );
+      return rows.length > 0;
+    },
+
+    async deleteTaskResultIfUnstopped(org, taskId, expectedJson, surfaceKey, threadTs) {
+      const { rows } = await client.query(
+        `DELETE FROM task_result WHERE org_id = $1 AND task_id = $2 AND result_json = $3
+           AND NOT EXISTS (SELECT 1 FROM thread_engagement WHERE org_id = $1 AND surface_key = $4 AND thread_ts = $5 AND stopped)
+         RETURNING task_id`,
+        [org, taskId, expectedJson, surfaceKey, threadTs],
+      );
       return rows.length > 0;
     },
 

@@ -75,7 +75,7 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   ok(ungranted.length === 1 && ungranted[0] === "orphan/repo", "mintGitReadBroker: an owner with no installation is reported ungranted, never silently widened");
 
   const acmeRule = rulesByOwner.get("acme")!;
-  ok(acmeRule.match?.path?.startsWith === "/acme/", "mintGitReadBroker: the rule is narrowed to this owner's own path prefix");
+  ok(acmeRule.match?.path !== undefined && "startsWith" in acmeRule.match.path && acmeRule.match.path.startsWith === "/acme/", "mintGitReadBroker: the rule is narrowed to this owner's own path prefix");
   ok(
     acmeRule.transform?.[0]?.headers?.Authorization === `Basic ${Buffer.from("x-access-token:tok_4242", "utf-8").toString("base64")}`,
     "mintGitReadBroker: the rule's header carries THIS owner's minted token",

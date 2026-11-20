@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { __setTestValveForTest, testValveArmed } from "@open-everywhere/core/agent/testing/test-valves.js";
@@ -246,7 +247,7 @@ test("Slack's Stop event stops the running turn through the ✋ arm's cancel pat
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
+    const rows = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — the turn really stopped");
   expect(cancelled).toHaveLength(1);

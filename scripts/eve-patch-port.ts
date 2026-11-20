@@ -12,12 +12,12 @@ interface PortOp {
 
 const OPS: readonly PortOp[] = [
   {
-    part: "1,4",
+    part: "1",
     file: "dist/src/harness/tool-loop.js",
-    why: "the OE helper block (markers, projection, compaction `reduced`)",
+    why: "the OE helper block (marker and projection)",
     expect: 1,
     find: "function createToolLoopHarness(e){",
-    replace: "\n// The untrusted OUTPUT PROJECTION hook (__oeProjectToolSet, OPE-73) is the first. It genuinely\n// needs bytes: this is the ONLY view of the fully-assembled toolset in the process, and OE's seat\n// rules plus the connector fence both act on tools eve mounts itself. Re-examined at 0.44.0 and\n// KEPT — OPE-946 records what upstream now does and what it still does not.\n// FIVE earlier additions were REMOVED and must not come back on a re-roll — the install-integrity\n// gate (packages/core/scripts/eve-install-integrity-test.ts) asserts each one's ABSENCE by name:\n//   * the force-tool-turn nudge (OPE-172) — gated on an env var set in no environment, so it\n//     never executed once in 14 days and six re-rolls.\n//   * the per-turn step ceiling (OPE-407) — reimplemented in USERLAND at the step.started model\n//     resolver (packages/core/agent/model/step-boundary.ts). Two-tier there (a wrap-up\n//     instruction at the budget, a text-only stub at the backstop) where these bytes could only\n//     mute the continue-decision, so porting it back would be a downgrade as well as a red gate.\n//   * the compaction trigger anchor (OPE-689) — RETIRED at the 0.54.3 re-roll. eve 0.52.3 landed\n//     the same correction upstream as `tokenEstimateAdjustment`, so `compaction.js` ships PRISTINE.\n//     Re-adding the hunk on top of it DOUBLE-COUNTS the real-minus-estimate gap — once as a lowered\n//     threshold, once as an added adjustment — and a session well under threshold would summarise.\n//     Its two helpers were `__oeAnchoredConfig` and `__oeNoteNoOpCompaction`.\n//   * the empty-step terminal guard (part 5, OPE-762) — RETIRED at OPE-2252 onto eve's native\n//     `endsTurn`: a successful `reply` or `no_reply` now ends the turn with no further\n//     model call, so the empty step this guard forgave is never requested. Its helper, marker\n//     and hook names are in the RETIRED table of eve-install-integrity-test.ts, never here.\n//   * the model-message projection (part 6, OPE-1396) — RETIRED at OPE-2251: eve 0.70 renders no\n//     `[Agents]` listing for it to splice off the model call, so worker continuation by `taskId`\n//     is allowed. Its helper and marker names are in the RETIRED table of\n//     eve-install-integrity-test.ts, never here.\n// --- OE UNTRUSTED OUTPUT PROJECTION (OPE-73): calls the userland hook (packages/core/agent/access/untrusted-projection.ts) with the fully-assembled AI-SDK toolset once per model call. The hook MUTATES tools in place (identity preserved for eve's approval WeakMap). Unregistered hook = passthrough (eve CLI contexts); a registered hook that throws fails the call loudly (fail-closed). ---\nglobalThis.__oeProjectToolSetPatched=!0;\nfunction __oeProjectToolSet(ts){const h=globalThis.__oeToolResultProjection;if(typeof h===\"function\")h(ts);return ts}\n// --- OE COMPACTION EVENT CONTRACT (OPE-697, re-derived for eve 0.46.x at OPE-1258): eve emits `compaction.completed` whenever EITHER the compaction trigger or memory canonicalization fires, so a pass that did no compaction work is indistinguishable from a real summary. `__oeWithReduced` stamps the payload with `reduced`, computed by `__oeCompactionReduced` over the WORK STEP's own input and output — the projected ordinary list handed to `compactMessages` versus what it returned. That is the one predicate that answers \"did COMPACTION do work\": when only `shouldCanonicalizeMemory` fires, eve skips the work step and passes the input straight through as a fresh array, which scores `false` on content, correctly. Comparing the REBUILT history (`[...memory,...ordinary]`) against the input would instead score a pure memory-canonicalization pass as work. It is computed BEFORE `onCompaction()` appends anything and before `drainMemoryCommit` replaces the list, both of which would otherwise make a no-op look like work. ADDITIVE ONLY: the event still fires, so a consumer awaiting completed-after-requested cannot hang. ---\nglobalThis.__oeCompactionContractPatched=!0;\nfunction __oeCompactionReduced(e,t){return t!==e&&(t.length!==e.length||JSON.stringify(t)!==JSON.stringify(e))}\nfunction __oeWithReduced(e,t){return{...e,data:{...e.data,reduced:t}}}\n// === END OE PATCH HELPERS ===\nfunction createToolLoopHarness(e){",
+    replace: "\n// The untrusted OUTPUT PROJECTION hook (__oeProjectToolSet, OPE-73) is the first. It genuinely\n// needs bytes: this is the ONLY view of the fully-assembled toolset in the process, and OE's seat\n// rules plus the connector fence both act on tools eve mounts itself. Re-examined at 0.44.0 and\n// KEPT — OPE-946 records what upstream now does and what it still does not.\n// SIX earlier additions were REMOVED and must not come back on a re-roll — the install-integrity\n// gate (packages/core/scripts/eve-install-integrity-test.ts) asserts each one's ABSENCE by name:\n//   * the force-tool-turn nudge (OPE-172) — gated on an env var set in no environment, so it\n//     never executed once in 14 days and six re-rolls.\n//   * the per-turn step ceiling (OPE-407) — reimplemented in USERLAND at the step.started model\n//     resolver (packages/core/agent/model/step-boundary.ts). Two-tier there (a wrap-up\n//     instruction at the budget, a text-only stub at the backstop) where these bytes could only\n//     mute the continue-decision, so porting it back would be a downgrade as well as a red gate.\n//   * the compaction trigger anchor (part 3, OPE-689) — RETIRED at the 0.54.3 re-roll. On 0.x, eve\n//     0.52.3 landed the same correction upstream as `tokenEstimateAdjustment`, so `compaction.js`\n//     ships PRISTINE. eve v1 drops that adjustment and anchors on the provider's count instead.\n//     Re-adding the hunk on top of it DOUBLE-COUNTS the real-minus-estimate gap — once as a lowered\n//     threshold, once in eve's own correction (the 0.x adjustment, or the v1 provider-count anchor) — and a session well under threshold would summarise.\n//     Its two helpers were `__oeAnchoredConfig` and `__oeNoteNoOpCompaction`.\n//   * the empty-step terminal guard (part 5, OPE-762) — RETIRED at OPE-2252 onto eve's native\n//     `endsTurn`: a successful `reply` or `no_reply` now ends the turn with no further\n//     model call, so the empty step this guard forgave is never requested. Its helper, marker\n//     and hook names are in the RETIRED table of eve-install-integrity-test.ts, never here.\n//   * the model-message projection (part 6, OPE-1396) — RETIRED at OPE-2251: eve 0.70 renders no\n//     `[Agents]` listing for it to splice off the model call, so worker continuation by `taskId`\n//     is allowed. Its helper and marker names are in the RETIRED table of\n//     eve-install-integrity-test.ts, never here.\n//   * the compaction event contract (part 4, OPE-697) — RETIRED at OPE-2704. Its helper and marker\n//     names are in the RETIRED table of eve-install-integrity-test.ts, never here.\n// --- OE UNTRUSTED OUTPUT PROJECTION (OPE-73): calls the userland hook (packages/core/agent/access/untrusted-projection.ts) with the fully-assembled AI-SDK toolset once per model call. The hook MUTATES tools in place (identity preserved for eve's approval WeakMap). Unregistered hook = passthrough (eve CLI contexts); a registered hook that throws fails the call loudly (fail-closed). ---\nglobalThis.__oeProjectToolSetPatched=!0;\nfunction __oeProjectToolSet(ts){const h=globalThis.__oeToolResultProjection;if(typeof h===\"function\")h(ts);return ts}\n// === END OE PATCH HELPERS ===\nfunction createToolLoopHarness(e){",
   },
   {
     part: "1",
@@ -26,38 +26,6 @@ const OPS: readonly PortOp[] = [
     expect: 1,
     find: "o.outputSchema!==void 0&&(a[FINAL_OUTPUT_TOOL_NAME]=buildFinalOutputTool(o.outputSchema));",
     replace: "__oeProjectToolSet(a);o.outputSchema!==void 0&&(a[FINAL_OUTPUT_TOOL_NAME]=buildFinalOutputTool(o.outputSchema));",
-  },
-  {
-    part: "4",
-    file: "dist/src/harness/tool-loop.js",
-    why: "declare the compaction `reduced` flag in maybeCompact",
-    expect: 1,
-    find: "async function maybeCompact(e){let{emit:t,emissionState:n}=e",
-    replace: "async function maybeCompact(e){let __oeRed=!1,{emit:t,emissionState:n}=e",
-  },
-  {
-    part: "4",
-    file: "dist/src/harness/tool-loop.js",
-    why: "compute `reduced` over the work step's own input and output, before onCompaction appends",
-    expect: 1,
-    find: ":[...p];if(r=validateHarnessModelMessages([...f.memory,...g]),t){",
-    replace: ":[...p];__oeRed=__oeCompactionReduced(p,g);if(r=validateHarnessModelMessages([...f.memory,...g]),t){",
-  },
-  {
-    part: "4",
-    file: "dist/src/harness/tool-loop.js",
-    why: "stamp `reduced` onto compaction.completed",
-    expect: 1,
-    find: "await t(createCompactionCompletedEvent({modelId:formatLanguageModelGatewayId(l.model),sequence:n.sequence,sessionId:i.sessionId,stepIndex:n.stepIndex,turnId:n.turnId}),",
-    replace: "await t(__oeWithReduced(createCompactionCompletedEvent({modelId:formatLanguageModelGatewayId(l.model),sequence:n.sequence,sessionId:i.sessionId,stepIndex:n.stepIndex,turnId:n.turnId}),__oeRed),",
-  },
-  {
-    part: "4",
-    file: "dist/src/protocol/message.d.ts",
-    why: "declare the optional `reduced` field on CompactionCompletedStreamEvent",
-    expect: 1,
-    find: "checkpoint message has been\n * appended to the durable session history.\n */\nexport interface CompactionCompletedStreamEvent {\n    data: {\n        modelId: string;\n        se",
-    replace: "pass finishes. eve does NOT\n * always append a checkpoint: read `reduced` to tell real work from a no-op.\n */\nexport interface CompactionCompletedStreamEvent {\n    data: {\n        modelId: string;\n        /**\n         * OE patch (OPE-697). `true` when the compaction work step returned a\n         * different message list, `false` when it returned its input. Only\n         * `maybeCompact` sets it. The `createCompactionCompletedEvent`\n         * factory does not, so the field stays optional.\n         */\n        reduced?: boolean;\n        se",
   },
   {
     part: "10",
@@ -79,7 +47,6 @@ const OPS: readonly PortOp[] = [
 
 const MARKERS: readonly string[] = [
   "__oeProjectToolSetPatched",
-  "__oeCompactionContractPatched",
   "__oeResolvesThroughInstalledPackage",
 ];
 
@@ -118,7 +85,7 @@ const already = MARKERS.filter((marker) => [...bytes.values()].some((text) => te
 if (already.length > 0) {
   console.error(
     `eve-patch-port: REFUSING — ${eveRoot} already carries ${already.join(", ")}. ` +
-      `A second pass inserts the helper block twice and re-stamps part 4. Reinstall a pristine eve first.`,
+      `A second pass inserts the helper block twice. Reinstall a pristine eve first.`,
   );
   process.exit(1);
 }

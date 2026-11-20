@@ -112,12 +112,12 @@ for (const [label, auth] of [["slack channel", slackChan], ["discord guild chann
 const dmWithheld = new Set(withheldFromGrain("standing"));
 ok(!dmWithheld.has("agent"), "a standing (DM) seat is not withheld `agent` BY GRAIN — WINDOW_GATED_TOOLS[agent] includes standing (the seat predicate then withholds it on a DM's native token)");
 ok(WINDOW_GATED_TOOLS.agent.includes("standing"), "`agent` is grain-gated to standing (manifest) — the mount predicate is layered on top, not a table change");
-const WIDE_HANDS_11 = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"];
-for (const wide of WIDE_HANDS_11) {
+const WIDE_HANDS_12 = ["bash", "glob", "grep", "read_file", "write_file", "edit_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"];
+for (const wide of WIDE_HANDS_12) {
   ok(dmWithheld.has(wide), `a standing (DM) seat DROPS ${wide} (withheld from grain standing)`);
 }
 ok(dmWithheld.has("complete_thread"), "complete_thread (thread-only) is also absent from a standing DM seat");
-eq(dmWithheld.size, WIDE_HANDS_11.length + 1, "a standing (DM) seat withholds exactly the 11 wide-hands tools + complete_thread");
+eq(dmWithheld.size, WIDE_HANDS_12.length + 1, "a standing (DM) seat withholds exactly the 12 wide-hands tools + complete_thread");
 
 console.log("4. auditWindowToolGate (turn.tool_gated row):");
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [], wakeId: "w-empty", sessionId: "s-empty" });

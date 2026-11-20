@@ -31,6 +31,7 @@ import { proposingGrantKey } from "../identity/binding.js";
 import { markCardPostedThisTurn } from "../approvals/card-signal.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
+import { STAND_DOWN_ACK_STILL_OWED, withholdIfStoodDown } from "../channels/stand-down-gate.js";
 
 export function sessionMemoAdmissible(input: {
   readonly sessionId?: string;
@@ -39,6 +40,15 @@ export function sessionMemoAdmissible(input: {
   readonly halted: boolean;
 }): boolean {
   return Boolean(input.sessionId) && !input.halted;
+}
+
+export const SESSION_NOTE_WITHHELD =
+  " This conversation stood down, so the outcome note was not posted here. Post nothing more in this conversation.";
+
+export function sessionNoteSuffix(note: "posted" | "withheld" | "withheld-ack-owed" | undefined): string {
+  if (note === "withheld") return SESSION_NOTE_WITHHELD;
+  if (note === "withheld-ack-owed") return " This conversation stood down, so the outcome note was not posted here." + STAND_DOWN_ACK_STILL_OWED;
+  return "";
 }
 
 async function postSessionNote(platform: string, channelId: string, threadTs: string | null, text: string): Promise<void> {
@@ -52,6 +62,19 @@ async function postSessionNote(platform: string, channelId: string, threadTs: st
   if (threadTs) body.set("thread_ts", threadTs);
   body.set("text", text);
   await bridgeSlackForm("chat.postMessage", body.toString()).catch(() => {});
+}
+
+export async function postSessionNoteUnlessStoodDown(
+  ctx: BindableContext,
+  platform: string,
+  channelId: string,
+  threadTs: string | null,
+  text: string,
+): Promise<"posted" | "withheld" | "withheld-ack-owed"> {
+  const standDown = await withholdIfStoodDown(ctx, "open_pull_request");
+  if (standDown.stopped) return standDown.holdsAck ? "withheld-ack-owed" : "withheld";
+  await postSessionNote(platform, channelId, threadTs, text);
+  return "posted";
 }
 
 export default windowGated("open_pull_request", defineTool({
@@ -183,16 +206,19 @@ export default windowGated("open_pull_request", defineTool({
       : null;
     if (memo) {
       const outcome = await executePrOpen(args, memo.grantedBy, {}, { sessionApproved: true });
-      if (originChannelId) {
-        await postSessionNote(binding.platform, originChannelId, binding.threadTs ?? null, `${outcome}\n-# approved for this routine by <@${memo.grantedBy}>`);
-      }
+      const note =
+        originChannelId
+          ? await postSessionNoteUnlessStoodDown(ctx as BindableContext, binding.platform, originChannelId, binding.threadTs ?? null, `${outcome}\n-# approved for this routine by <@${memo.grantedBy}>`)
+          : undefined;
       markCardPostedThisTurn();
       return {
         ok: true,
         repo: input.repo,
         head: input.head,
         pending: false,
-        message: `approved for this routine (by ${memo.grantedBy}) — published without a card: ${outcome}`,
+        message:
+          `approved for this routine (by ${memo.grantedBy}) — published without a card: ${outcome}` +
+          sessionNoteSuffix(note),
       };
     }
 

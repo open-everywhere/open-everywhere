@@ -107,24 +107,22 @@ export { normaliseMemoryPath, extractMemoryPathReads } from "../e2e/memory-reads
 export function replyText(events: readonly TranscriptWireEvent[]): string | null {
   const out: string[] = [];
   for (const e of events) {
-    if (e.type !== "actions.requested") continue;
-    const acts = (e.data as { actions?: unknown; calls?: unknown } | null);
-    const list = Array.isArray(acts?.actions) ? acts.actions : Array.isArray(acts?.calls) ? acts.calls : [];
-    for (const a of list) {
-      const name = (a as { toolName?: unknown; name?: unknown }).toolName ?? (a as { name?: unknown }).name;
-      const args = ((a as { args?: unknown; input?: unknown }).args ?? (a as { input?: unknown }).input) as { text?: unknown } | undefined;
-      if (name === "reply" && typeof args?.text === "string" && args.text.trim().length > 0) out.push(args.text);
-    }
+    if (e.type !== "call.requested") continue;
+    const call = e.data as { capability?: { name?: unknown }; input?: { text?: unknown } } | null;
+    const text = call?.input?.text;
+    if (call?.capability?.name === "reply" && typeof text === "string" && text.trim().length > 0) out.push(text);
   }
   return out.length > 0 ? out.join("\n") : null;
 }
 
 export function terminalProse(events: readonly TranscriptWireEvent[]): string | null {
-  const msgs = findEvents(events, "message.completed").concat(findEvents(events, "message.delta"));
+  const isProse = (e: TranscriptWireEvent): boolean => (e.data as { kind?: unknown } | null)?.kind === "text";
+  const msgs = findEvents(events, "content.completed", isProse).concat(findEvents(events, "content.delta", isProse));
   let best: string | null = null;
   for (const e of events) {
-    const d = e.data as { text?: unknown; content?: unknown; message?: unknown } | null;
+    const d = e.data as { text?: unknown; content?: unknown; message?: unknown; value?: unknown } | null;
     const text =
+      e.type === "content.completed" && isProse(e) && typeof d?.value === "string" ? d.value :
       typeof d?.text === "string" ? d.text :
       typeof d?.content === "string" ? d.content :
       typeof d?.message === "string" ? d.message : null;
@@ -145,7 +143,7 @@ export function transcriptServedWake(events: readonly TranscriptWireEvent[], wak
   const needle = `wake-id="${wakeId}"`;
   for (const e of events) {
     const t = e.type.toLowerCase();
-    if (!(t.includes("message.received") || t.includes("wake") || t.includes("user"))) continue;
+    if (!(t.includes("delivery.consumed") || t.includes("wake") || t.includes("user"))) continue;
     if (anyStringContains(e.data, needle)) return true;
   }
   return false;

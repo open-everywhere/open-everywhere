@@ -2,17 +2,19 @@ import { auditErrorDetail } from "../audit/tool-action.js";
 import { defineHook } from "eve/hooks";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../identity/binding.js";
+import { actingPrincipalId, currentTurnAddressed, currentTurnBotName, currentWakeId } from "../identity/binding.js";
 import { detectLinkClaim, detectAddressedLinkClaim, mintLinkCode } from "../identity/link-challenge.js";
 import { claimAddressingRefusal, claimCodeBackReply, claimVenueRefusal, codeBackDecision } from "../identity/link-flow.js";
 import { agentNameTokens } from "../identity/bot-name.js";
 import { auditLinkClaimUnaddressed, auditLinkCodeBackUndeliverable, auditLinkNoticeUndeliverable, claimLinkChallenge } from "../identity/link-store.js";
 import { linkTenantOf, tryLinkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
-import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
+import { auditReplyPost, postReply, replyAuditFor, resolveReplyTarget, type ReplyAudit } from "../channels/reply-post.js";
 import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
 import { humanAccountLabel } from "../identity/account-display-name.js";
 import { isWakeEnvelopeShaped, triggerMessageBody, type WakeTrust } from "../channels/wake-envelope.js";
+import { optional } from "./control-refusal.js";
+import { deliveredText } from "./event-reads.js";
 
 function claimBodyOf(text: string | undefined): string | undefined {
   if (text === undefined) return undefined;
@@ -34,6 +36,17 @@ async function notify(arm: ((text: string) => Promise<void> | void) | undefined,
     await arm(text);
   } catch (err) {
     log(`link claim refusal notice could not be delivered: ${String(err)}`);
+  }
+}
+
+export function claimantNoticeAudit(ctx: BindableContext): ReplyAudit | undefined {
+  try {
+    const wakeId = currentWakeId(ctx);
+    if (wakeId === undefined) return undefined;
+    const { creatorId: _creator, routine: _routine, fireRoutine: _fireRoutine, ...audit } = replyAuditFor(ctx, "tool", wakeId);
+    return audit;
+  } catch {
+    return undefined;
   }
 }
 
@@ -149,8 +162,8 @@ export async function observeLinkClaim(input: {
 
 export default defineHook({
   events: {
-    "message.received": async (event, ctx) => {
-      const raw = (event as { data?: { message?: unknown } }).data?.message;
+    "delivery.consumed": optional("link-claim", async (event, ctx) => {
+      const raw = deliveredText(event.data);
       if (typeof raw !== "string") return;
       const addressed = currentTurnAddressed(ctx as BindableContext);
       const addressTokens = addressed ? agentNameTokens(currentTurnBotName(ctx as BindableContext)) : [];
@@ -162,6 +175,7 @@ export default defineHook({
         const trust: WakeTrust = authorId === undefined ? "relay" : binding.trust === "internal" ? "peer" : "unauth";
         const trustIsEvidence = BINDING_TRUSTED_PLATFORMS.has(binding.platform);
         const target = resolveReplyTarget(ctx as BindableContext);
+        const noticeAudit = claimantNoticeAudit(ctx as BindableContext);
         await observeLinkClaim({
           org: binding.org,
           platform: binding.platform,
@@ -177,12 +191,13 @@ export default defineHook({
           codeBackDeliverable: target !== null,
           notifyClaimant: async (text) => {
             if (!target) return;
-            await postReply(target, text);
+            const id = await postReply(target, text);
+            if (noticeAudit) await auditReplyPost(noticeAudit, id, target.platform, text.length);
           },
         });
       } catch (err) {
         log(`link claim check skipped: ${String(err)}`);
       }
-    },
+    }),
   },
 });

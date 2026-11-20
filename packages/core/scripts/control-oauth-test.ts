@@ -126,7 +126,7 @@ const mcpRequest = (token: string | null, body: unknown = { jsonrpc: "2.0", id: 
   const prm = (await (await route.handleProtectedResourceMetadata(get(resource.CONTROL_PROTECTED_RESOURCE_METADATA_PATH), { signingSecret: ARMED, issuer: DECLARED })).json()) as Record<string, unknown>;
   ok(prm["resource"] === `${ORIGIN}${resource.CONTROL_MCP_PATH}`, "RFC 9728: the resource identifier is the MCP mount's URL");
   ok(JSON.stringify(prm["authorization_servers"]) === JSON.stringify([ORIGIN]), "RFC 9728: the authorization server is this deployment");
-  ok(JSON.stringify(prm["scopes_supported"]) === JSON.stringify([...resource.CONTROL_ADVERTISED_SCOPES]), "RFC 9728: the advertised scopes come off eve's own oauthResource decoration");
+  ok(JSON.stringify(prm["scopes_supported"]) === JSON.stringify([...resource.CONTROL_ADVERTISED_SCOPES]), "RFC 9728: the advertised scopes are CONTROL_ADVERTISED_SCOPES");
 
   ok(clients.CONTROL_OAUTH_EXTRA_AUDIENCES.length === 0, "no extra audience ships by default — the deployment's own resource is the only one accepted");
   ok(JSON.stringify(clients.controlOAuthAudiences(prm["resource"] as string, DECLARED)) === JSON.stringify([prm["resource"]]), "…so the accepted audience set is exactly the published resource");
@@ -453,28 +453,44 @@ let code = "";
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const evePkg = JSON.parse(readFileSync(resolve(here, "../../../node_modules/eve/package.json"), "utf-8")) as { version: string };
-  ok(evePkg.version === "0.71.0", `the parity claims below are pinned to eve 0.71.0 (installed: ${evePkg.version})`);
-  const eveAuth = readFileSync(resolve(here, "../../../node_modules/eve/dist/src/public/channels/auth.d.ts"), "utf-8");
+  const rootPkg = JSON.parse(readFileSync(resolve(here, "../../../package.json"), "utf-8")) as { dependencies?: Record<string, string> };
+  ok(evePkg.version === rootPkg.dependencies?.eve, `the parity claims below are pinned to the root eve pin ${rootPkg.dependencies?.eve} (installed: ${evePkg.version})`);
+  const eveAuth = (await import("eve/channels/auth")) as Record<string, unknown>;
+  const eveAuthNames = Object.keys(eveAuth);
 
-  for (const symbol of ["function jwtHmac", "function oauthResource", "function routeAuth", "function readOAuthResourceOptions"]) {
-    ok(eveAuth.includes(symbol), `eve ships \`${symbol.replace("function ", "")}\` — the resource-server arm is eve's, not ours`);
+  for (const symbol of ["jwtHmac", "oauthResource", "routeAuth"]) {
+    ok(typeof eveAuth[symbol] === "function", `eve ships \`${symbol}\` from \`eve/channels/auth\` — the resource-server arm is eve's, and OE does not reimplement it`);
   }
 
-  for (const absent of ["tokenEndpoint", "authorizationServer(", "clientCredentials", "authorizationCode", "pkce", "codeChallenge"]) {
-    ok(!eveAuth.includes(absent), `eve ships no \`${absent}\` — the authorization-server half is genuinely ours`);
+  for (const absent of [/tokenEndpoint/i, /authorizationServer$/i, /clientCredentials/i, /authorizationCode/i, /pkce/i, /codeChallenge/i]) {
+    ok(!eveAuthNames.some((n) => absent.test(n)), `eve ships no \`${absent.source}\` export — the authorization-server half is OE's own`);
   }
 
-  const eveMcp = readFileSync(resolve(here, "../../../node_modules/eve/dist/src/public/channels/mcp.js"), "utf-8");
-  ok(eveMcp.includes("#internal/mcp/protected-resource.js"), "eve builds the RFC 9728 document from an INTERNAL module…");
-  ok(!eveAuth.includes("ProtectedResourceMetadata"), "…which `eve/channels/auth` does not re-export, so the control mount publishes its own");
+  ok(!eveAuthNames.some((n) => /ProtectedResource|readOAuthResource/i.test(n)), "`eve/channels/auth` exports no protected-resource document builder and no options reader, so the control mount publishes its own");
   const evePkgJson = readFileSync(resolve(here, "../../../node_modules/eve/package.json"), "utf-8");
-  ok(!evePkgJson.includes('"./internal/mcp'), "…and no package export makes that internal module reachable");
+  ok(!evePkgJson.includes('"./internal/mcp'), "…and no package export makes eve's internal MCP module reachable");
 
   const auth = await resource.controlResourceAuth(ARMED, DECLARED);
   ok(auth !== null, "the resource AuthFn is built when the plane is armed");
-  const { readOAuthResourceOptions } = await import("eve/channels/auth");
-  const options = auth === null ? undefined : readOAuthResourceOptions(auth);
-  ok(options?.issuer === ORIGIN && options?.resource === `${ORIGIN}${resource.CONTROL_MCP_PATH}`, "eve reads our oauthResource decoration back — the published document cannot drift from the door");
+  const options = resource.controlResourceOptions(ORIGIN);
+  ok(options.issuer === ORIGIN && options.resource === `${ORIGIN}${resource.CONTROL_MCP_PATH}`, "one options builder names the issuer and the resource for the door");
+  // eve 1.0 no longer exports `readOAuthResourceOptions`. Read the door's decoration through the
+  // cross-instance `Symbol.for` brand that `oauthResource` stamps, with a control on eve's own value.
+  const OAUTH_RESOURCE_BRAND = Symbol.for("eve.channels.auth.oauthResource");
+  const { oauthResource } = await import("eve/channels/auth");
+  ok(Reflect.get(oauthResource(() => null, options), OAUTH_RESOURCE_BRAND) === options, "control: eve's own oauthResource() value carries its options under the brand");
+  ok(Reflect.get(() => null, OAUTH_RESOURCE_BRAND) === undefined, "control: a plain AuthFn carries no brand");
+  const door = (auth === null ? undefined : Reflect.get(auth, OAUTH_RESOURCE_BRAND)) as typeof options | undefined;
+  ok(door?.issuer === ORIGIN && door?.resource === `${ORIGIN}${resource.CONTROL_MCP_PATH}`, "the door's own decoration names the issuer and the resource");
+  const published = await resource.controlProtectedResourceMetadata(ARMED, DECLARED);
+  ok(
+    door !== undefined &&
+      published !== null &&
+      published.resource === door.resource &&
+      JSON.stringify(published.authorization_servers) === JSON.stringify([door.issuer]) &&
+      JSON.stringify(published.scopes_supported) === JSON.stringify(door.scopes),
+    "the published document repeats the options read off the door — it cannot drift from the door",
+  );
 }
 
 {

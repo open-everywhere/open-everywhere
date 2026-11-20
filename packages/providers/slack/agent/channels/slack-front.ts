@@ -1444,7 +1444,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       return OK();
     }
 
-    const threadKey = slackContinuationToken(ev.channelId, ev.threadTs);
+    const threadKey = slackContinuationToken({ channelId: ev.channelId, threadTs: ev.threadTs });
     args.waitUntil(
       fifo.enqueue(threadKey, async () => {
         const heard = !ev.botId && hasSlackVoiceClip(ev) && (await threadHearsClips(p, ev.threadTs!)) ? await hearVoice(ev) : ev;

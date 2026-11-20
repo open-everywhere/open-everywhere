@@ -309,6 +309,15 @@ export function parseLinkCode(text: string | undefined): string | undefined {
   return bareCodeLine(text);
 }
 
+export function linkCodeFromPosts(posts: readonly { readonly ts: string; readonly text: string }[]): { readonly code: string; readonly ts: string } | undefined {
+  const ordered = [...posts].sort((a, b) => Number(a.ts) - Number(b.ts));
+  for (const p of ordered) {
+    const code = parseLinkCode(p.text);
+    if (code) return { code, ts: p.ts };
+  }
+  return undefined;
+}
+
 const LINK_CODE_CLASS = `[${LINK_CODE_ALPHABET}]`;
 const LINK_CODE_PUNCT = "[\\s:*_`\\-]";
 

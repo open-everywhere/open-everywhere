@@ -7,6 +7,7 @@ import { registerReadAdapter, type ReadAdapter, type RenderedLine, type WakeRead
 import { resolveWakeChannel, requireWakeThreadRoot, WakeContainerError } from "../agent/channels/wake-container.js";
 import readChannelDynamic from "../agent/tools/read_channel.js";
 import readThreadDynamic from "../agent/tools/read_thread.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -71,7 +72,7 @@ const DOMAINS = [{ name: "d", reach: [`${PLATFORM}/T1/C1`] }] as never;
 console.log("1. the tool surface:");
 {
   const mount = (dyn: unknown): { inputSchema?: { shape?: Record<string, unknown>; parse?: (v: unknown) => unknown } } | null => {
-    const handler = (dyn as { events: Record<string, (e: unknown, c: unknown) => unknown> }).events["session.started"];
+    const handler = _dynamicResolverForTest(dyn);
     return handler({}, turn({ team_id: "T1", channel_id: "C1" })) as never;
   };
 

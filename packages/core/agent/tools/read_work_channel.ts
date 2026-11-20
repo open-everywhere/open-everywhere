@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { type BindableContext, TurnOriginFenceError } from "../identity/binding.js";
@@ -6,7 +6,7 @@ import { getConfig } from "../access/config.js";
 import { readChannelResult, renderChannelBody, channelReadSource, keyedReadResult, WindowSourcesRefusalError, READ_FILES_SCHEMA } from "../channels/channel-read.js";
 import { resolveWakeChannel } from "../channels/wake-container.js";
 import { auditSourcesGateRefusal, auditOriginFenceRefusal } from "../channels/read-scope-audit.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { capReadForInline } from "../channels/read-spool.js";
 import { assertSurfaceWorkGrant, surfaceWorkReadMount } from "../access/surface-work-grant.js";
 import type { Domain } from "../memory/domain.js";
@@ -70,13 +70,8 @@ const readWorkChannelEntry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("read_work_channel", "_single", readWorkChannelEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!surfaceWorkReadMount(ctx as BindableContext, safeDomains)) return null;
-      return readWorkChannelEntry;
-    },
-  },
+export default sessionMountedTool("read_work_channel", readWorkChannelEntry, (ctx) => {
+  if (!surfaceWorkReadMount(ctx, safeDomains)) return false;
+  return true;
 });

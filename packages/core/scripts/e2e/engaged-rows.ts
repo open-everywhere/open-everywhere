@@ -89,6 +89,71 @@ export function reportedNameDrop(rows: readonly AuditWireEntry[], platform: stri
   return dispatchAddressings(rows, platform).includes("name-drop");
 }
 
+export const NO_REPLY_OBSERVED_ACTION = "reply.no_reply_observed";
+
+export type EngagedFollowUpDiagnosis =
+  | { readonly kind: "answered"; readonly addressing: string; readonly wakeIds: readonly string[] }
+  | { readonly kind: "admitted-silent"; readonly addressing: string; readonly wakeIds: readonly string[]; readonly reasons: readonly string[] }
+  | { readonly kind: "admitted-unsettled"; readonly addressing: string; readonly wakeIds: readonly string[] }
+  | { readonly kind: "admitted-unjoined"; readonly addressing: string }
+  | { readonly kind: "not-admitted"; readonly seen: readonly string[] }
+  | { readonly kind: "unreported" };
+
+export function diagnoseEngagedFollowUp(
+  rows: readonly AuditWireEntry[],
+  platform: string,
+  expect = "thread-follow",
+): EngagedFollowUpDiagnosis {
+  const action = dispatchedAction(platform);
+  const wakeIds = [
+    ...new Set(
+      rows
+        .filter((r) => r.action === action && detailString(r, "addressing") === expect)
+        .map((r) => detailString(r, "wakeId"))
+        .filter((id): id is string => id !== undefined && id.length > 0),
+    ),
+  ];
+  if (wakeIds.length === 0) {
+    const seen = dispatchAddressings(rows, platform);
+    if (seen.length === 0) return { kind: "unreported" };
+    return seen.includes(expect) ? { kind: "admitted-unjoined", addressing: expect } : { kind: "not-admitted", seen };
+  }
+  const ofAdmitted = (r: AuditWireEntry, a: string): boolean => {
+    if (r.action !== a) return false;
+    const id = detailString(r, "wakeId");
+    return id !== undefined && wakeIds.includes(id);
+  };
+  if (rows.some((r) => ofAdmitted(r, REPLY_POST_ACTION))) return { kind: "answered", addressing: expect, wakeIds };
+  const silences = rows.filter((r) => ofAdmitted(r, NO_REPLY_OBSERVED_ACTION));
+  if (silences.length > 0) {
+    const reasons = [...new Set(silences.map((r) => detailString(r, "reason") ?? "unstated"))];
+    return { kind: "admitted-silent", addressing: expect, wakeIds, reasons };
+  }
+  return { kind: "admitted-unsettled", addressing: expect, wakeIds };
+}
+
+export function describeEngagedFollowUp(d: EngagedFollowUpDiagnosis, platform: string): string {
+  const dispatched = dispatchedAction(platform);
+  switch (d.kind) {
+    case "answered":
+      return `ADMITTED (${dispatched} addressing=${d.addressing}) and ANSWERED (a ${REPLY_POST_ACTION} row carries the admitted wake id)`;
+    case "admitted-silent":
+      return (
+        `ADMITTED (${dispatched} addressing=${d.addressing}, wake ${d.wakeIds.join(",")}), then the seat chose SILENCE ` +
+        `(${NO_REPLY_OBSERVED_ACTION} reason=${d.reasons.join(",")}). This is a seat-judgement red, NOT an admission red: ` +
+        `read the seat transcript for that wake`
+      );
+    case "admitted-unsettled":
+      return `ADMITTED (${dispatched} addressing=${d.addressing}, wake ${d.wakeIds.join(",")}), but no ${REPLY_POST_ACTION} and no ${NO_REPLY_OBSERVED_ACTION} row carries that wake id: the turn did not settle in the window, or it settled under another wake id`;
+    case "admitted-unjoined":
+      return `ADMITTED (${dispatched} addressing=${d.addressing}), but the row carries no wake id, so no reply or silence row can be joined to it`;
+    case "not-admitted":
+      return `NOT ADMITTED on the engaged road: no ${dispatched} row reports the expected addressing (saw ${JSON.stringify(d.seen)}). This is an admission red`;
+    case "unreported":
+      return `no ${dispatched} row in the window, so the rows cannot say whether the follow-up was admitted`;
+  }
+}
+
 export function replyPostCount(rows: readonly AuditWireEntry[], opts: { readonly surface?: string } = {}): number {
   return rows.filter((r) => r.action === REPLY_POST_ACTION && (opts.surface === undefined || r.surface === opts.surface)).length;
 }

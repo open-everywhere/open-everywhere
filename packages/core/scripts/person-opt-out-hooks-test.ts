@@ -87,8 +87,8 @@ function ctxFor(user: string, sessionId: string, deliveryId: string): never {
 async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: never, message: string): Promise<void> {
   await inEveContext(container, async () => {
     await learnHook.events!["turn.started"]!({} as never, ctx);
-    await learnHook.events!["message.received"]!({ data: { message: wake(message) } } as never, ctx);
-    await learnHook.events!["turn.completed"]!({} as never, ctx);
+    await learnHook.events!["delivery.consumed"]!({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: wake(message) }] } } as never, ctx);
+    await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
 }
 
@@ -138,10 +138,10 @@ console.log("§2b the delivery-change return");
   const swapCtx = { ...(ctxFor("UFRANK", "s-swap", "d-swap-a") as object), session: { ...((ctxFor("UFRANK", "s-swap", "d-swap-a") as { session: object }).session), turn: { id: "turn_swap" } } } as never;
   await inEveContext(shared, async () => {
     await learnHook.events!["turn.started"]!({} as never, swapCtx);
-    await learnHook.events!["message.received"]!({ data: { message: wake(MARKER) } } as never, swapCtx);
+    await learnHook.events!["delivery.consumed"]!({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: wake(MARKER) }] } } as never, swapCtx);
     noteTurnBoundary("turn_swap", "stamp-a");
     noteStepDelivery("turn_swap", "stamp-b");
-    await learnHook.events!["turn.completed"]!({} as never, swapCtx);
+    await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, swapCtx);
   });
   const CAROL_ASK = "collect the open incident follow-ups and chase each owner on monday";
   for (let i = 1; i <= 3; i += 1) await deliver(shared, ctxFor("UCAROL", "s-swap", `d-swap-c-${i}`), CAROL_ASK);

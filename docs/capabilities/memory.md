@@ -379,10 +379,29 @@ ordering does: bullets are day-granular, so a pair sharing one date, or carrying
 reported as a disagreement rather than resolved by picking. A seat with no recall route is told none
 of this: it reads nothing, so a rule for resolving what it found would be a dead affordance.
 
-**A fact the conversation already holds is not a lookup.** A seat on the `agent` recall route has no
-file tools, so it delegates a lookup to a worker. A conversation seat forwards that lookup with
-`work`, and `work` is async. The seat posts a holding line first and the answer later. So the `agent`
-recall lead and the `none` recall lead both say that a fact the conversation already holds gets a
+**A delegating seat's recall route names the hand-off verb it holds (OPE-2795).** A seat with no file
+tools hands a lookup or a save to a worker, and the memory index names the verb for that hand-off.
+A work session holds eve's `agent`, so its route is `agent`. A conversation seat that forwards to its
+work session holds `work`, so its route is `work`. That seat's per-wake `agent` verdict is
+`no-seat`, and the root approval policy refuses its `agent` call
+(see **native delegation** in the [glossary](../glossary.md)). So an index that told it to call
+`agent` would name a road its own verdict refuses. One predicate decides the verb, the route and the per-wake `agent` verdict:
+`seatDelegationVerb` and `seatMemoryRecallRoute` (`packages/core/agent/access/work-session.ts`), and
+`nativeDelegationVerdictFor` (`packages/core/agent/hooks/lean-seat.ts`) gives `allow` exactly when the
+route is `agent`. The worker-capability block also names the seat's own verb: `work` and
+`cancel_work` on a forwarding seat, `agent` and `eve__task_cancel` on a work session. The
+`work` route's save brief is the same brief the `agent` route writes. The index tells the seat to say
+"Saved" only when the job's result reports the line the worker wrote, and that result arrives on a
+later message. This is prompt guidance: no code holds back an early "Saved".
+The memory wake delta reaches a standing seat that forwards, so its lookup tail names `work` too
+(`packages/core/agent/memory/wake-delta.ts`). The integration spec
+`tests/integration/memory/forwarding-seat-memory-road.test.ts` saves a fact and recalls it from a
+forwarding channel seat, and it proves that the seat's own `agent` call stays refused.
+
+**A fact the conversation already holds is not a lookup.** A seat on the `agent` or `work` recall
+route has no file tools, so it hands a lookup to a worker. A conversation seat forwards that lookup
+with `work`, and `work` is async. The seat posts a holding line first and the answer later. So the
+`agent` and `work` recall leads and the `none` recall lead all say that a fact the conversation already holds gets a
 direct answer. That fact is something a person said earlier in the conversation, or the seat's own
 earlier reply. A lookup, or a "can't check memory from here", is only for what the conversation does
 not hold (OPE-2601). The `file-tools` recall lead does not carry the sentence: there the seat reads
@@ -1296,7 +1315,7 @@ road — the persist at the dispatching turn's own end, named below.
 A live run measured what the absence of this cost. A member asked, the agent wrote the note, and the
 reply said "(No durable memory write is recorded for this turn, so I cannot say the note is stored.)" (the note's wording before OPE-2487)
 — an honest sentence about a save that really did land moments later. Only the session persist records
-a write this guard reads as a stored fact, and for a seat's **own** edit it ran at `turn.completed`,
+a write this guard reads as a stored fact, and for a seat's **own** edit it ran at the turn's end (`turn.settled`),
 after the reply had left. (The status board stamps its writes with a turn too, but they are
 operational rows, so they back no claim that a fact was stored.)
 
@@ -1304,7 +1323,7 @@ This adds no second write road: it is the same road, the same row and the same a
 earlier moment. Three things follow from that, and they are the deliberate bounds:
 
 - **A turn nobody asked pays nothing.** An edit the agent made on its own initiative still persists at
-  `turn.completed`, because a persist on every reply would cost a sandbox read and a provider read on
+  the turn's end (`turn.settled`), because a persist on every reply would cost a sandbox read and a provider read on
   every turn of every session.
 - **A live delegated task holds it closed.** Persisting while a worker may be mid-write would publish
   a torn file to every other session on the silo, so the ask stays armed until the task settles. The

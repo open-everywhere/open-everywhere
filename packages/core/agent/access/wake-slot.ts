@@ -1,9 +1,20 @@
 const EVE_CONTEXT_STORAGE_KEY = Symbol.for("eve.context-storage");
 
+// eve 1.x keeps `{ context, values }` in its ALS, not the context container itself, so the
+// container is the store's `context` field, never the store.
+export function eveContextContainer(): unknown {
+  const storage = (globalThis as Record<symbol, unknown>)[EVE_CONTEXT_STORAGE_KEY] as { getStore?: () => unknown } | undefined;
+  if (typeof storage?.getStore !== "function") return undefined;
+  const store = storage.getStore() as { context?: unknown } | undefined | null;
+  return store === undefined || store === null ? undefined : store.context ?? undefined;
+}
+
 export function eveContextActive(): boolean | undefined {
   try {
     const storage = (globalThis as Record<symbol, unknown>)[EVE_CONTEXT_STORAGE_KEY] as { getStore?: () => unknown } | undefined;
     if (typeof storage?.getStore !== "function") return undefined;
+    // Any live store counts as a context, even one whose `context` is undefined: the restricting
+    // answer is the safe one there.
     return storage.getStore() !== undefined;
   } catch {
     return undefined;

@@ -23,7 +23,7 @@ registerConfig({
   loadBundles: () => [defineBundle({ name: "org-tools", plugins: ["acme-plugin"] })],
   loadBindings: () => [defineBinding({ bundle: "org-tools", scope: { level: "org" } })],
   pluginRegistry: { "acme-plugin": { skills: ["granted-one"] } },
-  skillContent: { "granted-one": { description: "A bundle-granted skill.", markdown: "# Granted\nDo the granted thing." } },
+  skillContent: { "granted-one": { description: "A bundle-granted skill.", content: "# Granted\nDo the granted thing." } },
   loadDomains: () => [defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }), defineDomain({ name: "org", match: "org" })],
   loadSilos: () => [],
   domainsForSurface: ({ surface }) => (surface === "C_ENG" ? ["eng"] : []),
@@ -43,20 +43,23 @@ const workerCtx: BindableContext = {
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
   const src = readFileSync(join(eveRoot, "dist/src/execution/skills/instructions.js"), "utf8");
+  const catalogTools = readFileSync(join(eveRoot, "dist/src/protocol/catalog-tools.js"), "utf8");
+  // eve 1.x interpolates the verb: the section says "load it with ${SKILL_TOOL_NAME}({ name }) before
+  // proceeding", and SKILL_TOOL_NAME is eve__skill. Both halves are read, so a rename of either reds.
   ok(
-    src.includes("call load_skill before proceeding"),
-    "pin: eve's Available-skills section instructs the model to call load_skill whenever ANY skill is listed to it — the ground truth this whole file gates against. If this goes red, eve's wording changed; re-derive the gate before touching anything else.",
+    src.includes("load it with ${SKILL_TOOL_NAME}({ name }) before proceeding") && /\bSKILL_TOOL_NAME=`eve__skill`/.test(catalogTools),
+    "pin: eve's Available-skills section instructs the model to load a listed skill with eve__skill whenever the request matches one — the ground truth this whole file gates against. If this goes red, eve's wording changed; re-derive the gate before touching anything else.",
   );
 }
 
 {
   ok(
-    !LEAN_SEAT_TOOLS.has("load_skill") && !HARNESS_INTERNAL_TOOLS.has("load_skill"),
-    "sanity: load_skill is not on the lean standing seat's roster (LEAN_SEAT_TOOLS) — this is what makes the §1 instruction dangerous if the seat ever sees it",
+    !LEAN_SEAT_TOOLS.has("eve__skill") && !HARNESS_INTERNAL_TOOLS.has("eve__skill"),
+    "sanity: eve__skill is not on the lean standing seat's roster (LEAN_SEAT_TOOLS) — this is what makes the §1 instruction dangerous if the seat ever sees it",
   );
   ok(
-    WORKER_ONLY_TOOLS_STANDING.includes("load_skill"),
-    "sanity: the GENERATED worker-capability index agrees — load_skill is worker-only from a standing seat (independent confirmation of the same fact)",
+    WORKER_ONLY_TOOLS_STANDING.includes("eve__skill"),
+    "sanity: the GENERATED worker-capability index agrees — eve__skill is worker-only from a standing seat (independent confirmation of the same fact)",
   );
 }
 
@@ -65,7 +68,7 @@ const workerCtx: BindableContext = {
   ok(
     leanEntries.length === 0,
     `OPE-692: a lean standing seat's skill manifest must be EMPTY (got ${JSON.stringify(leanEntries.map((e) => e.name))}) — ` +
-      "otherwise eve composes the Available-skills section pinned in §1, telling this seat to call a tool (load_skill) " +
+      "otherwise eve composes the Available-skills section pinned in §1, telling this seat to call a tool (eve__skill) " +
       "that §2 proves it does not hold. This is the exact defect measured on OPE-692's own live turn.",
   );
 
@@ -78,4 +81,4 @@ const workerCtx: BindableContext = {
 
 console.log(`skill-prompt-roster: ${n} assertions passed`);
 
-// proves: TOOL-load_skill
+// proves: TOOL-eve__skill

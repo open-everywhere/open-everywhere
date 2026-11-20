@@ -23,7 +23,7 @@ export function sourceLabel(silo: MemorySilo): string {
 }
 
 function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallRoute, dir: string): string {
-  const delegated = recall === "agent";
+  const delegated = recall === "agent" || recall === "work";
   const unreachable = recall === "none";
   const file = code(dir + "/MEMORY.md");
   const appendOnly = isAppendOnlyBacking(silo);
@@ -32,11 +32,12 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
   const saveVerb = unreachable
     ? "this seat CANNOT write these files and cannot delegate — say plainly that you can't save anything to memory from here, never that you saved it"
     : delegated
-      ? `to save something, delegate it THIS turn — \`${recall}\` with \`mode: "sync"\` and a brief of exactly this shape: ` +
+      ? `to save something, ${recall === "work" ? "hand it off" : "delegate it"} THIS turn — ${handOffCall(recall)} of exactly this shape: ` +
         `"Open ${dir}/MEMORY.md with your file tools and add this fact for the team under the right heading (as a note, or as a decision if it records a choice): <the fact, verbatim>. ` +
         rewriteInBrief +
         `Reply with the exact line you wrote and the path you wrote it to.". ` +
-        `A fact is not a standing rule — never frame it as one. Only after the worker reports the line it WROTE, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."`
+        `A fact is not a standing rule — never frame it as one. Only after the worker reports the line it WROTE, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."` +
+        (recall === "work" ? ` That report arrives as the job's result on a later message, so this turn says only that you will save it.` : "")
       : `save durable facts here by EDITING ${file} (or another file in this silo) with your file tools — the edit IS the save, and the host persists it when the turn ends. Nothing is saved by saying it is.${rewriteInPlace}`;
   if (!readOnly) {
     return appendOnly
@@ -52,6 +53,11 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
     : unreachable
       ? "read-only — and this seat cannot open or write these files at all"
       : "read-only — edits are blocked; edit this channel's OWN writable silo above instead";
+}
+
+/** The hand-off call a delegating route names. `agent` waits for its worker; `work` returns at once, and the result comes back later. */
+function handOffCall(recall: MemoryRecallRoute): string {
+  return recall === "work" ? "`work` with a `message`" : '`agent` with `mode: "sync"` and a brief';
 }
 
 const NEWEST_WINS =
@@ -77,6 +83,15 @@ const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: strin
       "say so rather than inventing the answer. " + NEWEST_WINS,
     heading: "## Silos — read by delegating a lookup",
   },
+  work: {
+    lead:
+      "This seat has NO file tools, so you cannot open these files yourself. " + HELD_IN_CONVERSATION + " " +
+      "To recall anything else from memory, hand off a lookup: `work` with a `message` naming the paths below and " +
+      "what you need out of them (the worker has the file tools, greps the tree, and reports what it " +
+      "found). `work` returns at once, and the answer arrives later as the job's result. Do that before answering from guesswork — and if the lookup comes back empty, " +
+      "say so rather than inventing the answer. " + NEWEST_WINS,
+    heading: "## Silos — read by handing off a lookup",
+  },
   none: {
     lead:
       "This seat has NO file tools and cannot delegate, so it CANNOT read these files. " + HELD_IN_CONVERSATION + " " +
@@ -97,6 +112,14 @@ const RECALL_DELTA_TAILS: Readonly<Record<MemoryRecallRoute, { readonly content:
       "not already hold the answer, delegate a lookup (`agent`, `mode: \"sync\"`) naming the path; otherwise ignore it:",
     index:
       "this seat has no file tools, so delegate a lookup (`agent`, `mode: \"sync\"`) naming the path " +
+      "before answering from memory, if it bears on the current message and this conversation does not already hold the answer.",
+  },
+  work: {
+    content:
+      "this seat has no file tools — ONLY if it bears on the current message and this conversation does " +
+      "not already hold the answer, hand off a lookup (`work`, with a `message` naming the path); otherwise ignore it:",
+    index:
+      "this seat has no file tools, so hand off a lookup (`work`, with a `message` naming the path) " +
       "before answering from memory, if it bears on the current message and this conversation does not already hold the answer.",
   },
   none: {

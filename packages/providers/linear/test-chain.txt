@@ -16,6 +16,7 @@ test:linear-event-normalizer
 test:dynamic-replay
 test:linear-post-arm
 test:linear-webhook-verify
+test:linear-webhook-event
 test:linear-multi-org-reply
 test:linear-multi-org-tools
 test:linear-stop

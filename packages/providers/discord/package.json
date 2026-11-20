@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-discord",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Open Everywhere Discord provider — Discord channel and DM surfaces, gateway wiring, identity mapping and approval cards.",
   "keywords": [
     "agent",
@@ -180,11 +180,11 @@
     "test": "echo 'provider-discord: its test suite runs at the APP TIER (root scripts/) because the discord surface composes deeply with core internals (a custom gateway, admin approval cards, guild-admin bypass, routine dispatch) — see the root test chain (test:discord*, test:scenarios*, test:oe-commands, and the read/dispatch/audit/wake integration tests). This keeps the core adapter-api barrel a small port surface rather than exporting test-only internals.'"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.10.0",
+    "@open-everywhere/core": "0.11.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "0.71.0"
+    "eve": "1.0.0-rc.18"
   },
   "devDependencies": {
     "@types/node": "latest",

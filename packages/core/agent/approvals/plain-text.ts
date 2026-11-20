@@ -22,6 +22,19 @@ export function plainValue(value: unknown, max: number = PLAIN_VALUE_MAX): strin
   return cutClean(cleaned, max);
 }
 
+/**
+ * A plain op name for a card headline. A name longer than `max` keeps its first 30 characters and
+ * its last characters, joined by "…": the verb of a long connector op can sit at either end, and a
+ * cut at the end only would hide what the person approves.
+ */
+export function plainOpWords(value: string, max: number): string {
+  const whole = plainValue(value, Number.MAX_SAFE_INTEGER);
+  if (whole.length <= max) return whole;
+  const head = whole.slice(0, 30).trimEnd();
+  const tail = whole.slice(whole.length - (max - 31)).trimStart();
+  return `${head}…${tail}`;
+}
+
 const EM_DASH = /\s*—\s*/gu;
 
 export function withoutDashes(line: string): string {

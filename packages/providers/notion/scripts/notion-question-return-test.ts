@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { readFileSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -104,9 +104,16 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
   eq(answered.respondOptions.length, 1, "OPE-2336: the answer's respond options were captured");
   ok(!Object.prototype.hasOwnProperty.call(answered.respondOptions[0], "auth"), "🔴 OPE-2336: the answer hands its respond edge NO auth — the commenter's identity never reaches the held turn");
   {
-    const src = readFileSync(new URL("../agent/channels/notion.ts", import.meta.url), "utf8");
-    const edge = /function notionRespondFrom\([^]*?\.respond\(\s*\[[^]*?\],\s*\{([^]*?)\}\s*,?\s*\);/u.exec(src)?.[1];
-    ok(edge !== undefined && !/\bauth\b/u.test(edge.replace(/\/\/.*$/gmu, "")), "🔴 OPE-2336: …and the eve `respond` call itself carries no `auth` key, in any form");
+    const { notionRespondFrom } = await import("../agent/channels/notion.js");
+    const calls: { payload: Record<string, unknown>; options: Record<string, unknown> }[] = [];
+    const from = (() => ({
+      deliver: async (payload: Record<string, unknown>, options: Record<string, unknown>) => calls.push({ payload, options }),
+    })) as unknown as Parameters<typeof notionRespondFrom>[0];
+    await notionRespondFrom(from)({ requestId: REQUEST_ID, text: "<wake>yes</wake>" }, { continuationToken: "page_1", context: ["<channel>c</channel>"] });
+    eq(calls.length, 1, "OPE-2336: the live eve edge was called once");
+    ok(!/\bauth\b/u.test(JSON.stringify(calls[0])), "🔴 OPE-2336: …and the eve call itself carries no `auth` key, in its payload or its options");
+    eq(calls[0]?.payload.answers, [{ interactionId: REQUEST_ID, text: "<wake>yes</wake>" }], "🔴 …it answers the interaction the worker is parked on, in eve's `{ interactionId, text }` shape");
+    eq(calls[0]?.payload.context, ["<channel>c</channel>"], "🔴 …and the discussion context rides the delivered PAYLOAD, where eve reads it (eve's `respond()` builds a payload of `answers` only)");
   }
 
   const rows = (await readAudit({ org: ORG, limit: 200 })).filter((r) => r.action === QUESTION_ANSWERED_AUDIT_ACTION);
@@ -181,20 +188,30 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
   eq(await rowNow(), undefined, "wiring precondition: no row before the handler runs");
 
   const notionChannel = (await import("../agent/channels/notion.js")).default as unknown as {
-    adapter: Record<string, (data: unknown, channel: unknown, ctx?: unknown) => Promise<void>>;
+    adapter: Record<string, (event: unknown, adapterCtx: unknown) => Promise<void>>;
   };
-  const rawHandler = notionChannel.adapter["input.requested"];
-  assert.ok(typeof rawHandler === "function", "§6 the shipped channel really registers an `input.requested` handler");
+  const rawHandler = notionChannel.adapter["interaction.opened"];
+  assert.ok(typeof rawHandler === "function", "§6 the shipped channel really registers an `interaction.opened` handler");
   n++;
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
   const { ContextContainer, contextStorage } = await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href);
   const { SessionKey } = await import(pathToFileURL(join(eveRoot, "dist/src/context/keys.js")).href);
-  const handler = (data: unknown, channel: unknown): Promise<void> => {
+  const { emptySessionView: rawEmptyView } = await import(pathToFileURL(join(eveRoot, "dist/src/protocol/session-projection/fold.js")).href);
+  const handler = (event: unknown, channel: unknown): Promise<void> => {
     const container = new ContextContainer();
-    container.set(SessionKey, { sessionId: "notion-question-return", auth: null, turn: 1, parent: undefined });
-    return contextStorage.run(container, () => rawHandler(data, channel)) as Promise<void>;
+    container.set(SessionKey, { sessionId: "notion-question-return", auth: null, turn: { id: "t1", sequence: 1 }, parent: undefined });
+    return contextStorage.run(container, () => rawHandler(event, { ...(channel as object), view: rawEmptyView() })) as Promise<void>;
   };
+  const opened = (requestId: string) => ({
+    type: "interaction.opened",
+    data: {
+      interactionId: requestId,
+      subject: { turnId: "t1" },
+      request: { kind: "question", prompt: "Ship it?", options: [] },
+      origin: { sessionId: "notion-question-return", interactionId: requestId, call: { callId: requestId, name: "ask_question" } },
+    },
+  });
 
   const posts: string[] = [];
   const { registerPostArm } = await import("@open-everywhere/core/agent/adapter-api.js");
@@ -208,12 +225,9 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
 
   const channel = {
     state: { oeReplyTarget: { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "workspace_acme" } },
-    session: { continuation: { token: NAMESPACED_TOKEN, alias: () => {} } },
+    continuation: { token: NAMESPACED_TOKEN, alias: () => {} },
   };
-  await handler(
-    { requests: [{ requestId: REQUEST_ID, kind: "question", prompt: "Ship it?", options: [], action: { toolName: "ask_question" } }] },
-    channel,
-  );
+  await handler(opened(REQUEST_ID), channel);
 
   eq(posts.length, 1, "§6 the handler posted the prompt into the discussion");
   const written = (await rowNow()) as { requestId: string; containerKey?: string } | undefined;
@@ -227,10 +241,7 @@ const rowNow = (): Promise<unknown> => readBridgedQuestion(getOperationalStore()
       throw new Error("Notion refused the comment");
     },
   } as never);
-  await handler(
-    { requests: [{ requestId: "task_zzz:call_1", kind: "question", prompt: "Ship it?", options: [], action: { toolName: "ask_question" } }] },
-    channel,
-  );
+  await handler(opened("task_zzz:call_1"), channel);
   eq(await rowNow(), undefined, "🔴 §6 a question that could NOT be posted writes no row — a dropped question must never eat the room's next comment");
 }
 

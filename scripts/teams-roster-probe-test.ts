@@ -8,7 +8,8 @@ import { pathToFileURL } from "node:url";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-teams-roster-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ org: undefined });
 
-import { parseTeamsActivity, type TeamsMessageActivity } from "eve/channels/teams";
+import type { TeamsMessageActivity } from "eve/channels/teams";
+import { parseTeamsActivity } from "@open-everywhere/provider-teams/agent/channels/teams-inbound.js";
 import {
   resolveTeamsUserType,
   teamsRosterMemberPath,

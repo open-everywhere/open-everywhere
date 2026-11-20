@@ -7,10 +7,9 @@ import {
 } from "../agent/access/consequence.js";
 import type { Bundle } from "../agent/access/bundle.js";
 import { connectorOpTierParts, effectiveConnectorOpTier } from "../agent/access/connector-op-gating.js";
-import { CONNECTION_REGISTRY_KEY_NAME, connectorOpToolHints, toolHintsOf } from "../agent/connections/connector-tool-hints.js";
-import { CONNECTION_REGISTRY_KEY_NAME as FIRE_TOOLSET_REGISTRY_KEY } from "../agent/hooks/fire-toolset.js";
+import { connectorOpToolHints, toolHintsOf } from "../agent/connections/connector-tool-hints.js";
+import { recordConnectorListing, registerMountedConnector, resetConnectorCatalogue } from "../agent/connections/connector-catalogue.js";
 import { connectorOpApproval } from "../agent/connections/connector-auth.js";
-import { FakeEveContext, inEveContext } from "./_eve-context-stub.js";
 import { pinSuiteStore } from "./_suite-store.js";
 pinSuiteStore("connector-op-hint");
 
@@ -92,79 +91,49 @@ eq(connectorOpHintTier(undefined), undefined, "map: undefined → no tier");
   eq(effectiveConnectorOpTier("notion__search", bundles, READ_ONLY), "destructive", "seam: an operator's `destructive` raise applies over a read verb and a read-only hint");
 }
 
-eq(CONNECTION_REGISTRY_KEY_NAME, FIRE_TOOLSET_REGISTRY_KEY, "reader: names eve's registry key exactly as hooks/fire-toolset.ts does (which pins it against eve's dist)");
 eq(toolHintsOf({ annotations: { readOnlyHint: "yes", destructiveHint: 1 } }), undefined, "reader: a non-boolean annotation is ignored");
 eq(toolHintsOf({ annotations: { readOnlyHint: true, title: "x" } }), { readOnlyHint: true }, "reader: keeps the two consequence booleans only");
 eq(toolHintsOf({ name: "x" }), undefined, "reader: a tool with no annotations has no hints");
+const listing = (name: string, annotations?: Record<string, unknown>) => ({
+  name,
+  description: "",
+  inputSchema: { type: "object" },
+  hasOutputSchema: false,
+  ...(annotations === undefined ? {} : { annotations }),
+});
 {
-  const catalogue: Record<string, readonly unknown[]> = {
-    notion: [
-      { name: "frobnicate_widget", annotations: { readOnlyHint: true } },
-      { name: "notion-purge", annotations: { readOnlyHint: false, destructiveHint: true } },
-    ],
-    "plug__notion": [{ name: "frobnicate_widget", annotations: { readOnlyHint: false, destructiveHint: false } }],
-  };
-  let reads = 0;
-  const registry = {
-    getConnectionNames: () => Object.keys(catalogue),
-    getClient: (name: string) => ({
-      getToolMetadata: async () => {
-        reads++;
-        return catalogue[name] ?? [];
-      },
-    }),
-  };
-  const session = new FakeEveContext();
-  session.set({ name: CONNECTION_REGISTRY_KEY_NAME }, registry);
-  await inEveContext(session, async () => {
-    eq(await connectorOpToolHints(UNKNOWN), { readOnlyHint: true }, "🔴 reader: a registered connection's tool annotations are found by the qualified name");
-    eq(await connectorOpToolHints("notion__notion-purge"), { readOnlyHint: false, destructiveHint: true }, "reader: a vendor-prefixed tool name is matched whole");
-    eq(await connectorOpToolHints("plug__notion__frobnicate_widget"), { readOnlyHint: false, destructiveHint: false }, "reader: the LONGEST registered connection wins, so a plugin slug with `__` stays whole");
-    eq(await connectorOpToolHints("notion__not_listed"), undefined, "reader: a tool the catalogue does not list has no hints");
-    eq(await connectorOpToolHints("linear__frobnicate_widget"), undefined, "reader: a connection the deployment did not register has no hints");
-    const before = reads;
-    eq(await connectorOpToolHints("grant__notion__frobnicate_widget"), undefined, "🔴 reader: a reserved grant__… name never takes hints");
-    eq(reads, before, "…and the reader never even reads a catalogue for it");
-    eq(await connectorOpToolHints("search"), undefined, "reader: an unqualified name has no hints");
-  });
-  eq(await connectorOpToolHints(UNKNOWN), undefined, "reader: no eve context → no hints (fail closed to the verb heuristic)");
-
-  const stalled = new FakeEveContext();
-  stalled.set({ name: CONNECTION_REGISTRY_KEY_NAME }, {
-    getConnectionNames: () => ["notion"],
-    getClient: () => ({ getToolMetadata: () => new Promise<readonly unknown[]>(() => undefined) }),
-  });
-  const started = Date.now();
-  await inEveContext(stalled, async () => {
-    eq(await connectorOpToolHints(UNKNOWN, 50), undefined, "🔴 reader: a catalogue that never answers gives no hints within the budget");
-  });
-  ok(Date.now() - started < 2_000, "…and the decision did not wait on the stalled host");
-
-  const throwing = new FakeEveContext();
-  throwing.set({ name: CONNECTION_REGISTRY_KEY_NAME }, {
-    getConnectionNames: () => ["notion"],
-    getClient: () => ({ getToolMetadata: async () => Promise.reject(new Error("401")) }),
-  });
-  await inEveContext(throwing, async () => {
-    eq(await connectorOpToolHints(UNKNOWN), undefined, "reader: a failed catalogue read gives no hints, never a throw");
-  });
+  resetConnectorCatalogue();
+  eq(await connectorOpToolHints(UNKNOWN), undefined, "reader: no mounted connection → no hints (fail closed to the verb heuristic)");
+  registerMountedConnector("notion");
+  registerMountedConnector("plug__notion");
+  eq(await connectorOpToolHints(UNKNOWN), undefined, "🔴 reader: a mounted connection that has not listed yet has no hints (fail closed)");
+  recordConnectorListing("notion", [
+    listing("frobnicate_widget", { readOnlyHint: true }),
+    listing("notion-purge", { readOnlyHint: false, destructiveHint: true }),
+  ]);
+  recordConnectorListing("plug__notion", [listing("frobnicate_widget", { readOnlyHint: false, destructiveHint: false })]);
+  recordConnectorListing("linear", [listing("frobnicate_widget", { readOnlyHint: true })]);
+  eq(await connectorOpToolHints(UNKNOWN), { readOnlyHint: true }, "🔴 reader: the mount's listed annotations are found by the qualified name");
+  eq(await connectorOpToolHints("notion__notion-purge"), { readOnlyHint: false, destructiveHint: true }, "reader: a vendor-prefixed tool name is matched whole");
+  eq(await connectorOpToolHints("plug__notion__frobnicate_widget"), { readOnlyHint: false, destructiveHint: false }, "reader: the LONGEST mounted connection wins, so a plugin slug with `__` stays whole");
+  eq(await connectorOpToolHints("notion__not_listed"), undefined, "reader: a tool the listing does not hold has no hints");
+  eq(await connectorOpToolHints("linear__frobnicate_widget"), undefined, "reader: a listing for a connection the deployment did not mount gives no hints");
+  eq(await connectorOpToolHints("grant__notion__frobnicate_widget"), undefined, "🔴 reader: a reserved grant__… name never takes hints");
+  eq(await connectorOpToolHints("search"), undefined, "reader: an unqualified name has no hints");
 }
 
 {
-  const ctx = (toolName: string) => ({ toolName, approvedTools: new Set<string>() }) as never;
+  const ctx = (toolName: string) => ({ toolName }) as never;
   const withHints = (hints: ConnectorOpToolHints | undefined) => connectorOpApproval({ toolHints: async () => hints });
   eq(await withHints(READ_ONLY)(ctx(UNKNOWN)), "not-applicable", "🔴 approval: an unknown verb the org-admitted server declares read-only runs with no prompt");
   eq(await withHints(undefined)(ctx(UNKNOWN)), "user-approval", "🔴 approval: the SAME op with no hint still prompts (fail-closed)");
   eq(await withHints(READ_ONLY)(ctx("notion__delete_page")), "user-approval", "approval: a read-only hint never opens a known delete");
   eq(await withHints(DESTRUCTIVE)(ctx("notion__search")), "user-approval", "approval: a destructive hint makes a read-named op prompt");
-  const fixed = new FakeEveContext();
-  fixed.set({ name: CONNECTION_REGISTRY_KEY_NAME }, {
-    getConnectionNames: () => ["notion"],
-    getClient: () => ({ getToolMetadata: async () => [{ name: "frobnicate_widget", annotations: { readOnlyHint: true } }] }),
-  });
-  await inEveContext(fixed, async () => {
-    eq(await connectorOpApproval()(ctx(UNKNOWN)), "not-applicable", "🔴 approval: the DEFAULT reader is wired in — the live catalogue's hint opens the read");
-  });
+  resetConnectorCatalogue();
+  eq(await connectorOpApproval()(ctx(UNKNOWN)), "user-approval", "approval: with no listing, the default reader gives no hint and the op prompts");
+  registerMountedConnector("notion");
+  recordConnectorListing("notion", [listing("frobnicate_widget", { readOnlyHint: true })]);
+  eq(await connectorOpApproval()(ctx(UNKNOWN)), "not-applicable", "🔴 approval: the DEFAULT reader is wired in — the mount's listed hint opens the read");
 }
 
 {
@@ -183,7 +152,7 @@ eq(toolHintsOf({ name: "x" }), undefined, "reader: a tool with no annotations ha
       credentialOf: async () => "domain",
       toolHints: async () => hints,
     } as never);
-  const call = (toolName: string) => ({ toolName, toolInput: { block: "b1" }, approvedTools: new Set<string>(), callId: "c1", session: { auth: {} } }) as never;
+  const call = (toolName: string) => ({ toolName, toolInput: { block: "b1" }, callId: "c1", session: { auth: {} } }) as never;
   overrideSettingsForTest({ connectors: { opTiering: true } } as never);
   await card(DESTRUCTIVE)(call("notion__update_block"));
   eq([offered.at(-1)?.grain, offered.at(-1)?.opTier], ["destructive", "destructive"], "🔴 card: a write-named op its server declares destructive takes the destructive grain and freezes opTier destructive");

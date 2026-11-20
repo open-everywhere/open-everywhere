@@ -47,7 +47,7 @@ registerConfig({
   loadBundles: () => [defineBundle({ name: "org-tools", plugins: ["acme-plugin"] })],
   loadBindings: () => [defineBinding({ bundle: "org-tools", scope: { level: "org" } })],
   pluginRegistry: { "acme-plugin": { skills: ["granted-one"] } },
-  skillContent: { "granted-one": { description: "A bundle-granted skill.", markdown: "# Granted\nDo the granted thing.", files: { "where.json": "shipped" } } },
+  skillContent: { "granted-one": { description: "A bundle-granted skill.", content: "# Granted\nDo the granted thing.", files: { "where.json": "shipped" } } },
   skillSessionFiles: { "granted-one": (where) => ({ "where.json": `${where.platform}/${where.surface}` }) },
   loadDomains: () => [
     defineDomain({ name: "eng", reach: ["slack/T1/C_ENG"] }),

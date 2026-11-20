@@ -420,7 +420,7 @@ synchronously from code, so a report can never render a priced model as unpriced
 instance is cold.
 
 **Why the reporting tools sometimes have to *assume* a model.** Hook-written usage rows
-don't carry a `model` field (`step.completed` doesn't expose one in this Eve version), so
+don't carry a `model` field (`usage.recorded` doesn't expose one in this Eve version), so
 turning a row's tokens into a dollar figure means assuming which model priced it. The
 reporting tools resolve this the same way everywhere: an explicit `assumedModelId` input
 always wins; otherwise the **built-in table's single entry** is assumed — but only when that

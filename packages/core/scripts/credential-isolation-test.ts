@@ -92,27 +92,43 @@ pinMatchSet(
   /\bresolveScopedToken\b/g,
   ["runtime/connections/mcp-client.js", "runtime/connections/scoped-authorization.js"],
   "modules naming the connection-token funnel entry (resolveScopedToken)",
-  "The 'injection, not exposure' claim (docs/security/credentials-and-planes.md:61) was verified against exactly\n" +
+  "The 'injection, not exposure' claim (docs/security/credentials-and-planes.md:75) was verified against exactly\n" +
     "  these two. Read each new site and confirm the token cannot reach the model or the sandbox BEFORE widening this list.",
 );
 
 pinMatchSet(
   /\bcreateAuthorizationExecution\b/g,
-  ["execution/tools/connection-tools.js", "runtime/authorization-context.js", "runtime/connections/scoped-authorization.js"],
+  [
+    "execution/catalog/connection-auth.js",
+    "runtime/authorization-context.js",
+    "runtime/connections/scoped-authorization.js",
+  ],
   "modules holding an authorization EXECUTION (createAuthorizationExecution — its getToken resolves a bearer)",
   "Each holder is a candidate bearer-holder. Read the new site: if it calls `.getToken` on the execution it is a\n" +
     "  FOURTH place the raw bearer flows, and §1c below must be extended with it BEFORE this list is widened.",
 );
 
 {
+  // eve 1.x's catalog sign-in (completeConnectionSignIn, which replaces eve 0.x's connection-tools.js) creates an
+  // execution to complete an interactive sign-in and returns it as `auth`. connection-entry.js then calls
+  // handleError and isJustAuthorized on it, and search.js passes it to the listing. None of the three
+  // resolves the bearer.
   ok(
-    !/\bgetToken\b/.test(read("execution/tools/connection-tools.js")),
-    "connection-tools.js never calls getToken — it holds an authorization execution for complete/handleError only",
+    !/\bgetToken\b/.test(read("execution/catalog/connection-auth.js")),
+    "execution/catalog/connection-auth.js never calls getToken — it holds an authorization execution for complete/isJustAuthorized only",
   );
   ok(
-    /\w+\.complete\(\w+\)/.test(read("execution/tools/connection-tools.js")) &&
-      /\w+\.handleError\(\w+,\w+\)/.test(read("execution/tools/connection-tools.js")),
-    "…and it still CALLS complete and handleError on that execution (the two uses this classification rests on)",
+    /\w+\.complete\(\w+\)/.test(read("execution/catalog/connection-auth.js")) &&
+      /\w+\.isJustAuthorized\(\w+\)/.test(read("execution/catalog/connection-auth.js")),
+    "…and it still CALLS complete and isJustAuthorized on that execution (the two uses this classification rests on)",
+  );
+  for (const rel of ["execution/catalog/connection-entry.js", "execution/catalog/search.js"]) {
+    ok(/\bcompleteConnectionSignIn\(/.test(read(rel)), `${rel} still receives the sign-in execution from completeConnectionSignIn (the pin below is not vacuous)`);
+    ok(!/\bgetToken\b/.test(read(rel)), `${rel} never names getToken — the execution it receives is used for sign-in only`);
+  }
+  ok(
+    /\w+\.auth\.handleError\(/.test(read("execution/catalog/connection-entry.js")) && /\w+\.auth\.isJustAuthorized\(/.test(read("execution/catalog/connection-entry.js")),
+    "connection-entry.js still calls handleError and isJustAuthorized on the execution",
   );
   ok(
     /await \w+\.getToken\(/.test(read("runtime/authorization-context.js")),
@@ -131,18 +147,30 @@ pinNormalisedMatchSet(
 
     "compiled/@chat-adapter/slack/index.js",
     "compiled/@photon-ai/chat-adapter-imessage/index.js",
-    "compiled/@workflow/world-vercel/index.js",
     "public/models/openai/chatgpt/transport.js",
     "internal/model-auth/available-models.js",
     "internal/model-auth/development-broker-server.js",
 
     "compiled/jsonc-parser/index.js",
     "compiled/shadcn-registry/index.js",
-    "compiled/_chunks/workflow/run-DYKeqbob.js",
+    // A lexer's token reader (the workflow bundle's parser), not a credential.
+    "compiled/_chunks/workflow/run-CBoukBsx.js",
+
+    // The Vercel Queue and Schedules clients send the platform's own OIDC token to the platform API
+    // (another plane). The workflow chunk bundles the same queue client.
+    "compiled/@vercel/queue/index.js",
+    "compiled/@vercel/schedules/index.js",
+    "compiled/_chunks/workflow/dist-74tor0XD.js",
+
+    // eve 1.x's git extension: its `gh` tool resolves a user's GitHub connection token with ctx.getToken
+    // and hands it to a sandbox shell. That is exposure, not injection. OE never mounts the extension,
+    // and the import sweep below fails if a product agent source imports it.
+    "extensions/git/extension/lib/gh-tool.js",
+    "extensions/git/extension/lib/github-shell.js",
   ],
   "modules CALLING .getToken( anywhere in the dist",
   "Read the new site before widening this list. If it calls `.getToken` on an authorization EXECUTION it is a\n" +
-    "  FOURTH place the raw connection bearer flows — docs/security/credentials-and-planes.md:61 claims there are three,\n" +
+    "  FOURTH place the raw connection bearer flows — docs/security/credentials-and-planes.md:75 claims there are three,\n" +
     "  and the DOC is what changes first. If it is another plane's token, a lexer, or a string, say which, here.",
 );
 
@@ -153,7 +181,7 @@ pinNormalisedMatchSet(
   if (touchingSandbox.length > 0) {
     console.error(
       `✗ eve ${eveVersion}'s connection runtime now references a sandbox: ${touchingSandbox.join(", ")}\n` +
-        `  docs/security/credentials-and-planes.md:61 claims "the sandbox isn't even in the loop" for the connector\n` +
+        `  docs/security/credentials-and-planes.md:75 claims "the sandbox isn't even in the loop" for the connector\n` +
         `  plane. Read the new reference: if a connector call can now traverse a sandbox, the DOC IS WRONG and must\n` +
         `  be corrected before this expectation is widened.`,
     );
@@ -177,20 +205,42 @@ pinNormalisedMatchSet(
 {
   const openapi = read("runtime/connections/openapi-client.js");
   ok(
-    /return\{status:\w+\.status,statusText:\w+\.statusText,body:await readResponseBody\(\w+\)\}/.test(openapi),
-    "the OpenAPI connector result is still {status, statusText, body} — the request header map never rides out with it",
+    /let (\w+)=\{status:\w+\.status,statusText:\w+\.statusText,body:await readResponseBody\(\w+\)\};return \w+!==void 0&&\(\1\.location=\w+\),\1\}/.test(openapi),
+    "the OpenAPI connector result is still {status, statusText, body}, plus `location` on eve 1.x (the URL of a CROSS-origin redirect that eve refused to follow; it reaches the model) — the request header map never rides out with it",
   );
 }
 
 {
   const openapi = read("runtime/connections/openapi-client.js");
-  const start = openapi.indexOf("async#f(");
-  ok(start > 0, "the OpenAPI request builder is still a private method on the client (the qualification below reads its body)");
+  // The builder is the private method that resolves the credential headers (its name is minified).
+  const start = openapi.search(/async#\w+\(\w+,\w+,\w+,\w+\)\{let \w+=await resolveProvidedArguments\([^]{0,200}?let \w+=await resolveHeaders\(/);
+  ok(start > 0, "the OpenAPI request builder is still a private method on the client that resolves the credential headers (the qualification below reads its body)");
   const body = openapi.slice(start, start + 2000);
   ok(/location===`cookie`\?/.test(body), "the OpenAPI request builder still branches parameters on `location`");
   ok(
     /\w+\[\w+\.name\]=String\(\w+\)/.test(body),
     "eve STILL writes header-location parameters into the resolved-header map (so a spec-declared `Authorization` param would override the injected credential)",
+  );
+}
+
+{
+  // eve 1.x: applySecurity re-places the resolved bearer as the spec's security scheme says. For an `apiKey`
+  // scheme `in: query` or `in: cookie` the raw token leaves the Authorization header and enters the request URL or
+  // the Cookie header. fetchWithinOrigin follows same-origin redirects itself and returns a CROSS-origin redirect's
+  // target URL as `location` in the tool result. A server that redirects cross-origin and keeps the query string
+  // therefore hands a query-placed token back to the model. That is exposure, not injection.
+  // docs/security/credentials-and-planes.md states the limit. Open Everywhere ships no eve OpenAPI connection
+  // (the sweep below), and `oe build` refuses one in an app tree (scripts/openapi-connection-refusal.ts,
+  // pinned by test:roster-build).
+  const security = read("runtime/connections/openapi-security.js");
+  ok(
+    /function applySecurity\((\w+),\w+,(\w+),(\w+),(\w+)\)\{[^]*?delete \2\.Authorization,\1\.in===`header`\?\2\[\1\.name\]=(\w+):\1\.in===`query`\?\3\.set\(\1\.name,\5\):\4\.push\(`\$\{\1\.name\}=\$\{\5\}`\)/.test(security),
+    "eve's applySecurity still moves the bearer into a header, the query string or a cookie, as the spec's apiKey scheme says",
+  );
+  const openapi = read("runtime/connections/openapi-client.js");
+  ok(
+    /if\((\w+)\.origin!==(\w+)\.origin\)return\{response:\w+,location:\1\.href\}/.test(openapi),
+    "eve's fetchWithinOrigin still returns a cross-origin redirect target as `location` (the result route a query-placed token can ride)",
   );
 }
 
@@ -278,7 +328,26 @@ function codeOf(rel: string): string {
 }
 
 const OE_SOURCES = agentSources();
+// The import and definer sweeps read CODE. A generated doc module embeds prose that names these modules on
+// purpose (docs/security/credentials-and-planes.md), so it is not a mount site.
+const OE_CODE_SOURCES = OE_SOURCES.filter((rel) => !rel.includes("/docs/generated/"));
 ok(OE_SOURCES.length > 200, `the OE agent-source sweep found ${OE_SOURCES.length} files across ${AGENT_ROOTS.length} roots (the sweeps below are meaningful)`);
+
+{
+  const gitExtensionImporters = OE_CODE_SOURCES.filter((rel) => /["']eve\/extensions\/git(?:\/[^"']*)?["']/.test(codeOf(rel)));
+  ok(
+    gitExtensionImporters.length === 0,
+    `no OE product agent source imports eve's git extension, whose gh tool hands a GitHub connection token to a sandbox shell — got ${gitExtensionImporters.join(", ")}`,
+  );
+}
+
+{
+  const openapiDefiners = OE_CODE_SOURCES.filter((rel) => /\bdefineOpenAPIConnection\b/.test(codeOf(rel)));
+  ok(
+    openapiDefiners.length === 0,
+    `no OE agent source mounts an eve OpenAPI connection, whose apiKey query and cookie placement can expose the token (got: ${openapiDefiners.join(", ")})`,
+  );
+}
 
 {
   const adopters = OE_SOURCES.filter((rel) => /\bctx\.getToken\s*\(/.test(codeOf(rel)) || /\bctx\.requireAuth\s*\(/.test(codeOf(rel)));
@@ -287,7 +356,7 @@ ok(OE_SOURCES.length > 200, `the OE agent-source sweep found ${OE_SOURCES.length
       `✗ ${adopters.join(", ")} now uses eve's inline ctx.getToken/ctx.requireAuth.\n` +
         `  This tree deliberately does NOT adopt that seam ("injection, not exposure"): it materialises a raw bearer\n` +
         `  as a JS value inside authored tool code, one careless return away from the model's context. Adopting it\n` +
-        `  needs its own review AND a docs correction to docs/security/credentials-and-planes.md:61 — not a widened\n` +
+        `  needs its own review AND a docs correction to docs/security/credentials-and-planes.md:75 — not a widened\n` +
         `  expectation here.`,
     );
     process.exit(1);
@@ -315,68 +384,143 @@ ok(OE_SOURCES.length > 200, `the OE agent-source sweep found ${OE_SOURCES.length
 }
 
 {
+  // eve 1.x: a sandbox provider's CONNECTION carries setNetworkPolicy as an `extensions` member, and
+  // createConnectionSession merges the extensions UNDER eve's own session members. The setter is a host-side
+  // closure the binding builds; nothing the sandbox runs can supply or replace it.
   const session = read("execution/sandbox/session.js");
-  const builder = /function buildSandboxSession\(\w+,(\w+)\)\{/.exec(session);
-  ok(builder !== null, "buildSandboxSession still takes the network-policy setter as a host-side CLOSURE argument");
-  const setter = builder?.[1] ?? "";
+  ok(/function createConnectionSession\(\w+\)\{/.test(session), "eve still builds the public SandboxSession in createConnectionSession");
+  const merge =
+    /let (\w+)=\w+\.extensions\?\?\{\};let (\w+)=Object\.keys\(\1\)\.filter\(\w+=>Object\.hasOwn\((\w+),\w+\)\|\|\w+===`delete`\|\|\w+===`stop`\);if\(\2\.length>0\)throw Error\(`Sandbox connection extensions cannot replace the session members eve provides/.exec(
+      session,
+    );
+  ok(merge !== null, "createConnectionSession still refuses a connection extension that would replace an eve session member");
   ok(
-    new RegExp(`return ${setter}===void 0\\?\\w+:\\{\\.\\.\\.\\w+,setNetworkPolicy:${setter}\\}`).test(session),
-    "the public SandboxSession carries THAT closure as its setNetworkPolicy method, and no member at all when the binding passed none",
+    merge !== null && new RegExp(`return\\{\\.\\.\\.${merge[1]},\\.\\.\\.${merge[3]}\\}`).test(session),
+    "…and spreads the binding's extensions FIRST, so eve's own members win (setNetworkPolicy arrives only as a binding extension)",
+  );
+
+  const vercel = read("execution/sandbox/bindings/vercel.js");
+  ok(
+    /extensions:\{name:\w+\.name,setNetworkPolicy:createVercelNetworkPolicySetter\(\w+\)\}/.test(vercel),
+    "the Vercel binding's setNetworkPolicy extension is createVercelNetworkPolicySetter over the host-side SDK sandbox handle",
+  );
+  ok(
+    /function createVercelNetworkPolicySetter\((\w+)\)\{return async (\w+)=>\{await \1\.update\(\{networkPolicy:toVercelNetworkPolicy\(\2\)\}\)\}\}/.test(
+      read("execution/sandbox/bindings/vercel-base-runtime.js"),
+    ),
+    "…which applies the policy with the SDK's update() call from the host (the Vercel API), never with a command inside the sandbox",
+  );
+
+  const docker = read("execution/sandbox/bindings/docker-connection.js");
+  ok(
+    /extensions:\{setNetworkPolicy:(\w+)=>setDockerNetworkPolicy\(\w+,\w+,\1\)\}/.test(docker),
+    "the Docker binding's setNetworkPolicy extension is setDockerNetworkPolicy over the host-side docker CLI",
+  );
+  const dockerNetwork = read("execution/sandbox/bindings/docker-network.js");
+  ok(
+    /function assertDockerNetworkPolicy\((\w+)\)\{if\(\1!==`allow-all`&&\1!==`deny-all`\)throw Error\(/.test(dockerNetwork) &&
+      /async function setDockerNetworkPolicy\(\w+,\w+,(\w+)\)\{assertDockerNetworkPolicy\(\1\);/.test(dockerNetwork),
+    "the Docker setter refuses every policy except allow-all and deny-all FIRST — a Docker sandbox can never carry a credential transform",
+  );
+
+  const defaultProvider = read("sandbox/providers/default.js");
+  ok(
+    /async function rejectJustBashNetworkPolicy\((\w+)\)\{if\(\1!==`allow-all`\)throw Error\(JUST_BASH_NETWORK_POLICY_MESSAGE\)\}/.test(defaultProvider),
+    "DefaultSandbox's just-bash fallback setter accepts only allow-all — it can never carry a credential transform either",
   );
 }
 
 const EVE_POLICY_SITES = [
-  "execution/sandbox/bindings/microsandbox-lifecycle.js",
-  "execution/sandbox/bindings/microsandbox-runtime.js",
-  "execution/sandbox/session.js",
+  "execution/sandbox/bindings/docker-connection.js",
+  "execution/sandbox/bindings/vercel.js",
+  "sandbox/providers/default.js",
   "public/channels/github/checkout.js",
-  "self-modification/git.js",
-  "self-modification/sandbox.js",
   "public/channels/github/defaults.js",
-  "compiler/extension-compatibility.js",
+  "self-modification/deployed-sandbox.js",
+  "self-modification/git.js",
   "extensions/code/extension/lib/credentials.js",
 ];
 pinMatchSet(
   /setNetworkPolicy/g,
   EVE_POLICY_SITES,
   "setNetworkPolicy",
-  "docs/security/credentials-and-planes.md:198 claims the agent 'cannot reach in and widen its own egress policy'.\n" +
-    "  Every known site is a sandbox binding or a host-side channel. A site under public/tools/ or harness/ would mean\n" +
+  "docs/security/credentials-and-planes.md:216 claims the agent 'cannot reach in and widen its own egress policy'.\n" +
+    "  Every known site is a host-side sandbox binding, DefaultSandbox's just-bash fallback, the GitHub channel's\n" +
+    "  checkout, eve's self-modification sandbox or eve-code's credential broker. A site under a tools/ directory or harness/ would mean\n" +
     "  the model can reach it — that is a SECURITY FINDING and a docs correction, not an expectation to widen.",
 );
 {
   const offSandbox = [...distFilesMatching(/setNetworkPolicy/g)].filter(
     (f) =>
-      !f.startsWith("execution/sandbox/") &&
-      !f.startsWith("public/channels/") &&
+      !f.startsWith("execution/sandbox/bindings/") &&
+      f !== "sandbox/providers/default.js" &&
+      !f.startsWith("public/channels/github/") &&
       !f.startsWith("self-modification/") &&
-      f !== "compiler/extension-compatibility.js" &&
       f !== "extensions/code/extension/lib/credentials.js",
   );
   ok(
     offSandbox.length === 0,
-    "no module outside execution/sandbox/**, public/channels/** or self-modification/** names setNetworkPolicy (never on the model tool surface)",
+    `no module outside the sandbox bindings, DefaultSandbox, the GitHub channel, self-modification and eve-code's credential broker names setNetworkPolicy (got: ${offSandbox.join(", ")})`,
   );
-  const compat = readFileSync(join(distSrc, "compiler/extension-compatibility.js"), "utf8");
-  const compatMentions = compat.match(/.{0,40}setNetworkPolicy.{0,2}/g) ?? [];
-  ok(compatMentions.length > 0, "the reviewed 0.71.0 compiler site still exists (drop the exemption when eve removes it)");
   ok(
-    compatMentions.every((m) => m.endsWith("`SandboxSession no longer exposes setNetworkPolicy; ")),
-    `compiler/extension-compatibility.js names setNetworkPolicy only inside its migration message (got: ${compatMentions.join(" | ")})`,
+    !/setNetworkPolicy/.test(read("compiler/extension-compatibility.js")),
+    "compiler/extension-compatibility.js no longer names setNetworkPolicy (eve 1.x dropped the 0.71.0 migration message)",
   );
-  const eveCodePolicy = readFileSync(join(distSrc, "extensions/code/extension/lib/credentials.js"), "utf8");
+
+  // eve's GitHub channel default `turn.started` checks the triggering repository out into the SESSION sandbox. It
+  // installs gitHubGitBrokerNetworkPolicy: allow-all egress ("*": []) plus an installation token for every repository
+  // of the installation, on github.com and codeload.github.com, and it never restores the policy. Open Everywhere's
+  // native GitHub `turn.started` therefore never runs eve's default: it reacts itself and skips the checkout
+  // (github-supervisor-test). These pins hold the eve facts that make the replacement complete and necessary.
+  const ghDefaults = read("public/channels/github/defaults.js");
+  ok(
+    /async"turn\.started"\((\w+),(\w+)\)\{let\{channel:(\w+)\}=\2;if\(\w+\.progress\?\.reactions!==!1\)try\{await \3\.thread\.react\(`eyes`\)\}catch\((\w+)\)\{logError\(log,`GitHub reaction failed — swallowed`,\4\)\}await checkoutRepositoryForTurn\(\3,\2,\w+\)\}/.test(
+      ghDefaults,
+    ),
+    "eve's GitHub default turn.started does exactly two things: the 👀 reaction and checkoutRepositoryForTurn (OE's replacement keeps the first)",
+  );
+  ok(
+    /async function checkoutRepositoryForTurn\(\w+,(\w+),\w+\)\{let\{state:\w+\}=\w+;try\{let (\w+)=await \1\.getSandbox\(\);if\(!\(`setNetworkPolicy`in \2\)\)throw Error\(/.test(ghDefaults),
+    "…and the checkout takes the SESSION sandbox through ctx.getSandbox() (the sandbox the model's tools run in)",
+  );
+  ok(
+    (ghDefaults.match(/checkoutRepositoryForTurn\(/g) ?? []).length === 2,
+    "checkoutRepositoryForTurn has exactly one call site in eve's GitHub defaults (turn.started) — no other forwarded default event runs the checkout",
+  );
+  const ghSandboxCalls = distFiles("public/channels/github").reduce((n, f) => n + (readFileSync(join(distSrc, f), "utf8").match(/getSandbox/g) ?? []).length, 0);
+  ok(ghSandboxCalls === 1, `eve's GitHub channel names getSandbox exactly once, in checkoutRepositoryForTurn (got ${ghSandboxCalls})`);
+  const channelSandboxUsers = distFiles("public/channels").filter((f) => /getSandbox|setNetworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
+  ok(
+    channelSandboxUsers.every((f) => f.startsWith("public/channels/github/")),
+    `no eve channel other than GitHub reaches the sandbox or its policy from a channel event (got: ${channelSandboxUsers.join(", ")})`,
+  );
+  ok(
+    /await \w+\.setNetworkPolicy\(gitHubGitBrokerNetworkPolicy\(\w+\)\)/.test(read("public/channels/github/checkout.js")),
+    "eve's GitHub checkout still installs gitHubGitBrokerNetworkPolicy on the sandbox it is given (the reason OE refuses it the session sandbox)",
+  );
+  ok(
+    /function gitHubGitBrokerNetworkPolicy\(\w+\)\{let (\w+)=\[\{transform:\[\{headers:\{Authorization:`Basic \$\{Buffer\.from\(`x-access-token:\$\{\w+\}`\)\.toString\(`base64`\)\}`\}\}\]\}\];return\{allow:\{"\*":\[\],"github\.com":\1,"codeload\.github\.com":\1\}\}\}/.test(
+      read("shared/git.js"),
+    ),
+    "gitHubGitBrokerNetworkPolicy is still allow-all plus the installation token on github.com and codeload.github.com",
+  );
+
+  const policySiteTools = EVE_POLICY_SITES.filter((f) => /\b(?:defineTool|createTool|inputSchema)\b/.test(read(f)));
+  ok(
+    policySiteTools.length === 0,
+    `no eve module that names setNetworkPolicy defines a tool (got: ${policySiteTools.join(", ")}) — every policy value is host-decided`,
+  );
+  const eveCodePolicy = read("extensions/code/extension/lib/credentials.js");
   ok(!/\b(?:defineTool|createTool|inputSchema)\b/.test(eveCodePolicy), "eve-code's policy site defines NO tool — the header broker stays host-decided");
-  const eveCodeTools = distFiles("extensions/code/extension/tools");
-  ok(eveCodeTools.length > 0, "eve-code still ships tool modules (the sweep below is not vacuous)");
-  const eveCodeToolPolicies = eveCodeTools.filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
-  ok(
-    eveCodeToolPolicies.length === 0,
-    `no eve-code TOOL module names a network policy (got: ${eveCodeToolPolicies.join(", ")}) — a model holding these tools cannot name a policy value`,
-  );
-  const eveCodeImporters = OE_SOURCES.filter((rel) => /["']eve\/extensions\/code\b/.test(codeOf(rel)));
+  const eveCodeImporters = OE_CODE_SOURCES.filter((rel) => /["']eve\/extensions\/code\b/.test(codeOf(rel)));
   ok(
     eveCodeImporters.length === 0,
     `this tree never imports eve/extensions/code (got: ${eveCodeImporters.join(", ")}) — its per-turn firewall hook is not mounted here`,
+  );
+  const selfModImporters = OE_CODE_SOURCES.filter((rel) => /["']eve\/extensions\/self-modification\b/.test(codeOf(rel)));
+  ok(
+    selfModImporters.length === 0,
+    `this tree never imports eve/extensions/self-modification (got: ${selfModImporters.join(", ")}) — its GitHub-brokering sandbox is not mounted here`,
   );
   const selfModPolicySites = distFiles("self-modification").filter((f) => /setNetworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
   const selfModPolicyTools = selfModPolicySites.filter((f) =>
@@ -384,21 +528,26 @@ pinMatchSet(
   );
   ok(
     selfModPolicyTools.length === 0,
-    `eve's self-modification policy sites still define NO tool (got: ${selfModPolicyTools.join(", ")}) — the allow-all baseline stays host-decided`,
-  );
-  const selfModToolPolicies = distFiles("self-modification")
-    .filter((f) => /\/tools\//.test(f))
-    .filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
-  ok(
-    selfModToolPolicies.length === 0,
-    `no self-modification TOOL module names a network policy (got: ${selfModToolPolicies.join(", ")}) — a model holding these tools cannot name a policy value`,
+    `eve's self-modification policy sites still define NO tool (got: ${selfModPolicyTools.join(", ")}) — the baseline stays host-decided`,
   );
   ok(
-    !/setNetworkPolicy/.test(readFileSync(join(distSrc, "context/build-callback-context.js"), "utf8")),
-    "context/build-callback-context.js no longer names setNetworkPolicy (eve 0.71.0 retired the pass-through)",
+    /async function withBrokeredGitHubCredential\(\w+,\w+,\w+\)\{[^]*?\}try\{await \w+\.setNetworkPolicy\(SELF_MODIFICATION_BASELINE_NETWORK_POLICY\)\}catch/.test(
+      read("self-modification/git.js"),
+    ),
+    "eve's self-modification git broker still restores its baseline policy after the brokered command (the token does not outlive it)",
   );
-  const toolSurface = distFiles("public/tools").filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
-  ok(toolSurface.length === 0, "eve's built-in TOOL definitions (public/tools/**) never mention a network policy — there is no model tool for it");
+
+  const toolDirs = [...distFiles()].filter((f) => /(?:^|\/)tools\//.test(f) && !f.startsWith("compiled/"));
+  ok(toolDirs.length > 20, `the tool-module sweep found ${toolDirs.length} modules under a tools/ directory (the assertion below is not vacuous)`);
+  const toolPolicies = toolDirs.filter((f) => /etworkPolicy/.test(readFileSync(join(distSrc, f), "utf8")));
+  ok(
+    toolPolicies.length === 0,
+    `no eve module under any tools/ directory names a network policy (got: ${toolPolicies.join(", ")}) — a model holding eve's tools cannot name a policy value`,
+  );
+  ok(
+    !/setNetworkPolicy/.test(read("context/build-callback-context.js")),
+    "context/build-callback-context.js does not name setNetworkPolicy (eve 0.71.0 retired the pass-through)",
+  );
 }
 
 const OE_POLICY_SEAM = "packages/core/agent/sandbox/network-policy.ts";
@@ -456,8 +605,12 @@ const OE_MID_TURN_APPLIERS = [
   const wrapperUsers = [...distFilesMatching(/createLoggingSandboxSession\(/g)].filter((f) => !f.startsWith("execution/sandbox/logging-session"));
   ok(wrapperUsers.length > 0, "eve's sandbox bindings still install the policy-logging wrapper somewhere (the confinement check below is not vacuous)");
   ok(
-    wrapperUsers.every((f) => f.startsWith("execution/sandbox/bindings/")),
-    "the policy-logging wrapper is still only installed by sandbox BINDINGS on the template-bootstrap path (not on the live session)",
+    wrapperUsers.length === 1 && wrapperUsers[0] === "execution/sandbox/prewarm.js",
+    `the bootstrap wrapper is installed only by execution/sandbox/prewarm.js, the template-preparation path (got: ${wrapperUsers.join(", ")})`,
+  );
+  ok(
+    /await (\w+)\(createLoggingSandboxSession\(\{log:\w+,session:\w+\}\)\)/.test(read("execution/sandbox/prewarm.js")),
+    "…which hands the wrapped session only to the app's prepare callback (OE's agent-browser bake, pinned below)",
   );
 
   const bake = readFileSync(join(repoRoot, "packages/adapters/agent/browser/sandbox.ts"), "utf8");

@@ -34,7 +34,40 @@ function resultById(requests: readonly RecordedRequest[], id: string): { isError
   return undefined;
 }
 
+interface CardRender {
+  readonly text: string;
+  readonly items: readonly { readonly kind: unknown; readonly id: unknown; readonly status: unknown }[];
+}
+
+function renderOf(params: URLSearchParams): CardRender {
+  const text = `${params.get("text") ?? ""} ${params.get("blocks") ?? ""}`;
+  const payload = (JSON.parse(params.get("metadata") ?? "{}") as { event_payload?: Record<string, unknown> }).event_payload ?? {};
+  const items = payload.kind === "grouped" ? ((payload.items ?? []) as CardRender["items"]) : [{ kind: payload.kind, id: payload.id, status: payload.status }];
+  return { text, items };
+}
+
+/**
+ * The last render of each approval card the host posted in the room. A card is one
+ * `chat.postMessage`; every later `chat.update` of that message's ts replaces its render. One job's
+ * cards fold into one grouped message, so a card can carry several approvals.
+ */
+function finalCards(calls: readonly { readonly method: string; readonly params: URLSearchParams }[], postedTs: readonly string[]): Map<string, CardRender> {
+  const cards = new Map<string, CardRender>();
+  let posted = 0;
+  for (const call of calls) {
+    if (call.method === "chat.postMessage") {
+      const ts = postedTs[posted++];
+      if (ts !== undefined && call.params.get("channel") === CHANNEL && call.params.get("metadata") !== null) cards.set(ts, renderOf(call.params));
+    } else if (call.method === "chat.update" && call.params.get("channel") === CHANNEL) {
+      const ts = call.params.get("ts") ?? "";
+      if (cards.has(ts)) cards.set(ts, renderOf(call.params));
+    }
+  }
+  return cards;
+}
+
 test("a worker's canvas and List writes each post a card on the real host, and nothing reaches Slack before a click", async () => {
+  const postedTs: string[] = [];
   const slack = installSlackWebApiStub((method, params) => {
     if (method === "auth.test") return { ok: true, user_id: BOT, bot_id: "B0OPE2521BOT", team_id: SLACK_TEAM_ID };
     if (method === "users.info") {
@@ -49,7 +82,11 @@ test("a worker's canvas and List writes each post a card on the real host, and n
       };
     }
     if (method === "conversations.history" || method === "conversations.replies") return { ok: true, messages: [] };
-    if (method === "chat.postMessage") return { ok: true, channel: params.get("channel"), ts: slackTs(Date.now(), 25219) };
+    if (method === "chat.postMessage") {
+      const ts = slackTs(Date.now(), 25219 + postedTs.length);
+      postedTs.push(ts);
+      return { ok: true, channel: params.get("channel"), ts };
+    }
     if (method === "chat.update" || method === "chat.postEphemeral") return { ok: true, ts: slackTs(Date.now(), 25218) };
     if (method === "files.info") {
       const file = params.get("file");
@@ -127,9 +164,21 @@ test("a worker's canvas and List writes each post a card on the real host, and n
   }, "the canvas.write and list.write approval.requested rows", 60_000);
   expect(requested.filter((r) => r.detail?.kind === "canvas.write")).toHaveLength(1);
   expect(requested.filter((r) => r.detail?.kind === "list.write")).toHaveLength(1);
-  const posted = slack.calls.filter((c) => c.method === "chat.postMessage").map((c) => `${c.params.get("text") ?? ""} ${c.params.get("blocks") ?? ""}`);
-  expect(posted.some((p) => p.includes('Add to the canvas') && p.includes("Launch plan"))).toBe(true);
-  expect(posted.some((p) => p.includes('Add 1 row in the List') && p.includes("Release bugs"))).toBe(true);
+  const canvasRow = requested.find((r) => r.detail?.kind === "canvas.write");
+  const listRow = requested.find((r) => r.detail?.kind === "list.write");
+  expect(typeof canvasRow?.detail?.id).toBe("string");
+  expect(typeof listRow?.detail?.id).toBe("string");
+  const cardHolding = (id: unknown): CardRender | undefined =>
+    [...finalCards(slack.calls, postedTs).values()].find((c) => c.items.some((i) => i.id === id && i.status === "pending"));
+  const { canvasCard, listCard } = await waitFor(() => {
+    const canvasCard = cardHolding(canvasRow?.detail?.id);
+    const listCard = cardHolding(listRow?.detail?.id);
+    return canvasCard !== undefined && listCard !== undefined ? { canvasCard, listCard } : undefined;
+  }, "a live card in the room that holds each of the canvas.write and list.write approvals, pending", 60_000);
+  expect(canvasCard.text).toContain("Add to the canvas");
+  expect(canvasCard.text).toContain("Launch plan");
+  expect(listCard.text).toContain("Add 1 row in the List");
+  expect(listCard.text).toContain("Release bugs");
 
   expect(slack.calls.filter((c) => WRITES.includes(c.method)).map((c) => c.method)).toEqual([]);
   expect(await rowsSinceCursor(cursor, ["canvas.write", "list.write"])).toEqual([]);

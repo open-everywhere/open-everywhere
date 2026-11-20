@@ -113,8 +113,16 @@ function throws(fn: () => unknown, re: RegExp, label: string): void {
   throws(() => personIds("U0456"), /not a person key/u, "person: a bare id is refused");
 
   const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
-  const eveDir = (await import(pathToFileURL(join(eveRoot, "dist/src/internal/workflow/local-world-data-directory.js")).href)) as { LOCAL_WORKFLOW_WORLD_DATA_DIRECTORY_RELATIVE_PATH: string };
-  ok(eveDir.LOCAL_WORKFLOW_WORLD_DATA_DIRECTORY_RELATIVE_PATH === LOCAL_WORKFLOW_DATA_DIR, "world: the transcript directory is eve's own");
+  // eve 1.x derives the directory from the app root instead of exporting a constant. Outside eve's own
+  // dev mode (EVE_DEV unset, as on every deployed host) it is `<root>/.eve/.workflow-data`.
+  const eveDir = (await import(pathToFileURL(join(eveRoot, "dist/src/internal/workflow/local-world-data-directory.js")).href)) as { displayLocalWorkflowWorldDataDirectory(root: string): string };
+  const devFlag = process.env["EVE_DEV"];
+  delete process.env["EVE_DEV"];
+  try {
+    ok(eveDir.displayLocalWorkflowWorldDataDirectory(process.cwd()) === LOCAL_WORKFLOW_DATA_DIR, "world: the transcript directory is eve's own");
+  } finally {
+    if (devFlag !== undefined) process.env["EVE_DEV"] = devFlag;
+  }
 }
 
 {
@@ -332,10 +340,10 @@ for (const make of [sqliteEngine, pgliteEngine]) {
     if (sessionId === dmRun) throw new TranscriptNotFoundError('no such session: {"found":false}');
     const all =
       sessionId === soleRun
-        ? [0, 1, 2].map((i) => ({ index: i, at: iso, type: i === 2 ? "session.completed" : "message.received", data: { sessionId } }))
+        ? [0, 1, 2].map((i) => ({ index: i, at: iso, type: i === 2 ? "session.ended" : "delivery.consumed", data: { sessionId } }))
         : sessionId === sharedRun
           ? []
-          : [{ index: 0, at: iso, type: "session.waiting", data: null }];
+          : [{ index: 0, at: iso, type: "turn.paused", data: null }];
     const slice = all.slice(startIndex, startIndex + 2);
     return { sessionId, startIndex, nextIndex: startIndex + slice.length, complete: sessionId === soleRun && startIndex + slice.length >= all.length, events: slice };
   };
@@ -343,7 +351,7 @@ for (const make of [sqliteEngine, pgliteEngine]) {
   const via = await exportOrg({ store: e.store, org, outDir: viaOut, transcriptReader: { baseUrl: "https://agent.example", pages }, actor: "x", now });
   ok(via.transcripts.store === "deployment" && via.transcripts.runs === 2, `${L} export deployment: two sessions read (${JSON.stringify(via.transcripts)})`);
   const soleLines = readFileSync(join(viaOut, "transcripts/sessions", `${soleRun}.jsonl`), "utf8").trim().split("\n");
-  ok(soleLines.length === 3 && (JSON.parse(soleLines[2]!) as { type: string }).type === "session.completed", `${L} export deployment: a session read over two pages arrives whole, in order`);
+  ok(soleLines.length === 3 && (JSON.parse(soleLines[2]!) as { type: string }).type === "session.ended", `${L} export deployment: a session read over two pages arrives whole, in order`);
   ok(served.includes(`${soleRun}@2`) && !served.includes(`${soleRun}@3`), `${L} export deployment: the read pages on, and stops at the terminal event (${served.join(", ")})`);
   ok(served.includes(`${liveRun}@1`) && readFileSync(join(viaOut, "transcripts/sessions", `${liveRun}.jsonl`), "utf8").trim().split("\n").length === 1, `${L} export deployment: a parked session ends on an empty page`);
   const unreachedVia = new Map((via.transcripts.unreached ?? []).map((u) => [u.sessionId, u.reason]));
@@ -592,7 +600,7 @@ for (const make of [sqliteEngine, pgliteEngine]) {
       auths.push(String(req.headers.authorization));
       res.setHeader("content-type", "application/json");
       if (/^\/control\/v1\/session\/wrun_CLI9\/transcript\?/u.test(req.url ?? "")) {
-        res.end(JSON.stringify({ sessionId: "wrun_CLI9", found: true, startIndex: 0, nextIndex: 1, complete: true, count: 1, events: [{ index: 0, at: "2026-10-01T00:00:00.000Z", type: "session.completed", data: { n: 9 } }] }));
+        res.end(JSON.stringify({ sessionId: "wrun_CLI9", found: true, startIndex: 0, nextIndex: 1, complete: true, count: 1, events: [{ index: 0, at: "2026-10-01T00:00:00.000Z", type: "session.ended", data: { n: 9 } }] }));
         return;
       }
       res.statusCode = 404;

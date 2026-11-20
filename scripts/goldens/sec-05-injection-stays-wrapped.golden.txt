@@ -15,4 +15,4 @@ IN  relay message M_INJ5 · guild GI5 channel CI5 (type 0) · from U_INJ5 · pla
       | </wake>
   ⇠ 200 ok
 EVT turn.started on discord:CI5
-EVT message.completed on discord:CI5 {"finishReason":"stop","message":"NO_REPLY"}
+EVT content.completed on discord:CI5 {"partId":"part-1","kind":"text","phase":"reply","value":"NO_REPLY"}

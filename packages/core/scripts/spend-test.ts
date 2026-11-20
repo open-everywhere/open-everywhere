@@ -384,7 +384,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     channel: { kind: "slack" },
     session: { id: sessionId, auth: { current: { attributes: { team_id: "T1", channel_id: "C_STAMP" }, principalId: "U1", principalType: "slack-user" } } },
   });
-  const stepEvent = (inputTokens: number, outputTokens: number) => ({ data: { usage: { inputTokens, outputTokens } } });
+  const stepEvent = (inputTokens: number, outputTokens: number) => ({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { inputTokens, outputTokens } } });
 
   const { createRequire } = await import("node:module");
   const { dirname, join: pathJoin } = await import("node:path");
@@ -419,24 +419,24 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
   await contextStorage.run(new ContextContainer(), async () => {
     stampModelCall("anthropic/claude-sonnet-5");
-    await spendHook.events!["step.completed"]!(stepEvent(10, 5) as never, hookCtx("sess-stamped") as never);
+    await spendHook.events!["usage.recorded"]!(stepEvent(10, 5) as never, hookCtx("sess-stamped") as never);
   });
   const stampedRows = await usageEvents.usageForSession("default", "sess-stamped");
   ok(stampedRows.length === 1 && stampedRows[0].model === "anthropic/claude-sonnet-5", "hooks/spend: step.completed attaches the model-stamp's id to the usage_events row");
 
   await contextStorage.run(new ContextContainer(), async () => {
-    await spendHook.events!["step.completed"]!(stepEvent(20, 10) as never, hookCtx("sess-unstamped") as never);
+    await spendHook.events!["usage.recorded"]!(stepEvent(20, 10) as never, hookCtx("sess-unstamped") as never);
   });
   const unstampedRows = await usageEvents.usageForSession("default", "sess-unstamped");
   ok(unstampedRows.length === 1 && unstampedRows[0].model === UNKNOWN_MODEL, "🔴 OPE-369 hooks/spend: no stamp on a TOKEN-BEARING step -> the row is recorded under the explicit unknown-model sentinel, never silently attributed");
   ok(unstampedRows[0].inputTokens === 20 && unstampedRows[0].outputTokens === 10, "…with its tokens intact — the fix withholds the rate-derived $, it never drops the usage");
 
-  await spendHook.events!["step.completed"]!(stepEvent(1, 1) as never, hookCtx("sess-no-context") as never);
+  await spendHook.events!["usage.recorded"]!(stepEvent(1, 1) as never, hookCtx("sess-no-context") as never);
   const noContextRows = await usageEvents.usageForSession("default", "sess-no-context");
   ok(noContextRows.length === 1 && noContextRows[0].model === UNKNOWN_MODEL, "hooks/spend: step.completed outside any Eve context still records the row, under the unknown-model sentinel");
 
   await contextStorage.run(new ContextContainer(), async () => {
-    await spendHook.events!["step.completed"]!(stepEvent(2, 2) as never, hookCtx("sess-isolated") as never);
+    await spendHook.events!["usage.recorded"]!(stepEvent(2, 2) as never, hookCtx("sess-isolated") as never);
   });
   const isolatedRows = await usageEvents.usageForSession("default", "sess-isolated");
   ok(isolatedRows.length === 1 && isolatedRows[0].model === UNKNOWN_MODEL, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
@@ -446,7 +446,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     const { MAX_OBSERVABLE_DELEGATION_DEPTH } = await import("../agent/operational/store.js");
     const ledgerPeriod = periodOf(new Date().toISOString());
     const ledgerFor = (surfaceKey: string) => ledgerStore.listSpendLedger("default", { surfaceKey, period: ledgerPeriod });
-    const startedEvent = (modelId: string) => ({ data: { modelId, sequence: 0, stepIndex: 0, turnId: "turn-depth2" } });
+    const startedEvent = (modelId: string) => ({ type: "model.started", data: { runId: "run-depth2", modelId, attempt: 1 }, scope: { turnId: "turn-depth2" } });
     const delegatedCtx = (channelId: string) => ({
       channel: { kind: "slack" },
       session: {
@@ -459,8 +459,8 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
     await contextStorage.run(new ContextContainer(), async () => {
       adoptSlackWorkerAuthority("C_DEPTH2");
-      await spendHook.events!["step.started"]!(startedEvent(PRICED_MODEL) as never, delegatedCtx("C_DEPTH2") as never);
-      await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2") as never);
+      await spendHook.events!["model.started"]!(startedEvent(PRICED_MODEL) as never, delegatedCtx("C_DEPTH2") as never);
+      await spendHook.events!["usage.recorded"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2") as never);
     });
     const depth2 = await usageEvents.usageForSession("default", "sess-worker");
     ok(depth2.length === 1, "control: the delegated call wrote exactly one usage row");
@@ -468,7 +468,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     ok(depth2[0].kind === "subagent", "control: the row really is a delegated call");
     ok(
       depth2[0].model === PRICED_MODEL && depth2[0].model !== UNKNOWN_MODEL,
-      "🔴 OPE-1878 hooks/spend: a delegated call whose session stamped NOTHING is named from the host's own step.started model reference, never recorded as the unknown-model sentinel",
+      "🔴 OPE-1878 hooks/spend: a delegated call whose session stamped NOTHING is named from the host's own model.started model reference, never recorded as the unknown-model sentinel",
     );
     const depth2Ledger = (await ledgerFor("slack/T1/C_DEPTH2")).filter((r) => r.model === PRICED_MODEL);
     ok(depth2Ledger.length === 1, "🔴 OPE-1878: the CAP ledger row carries the registry model id too — spend_ledger is the store every cap denomination sums");
@@ -476,7 +476,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
     await contextStorage.run(new ContextContainer(), async () => {
       adoptSlackWorkerAuthority("C_DEPTH2_UNSEEN");
-      await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_UNSEEN") as never);
+      await spendHook.events!["usage.recorded"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_UNSEEN") as never);
     });
     const unseenLedger = await ledgerFor("slack/T1/C_DEPTH2_UNSEEN");
     ok(unseenLedger.length === 1 && unseenLedger[0].model === UNKNOWN_MODEL, "🔴 OPE-1878: a delegated call NO source could name still records the unknown-model sentinel — the fix names what was observed, it never guesses");
@@ -484,9 +484,9 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
     await contextStorage.run(new ContextContainer(), async () => {
       adoptSlackWorkerAuthority("C_DEPTH2_BOTH");
-      await spendHook.events!["step.started"]!(startedEvent("some-other/model") as never, delegatedCtx("C_DEPTH2_BOTH") as never);
+      await spendHook.events!["model.started"]!(startedEvent("some-other/model") as never, delegatedCtx("C_DEPTH2_BOTH") as never);
       stampModelCall(PRICED_MODEL);
-      await spendHook.events!["step.completed"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_BOTH") as never);
+      await spendHook.events!["usage.recorded"]!(delegatedUsage as never, delegatedCtx("C_DEPTH2_BOTH") as never);
     });
     const bothLedger = await ledgerFor("slack/T1/C_DEPTH2_BOTH");
     ok(bothLedger.length === 1 && bothLedger[0].model === PRICED_MODEL, "🔴 OPE-1878: with BOTH a routed stamp and a host reference, the row takes the ROUTED id — the host reference never overwrites the route's own answer");
@@ -495,7 +495,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   {
     const ledgerStore = (await import("../agent/operational/provider.js")).getOperationalStore();
     const ledgerPeriod = periodOf(new Date().toISOString());
-    type Ev = { readonly type: string; readonly data: Record<string, unknown> };
+    type Ev = { readonly type: string; readonly data: Record<string, unknown>; readonly scope?: { readonly turnId?: string; readonly runId?: string } };
     type Usage2256 = { inputTokens: number; outputTokens: number };
     const sum = (us: readonly Usage2256[]) =>
       us.reduce((a, u) => ({ inputTokens: a.inputTokens + u.inputTokens, outputTokens: a.outputTokens + u.outputTokens }), { inputTokens: 0, outputTokens: 0 });
@@ -508,16 +508,20 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
       await handlers["*"]?.(ev, ctx);
     };
     const stepEvents = (steps: readonly Usage2256[], turnId: string): Ev[] =>
-      steps.flatMap((usage, stepIndex) => [
-        { type: "step.started", data: { modelId: PRICED_MODEL, sequence: 0, stepIndex, turnId } },
-        { type: "step.completed", data: { finishReason: "stop", sequence: 0, stepIndex, turnId, usage } },
-      ]);
+      steps.flatMap((usage, stepIndex) => {
+        const runId = `${turnId}-run-${stepIndex}`;
+        return [
+          { type: "model.started", data: { runId, modelId: PRICED_MODEL, attempt: 1 }, scope: { turnId } },
+          { type: "model.settled", data: { runId, outcome: "completed", finishReason: "stop" }, scope: { turnId } },
+          { type: "usage.recorded", data: { owner: { runId }, kind: "model", usage }, scope: { turnId } },
+        ];
+      });
+    // eve's inclusive aggregate on v27: the delegating session records the worker's summed usage as
+    // usage.recorded owned by the delegating CALL (owner.callId), scoped to the run that delegated.
     const aggregateEvents = (usage: Usage2256, turnId: string): Ev[] => [
-      { type: "turn.waiting", data: { on: "tasks", sequence: 0, turnId, usage } },
-      { type: "turn.completed", data: { sequence: 0, turnId } },
-      { type: "session.waiting", data: { continuationToken: "seat-token", usage, wait: "next-user-message" } },
-      { type: "session.completed", data: { usage } },
-      { type: "session.failed", data: { code: "X", message: "x", sessionId: "s", usage } },
+      { type: "usage.recorded", data: { owner: { callId: "call-ope2256" }, kind: "model", usage }, scope: { turnId, runId: `${turnId}-run-0` } },
+      { type: "turn.settled", data: { turnId, outcome: "completed" } },
+      { type: "session.ended", data: { outcome: "completed" } },
     ];
 
     const driveTurn = async (channelId: string, seatSessionId: string, delegate: boolean) => {
@@ -601,11 +605,10 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
     const period = periodOfIso(new Date().toISOString());
 
+    const measuredSettled = { type: "model.settled", data: { runId: "run-measured", outcome: "completed", generationId: "gen_abc123" }, scope: { turnId: "turn-measured" } };
     const measuredEvent = {
-      data: {
-        usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.00025 },
-        providerMetadata: { gateway: { generationId: "gen_abc123" } },
-      },
+      type: "usage.recorded",
+      data: { owner: { runId: "run-measured" }, kind: "model", usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.00025 } },
     };
     const measuredCtx = () => ({
       channel: { kind: "slack" },
@@ -613,13 +616,14 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     });
     await contextStorage.run(new ContextContainer(), async () => {
       stampModelCall(PRICED_MODEL);
-      await spendHook.events!["step.completed"]!(measuredEvent as never, measuredCtx() as never);
+      await spendHook.events!["model.settled"]!(measuredSettled as never, measuredCtx() as never);
+      await spendHook.events!["usage.recorded"]!(measuredEvent as never, measuredCtx() as never);
     });
 
     const measuredRows = await usageEvents.usageForSession("default", "sess-measured");
     ok(measuredRows.length === 1 && measuredRows[0].usdMicrosMeasured === 250, "🔴 OPE-369: the gateway-measured cost reaches usage_events in MICROS (0.00025 USD -> 250), instead of being dropped in the cast");
     ok(measuredRows[0].costSource === "measured", "…stamped cost_source='measured', so a reader can tell an exact figure from a rate-derived one");
-    ok(generationIdOf(measuredRows[0]) === "gen_abc123", "🔴 OPE-369: the gateway generation id is stamped into detail — the join key between an OE row and the gateway's own billing record");
+    ok(generationIdOf(measuredRows[0]) === "gen_abc123", "🔴 OPE-369: the gateway generation id is stamped into detail — the join key between an OE row and the gateway's own billing record (model.settled carries it; usage.recorded names the same run)");
     ok(measuredRows[0].delegationDepth === 0 && measuredRows[0].rootSessionId === "sess-measured", "…and a ROOT turn records depth 0 with itself as the root of its (so far empty) delegation tree");
 
     const ledger = (await opStore.listSpendLedger("default")).filter((r) => r.surfaceKey === "slack/T1/C_MEASURED" && r.period === period);
@@ -635,7 +639,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
     await contextStorage.run(new ContextContainer(), async () => {
       stampModelCall(PRICED_MODEL);
-      await spendHook.events!["step.completed"]!({ data: { usage: { inputTokens: 10, outputTokens: 5 } } } as never, {
+      await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-unmeasured" }, kind: "model", usage: { inputTokens: 10, outputTokens: 5 } } } as never, {
         channel: { kind: "slack" },
         session: { id: "sess-unmeasured", auth: { current: { attributes: { team_id: "T1", channel_id: "C_UNMEASURED" }, principalId: "U1", principalType: "slack-user" } } },
       } as never);
@@ -650,7 +654,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     };
     await contextStorage.run(new ContextContainer(), async () => {
       stampModelCall(PRICED_MODEL);
-      await spendHook.events!["step.completed"]!({ data: { usage: { costUsd: 0.0009 } } } as never, costOnlyCtx as never);
+      await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { costUsd: 0.0009 } } } as never, costOnlyCtx as never);
     });
     const costOnly = await usageEvents.usageForSession("default", "sess-cost-only");
     ok(costOnly.length === 1 && costOnly[0].usdMicrosMeasured === 900, "🔴 OPE-369: a step the gateway BILLED but reported no tokens for is recorded — a measured cost is positive evidence of model spend, and dropping it lost real money from the caps");
@@ -658,12 +662,30 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     ok(costOnlyLedger.calls === 1 && costOnlyLedger.usdMicrosMeasured === 900, "…and reaches the LEDGER, which is what the USD caps sum over");
 
     await contextStorage.run(new ContextContainer(), async () => {
-      await spendHook.events!["step.completed"]!({ data: { usage: {} } } as never, {
+      await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: {} } } as never, {
         channel: { kind: "slack" },
         session: { id: "sess-empty", auth: { current: { attributes: { team_id: "T1", channel_id: "C_EMPTY" }, principalId: "U1", principalType: "slack-user" } } },
       } as never);
     });
     ok((await usageEvents.usageForSession("default", "sess-empty")).length === 0, "…while a step with neither tokens NOR a cost still records nothing — the guard was tightened, not loosened");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      stampModelCall(PRICED_MODEL);
+      await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { callId: "call-x" }, kind: "model", usage: { inputTokens: 500, outputTokens: 50 } } } as never, {
+        channel: { kind: "slack" },
+        session: { id: "sess-non-model", auth: { current: { attributes: { team_id: "T1", channel_id: "C_NONMODEL" }, principalId: "U1", principalType: "slack-user" } } },
+      } as never);
+    });
+    ok((await usageEvents.usageForSession("default", "sess-non-model")).length === 0, "🔴 usage.recorded for a DELEGATED task (owner callId) records no row in the parent — the child session's own hook files that usage, so a second row would count it twice");
+
+    await contextStorage.run(new ContextContainer(), async () => {
+      stampModelCall(PRICED_MODEL);
+      await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-aux" }, kind: "auxiliary", usage: { inputTokens: 500, outputTokens: 50 } } } as never, {
+        channel: { kind: "slack" },
+        session: { id: "sess-aux", auth: { current: { attributes: { team_id: "T1", channel_id: "C_AUX" }, principalId: "U1", principalType: "slack-user" } } },
+      } as never);
+    });
+    ok((await usageEvents.usageForSession("default", "sess-aux")).length === 0, "usage.recorded of a kind other than \"model\" records no model-call row");
   }
 }
 
@@ -720,14 +742,14 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
       },
     };
   };
-  const step = (i: number, o: number) => ({ data: { usage: { inputTokens: i, outputTokens: o } } });
+  const step = (i: number, o: number) => ({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { inputTokens: i, outputTokens: o } } });
 
-  await spendHook.events!["step.completed"]!(step(100, 10) as never, runCtx("sess-deleg-parent") as never);
+  await spendHook.events!["usage.recorded"]!(step(100, 10) as never, runCtx("sess-deleg-parent") as never);
   await withWorkerAuthority("C_DELEG", "U1", () =>
-    spendHook.events!["step.completed"]!(step(7, 3) as never, runCtx("sess-deleg-child-a", { parent: { sessionId: "sess-deleg-parent", callId: "call_7" } }) as never),
+    spendHook.events!["usage.recorded"]!(step(7, 3) as never, runCtx("sess-deleg-child-a", { parent: { sessionId: "sess-deleg-parent", callId: "call_7" } }) as never),
   );
   await withWorkerAuthority("C_DELEG", "U1", () =>
-    spendHook.events!["step.completed"]!(step(5, 2) as never, runCtx("sess-deleg-child-b", { token: "subagent:sess-deleg-parent:call_9" }) as never),
+    spendHook.events!["usage.recorded"]!(step(5, 2) as never, runCtx("sess-deleg-child-b", { token: "subagent:sess-deleg-parent:call_9" }) as never),
   );
 
   const parentRows = await usageEvents.usageForSession("default", "sess-deleg-parent");
@@ -793,7 +815,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     ok(tokenChildRow.delegationDepth === 1 && tokenChildRow.rootSessionId === "sess-deleg-parent", "a child recognised through the CONTINUATION TOKEN alone (no root in the token) still reports depth 1 with the parent as the deepest visible ancestor");
 
     await withWorkerAuthority("C_DELEG", "U1", () =>
-      spendHook.events!["step.completed"]!(
+      spendHook.events!["usage.recorded"]!(
         step(3, 1) as never,
         runCtx("sess-deleg-grandchild", { parent: { sessionId: "sess-deleg-child-a", callId: "call_11", rootSessionId: "sess-deleg-parent" } }) as never,
       ),
@@ -847,8 +869,8 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
       "🔴 OPE-393: a subagent child binds IDENTICALLY to its dispatch parent through the validated snapshot",
     );
 
-    await spendHook.events!["step.completed"]!(step(50, 5) as never, parent394 as never);
-    await withWorkerAuthority("C_394", "U394", () => spendHook.events!["step.completed"]!(step(11, 4) as never, child394 as never));
+    await spendHook.events!["usage.recorded"]!(step(50, 5) as never, parent394 as never);
+    await withWorkerAuthority("C_394", "U394", () => spendHook.events!["usage.recorded"]!(step(11, 4) as never, child394 as never));
 
     const totals394 = await spendTotals("default", { surfaceKey: "slack/T1/C_394", period: period394 });
     ok(
@@ -1225,13 +1247,13 @@ rmSync(dir, { recursive: true, force: true });
   const rowOf = () => getOperationalStore().getChannelSession(org, dmWindowRegistryKey(SEAT_SURFACE));
   eq((await rowOf())?.inputTokensTotal ?? null, 0, "fixture: the minted DM seat row starts with a zero counter");
 
-  const step = { data: { usage: { inputTokens: 60_000, outputTokens: 400, cacheReadTokens: 55_000, cacheWriteTokens: 1_000 } } };
-  await spendHook.events!["step.completed"]!(step as never, dmCtx(seat.token) as never);
+  const step = { type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { inputTokens: 60_000, outputTokens: 400, cacheReadTokens: 55_000, cacheWriteTokens: 1_000 } } };
+  await spendHook.events!["usage.recorded"]!(step as never, dmCtx(seat.token) as never);
   const once = await rowOf();
   eq(once?.lastInputTokens ?? null, 60_000, "🔴 OPE-2277: the context-size rung reads the step's prompt as `inputTokens` (60k), not inputTokens + cacheReadTokens (115k)");
   eq(once?.inputTokensTotal ?? null, 60_000, "🔴 OPE-2277: the cumulative rung adds the step's `inputTokens` once — the cache reads are already inside it");
 
-  await spendHook.events!["step.completed"]!({ data: { usage: { inputTokens: 2_000, outputTokens: 10 } } } as never, dmCtx(seat.token) as never);
+  await spendHook.events!["usage.recorded"]!({ type: "usage.recorded", data: { owner: { runId: "run-1" }, kind: "model", usage: { inputTokens: 2_000, outputTokens: 10 } } } as never, dmCtx(seat.token) as never);
   const twice = await rowOf();
   eq([twice?.inputTokensTotal ?? null, twice?.lastInputTokens ?? null], [62_000, 2_000], "OPE-2277: an uncached step adds its full `inputTokens` to the running total and sets the per-step value");
 }

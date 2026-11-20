@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { replayStepNames } from "@open-everywhere/core/agent/adapter-api.js";
+import { evaluateDynamic } from "@open-everywhere/core/agent/adapter-api.js";
 
 delete process.env.OE_PLATFORM;
 
@@ -20,57 +20,48 @@ const linearCtx = {
   channel: { kind: "subagent", continuationToken: "subagent:sess-parent:call_1" },
   session: { id: "sess-child", auth: { current: { attributes: { oe_platform: "linear", oe_grain: "standing" } } } },
 };
-const CASES = [
-  { slug: "read_linear_issue", entryKey: "_single", ctx: linearCtx },
-] as const;
+const CASES: readonly { slug: string; ctx: { channel: unknown; session: Record<string, unknown> } }[] = [{ slug: "read_linear_issue", ctx: linearCtx }];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
 const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
 
-console.log("1. source scan (factored shape, closed inventory):");
+console.log("1. source scan (one helper, closed inventory):");
 {
   let scanned = 0;
   for (const f of readdirSync(toolsDir).filter((f) => f.endsWith(".ts"))) {
     const src = readFileSync(join(toolsDir, f), "utf8");
-    const dynAt = src.indexOf("defineDynamic(");
-    if (dynAt === -1) continue;
+    if (!src.includes("sessionMountedTool(") && !src.includes("defineDynamic(")) continue;
     scanned++;
     const slug = f.replace(/\.ts$/, "");
-    ok(
-      (SLUGS as readonly string[]).includes(slug),
-      `${f} uses defineDynamic but has no row in this test's inventory — pre-register its entry and add the (slug, entryKey) row here`,
-    );
-    ok(
-      !src.slice(dynAt).includes("defineTool("),
-      `${f} has an inline defineTool literal inside/after its defineDynamic call — factor it to a top-level const + preRegisterDynamicEntry`,
-    );
-    ok(src.includes("preRegisterDynamicEntry("), `${f} never calls preRegisterDynamicEntry — a cold-resumed session silently skips the tool`);
+    ok((SLUGS as readonly string[]).includes(slug), `${f} is a dynamic tool but has no row in this test's inventory — add the (slug, ctx) row here`);
+    ok(src.includes(`export default sessionMountedTool("${slug}",`), `${f} mounts through sessionMountedTool under its own file name, so its seat decision is memoized per session`);
+    ok(!src.includes("events:"), `${f} declares no eve 0.x lifecycle-event map`);
   }
-  eq(scanned, SLUGS.length, `the scan saw exactly the ${SLUGS.length} inventoried defineDynamic tool files`);
+  eq(scanned, SLUGS.length, `the scan saw exactly the ${SLUGS.length} inventoried dynamic tool files`);
 }
 
-console.log("2. module-load registration (no resolver run):");
-const resolvers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-for (const slug of SLUGS) {
-  const mod = (await import(`../agent/tools/${slug}.js`)) as { default: { events?: Record<string, (event: unknown, ctx: unknown) => unknown> } };
-  const handler = mod.default.events?.["session.started"];
-  ok(typeof handler === "function", `${slug} exports a defineDynamic default with a session.started resolver`);
-  resolvers.set(slug, handler!);
-}
-const reg = (globalThis as Record<symbol, unknown>)[Symbol.for("@workflow/core//registeredSteps")] as Map<string, unknown>;
-ok(reg instanceof Map, "the @workflow/core step registry exists after module load");
+console.log("2. each tool mounts on its happy-path session, and the seat stays fixed for the session:");
+const memoStore = () => {
+  const saved = new Map<string, unknown>();
+  return {
+    saved,
+    memo: async (key: unknown, fn: () => unknown) => {
+      const k = JSON.stringify(key);
+      if (!saved.has(k)) saved.set(k, JSON.parse(JSON.stringify(await fn())));
+      return saved.get(k);
+    },
+  };
+};
+const BARE_CTX = { channel: { kind: "unified" }, session: { id: "sess-bare", auth: { current: { attributes: {} } } } };
 for (const c of CASES) {
-  const names = replayStepNames(c.slug, c.entryKey);
-  ok(typeof reg.get(names.execute) === "function", `${c.slug}:${c.entryKey} execute is registered at MODULE LOAD under ${names.execute}`);
-  ok(reg.get(names.approval) === undefined, `${c.slug}:${c.entryKey} registers NO approval step (raw dynamic tools stay approval-less)`);
+  const mod = (await import(`../agent/tools/${c.slug}.js`)) as { default: unknown };
+  const store = memoStore();
+  const first = (await evaluateDynamic(mod.default, { ...c.ctx, session: { ...c.ctx.session, id: `sess-${c.slug}` }, memo: store.memo })) as Record<string, unknown> | null;
+  ok(first !== null && typeof first.execute === "function", `${c.slug} mounts on its happy-path session`);
+  eq([...store.saved.values()], [true], `${c.slug} memoizes its mount decision as JSON`);
+  const later = await evaluateDynamic(mod.default, { ...BARE_CTX, session: { ...BARE_CTX.session, id: `sess-${c.slug}` }, memo: store.memo });
+  ok(later === first, `${c.slug}: a later model call of the same session keeps the tool`);
+  eq(await evaluateDynamic(mod.default, { ...BARE_CTX, memo: memoStore().memo }), null, `NEGATIVE CONTROL: ${c.slug} does not mount on a session with no grant`);
 }
 
-console.log("3. resolver returns an UNSTAMPED entry (OPE-867 retirement):");
-for (const c of CASES) {
-  const resolved = (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
-  ok(resolved !== null && typeof resolved.execute === "function", `${c.slug}:${c.entryKey} arms on its happy-path session`);
-  ok(!("__executeStepFn" in resolved!), `${c.slug}:${c.entryKey} carries NO __executeStepFn stamp — eve derives its own step id, not OURS`);
-  ok(!("__closureVars" in resolved!), `${c.slug}:${c.entryKey} carries NO __closureVars stamp either`);
-}
-
-console.log(`\nlinear dynamic-replay: ${n} assertions passed.`);
+console.log(`\nlinear dynamic tools: ${n} assertions passed.`);

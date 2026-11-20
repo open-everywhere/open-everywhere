@@ -202,9 +202,11 @@ binding, field by field.
 `stackModelIds(stack)` answers every distinct id the stack names, de-duplicated and sorted. Both e2e
 model-routing expectations derive from it rather than each carrying a copy.
 
-`compactionThresholdTokens(window, percent)` mirrors eve's own arithmetic —
-`max(1, floor(window × percent))`. **Nothing configures eve with it.** It exists so the absolute count
-can be printed and pinned per stack.
+`compactionThresholdTokens(window, threshold)` mirrors eve's own arithmetic —
+`max(1, floor(window × threshold))`, where `threshold` is the fraction the agent hands eve as
+`compaction.threshold`. **Nothing configures eve with it.** It exists so the absolute count can be
+printed and pinned per stack. `scripts/model-stack-policy-test.ts` pins the arithmetic against the
+installed eve.
 
 ### The five resolved roles
 
@@ -636,15 +638,17 @@ declared subagent's bare `model: "<id>"` string and eve's own `evaluate()` throu
 provider, which sees only the id. So the app registers its stack roles (`agent/model/models.ts`,
 `registerBareModelRoutes`), and the default provider sends each bare id through:
 
-1. the target of the first role that names the id (`fresh_eyes_review` uses the primary's id, so it
-   goes through the primary's target);
+1. the target of the first role that names the id;
 2. else the primary role's target, the deployment default;
 3. else, in a process that registered no role, `gateway`.
 
 On this stack every role goes `via: "mistral"`, so every bare id carries the provider pin and the
 zero-retention row. A bare id that no role names (a plugin subagent that maps its own model, or
 eve's `evaluate()` default) also goes through `mistral`, and a model that no `mistral` provider
-serves fails closed. `npm run check:model-config` checks each declared subagent's id on its target
+serves fails closed. A declared subagent in this repository is not a bare id: it takes the root
+agent's model (`model: root.model`), so its calls go through the primary model resolver and take the
+same route as the root agent's turns. A subagent that a fork adds with a bare id still takes the route above, and
+`scripts/subagents-lint.ts` refuses it in this repository. `npm run check:model-config` checks each declared subagent's bare id on its target
 and names each declared subagent whose id no role names, and each one whose module does not load. It
 does not list eve's `evaluate()` model. An app scaffolded before 0.8.0 does not call
 `registerBareModelRoutes`, so every bare id still goes through `gateway`. When a role names another

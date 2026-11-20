@@ -5,10 +5,18 @@ import { supervisorRotateTokenBudget } from "./turn-delivery.js";
 import { DM_SEAT_ROTATE_TOKEN_BUDGET } from "./dm-seat.js";
 import { standingSeatRegistryKey } from "./unified-supervisor.js";
 import { isWorkWindowToken } from "./window-key.js";
+import { countedInputTokens } from "../model/session-usage.js";
 
 export const SESSION_LIMIT_CONTINUATION_TOOL_NAME = "session_limit_continuation";
 
-export const SESSION_LIMIT_REQUEST_ID_RE = /:limit:(?:input|output):\d+$/u;
+export const SESSION_LIMIT_REQUEST_ID_RE = /:limit:(?:usage|input|output):\d+$/u;
+
+const SESSION_USAGE_WINDOW_RE = /:limit:usage:(\d+)$/u;
+
+export function sessionUsageWindowIndex(requestId: string): number | undefined {
+  const m = SESSION_USAGE_WINDOW_RE.exec(requestId);
+  return m ? Number(m[1]) : undefined;
+}
 
 export const SESSION_LIMIT_COST_REQUEST_ID_RE = /:limit:token-cost:\d+(?:\.\d+)?(?:e[+-]?\d+)?$/iu;
 
@@ -40,6 +48,43 @@ function numberOrUndefined(v: unknown): number | undefined {
 export function isSessionLimitContinuationRequest(request: unknown): boolean {
   if (request === null || typeof request !== "object") return false;
   return (request as { action?: { toolName?: unknown } }).action?.toolName === SESSION_LIMIT_CONTINUATION_TOOL_NAME;
+}
+
+export interface BudgetInteraction {
+  readonly interactionId: string;
+  readonly requestKind: unknown;
+  readonly relayed: boolean;
+  readonly budget: unknown;
+  readonly sessionUsage: unknown;
+}
+
+function usageTokensOf(v: unknown): Parameters<typeof countedInputTokens>[0] | undefined {
+  if (v === null || typeof v !== "object") return undefined;
+  const u = v as Record<string, unknown>;
+  const inputTokens = numberOrUndefined(u["inputTokens"]);
+  const cacheReadTokens = numberOrUndefined(u["cacheReadTokens"]);
+  if (inputTokens === undefined || cacheReadTokens === undefined) return undefined;
+  return {
+    inputTokens,
+    cacheReadTokens,
+    cacheWriteTokens: numberOrUndefined(u["cacheWriteTokens"]) ?? 0,
+    outputTokens: numberOrUndefined(u["outputTokens"]) ?? 0,
+  };
+}
+
+export function budgetSessionLimitPark(i: BudgetInteraction): SessionLimitPark | undefined {
+  if (i.requestKind !== "budget") return undefined;
+  const budget = numberOrUndefined(i.budget);
+  const limit = budget !== undefined && budget > 0 ? budget : undefined;
+  const usage = usageTokensOf(i.sessionUsage);
+  const usedTokens =
+    !i.relayed && sessionUsageWindowIndex(i.interactionId) === 0 && usage !== undefined ? countedInputTokens(usage) : undefined;
+  return {
+    kind: "input",
+    ...(limit !== undefined ? { limit } : {}),
+    ...(usedTokens !== undefined ? { usedTokens } : {}),
+    requestId: i.interactionId,
+  };
 }
 
 export function detectSessionLimitPark(requests: unknown): SessionLimitPark | undefined {

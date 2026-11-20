@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -21,7 +21,7 @@ function safeDomains(): readonly Domain[] {
 import { LIST_PREVIEW_MAX, listCardLine, listPreviewText, type ListRowWrite, type ListWriteArgs } from "../approvals/slack-doc-write.js";
 import { LIST_ROWS_MAX, encodeListRow, findListRow, liveSlackDocCall, resolveRoomFile, type ListCell, type SlackDocCall } from "../channels/slack-canvas-list.js";
 import { bridgeFetchUserDisplayName, slackBridge } from "../channels/slack-bridge.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 
 const TOOL = "update_list";
 
@@ -161,10 +161,5 @@ const updateListEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry(TOOL, "_single", updateListEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => (slackBridge() ? updateListEntry : null),
-  },
-});
+export default sessionMountedTool(TOOL, updateListEntry, () => slackBridge() !== null);

@@ -27,6 +27,11 @@ export function consumeRepliedThisTurn(turnId: string | undefined): boolean {
   }
 }
 
+/** True when this turn already posted a reply. A read never clears the mark. */
+export function postedThisTurn(turnId: string | undefined): boolean {
+  return postsThisTurn(turnId) > 0;
+}
+
 function postsThisTurn(turnId: string | undefined): number {
   if (turnId === undefined || turnId.length === 0) return 0;
   try {

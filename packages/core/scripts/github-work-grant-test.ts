@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { evaluateDynamic } from "../agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -82,13 +83,12 @@ for (const [name, tool] of Object.entries(gated)) {
   );
 }
 
-type DynamicToolModule = { readonly default: { readonly events: Record<string, (event: unknown, ctx: BindableContext) => unknown> } };
+type DynamicToolModule = { readonly default: unknown };
 
 async function resolveDynamic(slug: string, ctx: BindableContext): Promise<unknown> {
   const mod = (await import(`../agent/tools/${slug}.js`)) as DynamicToolModule;
-  const resolver = mod.default.events["session.started"];
-  ok(typeof resolver === "function", `${slug} exports a session.started resolver`);
-  return resolver({}, ctx);
+  ok(typeof mod.default === "object" && mod.default !== null && Symbol.for("eve.dynamic") in mod.default, `${slug} exports a defineDynamic() resolver`);
+  return await evaluateDynamic(mod.default, ctx);
 }
 
 const UNGATED_GITHUB_TOOLS = ["check_pr_status", "get_pr_feedback", "read_github_issue", "walk_pr", "post_pr_walkthrough", "subscribe_pr"] as const;

@@ -128,14 +128,14 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
   eq(
     found.slice().sort(),
     KNOWN_DIRECT_CALLERS.map((c) => c.file).sort(),
-    "🔴 §3 the files calling eve's `callTeamsConnectorApi` directly are EXACTLY the tracked inventory — a NEW one appearing (a Connector call with no backoff), or a listed one vanishing (the inventory going stale), reds here",
+    "🔴 §3 the files calling the seam's unbacked-off `callTeamsConnectorApi` directly are EXACTLY the tracked inventory — a NEW one appearing (a Connector call with no backoff), or a listed one vanishing (the inventory going stale), reds here",
   );
 
   for (const entry of KNOWN_DIRECT_CALLERS) {
     const src = stripComments(readFileSync(join(PKG_ROOT, entry.file), "utf8"));
     ok(
       !CONNECTOR_WRITE_METHOD.test(src),
-      `🔴 §3 \`${entry.file}\` calls eve's Connector client directly and must stay READ-ONLY — it now carries a double-quoted uppercase write-method literal, so a Teams Connector WRITE is bypassing the 429 backoff. Route it through \`teamsConnectorWrite\` (agent/channels/teams-connector.ts) instead.`,
+      `🔴 §3 \`${entry.file}\` calls the unbacked-off Connector read directly and must stay READ-ONLY — it now carries a double-quoted uppercase write-method literal, so a Teams Connector WRITE is bypassing the 429 backoff. Route it through \`teamsConnectorWrite\` (agent/channels/teams-connector.ts) instead.`,
     );
     ok(
       BARE_CONNECTOR_CALL.test(src),
@@ -167,6 +167,11 @@ const seamCode = stripComments(readFileSync(SEAM, "utf8"));
       file: SEAM_REL,
       route: "global",
       why: "the Connector write seam itself — it does the Connector fetch host-side because eve's client discards the response headers a 429 backoff has to read.",
+    },
+    {
+      file: "agent/channels/teams-verify.ts",
+      route: "global",
+      why: "the inbound request verifier: it reads the Bot Framework OpenID metadata and its key set (GETs, no bearer token sent) to check each inbound token's signature. It writes nothing to a serviceUrl.",
     },
     {
       file: "agent/channels/teams-read.ts",

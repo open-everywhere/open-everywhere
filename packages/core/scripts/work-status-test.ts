@@ -172,7 +172,7 @@ eq(work.parseWorkCancels(delivered[0]!.message), [{ cancelId: byRequest.cancelId
 const settled = await inSession(() => cancelTool.cancelWork({ requestId: REQ_B }, seatCtx("c-done", WAKE_B), cancelDeps()));
 ok(settled.note.includes("finished") && settled.note.includes("nothing left to stop"), "🔴 the receipt for a settled job says it already finished");
 eq(settled.taskId, TASK_B, "…and still names its task");
-eq(delivered.length, 2, "…and the cancel is still relayed: W's task_cancel answers it (the decision-wake brake pins that path)");
+eq(delivered.length, 2, "…and the cancel is still relayed: W's eve__task_cancel answers it (the decision-wake brake pins that path)");
 await work.rememberWorkTask(store, ORG, TASK_B, REQ_B, new Date().toISOString());
 const settledByTask = await inSession(() => cancelTool.cancelWork({ taskId: TASK_B }, seatCtx("c-done-t", WAKE_B), cancelDeps()));
 ok(settledByTask.note.includes("nothing left to stop"), "…by its task id as well");

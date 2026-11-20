@@ -15,42 +15,8 @@ import {
   type ConnectionCatalogue,
   type DeclaredConnectorOp,
 } from "../routines/fire-toolset.js";
-
-const EVE_CONTEXT_STORAGE = Symbol.for("eve.context-storage");
-
-export const CONNECTION_REGISTRY_KEY_NAME = "eve.connectionRegistry";
-
-interface EveContextContainer {
-  get(key: { readonly name: string }): unknown;
-}
-
-interface EveConnectionRegistry {
-  getConnectionNames(): readonly string[];
-  getClient(connectionName: string): { getToolMetadata(): Promise<readonly unknown[]> };
-}
-
-function eveContext(): EveContextContainer | undefined {
-  try {
-    const storage = (globalThis as Record<symbol, unknown>)[EVE_CONTEXT_STORAGE] as
-      | { getStore?: () => unknown }
-      | undefined;
-    const store = storage?.getStore?.();
-    if (store === null || typeof store !== "object") return undefined;
-    const container = store as Partial<EveContextContainer>;
-    return typeof container.get === "function" ? (store as EveContextContainer) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function connectionRegistry(container: EveContextContainer): EveConnectionRegistry | undefined {
-  const value = container.get({ name: CONNECTION_REGISTRY_KEY_NAME });
-  if (value === null || typeof value !== "object") return undefined;
-  const registry = value as Partial<EveConnectionRegistry>;
-  return typeof registry.getConnectionNames === "function" && typeof registry.getClient === "function"
-    ? (value as EveConnectionRegistry)
-    : undefined;
-}
+import { optional } from "./control-refusal.js";
+import { listMountedConnector, mountedConnectorNames } from "../connections/connector-catalogue.js";
 
 const declaredOpsSlot = defineState<{ ops?: readonly DeclaredConnectorOp[] }>("open-everywhere.fire-declared-ops", () => ({}));
 
@@ -71,26 +37,22 @@ function keepDeclaredOps(ops: readonly DeclaredConnectorOp[]): void {
 
 export const CATALOGUE_READ_BUDGET_MS = 3_000;
 
-async function readCatalogue(
-  registry: EveConnectionRegistry,
-  connection: string,
-  budgetMs: number = CATALOGUE_READ_BUDGET_MS,
-): Promise<ConnectionCatalogue> {
+/**
+ * One connection's ops, from the OE connector catalogue (`connections/connector-catalogue.ts`).
+ * On eve 1.x a connection is an OE connector mount, so eve's connection registry is empty: the
+ * mount's memoised listing (or a live one, inside the budget) is the catalogue.
+ */
+async function readCatalogue(connection: string, ctx: unknown, budgetMs: number = CATALOGUE_READ_BUDGET_MS): Promise<ConnectionCatalogue> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const metadata = await Promise.race([
-      registry.getClient(connection).getToolMetadata(),
+    const listed = await Promise.race([
+      listMountedConnector(connection, ctx),
       new Promise<undefined>((resolve) => {
         timer = setTimeout(() => resolve(undefined), budgetMs);
       }),
     ]);
-    if (!Array.isArray(metadata)) return { connection, ops: [] };
-    const ops = metadata.flatMap((entry) => {
-      if (entry === null || typeof entry !== "object") return [];
-      const name = (entry as { name?: unknown }).name;
-      return typeof name === "string" && name.length > 0 ? [{ name }] : [];
-    });
-    return { connection, ops };
+    if (listed === undefined) return { connection, ops: [] };
+    return { connection, ops: listed.filter((op) => op.name.length > 0).map((op) => ({ name: op.name })) };
   } catch {
     return { connection, ops: [] };
   } finally {
@@ -130,15 +92,10 @@ export async function resolveDeclaredOps(ctx: HookContext, budgetMs: number = CA
   if (kept.length !== held.length) keepDeclaredOps(kept);
   if (declared.length === 0) return undefined;
 
-  const container = eveContext();
-  if (container === undefined) return undefined;
-  const registry = connectionRegistry(container);
-  if (registry === undefined) return undefined;
-
   const already = kept.map((op) => op.qualifiedName);
   const pending = declared.filter((name) => !already.includes(name));
-  const candidates = candidateConnectionsForDeclarations(pending, registry.getConnectionNames());
-  const catalogues = await Promise.all(candidates.map((connection) => readCatalogue(registry, connection, budgetMs)));
+  const candidates = candidateConnectionsForDeclarations(pending, mountedConnectorNames());
+  const catalogues = await Promise.all(candidates.map((connection) => readCatalogue(connection, ctx, budgetMs)));
   const resolution = resolveDeclaredConnectorOps({ declared, catalogues, alreadyResolved: already });
   keepDeclaredOps([...kept, ...resolution.resolved]);
   return { org, resolved: resolution.resolved.map((op) => op.qualifiedName), unresolved: resolution.unresolved };
@@ -182,14 +139,14 @@ async function auditResolution(ctx: HookContext, org: string, outcome: DeclaredO
   }
 }
 
+// The access instructions read the slot this hook writes (`declaredOpsForReach`). That works only
+// because eve runs the `turn.started` hooks to completion before it builds the step's instructions;
+// `test:fire-reach-hook-order` is the tripwire on that order.
 export default defineHook({
   events: {
-    "turn.started": async (_event, ctx) => {
-      try {
-        const outcome = await resolveDeclaredOps(ctx);
-        if (outcome !== undefined) await auditResolution(ctx, outcome.org, outcome);
-      } catch {
-      }
-    },
+    "turn.started": optional("fire-toolset", async (_event, ctx) => {
+      const outcome = await resolveDeclaredOps(ctx);
+      if (outcome !== undefined) await auditResolution(ctx, outcome.org, outcome);
+    }),
   },
 });

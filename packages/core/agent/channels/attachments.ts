@@ -117,6 +117,37 @@ function renderAttachmentBrief(attachments: readonly BriefAttachment[]): string 
   ].join("\n");
 }
 
+/**
+ * The files a stored row names, re-checked as a wake's envelope is checked: a bad id drops the
+ * file, and a bad label drops only that label. A stored row is data, so its text never reaches a
+ * brief unchecked.
+ */
+export function briefAttachmentsOf(raw: unknown): BriefAttachment[] {
+  if (!Array.isArray(raw)) return [];
+  const found: BriefAttachment[] = [];
+  const label = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 && v.length <= MAX_LABEL_CHARS && !UNRENDERABLE_LABEL_RE.test(v) ? v : undefined);
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.id !== "string" || !ATTACHMENT_ID_RE.test(e.id)) continue;
+    found.push({ id: e.id, kind: label(e.kind), name: label(e.name), mimeType: label(e.mimeType) });
+  }
+  return found.slice(-MAX_BRIEF_ATTACHMENTS);
+}
+
+/**
+ * The files of a job that continues earlier work: the earlier files, then this wake's own. A file
+ * that both name keeps its latest labels. The cap keeps the latest files.
+ */
+export function mergeBriefAttachments(earlier: readonly BriefAttachment[], own: readonly BriefAttachment[]): BriefAttachment[] {
+  const byId = new Map<string, BriefAttachment>();
+  for (const a of [...earlier, ...own]) {
+    byId.delete(a.id);
+    byId.set(a.id, a);
+  }
+  return [...byId.values()].slice(-MAX_BRIEF_ATTACHMENTS);
+}
+
 export function withDelegatedAttachments(message: string, attachments: readonly BriefAttachment[]): string {
   const block = renderAttachmentBrief(attachments);
   return block.length === 0 ? message : `${message}\n${block}`;

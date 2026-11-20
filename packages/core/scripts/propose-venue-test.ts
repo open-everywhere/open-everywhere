@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { removeTempDir } from "./_temp-dir.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "oe-propose-venue-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
@@ -187,8 +188,8 @@ registerTicketCreateAdapter({
 
 type Entry = { execute: (input: unknown, ctx: unknown) => Promise<Record<string, unknown>> };
 async function armed(def: unknown, ctx: unknown, name: string): Promise<Entry> {
-  const handler = (def as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
-  const entry = handler ? await handler({}, ctx) : def;
+  const isDynamic = typeof def === "object" && def !== null && Symbol.for("eve.dynamic") in def;
+  const entry = isDynamic ? await _dynamicResolverForTest(def)({}, ctx) : def;
   ok(entry !== null && typeof (entry as Entry).execute === "function", `${name} is MOUNTED on this surface (a null resolver would make every assertion below vacuous)`);
   return entry as Entry;
 }
@@ -661,7 +662,7 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
     "326-refuse: assign names ITS verb, not its sibling's",
   );
   {
-    const handler = (createTicketTool as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
+    const handler = _dynamicResolverForTest(createTicketTool);
     const resolved = handler ? await handler({}, teamsTicketCtx("CONV_ORPHAN")) : null;
     ok(resolved === null, "326-refuse: 🔴 create_ticket is ABSENT in a room that is in NO domain — it holds no work grant, so the verb never appears to be offered");
   }

@@ -27,7 +27,7 @@ its own adapters in the `customAdapters` hook. See
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/adapters eve@0.71.0
+npm i @open-everywhere/core @open-everywhere/adapters eve@1.0.0-rc.18
 npx oe-eve-patch
 ```
 

@@ -15,4 +15,4 @@ IN  relay message M111 · guild G11 channel C11 (type 0) · from U_TALK11 · pla
       | </wake>
   ⇠ 200 ok
 EVT turn.started on discord:C11
-EVT message.completed on discord:C11 {"finishReason":"stop","message":"It finished at step 5 of 5."}
+EVT content.completed on discord:C11 {"partId":"part-1","kind":"text","phase":"reply","value":"It finished at step 5 of 5."}

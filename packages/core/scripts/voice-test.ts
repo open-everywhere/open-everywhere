@@ -86,6 +86,7 @@ const corpus: Array<[string, string]> = [
   ["worker midTurnPost=true", renderSeatPersona({ seatKind: "worker", midTurnPost: true })],
   ["worker midTurnPost=false", renderSeatPersona({ seatKind: "worker", midTurnPost: false })],
   ["work follow-up receipt", freshFollowUpNote("task_1")],
+  ["work follow-up receipt, result carried", freshFollowUpNote("task_1", true)],
   ["stall nudge 1", stallNudge("bash", 1)],
   ["stall nudge 2", stallNudge("bash", 2)],
   ["stall nudge 3", stallNudge("bash", 3)],

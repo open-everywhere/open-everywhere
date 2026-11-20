@@ -5,27 +5,12 @@ import { consumeReactedThisTurn } from "../channels/react-signal.js";
 import { consumeNoReplyThisTurn } from "../channels/no-reply-signal.js";
 import { auditLabels, auditUnaccountedWakesForTurn } from "../channels/unified.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
-import { isSessionLimitContinuationRequest } from "../channels/session-park.js";
+import { optional } from "./control-refusal.js";
+import { interactionKindOf } from "./event-reads.js";
 
-export function requestsHoldTheWorkerOpen(requests: unknown): boolean {
-  if (!Array.isArray(requests) || requests.length === 0) return true;
-  return requests.some((r) => !isSessionLimitContinuationRequest(r));
-}
-
-const paused = defineState<{ awaiting: boolean }>("open-everywhere.wake-accounting.paused", () => ({ awaiting: false }));
-
-function markPaused(): void {
-  try {
-    paused.update(() => ({ awaiting: true }));
-  } catch {
-  }
-}
-
-function clearPaused(): void {
-  try {
-    paused.update(() => ({ awaiting: false }));
-  } catch {
-  }
+export function requestsHoldTheWorkerOpen(kinds: readonly (string | undefined)[]): boolean {
+  if (kinds.length === 0) return true;
+  return kinds.some((kind) => kind !== "budget");
 }
 
 const accountedTurn = defineState<{ turnId: string | undefined }>("open-everywhere.wake-accounting.accounted-turn", () => ({ turnId: undefined }));
@@ -47,16 +32,7 @@ function markAccounted(turnKey: string | undefined): void {
   }
 }
 
-function turnStillPaused(): boolean {
-  try {
-    return paused.get().awaiting;
-  } catch {
-    return true;
-  }
-}
-
 async function runAccounting(ctx: HookContext): Promise<void> {
-  if (turnStillPaused()) return;
   const bind = { session: ctx.session } as unknown as BindableContext;
   const turnKey = currentTurnId(bind) ?? NO_TURN_ID;
   if (alreadyAccounted(turnKey)) return;
@@ -80,29 +56,20 @@ async function runAccounting(ctx: HookContext): Promise<void> {
 
 export default defineHook({
   events: {
-    "turn.started": () => {
-      clearPaused();
+    "turn.started": optional("wake-accounting-turn", () => {
       markAccounted(undefined);
       consumeNoReplyThisTurn();
       consumeReactedThisTurn();
-    },
-    "input.requested": (event) => {
-      if (requestsHoldTheWorkerOpen((event.data as { requests?: unknown } | undefined)?.requests)) markPaused();
-    },
-    "authorization.required": () => {
-      markPaused();
-    },
-    "turn.completed": async (_event, ctx) => {
+    }),
+    "turn.paused": optional("wake-accounting-turn", async (event, ctx) => {
+      const kinds = event.data.awaiting.map((a) => interactionKindOf(ctx.view, a.interactionId));
+      if (!requestsHoldTheWorkerOpen(kinds)) await runAccounting(ctx);
+    }),
+    "turn.settled": optional("wake-accounting-turn", async (_event, ctx) => {
       await runAccounting(ctx);
-    },
-    "turn.cancelled": async (_event, ctx) => {
-      await runAccounting(ctx);
-    },
-    "turn.failed": async (_event, ctx) => {
-      await runAccounting(ctx);
-    },
-    "session.failed": async (_event, ctx) => {
-      await runAccounting(ctx);
-    },
+    }),
+    "session.ended": optional("wake-accounting-turn", async (event, ctx) => {
+      if (event.data.outcome === "failed") await runAccounting(ctx);
+    }),
   },
 });

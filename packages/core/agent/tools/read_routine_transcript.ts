@@ -1,7 +1,7 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { resolvePartition } from "../memory/partition.js";
 import type { BindableContext } from "../identity/binding.js";
 import {
@@ -67,10 +67,5 @@ const entry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("read_routine_transcript", "_single", entry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => (transcriptRelayConfigured() ? entry : null),
-  },
-});
+export default sessionMountedTool("read_routine_transcript", entry, () => transcriptRelayConfigured());

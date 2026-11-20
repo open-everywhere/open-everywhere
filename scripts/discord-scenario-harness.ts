@@ -6,6 +6,15 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { clearDiscordInfoCacheForTest } from "@open-everywhere/provider-discord/agent/channels/discord-channel-info.js";
 import { clearTypingThrottleForTest } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const emptySessionView = async (): Promise<() => unknown> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  return ((await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown }).emptySessionView;
+};
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 export class Timeline {
   private readonly lines: string[] = [];
@@ -348,15 +357,18 @@ export class ScenarioDriver {
       session: { continuation: { token: continuationToken, rekey: () => undefined } },
       ctx: undefined,
     });
-    await eveContextStorage().run(session.ctx, async () => {
-      await wrapped(data, adapterCtx);
+    // eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+    // projection. The simulated session has none, so the event carries an empty view.
+    const view = (await emptySessionView())();
+    await eveContextStorage().run(asEveStore(session.ctx), async () => {
+      await wrapped({ type: name, scope: { turnId: session.ctx.turnId }, data }, { ...(adapterCtx as object), view });
     });
   }
 
   async markCardPosted(continuationToken: string, mark: () => void): Promise<void> {
     const session = this.mustSession(continuationToken);
     this.timeline.add(`ACT propose tool posts an approval card on ${continuationToken} (card-signal armed)`);
-    await eveContextStorage().run(session.ctx, async () => {
+    await eveContextStorage().run(asEveStore(session.ctx), async () => {
       mark();
     });
   }
@@ -364,7 +376,7 @@ export class ScenarioDriver {
   async markReplied(continuationToken: string, mark: (turnId: string) => void): Promise<void> {
     const session = this.mustSession(continuationToken);
     this.timeline.add(`ACT reply tool posts on ${continuationToken} (reply-signal armed)`);
-    await eveContextStorage().run(session.ctx, async () => {
+    await eveContextStorage().run(asEveStore(session.ctx), async () => {
       mark(session.ctx.turnId);
     });
   }

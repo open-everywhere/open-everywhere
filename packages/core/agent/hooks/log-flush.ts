@@ -1,13 +1,13 @@
 import { defineHook } from "eve/hooks";
 import { buildRecord, enqueue, flushLogShip } from "../observability/ship.js";
+import { optional } from "./control-refusal.js";
 
-function recordFailure(kind: "turn" | "session", data: { code?: string; message?: string; details?: unknown }): void {
+function recordFailure(kind: "turn" | "session", error: { code?: string; message?: string } | undefined): void {
   enqueue(
-    buildRecord("error", "eve", `${kind}.failed: ${data.message ?? "(no message)"}`, {
+    buildRecord("error", "eve", `${kind}.failed: ${error?.message ?? "(no message)"}`, {
       fields: {
         failureKind: kind,
-        code: data.code,
-        details: data.details,
+        code: error?.code,
       },
     }),
   );
@@ -15,15 +15,13 @@ function recordFailure(kind: "turn" | "session", data: { code?: string; message?
 
 export default defineHook({
   events: {
-    "turn.completed": async () => flushLogShip(),
-    "turn.failed": async (event) => {
-      recordFailure("turn", event.data ?? {});
+    "turn.settled": optional("log-flush", async (event) => {
+      if (event.data.outcome === "failed") recordFailure("turn", event.data.error);
       await flushLogShip();
-    },
-    "session.completed": async () => flushLogShip(),
-    "session.failed": async (event) => {
-      recordFailure("session", event.data ?? {});
+    }),
+    "session.ended": optional("log-flush", async (event) => {
+      if (event.data.outcome === "failed") recordFailure("session", event.data.error);
       await flushLogShip();
-    },
+    }),
   },
 });

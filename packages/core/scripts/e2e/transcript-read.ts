@@ -3,6 +3,7 @@ export interface TranscriptWireEvent {
   readonly at: string | null;
   readonly type: string;
   readonly data: unknown;
+  readonly scope?: { readonly turnId?: string; readonly runId?: string; readonly taskId?: string; readonly changeId?: string };
 }
 
 export interface TranscriptResult {
@@ -55,7 +56,7 @@ export async function fetchTranscript(
 
 export const SEAT_READ_TOOL = "read_thread";
 
-export const SEAT_READ_RESULT_TYPES: readonly string[] = ["action.result"];
+export const SEAT_READ_RESULT_TYPES: readonly string[] = ["call.settled"];
 
 export function isToolResultEvent(type: string, types: readonly string[] = SEAT_READ_RESULT_TYPES): boolean {
   const t = type.toLowerCase();
@@ -102,11 +103,19 @@ export function seatCatchUpWake(
   const resultTypes = opts.readResultTypes ?? SEAT_READ_RESULT_TYPES;
   let readIndex: number | undefined;
   if (!carriedCatchUp) {
+    const readCalls = new Set<string>();
+    for (const e of events) {
+      if (e.type !== "call.requested") continue;
+      const d = e.data as { callId?: unknown; capability?: { name?: unknown } } | null;
+      if (d?.capability?.name === readTool && typeof d.callId === "string") readCalls.add(d.callId);
+    }
     for (const e of events) {
       if (e.index <= wake.index) continue;
       if (!isToolResultEvent(e.type, resultTypes)) continue;
       const body = eventText(e);
-      if (!body.includes(readTool) || !body.includes(opts.caughtUp)) continue;
+      const callId = (e.data as { callId?: unknown } | null)?.callId;
+      const fromReadTool = (typeof callId === "string" && readCalls.has(callId)) || body.includes(readTool);
+      if (!fromReadTool || !body.includes(opts.caughtUp)) continue;
       if (readIndex === undefined || e.index < readIndex) readIndex = e.index;
     }
   }

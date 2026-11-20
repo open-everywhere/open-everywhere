@@ -115,7 +115,7 @@ test("unified: with the silence-audit switch ON, the full-detail unified.no_repl
   }
 }, 300_000);
 
-test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the tool's own row, never a second sentinel-route row", async () => {
+test("unified: a no_reply TOOL call beside a react ends the turn at that step and writes ONLY the tool's own row, never a second sentinel-route row", async () => {
   await bootAgent();
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/normalized-wake.js");
@@ -144,10 +144,7 @@ test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the
       text: `<@9000000000000000001> ope895 tool then sentinel ${at}`,
       messageId: `ope895tool${at}`,
     });
-    const sentinelStep = await waitFor(() => handle.requests.find((r) => r.stepIndex === 1), "the unified wake's trailing sentinel step", 180_000);
-    const noReplyResult = sentinelStep.toolResults.find((t) => t.id === callId);
-    expect(noReplyResult, "the sentinel step's prompt carries the no_reply result").toBeDefined();
-    expect(noReplyResult?.isError, `the wake's no_reply TOOL call was refused: ${JSON.stringify(noReplyResult?.output)}`).toBe(false);
+    await waitFor(() => handle.requests.find((r) => r.stepIndex === 0), "the unified wake's no_reply step", 180_000);
 
     const toolRow = await waitFor(async () => {
       const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
@@ -161,7 +158,13 @@ test("unified: no_reply TOOL call + the taught trailing sentinel writes ONLY the
     const wakeId = (toolRow.detail as { wakeId?: unknown }).wakeId;
 
     await awaitWindowQuiet();
+    expect(
+      handle.requests.map((r) => r.stepIndex),
+      "a successful no_reply ends the turn at its own step, beside the react: the taught trailing sentinel step is never requested",
+    ).toEqual([0]);
     const rows = await rowsSinceCursor(cursor, ["reply.no_reply_observed"], { limit: 50 });
+    const toolRows = rows.filter((r) => (r.detail as { wakeId?: unknown } | undefined)?.wakeId === wakeId && (r.detail as { reason?: unknown } | undefined)?.reason === "not_relevant");
+    expect(toolRows, "exactly one tool-route row for the wake").toHaveLength(1);
     const newSentinelRows = rows.filter((r) => {
       const w = (r.detail as { wakeId?: unknown } | undefined)?.wakeId;
       return isSentinelRoute(r.detail) && (w === wakeId || (typeof w === "string" && !beforeSentinelRows.has(w)));

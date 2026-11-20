@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DISPATCH_TICK_MINUTES } from "../../agent/routines/schedule.js";
 import type { AuditWireEntry } from "./audit-read.js";
 import type { HaltLiveEvidenceKey } from "./scenarios.js";
 import {
@@ -17,7 +18,14 @@ import {
   connectorAnswerRoad,
   APPROVAL_DECISION_NOTICE,
   s23AckCheck,
-  s23ConfirmationCheck,
+  approvalCardDecision,
+  cardDecisionVerdict,
+  spendCapRaiseAsk,
+  SPEND_CAP_ASK_REASON,
+  APPROVAL_DENIED_ACTION,
+  nonAdminDenialRow,
+  ONE_SHOT_FIRE_WAIT_MS,
+  readsAsSpendRefusalReport,
   delegationJoinForSession,
   fireAnchor,
   fireReportJoin,
@@ -77,6 +85,9 @@ import {
   workerRoadForOp,
 } from "./gate-joins.js";
 import { runFallbackCheck } from "./judge.js";
+import { linkCodeFromPosts, parseLinkCode } from "./journey.js";
+import { decidedCardLine } from "../../agent/approvals/card-layout.js";
+import { linkClaimInstructions } from "../../agent/identity/link-challenge.js";
 import { nextReplyCandidate, SlackDriver, type SlackMessage, type SteppedOverMessage } from "./slack-driver.js";
 import { awaitDelegatedAnswer, classifyDelegatedAnswer, forwardedJobsDispatchedAtOrAfter, ingressOfDriverPost, tasksDispatchedAtOrAfter } from "./read-channel-lib.js";
 import { seatCatchUpWake, SEAT_READ_RESULT_TYPES, SEAT_READ_TOOL, type TranscriptWireEvent } from "./transcript-read.js";
@@ -96,6 +107,13 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   detail,
   ...(seq !== undefined ? { seq } : {}),
 });
+
+const SCENARIO_SOURCE = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+const legBodyOf = (id: string): string => {
+  const at = SCENARIO_SOURCE.indexOf(`id: "${id}",`);
+  const end = SCENARIO_SOURCE.indexOf('\n    id: "', at + 1);
+  return at > 0 ? SCENARIO_SOURCE.slice(at, end > at ? end : undefined) : "";
+};
 
 {
   const VENDOR_MS = Date.parse("2026-01-22T09:02:54.165Z");
@@ -264,19 +282,19 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     });
 
   const clean = [
-    ev(10, "message.received", { text: `Before I write this up — ${ASK}?` }),
-    ev(11, "step.started", {}),
-    ev(12, "message.appended", { text: `The deploy window is named ${MARKER}.` }),
+    ev(10, "delivery.consumed", { deliveryId: "d10", turnId: "t", parts: [{ kind: "text", text: `Before I write this up — ${ASK}?` }] }),
+    ev(11, "model.started", { runId: "r", modelId: "m", attempt: 1 }),
+    ev(12, "content.delta", { partId: "p", kind: "text", delta: `The deploy window is named ${MARKER}.` }),
   ];
   const cleanSlice = memoryPathReadsBetween(clean, { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(cleanSlice.bounded && cleanSlice.fromIndex === 10 && cleanSlice.toIndex === 12, "the slice is bounded by the ask and by the reply that quotes the marker");
   ok(cleanSlice.paths.length === 0, "a turn that answered from the live window read no memory path — the passing shape");
 
-  const hopped = [clean[0]!, ev(11, "action.result", { path: "memory/e2e-ambient-brain/notes.md" }), clean[2]!];
+  const hopped = [clean[0]!, ev(11, "call.settled", { callId: "c", outcome: "completed", path: "memory/e2e-ambient-brain/notes.md" }), clean[2]!];
   const hopSlice = memoryPathReadsBetween(hopped, { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(hopSlice.bounded && hopSlice.paths.length === 1, "🔴 a memory read INSIDE the slice is the hop, and the gate reds on it — the defect this half guards");
 
-  const earlier = [ev(1, "action.result", { path: "memory/e2e-ambient-brain/older.md" }), ...clean];
+  const earlier = [ev(1, "call.settled", { callId: "c0", outcome: "completed", path: "memory/e2e-ambient-brain/older.md" }), ...clean];
   ok(memoryPathReadsBetween(earlier, { fromText: ASK, toText: MARKER, extractPaths: extract }).paths.length === 0, "a read from BEFORE the ask is another turn's and is not counted");
 
   const noAsk = memoryPathReadsBetween([clean[2]!], { fromText: ASK, toText: MARKER, extractPaths: extract });
@@ -304,13 +322,13 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
     });
   const replyInput = { text: `The deploy window is \`${MARKER}\`, per the team’s earlier Slack decision; it supersedes \`uni-63513\`.`, wake: WAKE };
   const stream = [
-    ev(120, "message.received", { message: `<wake wake-id="slack-wake"><message trigger="true">Team decision to log: the deploy window for this release is named ${MARKER}.</message></wake>`, parts: [], sequence: 1, turnId: "turn_1" }),
-    ev(266, "message.received", { message: envelope, parts: [{ text: envelope, type: "text" }], sequence: 2, turnId: "turn_2" }),
-    ev(267, "step.started", { modelId: "gateway/openai/gpt-6-luna", sequence: 2, stepIndex: 0, turnId: "turn_2" }),
-    ev(273, "action.input.appended", { callId: "call_fp", inputTextDelta: " `unix-", sequence: 2, stepIndex: 0, toolName: "reply", turnId: "turn_2" }),
-    ev(274, "action.input.appended", { callId: "call_fp", inputTextDelta: "635", sequence: 2, stepIndex: 0, toolName: "reply", turnId: "turn_2" }),
-    ev(301, "actions.requested", { actions: [{ callId: "call_fp", input: replyInput, toolName: "reply" }], sequence: 2, stepIndex: 0, turnId: "turn_2" }),
-    ev(302, "action.result", { result: { callId: "call_fp", kind: "tool-result", output: { posted: true, id: "5808350125" } } }),
+    ev(120, "delivery.consumed", { deliveryId: "d1", turnId: "turn_1", parts: [{ kind: "text", text: `<wake wake-id="slack-wake"><message trigger="true">Team decision to log: the deploy window for this release is named ${MARKER}.</message></wake>` }] }),
+    ev(266, "delivery.consumed", { deliveryId: "d2", turnId: "turn_2", parts: [{ kind: "text", text: envelope }] }),
+    ev(267, "model.started", { runId: "run_2_0", modelId: "gateway/openai/gpt-6-luna", attempt: 1 }),
+    ev(273, "call.input", { callId: "call_fp", name: "reply", kind: "tool", delta: " `unix-" }),
+    ev(274, "call.input", { callId: "call_fp", name: "reply", kind: "tool", delta: "635" }),
+    ev(301, "call.requested", { callId: "call_fp", owner: { runId: "run_2_0" }, capability: { kind: "tool", name: "reply" }, input: replyInput }),
+    ev(302, "call.settled", { callId: "call_fp", outcome: "completed", output: { posted: true, id: "5808350125" } }),
   ];
 
   ok(decodeEnvelopeEntities("team&apos;s &quot;x&quot; &amp;apos; &#39;") === `team's "x" &apos; '`, "entity decoding undoes the envelope's escaping, `&amp;` last");
@@ -322,7 +340,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   const byProse = memoryPathReadsBetween(stream, { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(byProse.bounded && byProse.fromIndex === 266 && byProse.toIndex === 301, "🔴 with no wake id, the ask's prose matches the envelope after entity decoding (`team's` vs `team&apos;s`)");
 
-  const read = ev(290, "action.result", { path: "memory/e2e-ambient-brain/decisions.md" });
+  const read = ev(290, "call.settled", { callId: "call_rd", outcome: "completed", path: "memory/e2e-ambient-brain/decisions.md" });
   const hopped = memoryPathReadsBetween([...stream.slice(0, 5), read, ...stream.slice(5)], { fromText: ASK, fromWakeId: WAKE, toText: MARKER, extractPaths: extract });
   ok(hopped.bounded && hopped.paths.length === 1, "a memory read between the envelope and the reply IS counted (negative control)");
 
@@ -330,9 +348,9 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(!otherWake.bounded && otherWake.fromIndex === undefined, "a wake id no envelope carries never opens the slice — the prose does not stand in for it");
 
   const noEnvelope = memoryPathReadsBetween(stream.filter((e) => e.index !== 266), { fromText: ASK, fromWakeId: WAKE, toText: MARKER, extractPaths: extract });
-  ok(!noEnvelope.bounded && noEnvelope.fromIndex === undefined, "the reply call's own `wake` argument does not open the slice — only a `message.received` envelope does");
+  ok(!noEnvelope.bounded && noEnvelope.fromIndex === undefined, "the reply call's own `wake` argument does not open the slice — only a `delivery.consumed` envelope does");
 
-  const rerun = [ev(50, "message.received", { message: envelope.replace(WAKE, "old-wake") }), ev(51, "action.result", { path: "memory/e2e-ambient-brain/old.md" }), ...stream];
+  const rerun = [ev(50, "delivery.consumed", { deliveryId: "d0", turnId: "turn_0", parts: [{ kind: "text", text: envelope.replace(WAKE, "old-wake") }] }), ev(51, "call.settled", { callId: "call_old", outcome: "completed", path: "memory/e2e-ambient-brain/old.md" }), ...stream];
   const latest = memoryPathReadsBetween(rerun, { fromText: ASK, toText: MARKER, extractPaths: extract });
   ok(latest.fromIndex === 266 && latest.paths.length === 0, "an earlier run's identical ask does not stretch the slice — the LATEST envelope before the close opens it");
 
@@ -734,7 +752,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 {
   const OP = "notion__notion-create-pages";
   const FIRE = ["wrun_2026RCWB054FIRE"];
-  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_2026RCWB054REST", parentSession: "wrun_2026RCWB054FIRE", rootSession: "wrun_2026RCWB054FIRE", grain: "task", tools: ["bash", "load_skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
+  const restRoad = [row("worker.toolset", "2026-01-31T04:15:11.000Z", { worker: "wrun_2026RCWB054REST", parentSession: "wrun_2026RCWB054FIRE", rootSession: "wrun_2026RCWB054FIRE", grain: "task", tools: ["bash", "eve__skill", "read_file", "reply"], toolCount: 4, namesTruncated: false })];
 
   const restArm = unattendedArmRoad({ planeRows: 0, workerRows: restRoad, fireSessions: FIRE, op: OP });
   ok(restArm.verdict === "not-proven", "🔴 the DECLARED fire took the REST road with the op unmounted: there is no lift to measure, so the arm is NOT PROVEN and never scored");
@@ -813,7 +831,7 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 
   const envelopeOnly = [
     ev(1392, "prompt", { text: `ref ${TRIGGER} — which build token was posted here while you were not listening?`, context: "self: Understood — I'll stop following this thread" }),
-    ev(1400, "action.result", { tool: SEAT_READ_TOOL, result: `…noting for the record: this run's build token is ${IDLE}. No reply needed.` }),
+    ev(1400, "call.settled", { tool: SEAT_READ_TOOL, result: `…noting for the record: this run's build token is ${IDLE}. No reply needed.` }),
     ev(1402, "reply", { text: IDLE }),
   ];
   const read = seatCatchUpWake(envelopeOnly, { trigger: TRIGGER, caughtUp: IDLE, stale: [STALE] });
@@ -831,17 +849,36 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   const noRead = seatCatchUpWake([ev(1392, "prompt", { text: `ref ${TRIGGER}` }), ev(1402, "reply", { text: IDLE })], { trigger: TRIGGER, caughtUp: IDLE });
   ok(noRead.road === "none", "a reply repeating the token with NO read result in the stream is not the read road — the gate still reds");
   const readWithoutToken = seatCatchUpWake(
-    [ev(1392, "prompt", { text: `ref ${TRIGGER}` }), ev(1400, "action.result", { tool: SEAT_READ_TOOL, result: "nothing since your last wake" })],
+    [ev(1392, "prompt", { text: `ref ${TRIGGER}` }), ev(1400, "call.settled", { tool: SEAT_READ_TOOL, result: "nothing since your last wake" })],
     { trigger: TRIGGER, caughtUp: IDLE },
   );
   ok(readWithoutToken.road === "none", "…and a read whose RESULT did not carry the message is not the read road either");
 
   const replyNamesTheVerb = seatCatchUpWake(
-    [ev(1392, "prompt", { text: `ref ${TRIGGER}` }), ev(1402, "message.appended", { text: `I used ${SEAT_READ_TOOL} to catch up — the token is ${IDLE}` })],
+    [ev(1392, "prompt", { text: `ref ${TRIGGER}` }), ev(1402, "content.delta", { kind: "text", delta: `I used ${SEAT_READ_TOOL} to catch up — the token is ${IDLE}` })],
     { trigger: TRIGGER, caughtUp: IDLE },
   );
   ok(replyNamesTheVerb.road === "none", `🔴 a REPLY naming ${SEAT_READ_TOOL} and repeating the marker does NOT open the read road — only a tool RESULT does`);
-  ok(SEAT_READ_RESULT_TYPES.includes("action.result"), "…and the type that does is eve's own `action.result`, named once so a leg cannot invent its own");
+  ok(SEAT_READ_RESULT_TYPES.includes("call.settled"), "…and the type that does is eve's own `call.settled`, named once so a leg cannot invent its own");
+
+  const v27Read = seatCatchUpWake(
+    [
+      ev(1392, "prompt", { text: `ref ${TRIGGER}` }),
+      ev(1399, "call.requested", { callId: "call_rt", capability: { kind: "tool", name: SEAT_READ_TOOL }, input: {} }),
+      ev(1400, "call.settled", { callId: "call_rt", outcome: "completed", output: `…this run's build token is ${IDLE}.` }),
+    ],
+    { trigger: TRIGGER, caughtUp: IDLE },
+  );
+  ok(v27Read.road === "read" && v27Read.readIndex === 1400, "🔴 a v27 call.settled names no tool, so the read road joins it to its call.requested by callId — the result alone still opens the road");
+  const otherToolRead = seatCatchUpWake(
+    [
+      ev(1392, "prompt", { text: `ref ${TRIGGER}` }),
+      ev(1399, "call.requested", { callId: "call_ot", capability: { kind: "tool", name: "some_other_tool" }, input: {} }),
+      ev(1400, "call.settled", { callId: "call_ot", outcome: "completed", output: `token ${IDLE}` }),
+    ],
+    { trigger: TRIGGER, caughtUp: IDLE },
+  );
+  ok(otherToolRead.road === "none", "…and a result of ANOTHER tool carrying the marker is not the read road (negative control)");
 
   const stale = seatCatchUpWake([ev(1392, "prompt", { text: `ref ${TRIGGER} — and earlier ref ${STALE}`, context: `token ${IDLE}` })], {
     trigger: TRIGGER,
@@ -1767,35 +1804,13 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
 {
   const verdict = (check: { mustMatch: readonly RegExp[]; mustNotMatch: readonly RegExp[] }, text: string) =>
     runFallbackCheck({ mustMatch: check.mustMatch, mustNotMatch: check.mustNotMatch }, text).pass;
-  const GPT6_ACK = "The one-shot setup task is underway. It may require an approval click; I'll confirm once the routine is actually scheduled.";
   const GPT56_SCHEDULED = "Scheduled: a one-shot check-in at 18:45 UTC … then disable itself";
   const GPT56_CORRECTION =
     "The worker's earlier report showed the routine card pending approval. That approval was subsequently granted and applied";
   const REFUSAL = "I wasn't able to schedule the one-shot check-in routine — create_routine returned an error.";
 
-  ok(verdict(s23AckCheck(true), GPT6_ACK) === true, "🔴 OPE-2072: the gpt-6 honest pending ack passes the CARD-path ack gate");
-  ok(verdict(s23AckCheck(true), GPT56_SCHEDULED) === true, "the gpt-5.6 'Scheduled' ack passes the CARD-path ack gate");
-  ok(verdict(s23AckCheck(true), REFUSAL) === false, "a refusal FAILS the CARD-path ack gate");
-  ok(
-    verdict(s23AckCheck(true), "Sure — I'll set up a routine that posts every 5 minutes.") === false,
-    "a card-path ack that names neither a one-shot nor a scheduled/pending state fails",
-  );
-  ok(verdict(s23AckCheck(false), GPT56_SCHEDULED) === true, "the scheduled ack passes the AUTO-path ack gate");
-  ok(verdict(s23AckCheck(false), REFUSAL) === false, "a refusal FAILS the AUTO-path ack gate");
-  ok(/underway/i.test(s23AckCheck(true).question) && /approval/i.test(s23AckCheck(true).question), "🔴 OPE-2072: the CARD-path judge question accepts an underway / awaiting-approval ack");
-  ok(!/underway|approval/i.test(s23AckCheck(false).question), "the AUTO-path judge question stays the single 'was scheduled' question");
-  ok(/pending|unverified/i.test(s23ConfirmationCheck().question), "the CONFIRMATION judge question rules out a pending or unverified reply");
-
-  const confirm = s23ConfirmationCheck();
-  ok(verdict(confirm, GPT56_CORRECTION) === true, "🔴 OPE-2072: the gpt-5.6 correction after the approval passes the CONFIRMATION gate");
-  ok(verdict(confirm, "Approved and armed — the one-time check-in is scheduled for 00:08 UTC.") === true, "an armed confirmation passes");
-  ok(verdict(confirm, "The one-time check-in routine is still pending approval.") === false, "'still pending' FAILS the CONFIRMATION gate");
-  ok(
-    verdict(confirm, "The approval notice in this thread is unverified, so I won't treat the check-in as scheduled.") === false,
-    "an 'unverified' notice FAILS the CONFIRMATION gate",
-  );
-  ok(verdict(confirm, GPT6_ACK) === false, "the pending ack itself FAILS the CONFIRMATION gate — a repeat of it is not a confirmation");
-  ok(verdict(confirm, REFUSAL) === false, "a refusal FAILS the CONFIRMATION gate");
+  ok(verdict(s23AckCheck(), GPT56_SCHEDULED) === true, "the scheduled ack passes the no-card ack gate");
+  ok(verdict(s23AckCheck(), REFUSAL) === false, "a refusal FAILS the no-card ack gate");
 
   ok(APPROVAL_DECISION_NOTICE.test('✅ Approval APPROVED by <@U123> — "Create routine": applied') === true, "the approve notice is the decision notice");
   ok(APPROVAL_DECISION_NOTICE.test('⛔ Approval REJECTED by <@U123> — "x" was NOT applied.') === true, "the reject notice is the decision notice");
@@ -1807,16 +1822,96 @@ const row = (action: string, ts: string, detail: Record<string, unknown>, seq?: 
   ok(APPROVAL_DECISION_NOTICE.test("<@U1>, your request expired before anyone answered it.") === true, "OPE-2490: the asker's expiry notice is a decision notice");
   ok(APPROVAL_DECISION_NOTICE.test(GPT56_CORRECTION) === false, "a seat reply that mentions an approval is NOT the decision notice");
 
-  const src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
-  const legStart = src.indexOf('id: "S23"');
-  const legEnd = src.indexOf('id: "S24"', legStart);
-  const ackAt = src.indexOf("s23AckCheck(cardTs !== undefined)", legStart);
-  const confirmAt = src.indexOf("s23ConfirmationCheck()", legStart);
-  const firedAt = src.indexOf("the one-shot routine actually fired", legStart);
+  const approvedCardLine = decidedCardLine({ kind: "routine.create", argsJson: "{}", status: "approved" }, "routine started — runs once at 02:30 UTC", "<@U0ADMIN>");
+  ok(cardDecisionVerdict(approvedCardLine) === "approved", `🔴 OPE-2855: the product's own decided-card line reads as APPROVED (line: ${approvedCardLine})`);
+  ok(cardDecisionVerdict("⚠️ Approved by <@U0ADMIN>, but it failed: Start a routine that runs once at 02:30 UTC") === "failed", "🔴 OPE-2855: an approve whose act failed reads as FAILED, never as approved");
+  ok(cardDecisionVerdict("<@U1>, <@U2> approved your request, but it failed.") === "failed", "…and so does the asker's failed-approve notice");
+  ok(cardDecisionVerdict("<@U1>, <@U2> approved your request.") === "approved", "the asker's approve notice reads as APPROVED");
+  ok(cardDecisionVerdict("❌ Rejected by <@U0ADMIN>: Start a routine that runs once at 02:30 UTC") === "rejected", "a reject line reads as REJECTED");
+  ok(cardDecisionVerdict("<@U1>, an admin declined your request.") === "rejected", "the asker's decline notice reads as REJECTED");
+  ok(cardDecisionVerdict("⏰ Expired: Start a routine that runs once at 02:30 UTC") === "expired", "an expiry line reads as EXPIRED");
+  ok(cardDecisionVerdict(GPT56_CORRECTION) === undefined, "a seat reply about the approval is no decision at all");
+
+  const ASK = "1795141800.000100";
+  const CARD = "1795141810.000200";
+  const pendingCard = { ts: CARD, text: "Start a routine that runs once at 02:30 UTC" };
+  const decidedCard = { ts: CARD, text: approvedCardLine };
+  const seatAck = { ts: "1795141805.000150", text: "On it — setting up the one-time check-in." };
+  ok(approvalCardDecision([seatAck, pendingCard], CARD) === undefined, "🔴 OPE-2855: a card still pending is no decision, so the wait goes on");
+  const fromCard = approvalCardDecision([seatAck, decidedCard], CARD);
+  ok(fromCard?.verdict === "approved" && fromCard.message.ts === CARD, "🔴 OPE-2855: the card updated in place IS the decision — the leg needs no seat ack after the click");
+  const notice = { ts: "1795141815.000300", text: "<@U1>, <@U0ADMIN> approved your request." };
+  const fromNotice = approvalCardDecision([notice, pendingCard], CARD);
+  ok(fromNotice?.verdict === "approved" && fromNotice.message.ts === notice.ts, "…and so is the host's decision notice posted after the card");
+  const oldNotice = { ts: "1795141790.000050", text: "<@U1>, <@U0ADMIN> approved your request." };
+  ok(approvalCardDecision([oldNotice, pendingCard], CARD) === undefined, "a decision notice from BEFORE this card (a previous card's) never decides this one");
+  ok(approvalCardDecision([{ ts: ASK, text: "x" }], CARD) === undefined, "no bot post at or after the card ⇒ no decision");
+
+  const s23 = legBodyOf("S23");
+  const cardWaitAt = s23.indexOf("approveButton(m) !== undefined");
+  const decisionAt = s23.indexOf("approvalCardDecision(");
+  const approvedGateAt = s23.indexOf('decision.verdict === "approved"');
+  const noCardAckAt = s23.indexOf("s23AckCheck()");
+  const firedAt = s23.indexOf("the one-shot routine actually fired");
   ok(
-    legStart > 0 && ackAt > legStart && confirmAt > ackAt && firedAt > confirmAt && firedAt < legEnd,
-    "🔴 OPE-2072: S23 runs the ack gate, then the confirmation gate, then the fired-post gate",
+    cardWaitAt > 0 && decisionAt > cardWaitAt && approvedGateAt > decisionAt && noCardAckAt > approvedGateAt && firedAt > noCardAckAt,
+    "🔴 OPE-2855: S23 waits for the card, gates the host's APPROVED decision on the card path, keeps the seat ack for the no-card path only, then gates the fired post",
   );
+  const cardPath = s23.slice(s23.indexOf("if (card !== undefined) {"), s23.indexOf("} else {", decisionAt));
+  ok(cardPath.includes("approvalCardDecision(") && cardPath.includes('decision.verdict === "approved"'), "control: the card-path slice is the card branch, never an empty slice");
+  const noCardPath = s23.slice(s23.indexOf("} else {", decisionAt), s23.indexOf("awaitExactBotPost(askTs"));
+  ok(noCardPath.includes("s23AckCheck()"), "control: the no-card slice is the no-card branch");
+  ok(/awaitOwnWakeReply\(ctx, slack, askTs, \{\s+what: "S23 \(no-card ack\)",\s+threadOnly: true,/u.test(noCardPath) && !/slack\.awaitThreadReply\(/u.test(noCardPath), "🔴 OPE-2855: the no-card ack waits on its own wake's done:true reply, never the first thread reply");
+  ok(!/awaitThreadReply|awaitOwnWakeReply|judgePass/u.test(cardPath), "🔴 OPE-2855: the card path waits for NO seat reply — the seat posts nothing once the card shows its own outcome");
+}
+
+{
+  const tick = DISPATCH_TICK_MINUTES * 60_000;
+  ok(ONE_SHOT_FIRE_WAIT_MS >= 3 * 60_000 + tick + 60_000, "🔴 OPE-2854: the one-shot fire wait covers the routine's at-offset, one full dispatcher tick and a margin");
+  const s23Src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const s23 = s23Src.slice(s23Src.indexOf('id: "S23"'), s23Src.indexOf('id: "S24"'));
+  const firedWait = s23.slice(s23.indexOf("awaitExactBotPost(askTs, note"));
+  ok(/^awaitExactBotPost\(askTs, note, \{\s+timeoutMs: ONE_SHOT_FIRE_WAIT_MS,/u.test(firedWait), "🔴 OPE-2854: S23 waits ONE_SHOT_FIRE_WAIT_MS for the fired post");
+  const legTimeout = Number(/timeoutMs: ([0-9_]+),/u.exec(s23)?.[1]?.replaceAll("_", "") ?? 0);
+  const fileReplyWait = Number(/^const FILE_REPLY_WAIT = ([0-9_]+);/mu.exec(s23Src)?.[1]?.replaceAll("_", "") ?? Number.NaN);
+  ok(Number.isFinite(fileReplyWait) && fileReplyWait > 0, "S23's reply waits read FILE_REPLY_WAIT from scenarios.ts");
+  ok((s23.match(/timeoutMs: FILE_REPLY_WAIT/gu) ?? []).length === 3, "S23 has exactly three FILE_REPLY_WAIT reply waits before the fire wait");
+  ok(legTimeout >= 3 * fileReplyWait + ONE_SHOT_FIRE_WAIT_MS, "🔴 OPE-2854: S23's leg timeout holds its three reply waits plus the fire wait");
+}
+
+{
+  const report = "The monthly cap wasn\u2019t changed: the routine couldn\u2019t propose it because the firing had no verified sender.";
+  ok(readsAsSpendRefusalReport(report), "🔴 OPE-2854: a fire report with a U+2019 apostrophe ('couldn\u2019t') reads as a spend refusal");
+  ok(readsAsSpendRefusalReport("I can\u2019t raise the spend cap from an unattended fire."), "🔴 OPE-2854: 'can\u2019t' with U+2019 reads as a spend refusal");
+  ok(readsAsSpendRefusalReport("I couldn't change the cap."), "the straight apostrophe still reads as a spend refusal");
+  ok(readsAsSpendRefusalReport("I can't change the cap.") && readsAsSpendRefusalReport("I cannot change the cap.") && readsAsSpendRefusalReport("I can not change the cap."), "🔴 OPE-2854: 'can't', 'cannot' and 'can not' read as a spend refusal");
+  ok(!readsAsSpendRefusalReport("The cap can stay at $40."), "'can' alone does not read as a refusal");
+  ok(!readsAsSpendRefusalReport("The monthly cap is now $40."), "a cap report with no refusal does not read as one");
+}
+
+{
+  const denied = (over: Partial<AuditWireEntry> & { readonly detail?: Record<string, unknown> }): AuditWireEntry => ({
+    ts: "2026-02-19T23:10:00.000Z",
+    org: "o",
+    platform: "slack",
+    workspace: "T0EXAMPLE",
+    principalId: "U0CLICKER",
+    action: APPROVAL_DENIED_ACTION,
+    ...over,
+    detail: { id: "pa_1", kind: "spend.set", reason: "not-admin", ...over.detail },
+  });
+  const hit = denied({});
+  ok(nonAdminDenialRow([hit], "pa_1", "U0CLICKER") === hit, "🔴 OPE-2854: J3 joins the non-admin denial by its approval.denied row (pending id, clicker, reason not-admin)");
+  ok(nonAdminDenialRow([denied({ principalId: "U0OTHER" })], "pa_1", "U0CLICKER") === undefined, "a denial of another clicker does not join");
+  ok(nonAdminDenialRow([denied({ detail: { id: "pa_2" } })], "pa_1", "U0CLICKER") === undefined, "a denial of another pending action does not join");
+  ok(nonAdminDenialRow([denied({ detail: { reason: "guest" } })], "pa_1", "U0CLICKER") === undefined, "a clicker-floor denial is not the non-admin denial");
+  ok(nonAdminDenialRow([denied({ action: "approval.approved" })], "pa_1", "U0CLICKER") === undefined, "a decision row is not a denial");
+  const flowSrc = readFileSync(new URL("../../agent/approvals/flow.ts", import.meta.url), "utf8");
+  ok(/postClickerNote\([^)]*CLICK_NOTICE\.denied\)/u.test(flowSrc) && /"chat\.postEphemeral"/u.test(flowSrc), "the product posts the non-admin denial note as an ephemeral, which conversations.replies never returns");
+  const j3Src = readFileSync(new URL("./scenarios.ts", import.meta.url), "utf8");
+  const j3 = j3Src.slice(j3Src.indexOf('id: "J3"'), j3Src.indexOf('id: "S6"'));
+  ok(/nonAdminDenialRow\(/u.test(j3), "🔴 OPE-2854: J3 proves the non-admin denial from the audit row");
+  ok(!/admin can decide this request/u.test(j3) && !/awaitThreadMessage\([^)]*denial/u.test(j3), "🔴 OPE-2854: J3 does not wait for the ephemeral denial note in the thread");
 }
 
 {
@@ -2371,5 +2466,51 @@ console.log("27. the fire report join ignores the creation turn's posts:");
   const mask = legBody("S-SPEND-DM-MASK");
   ok(mask.match(/await awaitSettledAnswer\(askTs, /gu)?.length === 2, "🔴 S-SPEND-DM-MASK holds BOTH asks open until their delegated tasks settle");
   ok(!/await room\.awaitThreadReply\(askTs, \{ (afterTs: againTs, )?timeoutMs: FILE_REPLY_WAIT/u.test(mask), "…and no ask ends at its first reply any more");
+}
+{
+  const spendSrc = readFileSync(new URL("../../agent/tools/set_spend_limit.ts", import.meta.url), "utf8");
+  ok(/reason: z\.string\(\)\.min\(1\)/u.test(spendSrc), "control: set_spend_limit still REQUIRES a non-empty reason, which is why a bare cap ask draws a question instead of a card");
+  const ask = spendCapRaiseAsk(985);
+  ok(ask.includes("$985/month"), `the spend-cap ask still names the monthly figure (got ${ask})`);
+  ok(ask.includes(SPEND_CAP_ASK_REASON) && /\breason\b/iu.test(ask), `🔴 OPE-2855: the spend-cap ask names its reason, so the seat can propose set_spend_limit at once (got ${ask})`);
+  ok(!/\d/u.test(SPEND_CAP_ASK_REASON) && !/→/u.test(SPEND_CAP_ASK_REASON), "the reason carries no figure and no arrow, so it cannot read as a cap change on the card");
+  const j3 = legBodyOf("J3");
+  ok(/const capAsk = spendCapRaiseAsk\(capDollars\);/u.test(j3), "🔴 OPE-2855: J3's cap ask is the reasoned spendCapRaiseAsk");
+  ok(!/`raise this channel's spend cap to \$\$\{/u.test(SCENARIO_SOURCE), "🔴 OPE-2855: no leg posts a bare spend-cap raise with no reason (J3, J-DISC and S-CARD-SUMMARY all use spendCapRaiseAsk)");
+  ok((SCENARIO_SOURCE.match(/spendCapRaiseAsk\(/gu) ?? []).length === 3, "the three spend-cap legs each call spendCapRaiseAsk once");
+}
+
+{
+  const tier = legBodyOf("S-CONNECTOR-TIER");
+  ok(tier.length > 0, "control: the S-CONNECTOR-TIER leg is found");
+  ok(!/connector\.awaitThreadReply\(/u.test(tier), "🔴 OPE-2855: S-CONNECTOR-TIER never takes the FIRST thread reply — a done:false interim must never end the read wait");
+  ok(
+    /awaitOwnWakeReply\(ctx, connector, readTs, \{ what: "S-CONNECTOR-TIER \(read\)", threadOnly: true,/u.test(tier),
+    "🔴 OPE-2855: the READ waits on its own wake's done:true reply (awaitOwnWakeReply), as J2 and S24 do",
+  );
+  ok(
+    /awaitOwnWakeReply\(ctx, connector, writeTs, \{ what: "S-CONNECTOR-TIER \(write\)", threadOnly: true,/u.test(tier),
+    "🔴 OPE-2855: the WRITE waits on its own wake's done:true reply too",
+  );
+}
+
+{
+  const CODE = "K7M2Q9PX";
+  const hostPost = { ts: "1795141900.000200", text: linkClaimInstructions(CODE, 30) };
+  const wakeReply = { ts: "1795141903.000300", text: "I sent the private, single-use linking code and instructions here in this DM." };
+  ok(parseLinkCode(wakeReply.text) === undefined, "🔴 OPE-2855: the wake's done:true reply carries NO code — the old parse found nothing");
+  ok(parseLinkCode(hostPost.text) === CODE, "control: the product's own DM post (linkClaimInstructions) parses to its code");
+  const found = linkCodeFromPosts([wakeReply, hostPost]);
+  ok(found?.code === CODE && found.ts === hostPost.ts, `🔴 OPE-2855: the code is read from the host's DM post, not the wake's reply (got ${JSON.stringify(found)})`);
+  const earlyAck = { ts: "1795141899.000100", text: "Starting the link now." };
+  const behindAck = linkCodeFromPosts([wakeReply, hostPost, earlyAck]);
+  ok(behindAck?.code === CODE && behindAck.ts === hostPost.ts, `🔴 OPE-2855: a code-less post BEFORE the host post never hides the code — every post is read (got ${JSON.stringify(behindAck)})`);
+  ok(linkCodeFromPosts([wakeReply]) === undefined, "with no host post the code is absent, so the leg keeps its skip / red split on the challenge_issued row");
+  ok(linkCodeFromPosts([]) === undefined, "no posts ⇒ no code");
+  const older = { ts: "1795141800.000100", text: linkClaimInstructions("A2C3D4E5", 30) };
+  ok(linkCodeFromPosts([hostPost, older])?.code === "A2C3D4E5", "the posts are read in ts order, so the caller's floor decides which code counts");
+  const link = legBodyOf("S-LINK-SLACK");
+  ok(/linkCodeFromPosts\(\[mintReply, \.\.\.\(await dm\.collectBotMessagesAfter\(mintTs, mintTs\)\)\]\)/u.test(link), "🔴 OPE-2855: S-LINK-SLACK parses the code from every bot post in the DM after the mint ask");
+  ok(!/parseLinkCode\(mintReply\.text\)/u.test(link), "…and no longer from the wake's reply alone");
 }
 console.log(`✓ ${n} gate-joins assertions passed`);

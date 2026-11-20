@@ -159,11 +159,12 @@ console.log("§5 the build");
 {
   const base = { config: {}, lock: undefined, acceptLock: true, packages: [], agentDir: "agent" };
   const plan = planRoster({ ...base, mcpServers: ["fullstory"] });
-  const stub = plan.files.find((f) => f.path === "agent/connections/fullstory.ts");
-  ok(stub?.content === renderMcpServerStub("fullstory"), "§5 the plan writes one connection stub per declared server");
-  ok(stub?.content.includes('declaredMcpServerConnection(MCP_SERVERS, "fullstory")') && stub.content.includes('from "../access/mcp-servers.js"'), "§5 …which builds the connection from the app's own list");
-  ok(goldenPlanLines(plan, "agent").includes("agent/connections/fullstory.ts\tmcp-server agent/access/mcp-servers.ts"), "§5 the golden plan names the stub, so the review surface shows it");
-  ok(planRoster(base).files.every((f) => !f.path.startsWith("agent/connections/")), "§5 no declared server ⇒ no connection stub (the first-run state)");
+  const stub = plan.files.find((f) => f.path === "agent/tools/fullstory.ts");
+  ok(stub?.content === renderMcpServerStub("fullstory"), "§5 the plan writes one connector-mount stub per declared server, under agent/tools/");
+  ok(!plan.files.some((f) => f.path.startsWith("agent/connections/")), "§5 🔴 …and no eve connection file: eve refuses the connector tool names while one is mounted");
+  ok(stub?.content.includes('seatCut("fullstory", declaredMcpServerConnection(MCP_SERVERS, "fullstory"))') && stub.content.includes('from "../access/mcp-servers.js"'), "§5 …which builds the mount from the app's own list, through the seat cut");
+  ok(goldenPlanLines(plan, "agent").includes("agent/tools/fullstory.ts\tmcp-server agent/access/mcp-servers.ts"), "§5 the golden plan names the stub, so the review surface shows it");
+  ok(planRoster(base).files.every((f) => f.path !== "agent/tools/fullstory.ts"), "§5 no declared server ⇒ no stub (the first-run state)");
   const clash = planRoster({
     ...base,
     mcpServers: ["notion"],
@@ -174,7 +175,7 @@ console.log("§5 the build");
         decision: true,
         resolvedName: "@open-everywhere/core",
         version: "0.0.1",
-        manifest: { schemaVersion: 1, package: "@open-everywhere/core", contributions: [{ kind: "connection", name: "notion", module: "agent/connections/notion.js" }] },
+        manifest: { schemaVersion: 1, package: "@open-everywhere/core", contributions: [{ kind: "tool", name: "notion", module: "agent/connections/notion.js" }] },
       },
     ],
   });
@@ -183,12 +184,16 @@ console.log("§5 the build");
 
 console.log("§6 the connection the stub builds");
 {
-  const { declaredMcpServerConnection } = await import("../agent/connections/mcp-server-connection.js");
+  const { declaredMcpServerConnection, declaredMcpServerMountSpec } = await import("../agent/connections/mcp-server-connection.js");
   const { declaredConnectionSignIns, _resetConnectionSignInsForTest } = await import("../agent/connections/connection-sign-in.js");
   const { connectorTransportSpec } = await import("../agent/connections/connector-transport.js");
+  const { mountedConnectorNames } = await import("../agent/connections/connector-catalogue.js");
   _resetConnectionSignInsForTest();
-  const conn = declaredMcpServerConnection(SERVERS, "fullstory") as unknown as Record<string, unknown>;
-  ok(conn["url"] === FULLSTORY.url && conn["description"] === FULLSTORY.description, "§6 the connection dials the declared URL and carries the declared description");
+  const mount = declaredMcpServerConnection(SERVERS, "fullstory") as unknown as Record<symbol, unknown>;
+  ok(typeof mount[Symbol.for("eve.dynamic")] === "function", "§6 🔴 the stub builds a defineDynamic connector mount, not an eve connection");
+  ok(mountedConnectorNames().includes("fullstory"), "§6 …registered in the OE connector catalogue");
+  const conn = declaredMcpServerMountSpec(SERVERS, "fullstory") as unknown as Record<string, unknown>;
+  ok(conn["url"] === FULLSTORY.url && conn["description"] === FULLSTORY.description, "§6 the mount dials the declared URL and carries the declared description");
   ok(typeof conn["auth"] === "function" && typeof conn["approval"] === "function", "§6 🔴 it carries the gated auth resolver AND the OE approval policy, as Notion does");
   ok(declaredConnectionSignIns().get(mcpServerHomeRef("fullstory"))?.mode === "discovery-dcr-pkce", "§6 building it declares the sign-in under the server's home ref");
   ok(connectorTransportSpec("fullstory")?.directUrl === FULLSTORY.url, "§6 …and records the transport spec the connection dials");
@@ -302,12 +307,12 @@ console.log("§7 a personal-surface server (OPE-2421)");
   ok((await personalSurfaceApprovalRefusal(WRITE, auth, both(false))) !== undefined, "§7 🔴 …and refuses the same write on an unattended turn");
   ok((await personalSurfaceApprovalRefusal("notion__create_page", auth, both(false))) === undefined, "§7 a connection no personal-surface declaration names passes untouched");
 
-  const { declaredMcpServerConnection } = await import("../agent/connections/mcp-server-connection.js");
-  const conn = declaredMcpServerConnection(servers, "slack-as-you") as unknown as {
+  const { declaredMcpServerMountSpec } = await import("../agent/connections/mcp-server-connection.js");
+  const conn = declaredMcpServerMountSpec(servers, "slack-as-you") as unknown as {
     auth: (ctx: unknown) => Promise<unknown>;
     approval: (ctx: unknown) => Promise<unknown>;
   };
-  const verdict = (await conn.approval({ toolName: "slack-as-you__slack_send_message", approvedTools: new Set(), session: {} })) as { type?: string; reason?: string };
+  const verdict = (await conn.approval({ toolName: "slack-as-you__slack_send_message", session: {} })) as { type?: string; reason?: string };
   ok(verdict?.type === "denied" && String(verdict.reason).includes("answers only in that person's 1:1 DM"), "§7 🔴 the built connection's approval denies a call it cannot place in a DM, before any card");
   let authErr = "";
   try {

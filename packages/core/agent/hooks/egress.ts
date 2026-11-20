@@ -1,4 +1,5 @@
 import type { ConnectorContentOriginSpec } from "../access/bundle.js";
+import { inLaneSandbox, sandboxLaneKey } from "../sandbox/shared-sandbox-lane.js";
 import { auditErrorDetail } from "../audit/tool-action.js";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { defineHook, type HookContext } from "eve/hooks";
@@ -554,9 +555,9 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
         resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
       ),
     apply: (policy, scopeKey) => sendEgressPolicy(policy, ctx, scopeKey),
-    publish: async (input) => publishEgressStatus(await ctx.getSandbox(), input),
+    publish: async (input) => publishEgressStatus(inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox()), input),
     ...(isSubagentChildContext(ctx as unknown as BindableContext)
-      ? { parentPublishedFingerprint: async () => readPublishedEgressFingerprint(await ctx.getSandbox()) }
+      ? { parentPublishedFingerprint: async () => readPublishedEgressFingerprint(inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox())) }
       : {}),
     rememberScope: rememberEgressAttribution,
     lastApplied: () => egressApplied.get().fingerprint,
@@ -660,6 +661,7 @@ export function handleTurnEdgeFailure(err: unknown, inForce: boolean): TurnEdgeR
 
 export default defineHook({
   events: {
+    // hook-path: REFUSAL — a firewall that cannot be applied cancels the turn, so it never runs on the allow-all default
     "session.started": async (_event, ctx) => {
       try {
         await ensureDelegatedTaskBinding(ctx as unknown as BindableContext);
@@ -686,6 +688,7 @@ export default defineHook({
       }
     },
 
+    // hook-path: REFUSAL — the same firewall check at the turn edge
     "turn.started": async (_event, ctx) => {
       let deps: EgressEnforcementDeps | undefined;
       try {

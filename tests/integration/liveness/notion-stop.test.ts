@@ -1,4 +1,5 @@
 import { afterAll, expect, test, vi } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
@@ -121,7 +122,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   expect(botStopPosted.status).toBe(200);
   expect(await resolveTurnAnchor(org, { channelKey }), "a bot-authored `stop` must never clear the anchor").not.toBeNull();
   expect(await rowsSinceCursor(cursor, ["turn.cancel_requested"])).toEqual([]);
-  expect(await rowsSinceCursor(cursor, ["turn.cancelled"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION])).toEqual([]);
 
   const stopId = "it-ope-989-human-stop";
   triggerComments.set(stopId, comment({ id: stopId, authorId: STOPPER_ID, text: "stop" }));
@@ -142,7 +143,7 @@ test("a human's bare `stop` comment cancels an in-flight Notion turn; a bot-auth
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
+    const rows = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — written from the cancelled turn's OWN process");
   expect(cancelled).toHaveLength(1);

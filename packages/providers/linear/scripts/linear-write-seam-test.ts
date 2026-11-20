@@ -127,12 +127,12 @@ function tsFiles(dir: string): string[] {
   ok(!bearing.includes("verify"), "🔴 §0 NEGATIVE CONTROL: `verify` signs a webhook body and issues NOTHING, so the scan does not call every module a transport");
   ok(!bearing.includes("constants"), "§0 …nor the constants module");
   ok(
-    EVE_TRANSPORT_NAMES.includes("defaultOnAgentSession"),
+    EVE_TRANSPORT_NAMES.includes("defaultLinearAuth"),
     `§0 a re-exported function of a transport-bearing module IS watched — the widening's whole point (derived: ${EVE_TRANSPORT_NAMES.join(", ")})`,
   );
   ok(
-    !EVE_TRANSPORT_NAMES.includes("signLinearWebhookBody"),
-    "🔴 §0 …while an export of a NON-transport module is not — otherwise §2 would red on any honest file that verifies a webhook",
+    !EVE_TRANSPORT_NAMES.includes("linearContinuationToken"),
+    "🔴 §0 …while an export of a NON-transport module is not — otherwise §2 would red on any honest file that builds a continuation token",
   );
   ok(
     !EVE_TRANSPORT_NAMES.includes("createDefaultEvents"),

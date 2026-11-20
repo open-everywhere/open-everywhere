@@ -3403,6 +3403,22 @@ export const sqliteOperationalStore: OperationalStore = {
     return info.changes > 0;
   },
 
+  async casTaskResult(org, taskId, resultJson, at, ttlMs, expected) {
+    const handle = getDb();
+    if (expected === null) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      handle.prepare("DELETE FROM task_result WHERE created_at < ? AND org_id = ?").run(cutoff, org);
+      return (
+        handle.prepare(`INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (org_id, task_id) DO NOTHING`).run(org, taskId, resultJson, at)
+          .changes > 0
+      );
+    }
+    return (
+      handle.prepare("UPDATE task_result SET result_json = ?, created_at = ? WHERE org_id = ? AND task_id = ? AND result_json = ?").run(resultJson, at, org, taskId, expected)
+        .changes > 0
+    );
+  },
+
   async getTaskResult(org, taskId) {
     const row = getDb().prepare("SELECT result_json FROM task_result WHERE org_id = ? AND task_id = ?").get(org, taskId) as
       | { result_json?: string }
@@ -3412,6 +3428,21 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async deleteTaskResult(org, taskId) {
     return getDb().prepare("DELETE FROM task_result WHERE org_id = ? AND task_id = ?").run(org, taskId).changes > 0;
+  },
+
+  async deleteTaskResultIf(org, taskId, expectedJson) {
+    return getDb().prepare("DELETE FROM task_result WHERE org_id = ? AND task_id = ? AND result_json = ?").run(org, taskId, expectedJson).changes > 0;
+  },
+
+  async deleteTaskResultIfUnstopped(org, taskId, expectedJson, surfaceKey, threadTs) {
+    return (
+      getDb()
+        .prepare(
+          `DELETE FROM task_result WHERE org_id = ? AND task_id = ? AND result_json = ?
+             AND NOT EXISTS (SELECT 1 FROM thread_engagement WHERE org_id = ? AND surface_key = ? AND thread_ts = ? AND stopped = 1)`,
+        )
+        .run(org, taskId, expectedJson, org, surfaceKey, threadTs).changes > 0
+    );
   },
 
   async putMeetingData(org, key, valueJson, at, expiresAt) {

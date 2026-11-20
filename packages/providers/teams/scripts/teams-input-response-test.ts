@@ -155,8 +155,8 @@ console.log("admitTeamsInputResponse:");
 {
   const src = readFileSync(fileURLToPath(new URL("../agent/channels/teams.ts", import.meta.url)), "utf8");
   ok(
-    /onInputResponse:[^\n]*admitTeamsInputResponse/.test(src),
-    "🔴 teams.ts's teamsChannel() WIRES onInputResponse to admitTeamsInputResponse — deleting the hook silently restores eve's rejectInput, which drops every answer",
+    /onAnswers:[^\n]*admitTeamsInputResponse/.test(src),
+    "🔴 teams.ts's teamsChannel() WIRES eve 1.0's onAnswers hook to admitTeamsInputResponse — deleting the hook silently restores eve's rejectInput, which drops every answer",
   );
   ok(/onMessage:\s*teamsOnMessage/.test(src), "teams.ts still authors onMessage — the fact that makes eve's omitted-hook default `rejectInput` rather than accept-any");
 }

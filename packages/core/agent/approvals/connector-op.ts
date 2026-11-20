@@ -17,7 +17,7 @@ import { connectorDisplayName } from "../access/credential-grant-copy.js";
 import type { ActionKind } from "./types.js";
 import { approvalPostDeps, requestApproval } from "./flow.js";
 import type { SessionAuth } from "eve/context";
-import { plainValue } from "./plain-text.js";
+import { plainOpWords } from "./plain-text.js";
 
 const CONNECTOR_OP_KIND = "op.connector";
 const CONNECTOR_OP_KIND_MATCHES_OFFER: typeof CONNECTOR_OP_CARD_KIND = CONNECTOR_OP_KIND;
@@ -28,7 +28,10 @@ const CONNECTOR_OP_APPROVED_ACTION = "connector.op_approved";
 interface ConnectorOpArgs {
   readonly org: string;
   readonly scopeKey: string;
+  /** The name the model called (the mounted name). The replay matches it. */
   readonly tool: string;
+  /** The op's whole name when `tool` is a short name. The card and the audit row show it. */
+  readonly op?: string;
   readonly connection: string;
   readonly grain: ConnectorOpCardOffer["grain"];
   readonly opTier?: ConnectorOpCardOffer["opTier"];
@@ -45,10 +48,15 @@ interface ConnectorOpArgs {
 
 export const ONE_CALL_APPROVAL_TTL_HOURS = 24;
 
+/** The op the card names: its whole name, never a short name that hides the cut-off verb. */
+function shownOp(args: ConnectorOpArgs): string {
+  return args.op ?? args.tool;
+}
+
 function summarizeConnectorOp(args: ConnectorOpArgs): string[] {
   const tier = args.grain === "destructive" ? "destructive-tier " : "";
   return [
-    `Run the ${tier}op "${args.tool}" on connection "${args.connection}" — approves this one call, with exactly this input`,
+    `Run the ${tier}op "${shownOp(args)}" on connection "${args.connection}" — approves this one call, with exactly this input`,
     `Input: ${args.inputPreview}`,
   ];
 }
@@ -57,11 +65,14 @@ const REPLAY_TARGET_SEGMENT = /^[A-Za-z0-9_.:-]{1,128}$/u;
 
 function connectorReplayTarget(args: ConnectorOpArgs): { connection: string; tool: string } | undefined {
   if (args.input === undefined || args.input === null || typeof args.input !== "object") return undefined;
-  const prefix = `${args.connection}__`;
-  if (!args.tool.startsWith(prefix)) return undefined;
-  const tool = args.tool.slice(prefix.length);
-  if (!REPLAY_TARGET_SEGMENT.test(args.connection) || !REPLAY_TARGET_SEGMENT.test(tool)) return undefined;
-  return { connection: args.connection, tool };
+  // The replay names the tool the model called. A short name of a long connection starts with the
+  // first characters of the connection, so the split falls back to the name's own first `__`.
+  const own = args.tool.indexOf("__");
+  const prefix = args.tool.startsWith(`${args.connection}__`) ? args.connection : own > 0 && args.connection.startsWith(args.tool.slice(0, own)) ? args.tool.slice(0, own) : undefined;
+  if (prefix === undefined) return undefined;
+  const tool = args.tool.slice(prefix.length + 2);
+  if (!REPLAY_TARGET_SEGMENT.test(prefix) || !REPLAY_TARGET_SEGMENT.test(tool)) return undefined;
+  return { connection: prefix, tool };
 }
 
 const connectorOp: ActionKind<ConnectorOpArgs> = {
@@ -71,7 +82,9 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
   armedCallReplay: (args) => connectorReplayTarget(args),
   argsAfterClose: (args) => connectorArgsWithoutInput(args),
   plainSummary: (args) =>
-    `Run ${plainValue(toolWords(args.tool))} once on ${plainValue(args.connection)}${args.grain === "destructive" ? " — this deletes or overwrites data" : ""}`,
+    // "Run " + op (70) + " once on " + connection (34) + the warning (33) fit in PLAIN_SUMMARY_MAX
+    // (150), so the end cut of the headline never drops the destructive warning.
+    `Run ${plainOpWords(toolWords(shownOp(args)), 70)} once on ${plainOpWords(args.connection, 34)}${args.grain === "destructive" ? " — this deletes or overwrites data" : ""}`,
   consequence: (args) => (args.inputPreview.trim().length > 0 ? `Input: ${plainQuote(args.inputPreview, QUOTE_MAX - 10)}` : undefined),
   consequenceQuotes: true,
   summarize: (args) => summarizeConnectorOp(args),
@@ -81,9 +94,9 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
         ...whereFromScope(args.org, args.scopeKey),
         principalId: args.requestedBy,
         action: CONNECTOR_OP_APPROVED_ACTION,
-        detail: { connection: args.connection, op: args.tool, grain: args.grain, requestedBy: args.requestedBy, decidedBy },
+        detail: { connection: args.connection, op: shownOp(args), grain: args.grain, requestedBy: args.requestedBy, decidedBy },
       });
-      return `${toolWords(args.tool)} runs this one call now`;
+      return `${toolWords(shownOp(args))} runs this one call now`;
     }
     const now = new Date();
     const ttlMs = ONE_CALL_APPROVAL_TTL_HOURS * 60 * 60 * 1000;
@@ -99,9 +112,9 @@ const connectorOp: ActionKind<ConnectorOpArgs> = {
       ...whereFromScope(args.org, args.scopeKey),
       principalId: decidedBy,
       action: CONNECTOR_OP_APPROVED_ACTION,
-      detail: { connection: args.connection, op: args.tool, grain: args.grain, requestedBy: args.requestedBy },
+      detail: { connection: args.connection, op: shownOp(args), grain: args.grain, requestedBy: args.requestedBy },
     });
-    return `${toolWords(args.tool)} may run once with this input`;
+    return `${toolWords(shownOp(args))} may run once with this input`;
   },
 };
 
@@ -124,6 +137,7 @@ export function connectorOpArgsFromOffer(offer: ConnectorOpCardOffer, room: { re
     org: offer.org,
     scopeKey: room.scopeKey,
     tool: offer.tool,
+    ...(offer.op === undefined || offer.op === offer.tool ? {} : { op: offer.op }),
     connection: offer.connection,
     grain: offer.grain,
     ...(offer.opTier === undefined ? {} : { opTier: offer.opTier }),

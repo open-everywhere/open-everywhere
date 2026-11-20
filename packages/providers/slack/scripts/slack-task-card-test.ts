@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import type { TaskCardTask, TaskCardView } from "eve/channels/slack";
+import { fileURLToPath } from "node:url";
+import type { SlackCardMessage, TaskCard } from "eve/channels/slack";
 import {
   confidentialTaskCard,
-  confidentialTaskCardView,
+  confidentialTaskCardMessage,
   GENERIC_SELF_TASK_LABEL,
   genericTaskLabel,
+  sharedWaitingText,
+  slackTaskRowId,
   taskCardConfidentiality,
   taskCardRoomOf,
 } from "../agent/channels/slack-task-card.js";
@@ -23,13 +25,6 @@ function ok(cond: boolean, label: string): void {
 function eq<T>(actual: T, expected: T, label: string): void {
   ok(JSON.stringify(actual) === JSON.stringify(expected), `${label} (got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)})`);
 }
-
-const nodeRequire = createRequire(import.meta.url);
-const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
-const abs = (rel: string): string => pathToFileURL(join(eveRoot, rel)).href;
-const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
-const { composeSlackRenderers } = await import(abs("dist/src/public/channels/slack/renderers.js"));
-const { renderDefaultSlackTaskCard, withTaskCards } = await import(abs("dist/src/public/channels/slack/task-card.js"));
 
 const DM_BRIEF = "summarise Dana's salary complaint from her DM";
 const RESULT = "Dana earns less than the band. More detail follows.";
@@ -50,118 +45,128 @@ console.log("1. room decision:");
   eq(taskCardRoomOf(undefined), "shared", "no facts at all is shared (fail closed)");
 }
 
-console.log("2. view redaction:");
-const task = (over: Partial<TaskCardTask> = {}): TaskCardTask => ({
-  id: "call_1",
-  kind: "agent",
-  name: "researcher",
-  startedAt: "2026-10-03T00:00:00.000Z",
-  status: "working",
-  taskId: "researcher-1",
+console.log("2. rendered-card redaction:");
+const richText = (text: string): Record<string, unknown> => ({
+  elements: [{ elements: [{ text, type: "text" }], type: "rich_text_section" }],
+  type: "rich_text",
+});
+type Call = TaskCard["calls"][number];
+const call = (over: Partial<Record<string, unknown>> = {}): Call =>
+  ({ callId: "call:1", kind: "agent", label: `Researcher: ${DM_BRIEF}`, name: "researcher", startedAt: "2000-01-01T00:00:00.000Z", state: "running", taskId: "task-1", ...over }) as unknown as Call;
+const cardOf = (calls: Call[], state: TaskCard["state"] = "working"): TaskCard => ({ audience: "private", calls, since: 0, state, turnId: "turn_1", view: {} }) as unknown as TaskCard;
+const row = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  status: "complete",
+  task_id: slackTaskRowId("call:1"),
   title: `Researcher: ${DM_BRIEF}`,
+  output: richText(`Done in 5s: ${RESULT}`),
   ...over,
 });
-const viewOf = (tasks: TaskCardTask[], state: TaskCardView["state"] = "working"): TaskCardView => ({ actions: [], state, tasks, turnId: "turn_1" });
+const single = (r: Record<string, unknown>, text = `Finished 1 task: ${String(r.title)}`): SlackCardMessage =>
+  ({ blocks: [{ block_id: "eve_task_card_turn_1", type: "task_card", ...r }], text }) as unknown as SlackCardMessage;
 {
   eq(genericTaskLabel({ kind: "agent", name: "researcher" }), "Researcher", "a named agent's label is its name in words");
   eq(genericTaskLabel({ kind: "agent", name: "agent" }), GENERIC_SELF_TASK_LABEL, "a call to the agent's own copy gets the generic self label");
   eq(genericTaskLabel({ kind: "tool", name: "mcp__linear__createIssue" }), "Create issue", "a tool's label is its last name segment in words, never its start label");
+  eq(slackTaskRowId("call:1/x"), "call_1_x", "the row id follows eve's Slack task id rule");
 
-  const done = task({ settledAt: "2026-10-03T00:00:05.000Z", status: "completed", summary: RESULT });
-  const shared = confidentialTaskCardView(viewOf([done], "finished"), "shared");
-  eq(shared.tasks[0]?.title, "Researcher", "🔴 a shared room's row shows the generic label, not the brief");
-  ok(shared.tasks[0]?.summary === undefined, "🔴 a shared room's completed row shows no result excerpt");
-  const dm = confidentialTaskCardView(viewOf([done], "finished"), "direct-message");
-  eq(dm.tasks[0]?.title, `Researcher: ${DM_BRIEF}`, "a DM row keeps its title (negative control)");
-  ok(dm.tasks[0]?.summary === undefined, "a DM's completed row shows no result excerpt either — it would bypass review-surface.ts");
-  eq(done.title, `Researcher: ${DM_BRIEF}`, "the input view is never changed");
-  const carded = confidentialTaskCardView(viewOf([task({ title: "Researcher: charge card 4539 1488 0343 6467 again" })]), "direct-message");
-  ok(!(carded.tasks[0]?.title ?? "").includes("4539") && (carded.tasks[0]?.title ?? "").includes("[withheld: a card number]"), "🔴 a DM row's title is struck of a card number");
-  eq(confidentialTaskCard(viewOf([task()]), (v) => ({ blocks: [], text: v.tasks[0]?.title ?? "" }), "shared")?.text, "Researcher", "the link hands the redacted view to `next`");
+  const card = cardOf([call()]);
+  const raw = single(row());
+  ok(JSON.stringify(raw).includes("salary") && JSON.stringify(raw).includes("less than the band"), "POSITIVE CONTROL: the eve-shaped card carries the brief and the result excerpt");
 
-  const blocked = task({ blockedOn: { kind: "input", label: `Should I quote ${DM_BRIEF}?` }, status: "blocked" });
-  const sharedBlocked = confidentialTaskCardView(viewOf([blocked], "blocked"), "shared").tasks[0];
-  eq(sharedBlocked?.blockedOn, { kind: "input" }, "🔴 a shared room's blocked row keeps the blocker's kind and loses its label");
-  eq(confidentialTaskCardView(viewOf([blocked], "blocked"), "direct-message").tasks[0]?.blockedOn, blocked.blockedOn, "a DM's blocked row keeps the label (negative control)");
-  const card = renderDefaultSlackTaskCard(confidentialTaskCardView(viewOf([blocked], "blocked"), "shared"));
-  ok(card !== null && !JSON.stringify(card).includes("salary") && JSON.stringify(card).includes("Waiting for a response"), "eve's default card for the shared blocked row says what it waits for, without the prompt");
-}
+  const shared = confidentialTaskCardMessage(raw, card, "shared");
+  const sharedBytes = JSON.stringify(shared);
+  ok(shared !== null && !sharedBytes.includes("salary"), "🔴 a shared room's card carries the brief in NEITHER the blocks NOR the notification text");
+  ok(!sharedBytes.includes("less than the band"), "🔴 a shared room's completed row shows no result excerpt");
+  eq((shared?.blocks[0] as Record<string, unknown> | undefined)?.title, "Researcher", "a shared room's row shows the generic label");
+  eq(shared?.text, "Researcher", "the shared notification text is rebuilt from the redacted rows only");
+  eq((shared?.blocks[0] as Record<string, unknown> | undefined)?.block_id, "eve_task_card_turn_1", "the block id stays, so eve updates the same message");
 
-console.log("3. eve's card writer:");
-interface Posted {
-  readonly method: string;
-  readonly body: Record<string, unknown>;
-}
-async function runTurn(
-  room: { channelId: string; audience: string; attributes: Record<string, string> },
-  opts: { link?: boolean; secondTask?: boolean } = {},
-): Promise<Posted[]> {
-  const posted: Posted[] = [];
-  const links = opts.link === false ? [] : [taskCardConfidentiality];
-  const chain = composeSlackRenderers(links, { events: {}, received: async () => {}, taskCard: renderDefaultSlackTaskCard });
-  const events = withTaskCards(chain.events, chain.taskCard) as Record<string, (data: unknown, channel: unknown, ctx: unknown) => Promise<void>>;
-  const channel = {
-    slack: {
-      request: async (method: string, body: Record<string, unknown>) => {
-        posted.push({ body, method });
-        return { ok: true, ts: "1700159720.000100" };
+  const dm = confidentialTaskCardMessage(raw, card, "direct-message");
+  eq((dm?.blocks[0] as Record<string, unknown> | undefined)?.title, `Researcher: ${DM_BRIEF}`, "a DM row keeps its title (negative control)");
+  ok(!JSON.stringify(dm).includes("less than the band"), "a DM's completed row shows no result excerpt either — it would bypass review-surface.ts");
+  ok(JSON.stringify(raw).includes("less than the band"), "the input message is never changed");
+
+  const carded = confidentialTaskCardMessage(single(row({ title: "Researcher: charge card 4539 1488 0343 6467 again" })), card, "direct-message");
+  const cardedBytes = JSON.stringify(carded);
+  ok(!cardedBytes.includes("4539") && cardedBytes.includes("[withheld: a card number]"), "🔴 a DM row's title and notification text are struck of a card number");
+
+  const blockedRow = row({ details: richText(`Waiting for a response: Should I quote ${DM_BRIEF}?`), output: undefined, status: "in_progress" });
+  const sharedBlocked = confidentialTaskCardMessage(single(blockedRow), card, "shared");
+  eq(sharedBlocked?.blocks[0] && JSON.stringify((sharedBlocked.blocks[0] as Record<string, unknown>).details), JSON.stringify(richText("Waiting for a response")), "🔴 a shared room's blocked row keeps the wait kind and loses the prompt");
+  ok(JSON.stringify(confidentialTaskCardMessage(single(blockedRow), card, "direct-message")).includes("salary"), "a DM's blocked row keeps the prompt (negative control)");
+  eq(sharedWaitingText(richText("Waiting for approval: send the salary sheet")), "Waiting for approval", "the approval wait kind survives");
+  eq(sharedWaitingText(richText("Waiting for sign-in: Payroll")), "Waiting for sign-in", "the sign-in wait kind survives");
+  eq(sharedWaitingText(richText("Something new: the salary sheet")), "Waiting for a response", "an unknown blocker line falls back to the generic wait text (fail closed)");
+
+  const plan = {
+    blocks: [
+      {
+        block_id: "eve_task_card_turn_1",
+        title: `Waiting on ${DM_BRIEF} · 1 of 3 tasks done`,
+        type: "plan",
+        tasks: [
+          { status: "complete", task_id: "earlier", title: "2 tasks finished earlier" },
+          row(),
+          row({ task_id: "unknown_row", title: `Unknown: ${DM_BRIEF}` }),
+        ],
       },
-    },
-    state: { audience: room.audience, channelId: room.channelId, taskCards: {}, threadTs: "1700159720.000001" },
-  };
-  const ctx = { session: { auth: { current: { attributes: room.attributes, principalId: "U1" }, initiator: null }, id: "s1" } };
-  await contextStorage.run(new ContextContainer(), async () => {
-    const action = { callId: "call_1", input: { message: DM_BRIEF }, kind: "subagent-call", subagentName: "researcher" };
-    await events["actions.requested"]!({ actions: [action], presentation: { call_1: { label: `researcher: ${DM_BRIEF}` } }, turnId: "turn_1" }, channel, ctx);
-    await events["task.started"]!({ callId: "call_1", kind: "agent", name: "researcher", taskId: "researcher-1", turnId: "turn_1" }, channel, ctx);
-    await events["task.settled"]!({ callId: "call_1", output: RESULT, status: "completed", taskId: "researcher-1", turnId: "turn_1" }, channel, ctx);
-    if (opts.secondTask === true) {
-      const second = { callId: "call_2", input: { message: "again" }, kind: "subagent-call", subagentName: "researcher" };
-      await events["actions.requested"]!({ actions: [second], presentation: { call_2: { label: `researcher: again, ${DM_BRIEF}` } }, turnId: "turn_1" }, channel, ctx);
-      await events["task.started"]!({ callId: "call_2", kind: "agent", name: "researcher", taskId: "researcher-1", turnId: "turn_1" }, channel, ctx);
-      await events["task.settled"]!({ callId: "call_2", output: RESULT, status: "completed", taskId: "researcher-1", turnId: "turn_1" }, channel, ctx);
-    }
-    await events["turn.completed"]!({ turnId: "turn_1" }, channel, ctx);
-  });
-  return posted;
-}
-{
-  const pub = await runTurn({ attributes: { channel_id: "C1", channel_type: "channel" }, audience: "public", channelId: "C1" });
-  ok(pub.length > 0, "eve wrote a card in the public channel (the card is on: native first)");
-  const pubBytes = JSON.stringify(pub);
-  ok(!pubBytes.includes("salary"), "🔴 the DM brief reaches NEITHER the blocks NOR the notification text in a public channel");
-  ok(!pubBytes.includes("less than the band"), "🔴 the worker's result excerpt never reaches the public channel");
-  ok(pub.every((p) => typeof p.body.text === "string" && !String(p.body.text).includes("salary")), "…the notification `text` of every write is redacted too");
-  ok(pubBytes.includes("Researcher"), "the public card still names the task by its agent");
+      { type: "section", text: { text: DM_BRIEF, type: "mrkdwn" } },
+    ],
+    text: `1 of 3 tasks done: ${DM_BRIEF}`,
+  } as unknown as SlackCardMessage;
+  const planCalls = [call(), ...Array.from({ length: 3 }, (_, i) => call({ callId: `call:e${String(i)}`, taskId: `task-e${String(i)}` })), call({ callId: "call:x", taskId: undefined })];
+  const planCard = cardOf(planCalls);
+  const sharedPlan = confidentialTaskCardMessage(plan, planCard, "shared");
+  ok(sharedPlan !== null && !JSON.stringify(sharedPlan).includes("salary"), "🔴 no row, block or text of a shared plan carries the brief");
+  eq(sharedPlan?.blocks.length, 1, "🔴 a shared room drops a block that is not a task row or plan (fail closed)");
+  eq(sharedPlan?.text, "Working on 4 tasks: 2 tasks finished earlier, Researcher, Delegated task", "🔴 a shared plan's title is built from counts, never eve's text; the folded row keeps its count and a row with no call gets the generic label");
+  ok(JSON.stringify(confidentialTaskCardMessage(plan, card, "direct-message")).includes("Waiting on summarise"), "a DM keeps eve's plan title (negative control)");
+  eq(confidentialTaskCardMessage(plan, cardOf(planCalls, "finished"), "shared")?.text.split(":")[0], "Finished 4 tasks", "a finished shared plan counts the card's task calls, not the rendered rows (eve folds rows past 50)");
+  const blockedPlan = { blocks: [{ title: `Waiting for approval: ${DM_BRIEF}`, type: "plan", tasks: [row({ details: richText(`Waiting for approval: send ${DM_BRIEF}`) }), row({ task_id: "x" })] }], text: "" } as unknown as SlackCardMessage;
+  eq(confidentialTaskCardMessage(blockedPlan, cardOf([call()], "blocked"), "shared")?.text.split(":")[0], "Waiting for approval", "a blocked shared plan names only the wait kind");
+  ok(!JSON.stringify(confidentialTaskCardMessage(blockedPlan, cardOf([call()], "blocked"), "shared")).includes("salary"), "🔴 a blocked shared plan carries no prompt, even when eve's title does");
+  eq(((confidentialTaskCardMessage(single(row()), cardOf([call({ name: `mcp__x__${"a".repeat(120)}` })]), "shared")?.blocks[0] ?? {}) as Record<string, unknown>).title?.toString().length, 80, "a shared row title stays within 80 characters, as eve's own titles do");
+  const leakyEarlier = single(row({ task_id: "earlier", title: `2 tasks finished earlier: ${DM_BRIEF}` }));
+  eq((confidentialTaskCardMessage(leakyEarlier, card, "shared")?.blocks[0] as Record<string, unknown> | undefined)?.title, "Earlier tasks finished", "🔴 a folded row title that is not plain count text is replaced (fail closed)");
+  eq(confidentialTaskCardMessage(plan, card, "direct-message")?.blocks.length, 2, "a DM keeps the other block (negative control)");
+  const drift = {
+    blocks: [
+      { block_id: "eve_task_card_turn_1", title: { text: DM_BRIEF }, type: "plan", hint: DM_BRIEF, tasks: [row({ sources: [DM_BRIEF] })] },
+    ],
+    text: DM_BRIEF,
+  } as unknown as SlackCardMessage;
+  const sharedDrift = confidentialTaskCardMessage(drift, card, "shared");
+  ok(sharedDrift !== null && !JSON.stringify(sharedDrift).includes("salary"), "🔴 a shared room keeps only the known row and plan keys — a field eve adds later never passes through");
+  eq((sharedDrift?.blocks[0] as Record<string, unknown> | undefined)?.title, "Working on 1 task", "🔴 a plan title that is not text never passes through to a shared room");
+  const dmDrift = confidentialTaskCardMessage(drift, card, "direct-message");
+  ok(JSON.stringify(dmDrift).includes("sources") && !("title" in ((dmDrift?.blocks[0] ?? {}) as Record<string, unknown>)), "a DM keeps the unknown row key (negative control) and also drops a plan title that is not text");
+  eq(confidentialTaskCardMessage(null, card, "shared"), null, "no card from eve stays no card");
+  eq(confidentialTaskCardMessage({ blocks: [{ type: "section" }], text: DM_BRIEF } as unknown as SlackCardMessage, card, "shared"), null, "a shared card with no task block posts nothing");
 
-  const raw = JSON.stringify(await runTurn({ attributes: { channel_id: "C1", channel_type: "channel" }, audience: "public", channelId: "C1" }, { link: false }));
-  ok(raw.includes("salary") && raw.includes("less than the band"), "POSITIVE CONTROL: eve's card without the link posts the brief and the excerpt into the public channel");
-
-  const two = await runTurn({ attributes: { channel_id: "C1", channel_type: "channel" }, audience: "public", channelId: "C1" }, { secondTask: true });
-  ok(two.length >= 3, `a two-task turn writes more than one card (got ${two.length} writes)`);
-  ok(two.filter((p) => p.method === "chat.postMessage").length >= 2, "…the first card and a new open card (the closed card is a chat.update)");
-  ok(!JSON.stringify(two).includes("salary") && !JSON.stringify(two).includes("less than the band"), "🔴 no write of the two-task turn, the close-out included, carries the brief or the excerpt");
-
-  const twoDm = await runTurn({ attributes: { channel_id: "D1", channel_type: "im" }, audience: "private", channelId: "D1" }, { secondTask: true });
-  const secondPost = twoDm.findIndex((p, i) => p.method === "chat.postMessage" && i > 0);
-  const closed = twoDm.slice(0, secondPost).reverse().find((p) => p.method === "chat.update");
-  ok(secondPost > 0 && closed !== undefined, "the DM two-task turn closes the first card with a chat.update before the new card's chat.postMessage");
-  ok(JSON.stringify(closed).includes("salary"), "🔴 the close-out write, made BEFORE task.started's handler, reads the DM room recorded earlier and keeps the brief");
-
-  const dm = await runTurn({ attributes: { channel_id: "D1", channel_type: "im" }, audience: "private", channelId: "D1" });
-  ok(dm.length > 0, "eve wrote a card in the DM");
-  ok(JSON.stringify(dm).includes("salary"), "NEGATIVE CONTROL: the same brief in the DM shows the brief");
-  ok(!JSON.stringify(dm).includes("less than the band"), "…but no result excerpt, in the DM either");
+  let seen: TaskCard | undefined;
+  const linked = confidentialTaskCard(card, (c) => ((seen = c), raw), "shared");
+  ok(seen === card && linked?.text === "Researcher", "the link hands the card to `next` and redacts what `next` renders");
 
   let threw = false;
   try {
-    const chain = composeSlackRenderers([taskCardConfidentiality], { events: {}, received: async () => {}, taskCard: renderDefaultSlackTaskCard });
-    const card = chain.taskCard(viewOf([task()]));
-    ok(card !== null && !JSON.stringify(card).includes("salary"), "🔴 outside an eve context the card shows the generic label (fail closed)");
+    const outside = taskCardConfidentiality.taskCard!(card, () => raw);
+    ok(outside !== null && !JSON.stringify(outside).includes("salary"), "🔴 outside an eve context the card shows the generic label (fail closed)");
   } catch {
     threw = true;
   }
   ok(!threw, "…and does not throw");
+}
+
+console.log("3. eve's card shape (a text read of eve's shipped renderer, never an import):");
+{
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const renderer = readFileSync(join(eveRoot, "dist", "src", "public", "channels", "slack", "task-card.js"), "utf8");
+  ok(
+    /function slackTaskId\((\w)\)\{return \1\.replace\(\/\[\^a-zA-Z0-9_-\]\/g,`_`\)\.slice\(-200\)\}/.test(renderer),
+    "eve's row id rule is the one slackTaskRowId copies — a change would label every shared row with the generic self label",
+  );
+  ok(/\{status:slackStatus\([^)]*\),task_id:slackTaskId\(\w\.callId\),title:/.test(renderer), "eve's row carries status, task_id and title, and keys the row on the call id the calls map reads");
+  ok(/type:`task_card`/.test(renderer) && /type:`plan`/.test(renderer), "eve renders the task_card and plan block types the link redacts");
 }
 
 console.log("4. wiring:");

@@ -8,6 +8,9 @@ import { toolUsageNames } from "../spend/tool-usage.js";
 import { askedText, questionEntry, questionOf, questionPruneBefore } from "../personal-watch/questions.js";
 import type { QuestionLedgerEntry } from "../operational/store.js";
 import { captureEligible } from "./requester-messages.js";
+import { call } from "eve/events";
+import { optional } from "./control-refusal.js";
+import { deliveredText } from "./event-reads.js";
 
 const HELD = new Map<string, QuestionLedgerEntry>();
 const HELD_MAX = 500;
@@ -64,25 +67,28 @@ export async function settleQuestion(sessionId: unknown, turnId: unknown, answer
   }
 }
 
-function onMessage(event: HookEvent<"message.received">, ctx: HookContext): void {
-  try {
-    if (!captureEligible(ctx)) return;
-    const entry = questionFromDelivery(event.data.message, bindFrom(ctx as unknown as BindableContext), new Date().toISOString());
-    if (entry) holdQuestion(ctx.session?.id, event.data.turnId, entry);
-  } catch {
-  }
-}
-
-function turnOf(event: unknown): unknown {
-  return (event as { data?: { turnId?: unknown } } | undefined)?.data?.turnId;
+function onMessage(event: HookEvent<"delivery.consumed">, ctx: HookContext): void {
+  if (!captureEligible(ctx)) return;
+  const entry = questionFromDelivery(deliveredText(event.data), bindFrom(ctx as unknown as BindableContext), new Date().toISOString());
+  if (entry) holdQuestion(ctx.session?.id, event.data.turnId, entry);
 }
 
 export default defineHook({
   events: {
-    "message.received": (event, ctx) => onMessage(event, ctx),
-    "action.result": async (event, ctx) => noteToolResult(ctx.session?.id, turnOf(event), (event as { data?: { result?: { kind?: string; toolName?: string } } } | undefined)?.data?.result),
-    "turn.completed": async (event, ctx) => void (await settleQuestion(ctx.session?.id, turnOf(event), true)),
-    "turn.failed": async (event, ctx) => void (await settleQuestion(ctx.session?.id, turnOf(event), false)),
-    "turn.cancelled": async (event, ctx) => void (await settleQuestion(ctx.session?.id, turnOf(event), false)),
+    "delivery.consumed": optional("question-ledger", (event, ctx) => onMessage(event, ctx)),
+    "call.settled": optional("question-ledger", (event, ctx) => {
+      const observed = call(ctx.view, event.data.callId);
+      if (observed === undefined || observed.kind !== "tool") return;
+      noteToolResult(ctx.session?.id, observed.turnId ?? event.scope?.turnId, { kind: "tool-result", toolName: observed.name });
+    }),
+    "turn.settled": optional("question-ledger", async (event, ctx) => {
+      switch (event.data.outcome) {
+        case "completed":
+          await settleQuestion(ctx.session?.id, event.data.turnId, true);
+          return;
+        default:
+          await settleQuestion(ctx.session?.id, event.data.turnId, false);
+      }
+    }),
   },
 });

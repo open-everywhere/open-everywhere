@@ -54,7 +54,10 @@ function cloneJsonPinValue(value: unknown): unknown {
   const proto: unknown = typeof value === "object" ? Object.getPrototypeOf(value) : undefined;
   if (isJsonRecord(value) && (proto === Object.prototype || proto === null)) {
     const copy: Record<string, unknown> = {};
-    for (const key of Object.keys(value)) copy[key] = cloneJsonPinValue(value[key]);
+    // An own-property write, so a key named `__proto__` stays a key the fence compares and never sets the prototype.
+    for (const key of Object.keys(value)) {
+      Object.defineProperty(copy, key, { configurable: true, enumerable: true, value: cloneJsonPinValue(value[key]), writable: true });
+    }
     return copy;
   }
   throw new McpCallFenceError(

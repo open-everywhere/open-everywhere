@@ -2,7 +2,7 @@ import { ingestUntrusted } from "../access/untrusted.js";
 import { renderWake, type NormalizedWake } from "../channels/normalized-wake.js";
 import { escapeXml } from "../channels/wake-envelope.js";
 import type { UnifiedWakeOrigin } from "../channels/unified-window.js";
-import { CONNECTOR_REPLAY_INPUT_KEY } from "./connector-op-offer.js";
+import { CONNECTOR_REPLAY_CALL_TOOL, connectorReplayCall } from "./connector-op-offer.js";
 import { CARD_OUTCOME_RULE } from "../instructions/seat-prompt.js";
 
 const CARD_RULE_LINE = CARD_OUTCOME_RULE.replace(/\s+/g, " ");
@@ -60,7 +60,7 @@ function outcomeClause(outcome: ApprovalOutcome, clickerId?: string): string {
 }
 
 function cancelWorkerSentence(forwardsWork: boolean | undefined): string {
-  const verb = forwardsWork === true ? "cancel_work" : "task_cancel";
+  const verb = forwardsWork === true ? "cancel_work" : "eve__task_cancel";
   return `If a worker of yours is still running toward this act, cancel it (\`${verb}\`) — the decision is final for that proposal.`;
 }
 
@@ -94,14 +94,11 @@ function armedCallClosing(forwardsWork: boolean | undefined, replay: ApprovalDec
 }
 
 function replayClosing(forwardsWork: boolean | undefined, replay: { readonly connection: string; readonly tool: string }, pendingId: string): string {
-  const call =
-    `call \`connection_execute\` with \`connection\` set to \`${replay.connection}\`, \`tool\` set to ` +
-    `\`${replay.tool}\`, and \`input\` set to an object whose ONLY key is \`${CONNECTOR_REPLAY_INPUT_KEY}\`, ` +
-    `with the card id \`${pendingId}\` as its value`;
+  const call = connectorReplayCall(replay.connection, replay.tool, pendingId);
   const who =
     forwardsWork === true
       ? `Send a job with \`work\` that tells it to ${call}. Send it to the job that asked, with its \`taskId\`, or as a new job if that job has ended.`
-      : `If you hold \`connection_execute\`, make that call yourself: ${call}. Otherwise send the call to a worker: the one that asked, by its \`taskId\`, or a new one.`;
+      : `If you hold \`${CONNECTOR_REPLAY_CALL_TOOL}\`, make that call yourself: ${call}. Otherwise send the call to a worker: the one that asked, by its \`taskId\`, or a new one.`;
   return (
     `THE APPROVED ACT HAS NOT RUN. The approval allows ONE replay of the exact call stored on card ` +
     `${pendingId}, and only that replay runs it. The approval's own line is in the fenced block marked ` +

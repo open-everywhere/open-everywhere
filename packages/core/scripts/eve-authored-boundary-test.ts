@@ -88,9 +88,10 @@ const built = await evaluate("@fx/built");
 ok(
   built?.external === true && built.id === "@fx/built",
   `built: the evaluation path keeps a symlinked workspace package with a JavaScript entry EXTERNAL, by its bare ` +
-    `specifier (got ${JSON.stringify(built)}). An inlined result means part 10 is absent from ${CARRIER}: every ` +
-    `authored file's bundle then re-evaluates the whole @open-everywhere graph, and a cold \`eve build\` pays it ` +
-    `once per authored file (31 evaluations on eve 0.54.3, OPE-2276)`,
+    `specifier (got ${JSON.stringify(built)}). An inlined result means part 10 is absent from ${CARRIER}. On eve ` +
+    `1.0.0-rc.18 the authored graph then inlines the @open-everywhere packages, and \`eve build\` exits 13 (Node's ` +
+    `unsettled top-level await) before it writes a build (OPE-2705). On eve 0.54.3 the same absence cost 31 graph ` +
+    `evaluations per cold build (OPE-2276)`,
 );
 
 const ts = await evaluate("@fx/ts");

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { MemoryPlan } from "../agent/memory/resolve.js";
 import { principalKey } from "../agent/identity/principal-key.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { evaluateDynamic } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -438,11 +439,10 @@ const staleBag = delivered[1]!.attributes;
   const chanLive = liveCtx({ channel_id: "C_ENG", channel_type: "channel", trust_checked: "true" });
 
   type Entry = { execute: (i: unknown, c: unknown) => unknown };
-  type DynHandler = (event: unknown, ctx: unknown) => Entry | null;
   const loadFor = async (name: string, ctx: unknown): Promise<Entry> => {
-    const mod = (await import(`../agent/tools/${name}.js`)).default as Entry & { events?: Record<string, DynHandler> };
+    const mod = (await import(`../agent/tools/${name}.js`)).default as Entry;
     if (typeof mod.execute === "function") return mod;
-    const entry = mod.events?.["session.started"]?.({ type: "session.started" }, ctx);
+    const entry = (await evaluateDynamic(mod, ctx)) as Entry | null;
     if (!entry) throw new Error(`fixture: ${name}'s dynamic resolver hid the tool on this context — the leg would pass for the wrong reason`);
     return entry;
   };

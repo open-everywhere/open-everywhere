@@ -643,14 +643,14 @@ export const SETTINGS = {
       shipped: 30_000_000,
       validate: positiveNumber,
       summary:
-        "eve's `limits.maxInputTokensPerSession`, set BELOW the hosted 40M hard kill so the graceful park/fail fires first. KEEP IT UNDER 40M — above that the hosted wall wins and the session dies ungracefully instead of parking. ONE SHARED BUDGET: every delegated worker's input counts toward its seat's total, and a worker starts with only the seat's remaining share. Read at BOOT (it is a `defineAgent` argument).",
+        "The budget behind eve's `limits.sessionUsage`. The agent passes `sessionUsageLimit(budget)` from `@open-everywhere/core/agent/model/session-usage.js`, which trips when the session's input since the last approved continuation reaches this many tokens. CACHE READS DO NOT COUNT; cache writes do. A `decide()` call counts, and a delegated worker's spend counts toward its seat once the worker replies. A worker session applies the same limit to its own usage. It REPLACES eve's own default limit (40M input tokens per window, cache reads excluded), so the graceful park/fail fires at this value. A hosted wall that counts cache reads is not ordered by this budget: a long cached session can pass 40M gross input below it. Read at BOOT (it is a `defineAgent` argument).",
     } satisfies SettingSpec<number>,
     compactionThresholdPercent: {
       path: "agent.compactionThresholdPercent",
       shipped: 0.5,
       validate: (v) => (Number.isFinite(v) && v > 0 && v < 1 ? undefined : "must be a fraction strictly between 0 and 1"),
       summary:
-        "eve's `compaction.thresholdPercent` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. A FRACTION IS THE ONLY THING AUTHORED: the absolute token count is this value times the active model stack's primary context window, so pointing `models.stack` at a smaller-window stack compacts proportionally lower with no edit here. `/oe status` prints the count this deploy resolved. Per-type thresholds are not reachable on the pinned eve. Read at BOOT.",
+        "eve's `compaction.threshold` — the fraction of the model context window at which compaction fires. COMPACTION OWNS SIZE for every window type (rotation is context-motivated and time-triggered), so this is the in-generation size lever. A FRACTION IS THE ONLY THING AUTHORED: the absolute token count is this value times the active model stack's primary context window, so pointing `models.stack` at a smaller-window stack compacts proportionally lower with no edit here. `/oe status` prints the count this deploy resolved. Per-type thresholds are not reachable on the pinned eve. Read at BOOT.",
       format: (v) => `${v} (${Math.round(v * 100)}% of the window)`,
     } satisfies SettingSpec<number>,
   },

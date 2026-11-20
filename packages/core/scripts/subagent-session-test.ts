@@ -109,13 +109,14 @@ function withMode<T>(mode: string, fn: () => T): T {
   eq(turnKind(ctx, "cse_x"), "unclassified", "🔴 …and the SAME turn with nothing to resolve its mode tags 'unclassified' instead — a default may not reach the report mask as a room");
 }
 
-const FRAMEWORK = ["ask_question", "bash", "glob", "grep", "load_skill", "read_file", "todo", "web_fetch", "web_search", "write_file"];
+const FRAMEWORK = ["ask_question", "bash", "glob", "grep", "eve__skill", "read_file", "todo", "web_fetch", "web_search", "write_file"];
+const GOOD_AGENT_SOURCE = "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\", model: root.model });";
 const DISABLED = "import { disableTool } from \"eve/tools\";\nexport default disableTool();\n";
 
 function goodSubagent(overrides: Partial<DeclaredSubagentSource> = {}): DeclaredSubagentSource {
   return {
     name: "fresh_eyes_review",
-    agentSource: "export default defineAgent({ description: \"x\", model: m() });",
+    agentSource: GOOD_AGENT_SOURCE,
     hasInstructions: true,
     toolFiles: new Map(FRAMEWORK.map((t) => [t, DISABLED])),
     hookFiles: new Set(["spend"]),
@@ -136,6 +137,44 @@ function expectProblem(subject: DeclaredSubagentSource, needle: string, label: s
   eq(checkDeclaredSubagents([goodSubagent()], FRAMEWORK, []), [], "a conforming subagent package passes clean");
   eq(checkDeclaredSubagents([], FRAMEWORK, []), [], "no subagents at all is legal (a fork may declare none)");
   eq(listDeclaredSubagents([goodSubagent({ name: "b_b" }), goodSubagent({ name: "a_a" })]), ["a_a", "b_b"], "listDeclaredSubagents returns the names sorted");
+
+  const STATIC_MODEL = "import { PRIMARY_MODEL } from \"../../model/models.js\";\nexport default defineAgent({ description: \"x\", model: PRIMARY_MODEL });";
+  expectProblem(goodSubagent({ agentSource: STATIC_MODEL }), "does not import the root agent", "a subagent that names a static model id is caught: it would skip the primary model resolver");
+  expectProblem(
+    goodSubagent({ agentSource: "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\", model: \"vendor/model-a\" });" }),
+    "sets `model` to `\"vendor/model-a\"`, not `root.model`",
+    "a subagent that imports the root but still names a literal model id is caught",
+  );
+  expectProblem(
+    goodSubagent({ agentSource: "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\" });" }),
+    "sets `model` to nothing",
+    "a subagent with no `model` field is caught: eve would not run the primary model resolver for it",
+  );
+  expectProblem(
+    goodSubagent({ agentSource: "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\", model: root.model, \"model\": \"vendor/x\" });" }),
+    "sets `model` to `root.model`, `\"vendor/x\"`",
+    "a quoted duplicate `model` key is caught: the last key wins, so the subagent would call the static id",
+  );
+  expectProblem(
+    goodSubagent({ agentSource: "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\", model: root.model, [\"model\"]: \"vendor/x\" });" }),
+    "sets `model` to `root.model`, `\"vendor/x\"`",
+    "a computed `[\"model\"]` key beside `model: root.model` is caught",
+  );
+  expectProblem(
+    goodSubagent({ agentSource: "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\", model: root.model, [`model`]: \"vendor/x\" });" }),
+    "sets `model` to `root.model`, `\"vendor/x\"`",
+    "a computed template-literal `model` key beside `model: root.model` is caught",
+  );
+  expectProblem(
+    goodSubagent({ agentSource: "import root from \"../../agent.js\";\nexport default defineAgent({ description: \"x\", 'model': 'vendor/x' });" }),
+    "not `root.model`",
+    "a single-quoted `model` key with a static id is caught",
+  );
+  eq(
+    checkDeclaredSubagents([goodSubagent({ agentSource: "import parent from \"../../agent.ts\";\nexport default defineAgent({ description: \"x\", model: parent.model });" })], FRAMEWORK, []),
+    [],
+    "the root agent's model under another import name passes",
+  );
 
   expectProblem(
     goodSubagent({ toolFiles: new Map(FRAMEWORK.filter((t) => t !== "bash").map((t) => [t, DISABLED])) }),

@@ -38,6 +38,7 @@ import { assertNotionWorkPageAllowed, notionWorkScope } from "@open-everywhere/p
 import { notionReadAdapter } from "@open-everywhere/provider-notion/agent/channels/notion-read.js";
 import { notionWorkSearchAdapter } from "@open-everywhere/provider-notion/agent/channels/notion-work-search.js";
 import notionSearch, { notionSearchEntry } from "@open-everywhere/provider-notion/agent/tools/notion_search.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 import { readNotionPageEntry } from "@open-everywhere/provider-notion/agent/tools/read_notion_page.js";
 import { readNotionCommentsEntry } from "@open-everywhere/provider-notion/agent/tools/read_notion_comments.js";
 
@@ -187,10 +188,8 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
 }
 
 {
-  const resolve = (notionSearch as unknown as { events?: Record<string, ((e: unknown, c: BindableContext) => unknown) | undefined> }).events?.[
-    "session.started"
-  ];
-  ok(typeof resolve === "function", "notion_search exposes a session.started resolver");
+  const resolve = _dynamicResolverForTest(notionSearch) as (e: unknown, c: BindableContext) => unknown;
+  ok(typeof resolve === "function", "notion_search exposes its eve 1.x dynamic resolver (the 0.x session.started resolver)");
   if (typeof resolve !== "function") process.exit(1);
 
   const armed = await resolve({}, slackCtx("C_DEV"));
@@ -296,9 +295,7 @@ const notionCtx = (page: string, ws = WS): BindableContext =>
 }
 
 {
-  const resolve = (notionSearch as unknown as { events?: Record<string, ((e: unknown, c: BindableContext) => unknown) | undefined> }).events?.[
-    "session.started"
-  ]!;
+  const resolve = _dynamicResolverForTest(notionSearch) as (e: unknown, c: BindableContext) => unknown;
 
   const inheritedAttrs = (channel: string) => ({
     oe_platform: "slack",

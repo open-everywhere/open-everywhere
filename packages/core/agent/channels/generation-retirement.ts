@@ -3,7 +3,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { OperationalStore } from "../operational/store.js";
 import { isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { bareTokenFromEveContext } from "./window-key.js";
+import { bareTokenFromEveContext, UNIFIED_SEND_PREFIX } from "./window-key.js";
 import type { AuditDetail } from "../audit/scrubbed-text.js";
 
 export const GENERATION_RETIRED_AUDIT_ACTION = "session.generation_retired";
@@ -167,10 +167,16 @@ export function retirementVerdict(input: {
 }
 
 export interface RetirementSource {
-  reset(options?: { readonly reason?: string }): Promise<{ readonly status?: string } | undefined>;
+  end(options?: { readonly reason?: string }): Promise<unknown>;
 }
 
-export const RESET_STATUS_RETIRED = "reset";
+/** The `code` of eve's `SessionNotActiveError`, which `end()` throws when no session owns the address. */
+export const END_NOT_ACTIVE_CODE = "session_not_active";
+
+function endNotActiveCode(err: unknown): string | undefined {
+  const code = typeof err === "object" && err !== null ? (err as { readonly code?: unknown }).code : undefined;
+  return code === END_NOT_ACTIVE_CODE ? code : undefined;
+}
 
 export type RetirementFrom = (address: string) => RetirementSource;
 
@@ -180,12 +186,9 @@ export interface RetirementDeps {
   readonly confirmTimeoutMs?: number;
 }
 
-async function withConfirmTimeout(
-  reset: Promise<{ readonly status?: string } | undefined>,
-  ms: number,
-): Promise<{ confirmed: boolean; status?: string }> {
+async function withConfirmTimeout(end: Promise<unknown>, ms: number): Promise<{ confirmed: boolean }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const confirmed = reset.then((r) => ({ confirmed: true, ...(r?.status !== undefined ? { status: r.status } : {}) }));
+  const confirmed = end.then(() => ({ confirmed: true }));
   try {
     return await Promise.race([
       confirmed,
@@ -197,8 +200,6 @@ async function withConfirmTimeout(
     if (timer !== undefined) clearTimeout(timer);
   }
 }
-
-const UNIFIED_TOKEN_PREFIX = "unified:";
 
 const RETIREMENT_CONFIRM_TIMEOUT_MS = 5_000;
 
@@ -223,7 +224,7 @@ async function turnState(
   token: string,
 ): Promise<"live" | "none" | "unreadable"> {
   try {
-    for (const key of [token, `${UNIFIED_TOKEN_PREFIX}${token}`]) {
+    for (const key of [token, `${UNIFIED_SEND_PREFIX}${token}`]) {
       if (await store.getTurnAnchorByWindow(org, key)) return "live";
     }
     return "none";
@@ -253,18 +254,21 @@ export async function drainGenerationRetirements(
       continue;
     }
     try {
-      const outcome = await withConfirmTimeout(from(p.token).reset({ reason: GENERATION_RETIREMENT_REASON }), Math.max(0, deadline - Date.now()));
-      if (outcome.confirmed === false) {
-        await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "reset-unconfirmed" });
-      } else if (outcome.status === RESET_STATUS_RETIRED) {
+      const outcome = await withConfirmTimeout(from(p.token).end({ reason: GENERATION_RETIREMENT_REASON }), Math.max(0, deadline - Date.now()));
+      if (outcome.confirmed) {
         await auditRetirement(p, deps, GENERATION_RETIRED_AUDIT_ACTION, {});
       } else {
-        await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "no-active-session", status: outcome.status ?? "" });
+        await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "end-unconfirmed" });
       }
     } catch (err) {
+      const notActive = endNotActiveCode(err);
+      if (notActive !== undefined) {
+        await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "no-active-session", status: notActive });
+        continue;
+      }
       const error = auditErrorDetail(err).error;
-      console.warn(`[open-everywhere:generation-retirement] reset refused for ${p.token}: ${error} — the generation's workers stay parked`);
-      await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "reset-failed", error });
+      console.warn(`[open-everywhere:generation-retirement] end refused for ${p.token}: ${error} — the generation's workers stay parked`);
+      await auditRetirement(p, deps, GENERATION_RETIRE_SKIPPED_AUDIT_ACTION, { skipped: "end-failed", error });
     }
   }
 }

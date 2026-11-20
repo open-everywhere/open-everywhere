@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterAll, expect, test } from "vitest";
-import { auditCursor, bootAgent, installTeamsJwksStub, rowsSinceCursor, signTeamsJwt, teamsActivityPost, waitFor } from "../harness";
+import { auditCursor, bootAgent, installTeamsJwksStub, rowsSinceCursor, signTeamsJwt, TEAMS_FIXTURE_SERVICE_URL, teamsActivityPost, waitFor } from "../harness";
 
 afterAll(async () => {
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
@@ -14,7 +14,7 @@ function dmActivity(input: { readonly tenantId: string; readonly authorId: strin
     type: "message",
     channelId: "msteams",
     id: `it-teams-act-${randomBytes(4).toString("hex")}`,
-    serviceUrl: "https://smba.trafficmanager.net/amer/",
+    serviceUrl: TEAMS_FIXTURE_SERVICE_URL,
     from: { id: input.authorId, name: "IT Fixture User" },
     recipient: { id: "28:it-teams-bot", name: "OE Bot" },
     conversation: { id: input.conversationId, conversationType: "personal", tenantId: input.tenantId },
@@ -117,4 +117,44 @@ test("a WRONG-AUDIENCE Teams Activity JWT (correctly signed, wrong `aud`) is ref
   } finally {
     jwks.uninstall();
   }
+});
+
+async function expectRefusedWithNoRow(label: string, bearer: (activity: Record<string, unknown>) => string): Promise<void> {
+  const nonce = randomBytes(6).toString("hex");
+  const tenantId = `it-teams-tenant-${nonce}`;
+  const authorId = `it-teams-${label}-${nonce}`;
+  const jwks = await armSeams(tenantId, `it-teams-internal-${nonce}`);
+  try {
+    const cursor = await auditCursor();
+    const activity = dmActivity({ tenantId, authorId, conversationId: `it-teams-conv-${nonce}` });
+    const res = await teamsActivityPost({ activity, bearer: bearer(activity) });
+    expect(res.status).toBe(401);
+
+    await new Promise((r) => setTimeout(r, 500));
+    const rows = await rowsSinceCursor(cursor, ["teams.external_policy_suppressed"]);
+    expect(rows.find((r) => r.principalId === authorId)).toBeUndefined();
+  } finally {
+    jwks.uninstall();
+  }
+}
+
+test("a Teams Activity JWT with NO `serviceurl` claim (correctly signed otherwise) is refused (401) and writes NO row", async () => {
+  await expectRefusedWithNoRow("noserviceurl", () => signTeamsJwt({ serviceUrl: null }));
+});
+
+test("a Teams Activity whose `serviceUrl` differs from the token's `serviceurl` claim is refused (401) and writes NO row", async () => {
+  await expectRefusedWithNoRow("otherserviceurl", (activity) => {
+    expect(activity.serviceUrl).toBe(TEAMS_FIXTURE_SERVICE_URL);
+    return signTeamsJwt({ serviceUrl: "https://smba.trafficmanager.net/emea/" });
+  });
+});
+
+// A replay inside the token lifetime gets no 401: the verifier keeps no record of seen tokens. The front
+// dedupes a repeated activity id on its dispatch paths. This pin covers a token used after it expires.
+test("an EXPIRED Teams Activity JWT (correctly signed, `exp` past the clock skew) is refused (401) and writes NO row", async () => {
+  await expectRefusedWithNoRow("expired", () => signTeamsJwt({ expiresInSec: -600 }));
+});
+
+test("a WRONG-ISSUER Teams Activity JWT (correctly signed, wrong `iss`) is refused (401) and writes NO row", async () => {
+  await expectRefusedWithNoRow("wrongiss", () => signTeamsJwt({ iss: "https://sts.windows.net/it-fixture-tenant/" }));
 });

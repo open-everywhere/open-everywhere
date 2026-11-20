@@ -1,8 +1,10 @@
+pinSuiteStore("connector-op-gating");
 overrideSettingsForTest({ connectors: { opTiering: true } });
 
 import { assertBundlesValid, defineBundle, type Bundle } from "../agent/access/bundle.js";
 import { classifyConnectorOpTier, type ConnectorOpTier } from "../agent/access/consequence.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { pinSuiteStore } from "./_suite-store.js";
 import {
   declaredConnectorOpRaise,
   effectiveConnectorOpConsequence,
@@ -188,20 +190,33 @@ registerConfig({
   domainsForSurface: () => [],
 });
 
-const { connectorOpApproval } = await import("../agent/connections/connector-auth.js");
+const { connectorOpApproval, withOeConnectorCard } = await import("../agent/connections/connector-auth.js");
 const approve = connectorOpApproval();
-const ctxFor = (toolName: string, approved: readonly string[] = []) =>
-  ({ toolName, approvedTools: new Set(approved) }) as unknown as Parameters<typeof approve>[0];
+const ctxFor = (toolName: string) => ({ toolName, callId: `c-${toolName}`, toolInput: {} }) as unknown as Parameters<typeof approve>[0];
 
 eq(await approve(ctxFor("notion__get_page")), "not-applicable", "live gate: an unraised READ still sails through with no prompt");
 eq(await approve(ctxFor(READ_OP)), "user-approval", "🔴 live gate: the READ raised by `gated` now PROMPTS — the declaration reaches the eve-native seam");
-eq(await approve(ctxFor(READ_OP, [READ_OP])), "not-applicable", "…and, being a WRITE-tier raise, it is silenced once approved this session");
 eq(await approve(ctxFor(WRITE_OP)), "user-approval", "live gate: the WRITE raised to `destructive` prompts");
-eq(
-  await approve(ctxFor(WRITE_OP, [WRITE_OP])),
-  "user-approval",
-  "🔴 live gate: …and STILL prompts after approval — a raise to destructive really did buy per-call gating, not just a label",
-);
+{
+  const grains: Record<string, string> = {};
+  const carded = withOeConnectorCard(approve, {
+    store: { getSessionApproval: async () => null, markEventSeen: async () => true, hasEventSeen: async () => false } as never,
+    grantScope: () => ({ key: "win-gating", reach: "call" }) as never,
+    credentialOf: async () => "domain",
+    offer: (async (o: { tool: string; grain: string }) => {
+      grains[o.tool] = o.grain;
+      return { outcome: "carded", pendingId: "p-gating", where: "in this conversation" };
+    }) as never,
+  });
+  await carded(ctxFor(READ_OP));
+  await carded(ctxFor(WRITE_OP));
+  eq(grains[READ_OP], "call", "live gate: the READ raised to `write` is carded at the one-call grain");
+  eq(
+    grains[WRITE_OP],
+    "destructive",
+    "🔴 live gate: the WRITE raised to `destructive` is carded at the DESTRUCTIVE grain (the card text and the audit row). The one-call memo gates every tier per call, as no-native-hitl §6 proves",
+  );
+}
 eq(await approve(ctxFor("linear__search")), "not-applicable", "live gate: the same op name on an undeclared connector is untouched");
 
 console.log(`✓ connector-op-gating: ${passed} assertions passed`);

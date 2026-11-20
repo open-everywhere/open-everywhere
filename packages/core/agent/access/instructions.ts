@@ -68,7 +68,7 @@ export function assembleAccessInstructions(access: EffectiveAccess, domains: rea
     parts.push(
       `### Connections you may use\n\n` +
         `- Allowed connections for this channel: ${list}\n\n` +
-        `Use **only** the connections listed above. \`connection_search\` may surface other ` +
+        `Use **only** the connections listed above. \`eve__search\` may surface other ` +
         `connections that exist on this deployment — you are **not** authorized to use them here. ` +
         `If a task needs a connection you haven't been granted, say so plainly; do not invoke it.` +
         workReconciliation,

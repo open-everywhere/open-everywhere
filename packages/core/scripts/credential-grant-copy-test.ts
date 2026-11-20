@@ -26,9 +26,9 @@ import { grantResolutionText } from "../agent/access/credential-grant-resolution
 import { credentialGrantDisclosureLine, credentialGrantRefusalMessage, grantBorrowResourceLabel, grantJsonColumn, grantJsonFromColumn, grantResourceTargetLabel } from "../agent/operational/credential-grant-rows.js";
 import type { CredentialGrantAskRow, CredentialGrantRefusal, CredentialGrantRow } from "../agent/operational/credential-grant-rows.js";
 import { grantToolEntry } from "../agent/tools/grant_tools.js";
-import type { ReplayableToolEntry } from "../agent/access/window-gated.js";
+import type { MountedToolEntry } from "../agent/access/window-gated.js";
 
-const descriptionOf = (entry: ReplayableToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
+const descriptionOf = (entry: MountedToolEntry | undefined): string => (entry as unknown as { description?: string } | undefined)?.description ?? "";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {

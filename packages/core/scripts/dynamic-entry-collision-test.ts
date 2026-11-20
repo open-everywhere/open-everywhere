@@ -3,18 +3,14 @@ import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { fileURLToPath } from "node:url";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-entry-collision-")), "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 
-import { mountedEntryCollisions, preRegisterDynamicEntry, preRegisterDynamicVariants, type ReplayableToolEntry } from "../agent/access/window-gated.js";
-import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
-
-registerBrowserToolkit({
-  browser_navigate: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
-  browser_screenshot: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
-});
+import { registeredMountedEntries } from "../agent/access/window-gated.js";
+import { BROWSER_TOOL_NAMES } from "../agent/access/browser-toolkit.js";
+import { WINDOW_GATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -26,112 +22,62 @@ const eq = (a: unknown, b: unknown, label: string): void => {
   n++;
 };
 
-const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
-interface Descriptor {
-  readonly callback: (closure: Record<string, unknown>, ...args: unknown[]) => unknown;
-  readonly closure: Record<string, unknown>;
+const DYNAMIC_MARKERS = /\b(?:defineDynamic|sessionMountedTool|sessionVariantTool|windowGated|windowGatedKit)\s*\(/;
+
+function staticDynamicCollisions(staticNames: Iterable<string>, dynamicNames: Iterable<string>): string[] {
+  const statics = new Set(staticNames);
+  return [...new Set(dynamicNames)].filter((name) => statics.has(name)).sort();
 }
-const describedExecute = (entry: unknown): Descriptor | undefined =>
-  ((entry as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as Record<string, Descriptor | undefined> | undefined)?.execute;
 
 console.log("1. the real core tool inventory:");
 const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
-const toolFiles = readdirSync(toolsDir).filter((f) => f.endsWith(".ts") && readFileSync(join(toolsDir, f), "utf8").includes("defineDynamic("));
-for (const f of toolFiles) await import(`../agent/tools/${f.replace(/\.ts$/, "")}.js`);
-ok(toolFiles.length > 20, `the scan imported the tool inventory (${toolFiles.length} defineDynamic files)`);
+const files = readdirSync(toolsDir).filter((f) => f.endsWith(".ts"));
+const dynamicFiles = files.filter((f) => DYNAMIC_MARKERS.test(readFileSync(join(toolsDir, f), "utf8")));
+const staticNames = files.filter((f) => !dynamicFiles.includes(f)).map((f) => f.replace(/\.ts$/, ""));
+ok(dynamicFiles.length > 40, `the scan found the dynamic tool inventory (${dynamicFiles.length} files)`);
+ok(staticNames.length > 40, `…and the static tool inventory (${staticNames.length} files)`);
+for (const f of dynamicFiles) await import(`../agent/tools/${f.replace(/\.ts$/, "")}.js`);
 
+const kitNames = (src: string): string[] => [...src.matchAll(/\n\s+([a-z_][\w]*)\s*:\s*defineTool\(/gu)].map((m) => m[1]);
+const dynamicNames = new Set<string>([...registeredMountedEntries().keys(), ...BROWSER_TOOL_NAMES, ...Object.keys(WINDOW_GATED_TOOLS)]);
+for (const f of dynamicFiles) {
+  const src = readFileSync(join(toolsDir, f), "utf8");
+  if (/windowGatedKit\s*\(/.test(src)) for (const name of kitNames(src)) dynamicNames.add(name);
+  else if (!/\bgrant_tools\b|\bbrowser_tools\b/.test(f)) dynamicNames.add(f.replace(/\.ts$/, ""));
+}
+ok(dynamicNames.has("bash") && dynamicNames.has("reply") && dynamicNames.has("work"), "the dynamic name set holds the kit, variant and single-tool names");
+
+eq(
+  staticDynamicCollisions(staticNames, dynamicNames),
+  [],
+  "🔴 no dynamic tool name equals a static tool file name. On eve 1.x a dynamic tool no longer replaces a static tool of the same name, " +
+    "so a collision would let the static tool win and silently change a seat. Define a per-session tool ONLY in a dynamic file.",
+);
+eq(
+  staticDynamicCollisions(["work", "read_file"], ["work", "bash"]),
+  ["work"],
+  "NEGATIVE CONTROL: the check names a collision when one exists",
+);
+
+console.log("2. eve's default tools:");
 {
-  const collisions = mountedEntryCollisions();
-  const unmanaged = collisions.filter((c) => !c.variantManaged);
+  const eveRoot = dirname(createRequire(import.meta.url).resolve("eve/package.json"));
+  const src = readFileSync(join(eveRoot, "dist/src/framework/sources/default-tools.js"), "utf8");
+  const listed = /const DEFAULT_TOOLS=\[([^\]]*)\]/.exec(src)?.[1];
+  ok(listed !== undefined, "the installed eve still declares its DEFAULT_TOOLS list");
+  const defaults = [...(listed ?? "").matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
   eq(
-    unmanaged.map((c) => c.name),
-    [],
-    "no mounted tool name holds two entries registered as separate singles — eve keeps ONE execute per (toolName, phase), " +
-      "so the second registration would silently take over the first's contract on a replayed turn. Use preRegisterDynamicVariants.",
-  );
-  const split = collisions.filter((c) => c.distinctExecuteCallbacks !== 1);
-  eq(
-    split.map((c) => `${c.name} (${String(c.distinctExecuteCallbacks)} callbacks)`),
-    [],
-    "every multi-entry tool name resolves to exactly ONE execute callback — a second callback means a descriptor was not overwritten " +
-      "(eve's build transform stamps each inline execute body as its own callback)",
-  );
-  eq(
-    collisions.map((c) => c.name).sort(),
-    ["edit_reply", "reply"],
-    "exactly two core tool names mount several entries, and both are the reply plane's unified/per-surface pair",
+    staticDynamicCollisions(defaults, dynamicNames),
+    ["bash", "edit_file", "read_file", "web_fetch", "write_file"],
+    "🔴 exactly these five eve default tools are re-provided per grain by the sandbox kit. Each needs its roster `framework.disable` sentinel, " +
+      "or eve's static default wins over the gated kit member. A new name here (eve adds a default that the kit also provides) needs a sentinel first.",
   );
 }
 
-console.log("2. reply / edit_reply descriptor identity:");
+console.log("3. the reply plane's variant pairs:");
 {
-  const reply = (await import("../agent/tools/reply.js")) as { unifiedReplyEntry: unknown; baseReplyEntry: unknown };
-  const unified = describedExecute(reply.unifiedReplyEntry);
-  const base = describedExecute(reply.baseReplyEntry);
-  ok(unified !== undefined && base !== undefined, "both reply variants carry a durable execute descriptor");
-  ok(unified!.callback === base!.callback, "both reply variants describe the SAME execute callback — one dispatcher owns eve's (reply, execute) slot");
-  eq(unified!.closure, { entryKey: "_single" }, "the unified reply variant's closure names it, and eve persists that closure with the tool");
-  eq(base!.closure, { entryKey: "_base" }, "the per-surface reply variant's closure names it — the two are what replay tells apart");
+  eq(registeredMountedEntries().get("reply")?.size, 2, "reply registers its unified and per-surface variants under one name");
+  eq(registeredMountedEntries().get("edit_reply")?.size, 2, "edit_reply does the same");
 }
 
-console.log("3. installed-eve replay picks the variant the closure names:");
-const require2 = createRequire(import.meta.url);
-const eveRoot = dirname(require2.resolve("eve/package.json"));
-const distUrl = (rel: string): string => pathToFileURL(join(eveRoot, "dist", "src", rel)).href;
-const lifecycle = (await import(distUrl("context/dynamic-tool-lifecycle.js"))) as {
-  validateDurableDynamicToolCallbacks(name: string, entry: unknown, owner: Record<string, unknown>): { execute: { closure: Record<string, unknown> } };
-};
-const durable = (await import(distUrl("tools/durable-callbacks.js"))) as {
-  lookupDurableDynamicCallback(owner: Record<string, unknown>, phase: string): ((closure: Record<string, unknown>, ...args: unknown[]) => unknown) | undefined;
-};
-
-const ownerFor = (name: string): Record<string, unknown> => ({
-  sessionId: "sess-dynamic-entry-collision",
-  scope: "session",
-  resolverSlug: name,
-  entryKey: "_single",
-  name,
-});
-
-function fixturePair(): { unified: ReplayableToolEntry; base: ReplayableToolEntry } {
-  return {
-    base: { execute: () => "BASE" },
-    unified: { execute: () => "UNIFIED" },
-  };
-}
-
-{
-  const { unified, base } = fixturePair();
-  preRegisterDynamicVariants("pretend_reply_dispatched", { _base: base, _single: unified });
-  const dispatchedOwner = ownerFor("pretend_reply_dispatched");
-  const unifiedClosure = lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_dispatched", unified, dispatchedOwner).execute.closure;
-  lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_dispatched", base, dispatchedOwner);
-  eq(unifiedClosure, { entryKey: "_single" }, "eve persists the unified variant's key in the durable closure");
-  const bound = durable.lookupDurableDynamicCallback(dispatchedOwner, "execute");
-  ok(typeof bound === "function", "eve bound a callback under the mounted name's owner scope");
-  eq(bound!(unifiedClosure), "UNIFIED", "a replay driven from the UNIFIED closure runs the UNIFIED implementation, though the per-surface variant registered LAST");
-  eq(bound!({ entryKey: "_base" }), "BASE", "…and the per-surface closure still runs the per-surface implementation");
-  assert.throws(
-    () => bound!({}),
-    /no variant key in its durable closure/,
-    "a closure with no variant key FAILS CLOSED — guessing there is the defect this gate exists for",
-  );
-  n++;
-}
-
-console.log("4. negative control — the pre-fix registration shape runs the WRONG implementation:");
-{
-  const { unified, base } = fixturePair();
-  preRegisterDynamicEntry("pretend_reply_collided", "_single", unified);
-  preRegisterDynamicEntry("pretend_reply_collided", "_base", base);
-  const collidedOwner = ownerFor("pretend_reply_collided");
-  const unifiedClosure = lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_collided", unified, collidedOwner).execute.closure;
-  lifecycle.validateDurableDynamicToolCallbacks("pretend_reply_collided", base, collidedOwner);
-  const bound = durable.lookupDurableDynamicCallback(collidedOwner, "execute");
-  eq(bound!(unifiedClosure), "BASE", "the pre-fix shape runs the PER-SURFACE implementation from the UNIFIED closure — the measured defect, reproduced");
-  const collided = mountedEntryCollisions().find((c) => c.name === "pretend_reply_collided");
-  ok(collided !== undefined && !collided.variantManaged, "…and leg 1's check sees it as an unmanaged collision");
-  ok(collided!.distinctExecuteCallbacks === 2, "…with two distinct execute callbacks, which is leg 1's second discriminator");
-}
-
-console.log(`\ndynamic-entry-collision: ${n} assertions passed.`);
+console.log(`\n✓ dynamic-entry-collision: ${n} assertions passed.`);

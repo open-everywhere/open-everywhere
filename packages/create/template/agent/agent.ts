@@ -1,5 +1,5 @@
 import { defineAgent } from "eve";
-import { defineDynamic } from "eve/tools";
+import { defineDynamic, type DynamicModelContext } from "eve/models";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import "@open-everywhere/core/agent/access/eve-patch-probe-boot.js";
@@ -25,14 +25,16 @@ import { loadModelPolicy } from "./model/policy.js";
 import { compactionThresholdTokens } from "./model/stacks.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { sessionUsageLimit } from "@open-everywhere/core/agent/model/session-usage.js";
+import { taskContinuationApproval } from "@open-everywhere/core/agent/access/worker-continuation.js";
 import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
 import appPackageJson from "../package.json" with { type: "json" };
 
 const GATEWAY_DEFAULTS = { caching: "auto" } as const;
 
 const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
-const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
-const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD_PERCENT);
+const COMPACTION_THRESHOLD = getSettings().agent.compactionThresholdPercent;
+const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD);
 
 registerGatewayDreamJudge({ id: UTILITY_MODEL, via: MODELS.utility.via, gateway: GATEWAY_DEFAULTS });
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, via: MODELS.utility.via, gateway: GATEWAY_DEFAULTS });
@@ -96,15 +98,14 @@ function primaryModelSelection<TModel>(model: TModel): {
 
 export default defineAgent({
   build: { externalDependencies: ["just-bash"] },
-  model: defineDynamic({
-    events: {
-      "step.started": (() => {
-        const resolve = gatewayModelResolver({ id: PRIMARY_MODEL, via: MODELS.primary.via, gateway: GATEWAY_DEFAULTS });
-        return async (event: unknown, ctx: unknown) => primaryModelSelection(await resolve(event, ctx));
-      })(),
-    },
-  }),
+  model: defineDynamic(
+    (() => {
+      const resolve = gatewayModelResolver({ id: PRIMARY_MODEL, via: MODELS.primary.via, gateway: GATEWAY_DEFAULTS });
+      return async (ctx: DynamicModelContext) => primaryModelSelection(await resolve(undefined, ctx));
+    })(),
+  ),
   reasoning: "medium",
-  limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
-  compaction: { thresholdPercent: COMPACTION_THRESHOLD_PERCENT },
+  limits: { sessionUsage: sessionUsageLimit(SESSION_INPUT_TOKEN_BUDGET), sessionTimeoutMs: false },
+  approval: taskContinuationApproval,
+  compaction: { threshold: COMPACTION_THRESHOLD },
 });

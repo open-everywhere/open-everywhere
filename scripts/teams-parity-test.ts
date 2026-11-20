@@ -6,7 +6,7 @@ const __suiteStoreDir = __joinSuiteStore(__tmpdirSuiteStore(), `open-everywhere-
 __rmSuiteStore(__suiteStoreDir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = __joinSuiteStore(__suiteStoreDir, "ops.sqlite3");
 
-const { parseTeamsActivity } = await import("eve/channels/teams");
+const { parseTeamsActivity } = await import("@open-everywhere/provider-teams/agent/channels/teams-inbound.js");
 type TeamsMessageActivity = import("eve/channels/teams").TeamsMessageActivity;
 type TeamsConversationUpdateActivity = import("eve/channels/teams").TeamsConversationUpdateActivity;
 const { registerTeamsProvider } = await import("@open-everywhere/provider-teams/agent/register.js");

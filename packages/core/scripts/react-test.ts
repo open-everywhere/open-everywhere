@@ -6,6 +6,7 @@ import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 const dir = join(tmpdir(), `open-everywhere-react-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -66,7 +67,7 @@ interface ArmedTool {
   readonly execute: (input: { emoji: string; ts?: string; reason?: "ack" | "noise" }, ctx: unknown) => Promise<{ reacted: boolean; emoji: string; ts: string }>;
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
-const armEvent = (react as unknown as { events: Record<string, Handler> }).events["session.started"];
+const armEvent = _dynamicResolverForTest(react);
 const armed = (await armEvent({}, { channel: { kind: "slack" } })) as ArmedTool;
 ok(armed !== null && typeof armed.execute === "function", "react arms on a Slack session");
 
@@ -337,7 +338,7 @@ function fixtureCtx(issueId: string | undefined) {
 }
 
 {
-  const armEventFixture = (react as unknown as { events: Record<string, Handler> }).events["session.started"];
+  const armEventFixture = _dynamicResolverForTest(react);
   const fixtureArmed = (await armEventFixture({}, fixtureCtx("ISS1"))) as ArmedTool;
   ok(fixtureArmed !== null, "react: mounts on a native session for a manifest-registered non-Slack platform (OPE-862)");
 

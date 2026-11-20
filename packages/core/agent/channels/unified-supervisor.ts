@@ -1,8 +1,8 @@
 import { windowedDomainFor, windowIdFor, windowModeFor, type Domain } from "../memory/domain.js";
 import {
   formatWindowToken,
-  parseWindowToken,
   isWindowToken,
+  seatWindowKey,
   windowKeyForDomain,
   saltSupervisorGeneration,
   parseDmSeatToken,
@@ -24,20 +24,23 @@ export function unifiedSupervisorToken(domainName: string, generation: number): 
   return formatWindowToken(windowKeyForDomain(domainName, generation));
 }
 
+// Strict on purpose: a dispatch address takes the bare token, and eve adds the `unified:` namespace.
 export function isUnifiedSupervisorToken(token: unknown): token is string {
   return isWindowToken(token);
 }
 
+// The three readers below resolve through seatWindowKey, so they accept the bare token and eve's
+// `unified:`-namespaced token alike.
 export function unifiedDomainFromToken(token: unknown): string | undefined {
-  return parseWindowToken(token)?.domain;
+  return seatWindowKey(token)?.domain;
 }
 
 export function unifiedWindowFromToken(token: unknown): string | undefined {
-  return parseWindowToken(token)?.windowId;
+  return seatWindowKey(token)?.windowId;
 }
 
 export function unifiedGenerationFromToken(token: unknown): number | undefined {
-  return parseWindowToken(token)?.generation;
+  return seatWindowKey(token)?.generation;
 }
 
 const UNIFIED_DOMAIN_KEY_PREFIX = "oe-domain::";

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, currentTurnId, type SurfaceBinding } from "../identity/binding.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
@@ -19,7 +19,7 @@ import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { domainExposureLines, joinWords, normalizeHost, type WideningSubject } from "../approvals/domain-exposure.js";
 import { surfaceDisplayName } from "../instructions/seat-prompt.js";
@@ -355,10 +355,5 @@ const requestAccessEntry = defineTool({
           };
         },
 });
-preRegisterDynamicEntry("request_access", "_single", requestAccessEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => requestAccessEntry,
-  },
-});
+export default sessionMountedTool("request_access", requestAccessEntry);

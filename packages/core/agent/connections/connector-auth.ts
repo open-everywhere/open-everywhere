@@ -1,5 +1,6 @@
+import { canonicalConnectorOpName } from "../access/connector-op-alias.js";
 import { auditErrorDetail } from "../audit/tool-action.js";
-import type { ConnectionAuthProvider, ConnectionAuthResolver, TokenResult } from "eve/connections";
+import type { ConnectionAuthResolver, NonInteractiveAuthorizationDefinition, TokenResult } from "eve/connections";
 import type { SessionAuth, SessionContext } from "eve/context";
 import type { ApprovalStatus } from "eve/tools/approval";
 import { connectorToolPermissionKind } from "../approvals/session-grant.js";
@@ -11,6 +12,7 @@ import {
   CONNECTOR_OP_CARD_KIND,
   CONNECTOR_REPLAY_ADMISSION_TTL_MS,
   CONNECTOR_REPLAY_INPUT_CAP,
+  CONNECTOR_REPLAY_CALL_TOOL,
   CONNECTOR_REPLAY_INPUT_KEY,
   connectorCardContext,
   connectorOpApprovalKind,
@@ -38,6 +40,7 @@ import { assertCredentialEndpointHostAllowed } from "../access/credential-endpoi
 import { classifyConnectorOpTier, isConnectorOpTool, parseQualifiedToolName } from "../access/consequence.js";
 import { effectiveConnectorOpTier, joinConnectorOpTiers } from "../access/connector-op-gating.js";
 import { connectorOpToolHints } from "./connector-tool-hints.js";
+import { ConnectorSignInRequiredError, isListingTokenRequest } from "./connector-listing.js";
 import { personalSurfaceApprovalRefusal } from "./personal-surface-fence.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
 import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
@@ -85,6 +88,12 @@ import {
 } from "./auth-retry-memo.js";
 import type { AuditDetail } from "../audit/scrubbed-text.js";
 
+/**
+ * The non-interactive `auth` shape a connection resolver returns: a `getToken` probe and no
+ * `startAuthorization`. OE runs its own sign-in card, so it never hands eve an interactive flow.
+ */
+type ConnectionAuthProvider = NonInteractiveAuthorizationDefinition;
+
 function requesterForAuthority(auth: MemberPlaneAuthLike | undefined) {
   const delegated = delegatedRequesterThisTurn(undefined);
   if (delegated?.kind === "requester") return { kind: "requester" as const, principalId: delegated.principalId };
@@ -106,8 +115,11 @@ export function appProviderToken(opts: {
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
-      if (connectorAuthRequiredThisTurn(opts.connector)) throw connectorAuthRequiredError(opts.connector);
-      await assertConnectorGranted(opts.connector, ctx.session.auth);
+      const listing = isListingTokenRequest(o);
+      if (connectorAuthRequiredThisTurn(opts.connector)) {
+        throw listing ? new ConnectorSignInRequiredError(opts.connector) : connectorAuthRequiredError(opts.connector);
+      }
+      await assertConnectorGranted(opts.connector, ctx.session.auth, { audit: !listing });
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
       return resolveAppTokenFromCred(opts, cred, o);
     },
@@ -330,11 +342,15 @@ export function userAwareProviderToken(
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
+      // A connector mount's listing probe (connector-listing.ts) starts no sign-in and writes no
+      // audit row: it runs before every model call, for every mounted connection.
+      const listing = isListingTokenRequest(o);
       if (connectorAuthRequiredThisTurn(opts.connector) && !(await memoSelfHealsUserGrant(opts.connector, ctx.session.auth))) {
+        if (listing) throw new ConnectorSignInRequiredError(opts.connector);
         if (isWorkChild(ctx)) throw new Error(needsSignInMessage(opts.connector, false, true));
         throw connectorAuthRequiredError(opts.connector, connectorAuthUrlThisTurn(opts.connector));
       }
-      await assertConnectorGranted(opts.connector, ctx.session.auth);
+      await assertConnectorGranted(opts.connector, ctx.session.auth, { audit: !listing });
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
       if (cred?.type === "user-oauth") {
@@ -366,7 +382,7 @@ export function userAwareProviderToken(
             roomVouchedInternal: roomVouchedInternalFrom(declaredTrust, trust),
           });
           if (!verdict.admit) {
-            await auditMintOutcome(opts.connector, { subject: "user", plane: "member", outcome: "refused", reason: verdict.reason });
+            if (!listing) await auditMintOutcome(opts.connector, { subject: "user", plane: "member", outcome: "refused", reason: verdict.reason });
             throw new Error(memberPlaneRefusalMessage(opts.connector, verdict.reason));
           }
           memberRequester = verdict.requesterPrincipalId;
@@ -378,7 +394,7 @@ export function userAwareProviderToken(
         const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, workspace, actorId);
         try {
           const minted = await mintUser(connector, { subject: { type: "user", id: subjectId } });
-          await auditMintOutcome(opts.connector, {
+          if (!listing) await auditMintOutcome(opts.connector, {
             subject: "user",
             outcome: "ok",
             shared: subjectId.startsWith(SHARED_VAULT_SUBJECT_PREFIX),
@@ -387,6 +403,10 @@ export function userAwareProviderToken(
           return minted;
         } catch (e) {
           const authRequired = classifyUserAuthRequired(e);
+          if (listing) {
+            if (authRequired) throw new ConnectorSignInRequiredError(opts.connector);
+            throw e;
+          }
           await auditMintOutcome(opts.connector, {
             subject: "user",
             outcome: authRequired ? "auth-required" : "error",
@@ -454,7 +474,7 @@ export function connectorOpApproval(deps: ConnectorOpApprovalDeps = {}): Approva
     const hints = await (deps.toolHints ?? connectorOpToolHints)(ctx.toolName);
     const tier = effectiveConnectorOpTier(ctx.toolName, undefined, hints);
     if (tier === "read") return "not-applicable";
-    return decideConnectorWrite(ctx, tier, deps.boundCredential ?? boundConnectorCredential, deps.dmPrincipal ?? resolveDmPrincipal);
+    return decideConnectorWrite(ctx, deps.boundCredential ?? boundConnectorCredential, deps.dmPrincipal ?? resolveDmPrincipal);
   };
 }
 
@@ -473,8 +493,7 @@ export function unresolvableConnectionRefusalMessage(toolName: string): string {
 }
 
 async function decideConnectorWrite(
-  ctx: { readonly toolName: string; readonly approvedTools: ReadonlySet<string>; readonly session?: { readonly auth?: unknown } },
-  tier: ReturnType<typeof effectiveConnectorOpTier>,
+  ctx: { readonly toolName: string; readonly session?: { readonly auth?: unknown } },
   boundCredential: typeof boundConnectorCredential,
   dmPrincipal: typeof resolveDmPrincipal,
 ): Promise<ApprovalStatus> {
@@ -502,8 +521,6 @@ async function decideConnectorWrite(
       return { type: "denied", reason: personalWriteRefusalMessage(connection, verdict.reason) };
     }
   }
-  if (tier === "destructive") return "user-approval";
-  if (ctx.approvedTools.has(ctx.toolName)) return "not-applicable";
   return "user-approval";
 }
 
@@ -587,9 +604,8 @@ function connectorReplayInput(input: unknown): Record<string, unknown> | undefin
 }
 
 function connectorOpCardedMessage(connection: string, toolName: string, where: string, pendingId: string, replayable: boolean): string {
-  const op = toolName.startsWith(`${connection}__`) ? toolName.slice(connection.length + 2) : toolName;
   const after = replayable
-    ? `When a member approves it, replay the approved call by its card id: call \`connection_execute\` with \`connection\` "${connection}", \`tool\` "${op}" and \`input\` {"${CONNECTOR_REPLAY_INPUT_KEY}":"${pendingId}"}. The host then runs the exact input stored on the card. Do not rebuild the input.`
+    ? `When a member approves it, replay the approved call by its card id: call \`${CONNECTOR_REPLAY_CALL_TOOL}\` with \`name\` "${toolName}" and \`input\` {"${CONNECTOR_REPLAY_INPUT_KEY}":"${pendingId}"}. The host then runs the exact input stored on the card. Do not rebuild the input.`
     : "When a member approves it, call the op again with the same input.";
   return (
     `connection "${connection}": the op "${toolName}" needs a member's approval, so an approval card is posted ${where} (pending ${pendingId}). ` +
@@ -713,6 +729,7 @@ export function withOeConnectorCard(policy: ApprovalPolicy, deps: OeConnectorCar
     const offered = await (deps.offer ?? offerConnectorOpCard)({
       org,
       tool: ctx.toolName,
+      op: canonicalConnectorOpName(ctx.toolName),
       connection,
       grain,
       ...(opTier === undefined ? {} : { opTier }),
@@ -747,7 +764,7 @@ export function unattendedConnectorRefusalMessage(
   tier: ReturnType<typeof effectiveConnectorOpTier>,
   _tainted?: boolean,
 ): string {
-  const declaration = tier === "write" ? `Declare "tool:${toolName}" on the routine's creation card to lift it. ` : "";
+  const declaration = tier === "write" ? `Declare "tool:${canonicalConnectorOpName(toolName)}" on the routine's creation card to lift it. ` : "";
   return (
     `connection "${connection}": the ${tier}-tier op "${toolName}" needs approval and nobody is attending this run. ` +
     `${ASK_UNATTENDED_SENTENCE} ${declaration}` +
@@ -903,7 +920,7 @@ export function withUnattendedConnectorFence(
       tier === "write" && routineKey !== undefined && requestedBy !== undefined
         ? await offerRoutinePermissionCardFor({
             org: facts.org,
-            declaration: `tool:${ctx.toolName}`,
+            declaration: `tool:${canonicalConnectorOpName(ctx.toolName)}`,
             grantKind: connectorToolPermissionKind(ctx.toolName),
             grantKey: routineKey,
             scopeKey: facts.surfaceKey,

@@ -175,7 +175,7 @@ export function haltSeatParagraph(state: HaltState): string | null {
     `**Consequential work is paused right now${haltWidthClause(state)}.** Someone pulled the stop ` +
     "switch, so nothing whose effect would LEAVE this conversation will run — no messages sent on " +
     "your behalf, no tickets, no pull requests, no scheduled or event-driven work, no borrowed " +
-    "credential. Your sandbox reaches no host, and `web_fetch` and `web_search` are not available " +
+    "credential. Your sandbox reaches no host, and `web_fetch` is not available " +
     "while the pause stands. **Reading and replying still work, and so does handing a read to a " +
     "worker.** A question you can answer by reading, you should still answer — reading is not a way " +
     "round the pause, and neither is delegating one. Posting a file into THIS conversation and " +

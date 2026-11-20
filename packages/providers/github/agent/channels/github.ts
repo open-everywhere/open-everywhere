@@ -481,9 +481,52 @@ async function installationDelivery(body: string, eventType: string): Promise<vo
 }
 
 const pristine = githubChannel({ ...GITHUB_CHANNEL_APP });
-type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
+type AdapterEventFn = (event: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
+
+/**
+ * The native (non-supervisor) `turn.started`. eve's default handler reacts 👀 and then checks the triggering
+ * repository out into the SESSION sandbox. That checkout installs eve's git broker policy: allow-all egress plus an
+ * installation token that covers every repository of the installation, injected on github.com. eve never restores
+ * the policy, and the egress hook re-applies the compiled policy only when the policy changes, so the broker policy
+ * would stay in force for the model's turn. This handler keeps the reaction and never runs eve's checkout. The model
+ * clones through the checkout_repo tool, whose brokered policy is narrowed to the granted repositories.
+ */
+export async function nativeGitHubTurnStarted(thread: { react(emoji: string): Promise<unknown> }): Promise<void> {
+  try {
+    await thread.react("eyes");
+  } catch (err) {
+    slog(`native turn.started reaction failed (swallowed): ${String(err)}`);
+  }
+}
+
+const FORWARD_TO_DEFAULT = Symbol("open-everywhere.forward-to-default");
+
+function forwardToDefault(event: unknown): void {
+  return { [FORWARD_TO_DEFAULT]: event } as unknown as void;
+}
+
+function forwardedEvent(result: unknown): { readonly event: unknown } | undefined {
+  if (result === null || typeof result !== "object" || !(FORWARD_TO_DEFAULT in result)) return undefined;
+  return { event: (result as Record<symbol, unknown>)[FORWARD_TO_DEFAULT] };
+}
+
+export function withDefaultForward<C extends object>(channel: C, defaultFor: (name: string, adapterCtx: unknown) => AdapterEventFn | undefined): C {
+  const adapter = (channel as { readonly adapter?: Record<string, unknown> }).adapter;
+  if (adapter === undefined || adapter === null || typeof adapter !== "object") return channel;
+  const wrapped: Record<string, unknown> = { ...adapter };
+  for (const [name, fn] of Object.entries(adapter)) {
+    if (typeof fn !== "function" || !name.includes(".")) continue;
+    wrapped[name] = async (event: unknown, adapterCtx: unknown) => {
+      const result = await (fn as AdapterEventFn)(event, adapterCtx);
+      const forward = forwardedEvent(result);
+      if (forward === undefined) return result;
+      return await defaultFor(name, adapterCtx)?.(forward.event, adapterCtx);
+    };
+  }
+  return { ...channel, adapter: wrapped } as C;
+}
 
 async function auditNativeGitHubSilence(state: GitHubChannelState, reason: string, replied: boolean, sessionId?: string): Promise<void> {
   slog(`native turn judged silence (${reason}) on ${state.owner}/${state.repo}#${state.issueNumber ?? "?"} — nothing commented`);
@@ -587,14 +630,15 @@ export const githubOnComment = async (ctx: GitHubInboundContext, comment: GitHub
     return isMention ? { auth } : { auth, context: [ENGAGED_FOLLOW_UP_CONTEXT] };
 };
 
-const native: GitHubChannel = githubChannel({
+const native: GitHubChannel = withDefaultForward(githubChannel({
   ...GITHUB_CHANNEL_APP,
   turnPolicy: "queue",
   onComment: githubOnComment,
   events: {
-    async "turn.started"(data, channel, ctx) {
+    async "turn.started"(event, ctx) {
+      const channel = ctx.channel;
       if (!isSupervisorGitHubState(channel.state)) {
-        await defaultEvent("turn.started")?.(data, channel);
+        await nativeGitHubTurnStarted(channel.thread);
         return;
       }
       const st = channel.state as GitHubSupervisorSessionState;
@@ -613,14 +657,18 @@ const native: GitHubChannel = githubChannel({
       }
       st.oeReplyTarget = { issueNumber: n };
     },
-    async "message.completed"(data, channel, ctx) {
+    async "content.completed"(event, ctx) {
+      const channel = ctx.channel;
+      const text = event.data.kind === "text";
+      if (!text) {
+        return forwardToDefault(event);
+      }
       if (!isSupervisorGitHubState(channel.state)) {
-        if (data.finishReason === "tool-calls") {
-          await defaultEvent("message.completed")?.(data, channel);
-          return;
+        if (event.data.phase !== "reply") {
+          return forwardToDefault(event);
         }
-        const nativeTurnId = (ctx as unknown as { session?: { turn?: { id?: string } } })?.session?.turn?.id;
-        const nativeAction = finalMessageActionForTurn(data.finishReason, data.message, nativeTurnId);
+        const nativeTurnId = event.scope?.turnId ?? ctx.session.turn?.id;
+        const nativeAction = finalMessageActionForTurn(event.data, nativeTurnId);
         const nativeReplied = consumeSupervisorReplyMark(ctx);
         if (nativeAction.kind === "silent") {
           await auditNativeGitHubSilence(channel.state, nativeAction.reason, nativeReplied, ctx?.session?.id);
@@ -651,7 +699,7 @@ const native: GitHubChannel = githubChannel({
         return;
       }
       const sessionId = ctx?.session?.id;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(event.data);
       if (action.kind === "buffer-tool-status") return;
       const st = channel.state as GitHubSupervisorSessionState;
       const target = st.oeReplyTarget;
@@ -676,10 +724,10 @@ const native: GitHubChannel = githubChannel({
         log: (m) => slog(m),
       });
     },
-    async "turn.failed"(data, channel) {
-      if (!isSupervisorGitHubState(channel.state)) {
-        await defaultEvent("turn.failed")?.(data, channel);
-        return;
+    async "turn.settled"(event, ctx) {
+      const channel = ctx.channel;
+      if (!isSupervisorGitHubState(channel.state) || event.data.outcome !== "failed") {
+        return forwardToDefault(event);
       }
       const st = channel.state as GitHubSupervisorSessionState;
       slog(`supervisor turn failed on ${st.owner}/${st.repo} (audited, no comment posted)`);
@@ -689,10 +737,10 @@ const native: GitHubChannel = githubChannel({
         {},
       );
     },
-    async "session.failed"(data, channel) {
-      if (!isSupervisorGitHubState(channel.state)) {
-        await defaultEvent("session.failed")?.(data, channel);
-        return;
+    async "session.ended"(event, ctx) {
+      const channel = ctx.channel;
+      if (!isSupervisorGitHubState(channel.state) || event.data.outcome !== "failed") {
+        return forwardToDefault(event);
       }
       const st = channel.state as GitHubSupervisorSessionState;
       slog(`supervisor session failed on ${st.owner}/${st.repo} (audited, no comment posted)`);
@@ -703,7 +751,7 @@ const native: GitHubChannel = githubChannel({
       );
     },
   },
-});
+}), (name) => defaultEvent(name));
 
 type HttpHandler = HttpRouteDefinition<GitHubChannelState>["handler"];
 function wrapRoute(inner: HttpHandler): HttpHandler {

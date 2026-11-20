@@ -72,8 +72,8 @@ function seatCtx(sessionId: string, deliveryId = `delivery-${sessionId}`): never
 async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: never, message: string): Promise<void> {
   await inEveContext(container, async () => {
     await learnHook.events!["turn.started"]!({} as never, ctx);
-    await learnHook.events!["message.received"]!({ data: { message: wake(message) } } as never, ctx);
-    await learnHook.events!["turn.completed"]!({} as never, ctx);
+    await learnHook.events!["delivery.consumed"]!({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: wake(message) }] } } as never, ctx);
+    await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
 }
 
@@ -109,7 +109,7 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   const before = (await observedDigests()).length;
   await inEveContext(container, async () => {
     await learnHook.events!["turn.started"]!({} as never, ctx);
-    await learnHook.events!["turn.completed"]!({} as never, ctx);
+    await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
   ok((await observedDigests()).length === before, "per-turn: a turn carrying NO user message observes nothing — the capture is reset, never inherited");
 }
@@ -195,8 +195,8 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
   const ctx = seatCtx("sess-notify");
   await inEveContext(container, async () => {
     await learnHook.events!["turn.started"]!({} as never, ctx);
-    await learnHook.events!["message.received"]!({ data: { message: notification } } as never, ctx);
-    await learnHook.events!["turn.completed"]!({} as never, ctx);
+    await learnHook.events!["delivery.consumed"]!({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: notification }] } } as never, ctx);
+    await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, ctx);
   });
   const sig = workflowSignature(notification);
   ok(sig.length > 0, "fixture: the task notification produces a non-empty signature");
@@ -266,9 +266,9 @@ async function deliver(container: InstanceType<typeof FakeEveContext>, ctx: neve
     await inEveContext(container, async () => {
       noteTurnBoundary(turnId, `dlv-${turnId}-A`);
       await learnHook.events!["turn.started"]!({} as never, start);
-      await learnHook.events!["message.received"]!({ data: { message: wake(request) } } as never, start);
+      await learnHook.events!["delivery.consumed"]!({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: wake(request) }] } } as never, start);
       if (swapTo !== undefined) noteStepDelivery(turnId, `dlv-${turnId}-B`);
-      await learnHook.events!["turn.completed"]!({} as never, end);
+      await learnHook.events!["turn.settled"]!({ data: { turnId: "t1", outcome: "completed" } } as never, end);
     });
   };
 

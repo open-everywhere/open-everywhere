@@ -2,6 +2,9 @@ import { afterAll, expect, test } from "vitest";
 
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { parseWindowToken } from "@open-everywhere/core/agent/channels/window-key.js";
+import { effectiveUserVaultSubject } from "@open-everywhere/core/agent/connections/connector-auth.js";
+import { encryptedKvVault } from "@open-everywhere/core/agent/credentials/kv-vault.js";
+import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 
 import {
   afterThisTest,
@@ -23,6 +26,7 @@ import {
   type RecordedRequest,
   type ScriptedHandle,
 } from "../harness";
+import { installHostFetchStub } from "../fetch-stub";
 
 const OWNER_ID = "U0EXOWNER";
 const DM_CHANNEL_ID = "D0OPE2350DMSEAT";
@@ -31,6 +35,17 @@ const CHILD_HOLD_MS = 120_000;
 const TURN_END_CEILING_MS = 60_000;
 
 const BRIEF = "ope2350 dm job: look in my notion for the handbook";
+
+// On eve 1.x a connector op is a deferred entry `<connection>__<op>`, reached through `eve__tool`
+// (agent/connections/connector-mount.ts). The mount lists the vendor's ops before each model call.
+// With no owner token in the vault it lists them anonymously, so the op stays reachable either way.
+// The listing proves nothing about the token. The mint `ok` row and the vendor call's bearer token,
+// asserted below, are what prove that the owner's own token served the worker's call.
+const NOTION_OAUTH_PROVIDER_REF = "mcp.notion.com/notion-mcp";
+const CONNECTION = "notion";
+const VENDOR_TOOL = "search";
+const ENTRY = `${CONNECTION}__${VENDOR_TOOL}`;
+const ACCESS_TOKEN = "it-ope2350-dm-mcp-token";
 
 const cleanups: (() => void)[] = [];
 afterAll(() => {
@@ -64,6 +79,62 @@ function armSlack(): void {
   cleanups.push(() => slack.uninstall());
 }
 
+interface McpRequest {
+  readonly id: unknown;
+  readonly method: string;
+  readonly params: Record<string, unknown>;
+  readonly authorization: string | null;
+}
+
+function rpcOf(init: RequestInit | undefined): McpRequest | undefined {
+  try {
+    const parsed = JSON.parse(String(init?.body)) as { id?: unknown; method?: unknown; params?: unknown };
+    if (typeof parsed.method !== "string") return undefined;
+    const params = typeof parsed.params === "object" && parsed.params !== null ? (parsed.params as Record<string, unknown>) : {};
+    return { id: parsed.id, method: parsed.method, params, authorization: new Headers(init?.headers).get("authorization") };
+  } catch {
+    return undefined;
+  }
+}
+
+function armNotionMcp(): { readonly calls: readonly { url: string; init: RequestInit | undefined }[] } {
+  const vendor = installHostFetchStub("https://mcp.notion.com", (_url, init) => {
+    const httpMethod = (init?.method ?? "GET").toUpperCase();
+    if (httpMethod === "GET") return new Response(null, { status: 405 });
+    if (httpMethod === "DELETE") return new Response(null, { status: 200 });
+    const rpc = rpcOf(init);
+    if (rpc === undefined) return undefined;
+    const json = (result: unknown, extra: Record<string, string> = {}): Response =>
+      new Response(JSON.stringify({ id: rpc.id, jsonrpc: "2.0", result }), { status: 200, headers: { "content-type": "application/json", ...extra } });
+    if (rpc.method === "initialize") {
+      const protocolVersion = typeof rpc.params["protocolVersion"] === "string" ? (rpc.params["protocolVersion"] as string) : "2025-06-18";
+      return json({ capabilities: { tools: {} }, protocolVersion, serverInfo: { name: "it-ope2350-notion-mcp", version: "1.0.0" } }, { "mcp-session-id": "it-ope2350-sess" });
+    }
+    if (rpc.method === "notifications/initialized") return new Response(null, { status: 202 });
+    if (rpc.method === "tools/list") {
+      return json({
+        tools: [
+          {
+            name: VENDOR_TOOL,
+            description: "Search the workspace.",
+            inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+            annotations: { readOnlyHint: true },
+          },
+        ],
+      });
+    }
+    if (rpc.method === "tools/call") return json({ content: [{ type: "text", text: JSON.stringify({ results: [{ title: "Handbook" }] }) }] });
+    return undefined;
+  });
+  cleanups.push(() => vendor.uninstall());
+  return vendor;
+}
+
+async function seedOwnerNotionToken(): Promise<void> {
+  const subject = await effectiveUserVaultSubject(CONNECTION, deploymentOrg(), "slack", SLACK_TEAM_ID, OWNER_ID);
+  await encryptedKvVault().write(`oe-oauth:tok:${NOTION_OAUTH_PROVIDER_REF}:user:${subject}`, JSON.stringify({ accessToken: ACCESS_TOKEN, obtainedAt: Date.now() }));
+}
+
 function detailOf(row: AuditRow | undefined): Record<string, unknown> {
   return (row?.detail ?? {}) as Record<string, unknown>;
 }
@@ -81,16 +152,20 @@ function assertNoFault(handle: ScriptedHandle, label: string): void {
 
 test("🔴 a DM seat forwards its job to the DM's OWN work session, whose worker holds the owner's own-account plane, and the seat's turn never waits", async () => {
   armSlack();
-  await bootAgent();
+  const vendor = armNotionMcp();
+  // The vault seed below must land in the store the server reads. Under the default PGlite boot
+  // the test process writes a store of its own, so the worker's mint finds no token.
+  await bootAgent({ sharedSqlite: true });
   const settings = await import("@open-everywhere/core/agent/settings/settings.js");
   settings.overrideSettingsForTest({ connectors: { userPrincipal: true } });
   expect(settings.getSettings().connectors.userPrincipal, "the per-user plane is not armed").toBe(true);
+  await seedOwnerNotionToken();
   const cursor = await auditCursor();
 
   const dm = disposeLater(
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: BRIEF }, id: "ope2350-dm-work" }] }, { say: NO_REPLY_SENTINEL }],
-      child: [{ delayMs: CHILD_HOLD_MS, calls: [{ tool: "connection_search", input: { query: "handbook" }, id: "ope2350-dm-search" }] }, { say: "ope2350 dm job result" }],
+      child: [{ delayMs: CHILD_HOLD_MS, calls: [{ tool: "eve__tool", input: { name: ENTRY, input: { query: "handbook" } }, id: "ope2350-dm-search" }] }, { say: "ope2350 dm job result" }],
     }),
   );
   afterThisTest(() => dm.releaseHolds());
@@ -146,6 +221,10 @@ test("🔴 a DM seat forwards its job to the DM's OWN work session, whose worker
     cursor,
   });
   expect(mints.map((r) => detailOf(r).subject), "🔴 the DM's work-session worker minted for something other than the DM owner").toEqual(mints.map(() => "user"));
+  expect(mints.map((r) => detailOf(r).outcome), "🔴 the DM owner's own notion token did not mint for the DM's worker").toContain("ok");
+  const vendorCalls = vendor.calls.map((c) => rpcOf(c.init)).filter((r): r is McpRequest => r?.method === "tools/call");
+  expect(vendorCalls.map((r) => r.params["name"]), "🔴 the worker's notion op did not reach the vendor exactly once").toEqual([VENDOR_TOOL]);
+  expect(vendorCalls[0]?.authorization, "🔴 the worker's notion op reached the vendor without the DM owner's own token").toBe(`Bearer ${ACCESS_TOKEN}`);
   expect((await rowsSinceCursor(cursor, ["connector.refused"])).filter((r) => detailOf(r).connection === "notion"), "the owner's own notion was refused to the DM's worker").toEqual([]);
 
   const read = await consumeSettlement({ armed: closing, dispatched: dm, taskId, label: "the DM seat's result wake" });

@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -10,7 +10,7 @@ import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import type { ChatPostArgs } from "../approvals/chat-post.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -113,13 +113,8 @@ const postMessageEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("post_message", "_single", postMessageEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!chatWriteMount(ctx as BindableContext, safeDomains)) return null;
-      return postMessageEntry;
-    },
-  },
+export default sessionMountedTool("post_message", postMessageEntry, (ctx) => {
+  if (!chatWriteMount(ctx, safeDomains)) return false;
+  return true;
 });

@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 
 import {
   afterThisTest,
@@ -80,7 +81,7 @@ test("a stop that lands while the second tool of a step is still running still n
   expect(stop.body).not.toContain("Nothing running here right now");
 
   const cancelled = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
+    const rows = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — written from the cancelled turn's OWN process");
   expect(cancelled).toHaveLength(1);

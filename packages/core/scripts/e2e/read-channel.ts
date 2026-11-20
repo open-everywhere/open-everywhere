@@ -86,11 +86,10 @@ async function toolNamesOf(sessionId: string, sinceIso: string): Promise<string[
     for (let page = 0; page < 40; page++) {
       const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
       for (const e of tr.events) {
-        if (e.type !== "actions.requested") continue;
+        if (e.type !== "call.requested") continue;
         if (e.at !== null && e.at < sinceIso) continue;
-        for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
-          if (typeof a.toolName === "string") names.push(a.toolName);
-        }
+        const name = (e.data as { capability?: { name?: unknown } } | undefined)?.capability?.name;
+        if (typeof name === "string") names.push(name);
       }
       if (tr.events.length === 0) break;
       start = tr.nextIndex ?? start + tr.events.length;

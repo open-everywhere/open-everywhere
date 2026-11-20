@@ -14,6 +14,7 @@ import type { HookContext } from "eve/hooks";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { overrideSettingsForTest } from "../agent/settings/settings.js";
+import { v27EndOf } from "./_hook-view.js";
 registerSlackFixtureMapper();
 
 let n = 0;
@@ -308,9 +309,10 @@ function makeSession(sessionId: string, continuationToken: string, attrs: Record
   return { ctx: makeCtx(sessionId, continuationToken, sandbox, attrs), sandbox, als: new FakeEveContext() };
 }
 
-async function fire(sim: Sim, event: string): Promise<void> {
-  await eveContextStorage().run(sim.als, async () => {
-    await hook.events[event]({ type: event }, sim.ctx);
+async function fire(sim: Sim, event: string, outcome?: string): Promise<void> {
+  await eveContextStorage().run(Object.assign(sim.als, { context: sim.als, values: new Map<unknown, unknown>() }), async () => {
+    const end = v27EndOf(event, outcome);
+    await hook.events[end.key]!(end.event, sim.ctx);
   });
 }
 
@@ -443,7 +445,7 @@ overrideSettingsForTest({ window: { topology: true } });
   await brain.provider.deleteFile!(partition, BRAIN, "ghost.md");
   await fire(s, "turn.started");
   ok(s.sandbox.files.get("memory/brain-silo/ghost.md") === undefined, "FIX-2: the upstream delete PROPAGATES — the file is removed from the sandbox (no longer model-visible)");
-  await fire(s, "session.completed");
+  await fire(s, "session.ended", "completed");
   ok(!("ghost.md" in brain.tiers.get(tierId(BRAIN))!.files), "FIX-2: persistMemoryNow does NOT resurrect the deleted file into the store (the {...host,...sandbox} union no longer re-adds it)");
 }
 
@@ -528,7 +530,7 @@ overrideSettingsForTest({ window: { topology: true } });
   ok(s.sandbox.files.get("memory/brain-silo/MEMORY.md") === BRAIN_TEXT, "the brain materialises for the session");
 
   s.sandbox.files.set("memory/brain-silo/MEMORY.md", "");
-  await fire(s, "session.completed");
+  await fire(s, "session.ended", "completed");
 
   const stored = brain.tiers.get(tierId(BRAIN))!.files;
   ok(stored["MEMORY.md"] === BRAIN_TEXT, "OPE-245: persistMemoryNow REFUSES the truncation — the domain's brain is intact in the store");
@@ -545,7 +547,7 @@ overrideSettingsForTest({ window: { topology: true } });
   const s = makeSession("sup-append", SUP_TOKEN);
   await fire(s, "session.started");
   s.sandbox.files.set("memory/brain-silo/MEMORY.md", `${before}\n- the session learned a new thing`);
-  await fire(s, "session.completed");
+  await fire(s, "session.ended", "completed");
   ok(
     brain.tiers.get(tierId(BRAIN))!.files["MEMORY.md"] === `${before}\n- the session learned a new thing`,
     "OPE-245: the floor is not a blanket block — an ordinary APPEND from the same seat still persists",

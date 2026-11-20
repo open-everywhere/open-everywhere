@@ -1,5 +1,5 @@
 import { trace } from "@opentelemetry/api";
-import { isOtelDeclaration, isOtelIntegration } from "eve/instrumentation/otel";
+import { otel, otelIntegration } from "eve/instrumentation/otel";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -10,6 +10,18 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+// eve 1.0 no longer exports its brand guards. These read the same cross-instance `Symbol.for`
+// brands that eve stamps on `otel()` and `otelIntegration()` values. The controls below prove the
+// brands still match eve's own values, so a renamed brand fails here instead of passing silently.
+const OTEL_DECLARATION_BRAND = Symbol.for("eve.instrumentation.otel");
+const OTEL_INTEGRATION_BRAND = Symbol.for("eve.instrumentation.otel-integration");
+const isOtelDeclaration = (v: unknown): boolean => typeof v === "object" && v !== null && Reflect.get(v, OTEL_DECLARATION_BRAND) === true;
+const isOtelIntegration = (v: unknown): boolean => typeof v === "object" && v !== null && Reflect.get(v, OTEL_INTEGRATION_BRAND) === true;
+ok(isOtelDeclaration(otel({})) && !isOtelIntegration(otel({})), "control: eve's own otel() value carries the declaration brand only");
+const controlIntegration = otelIntegration({ spanProcessors: [] });
+ok(isOtelIntegration(controlIntegration) && !isOtelDeclaration(controlIntegration), "control: eve's own otelIntegration() value carries the integration brand only");
+ok(!isOtelDeclaration({}) && !isOtelIntegration({}), "control: a plain object carries neither brand");
 
 delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;

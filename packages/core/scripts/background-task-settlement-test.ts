@@ -6,6 +6,8 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { v27Hooks } from "./_hook-view.js";
+import { EVE_EVENT_NAMES } from "../../../scripts/eve-event-names.generated.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-background-task-settlement-")), "ops.sqlite3");
 _setDeploymentIdentityForTest({ workspace: "dev" });
@@ -104,8 +106,8 @@ async function onParentTurn<T>(fn: () => Promise<T>): Promise<T> {
     "…and the FAILED arm's error rides eve's own `error.message` field, not a parsed paragraph",
   );
   eq(
-    tasks.readTaskSettled(settledData("c", "agent-aa0006", "cancelled", { cancel: { reason: "turn_ended" } }))?.cancelReason,
-    "turn_ended",
+    tasks.readTaskSettled(settledData("c", "agent-aa0006", "cancelled", { cancel: { reason: "turn-ended" } }))?.cancelReason,
+    "turn-ended",
     "…and the CANCELLED arm carries eve's own reason word",
   );
   eq(
@@ -145,13 +147,21 @@ async function onParentTurn<T>(fn: () => Promise<T>): Promise<T> {
     "🔴 OPE-1737: a failure eve sent with NO message half still yields a non-empty errorText — the status word — under a `parse` that says so. A live run wrote three rows whose `error` was `\"\"`, and an empty field says nothing at all, not even whether the reader looked",
   );
   eq(
-    tasks.taskSettledFailure(tasks.readTaskSettled(settledData("c", "agent-aa0013", "cancelled", { cancel: { reason: "task_cancel" } }))),
-    { errorClass: "task_cancel", errorText: "task_cancel", parse: "event" },
-    "a CANCELLED settlement carries eve's reason as the CLASS too: `turn_ended` and `task_cancel` are different operator stories and one row must not blur them",
+    tasks.taskSettledFailure(tasks.readTaskSettled(settledData("c", "agent-aa0013", "cancelled", { cancel: { reason: "task-cancel" } }))),
+    { errorClass: "task-cancel", errorText: "task-cancel", parse: "event" },
+    "the projection of a CANCELLED settlement carries eve's reason as the CLASS too: `turn-ended` and `task-cancel` are different operator stories and the projection keeps them apart (no audit row carries a cancel — see T4 CANCEL below)",
   );
 
-  eq([...tasks.TASK_TOOL_NAMES].sort(), ["task_cancel", "task_wait"], "the task tool names are named once, in the isolation module");
-  eq([...tasks.TASK_PARENT_TOOL_NAMES].sort(), ["task_cancel", "task_wait"], "🔴 and the PARENT list is the SAME set at 0.70 — see PART 0B, which reads eve's own mount and availability rules rather than trusting this line");
+  {
+    const long = `turn-${"x".repeat(2000)}`;
+    const capped = tasks.taskSettledFailure(tasks.readTaskSettled(settledData("c", "agent-aa0014", "cancelled", { cancel: { reason: long } })));
+    ok(
+      capped.errorClass.length < 700 && capped.errorText.length < 700 && capped.errorClass.startsWith("turn-x"),
+      `🔴 DEFENCE IN DEPTH: the projection bounds its own output whatever the caller does — an OPEN cancel reason of any length is capped in both the class and the text, because eve 1.x types \`reason\` as a plain string (class ${String(capped.errorClass.length)} chars)`,
+    );
+  }
+  eq([...tasks.TASK_TOOL_NAMES].sort(), ["eve__task_cancel", "eve__task_wait"], "the task tool names are named once, in the isolation module");
+  eq([...tasks.TASK_PARENT_TOOL_NAMES].sort(), ["eve__task_cancel", "eve__task_wait"], "🔴 and the PARENT list is the SAME set at 0.70 — see PART 0B, which reads eve's own mount and availability rules rather than trusting this line");
 }
 
 {
@@ -180,60 +190,88 @@ async function onParentTurn<T>(fn: () => Promise<T>): Promise<T> {
     );
   }
 
-  const message = readEveDist("protocol/message.d.ts");
-  ok(/type: "task\.started";/.test(message), "🔴 PART 0B: eve still declares the `task.started` event");
-  ok(/type: "task\.settled";/.test(message), "🔴 PART 0B: eve still declares the `task.settled` event");
-  ok(/type: "agent\.started";/.test(message), "🔴 PART 0B: eve still declares the `agent.started` event");
+  // eve 1.x (v27) declares each event family in its own module, and the session machine
+  // (`harness/session-machine/transitions.js`) is the one place that emits the task facts.
+  const taskTypes = readEveDist("protocol/session-events/families/task.d.ts");
+  const childTypes = readEveDist("protocol/session-events/families/child.d.ts");
+  ok(/export type TaskStarted = Envelope<"task\.started", TaskStartedData>;/.test(taskTypes), "🔴 PART 0B: eve still declares the `task.started` event");
+  ok(/export type TaskEnded = Envelope<"task\.ended", TaskEndedData>;/.test(taskTypes), "🔴 PART 0B: eve declares `task.ended`, the v27 end of a task (0.x `task.settled`)");
+  ok(/export type ChildOpened = Envelope<"child\.opened", ChildOpenedData>;/.test(childTypes), "🔴 PART 0B: eve declares `child.opened`, the v27 event that names an opened child session (0.x `agent.started`)");
   ok(
-    /kind: "agent" \| "tool";/.test(message),
-    "🔴 PART 0B: `task.started`'s kind union is exactly `agent | tool` — the two names `readTaskStarted` admits and the reason a third reds its negative control",
+    /readonly kind: "agent" \| "tool" \| \(string & \{\}\);/.test(taskTypes),
+    "🔴 PART 0B: `task.started`'s NAMED kinds are exactly `agent | tool` — the two names `readTaskStarted` admits. eve 1.x leaves the type open (`string & {}`), so a third named kind reds this pin, and an unnamed one reads as `null` (the negative control above)",
+  );
+  {
+    const outcome = /export type TaskOutcome = ((?:"[a-z]+"(?: \| )?)+);/.exec(taskTypes)?.[1];
+    eq(
+      [...(outcome ?? "").matchAll(/"([a-z]+)"/g)].map((m) => m[1]).sort(),
+      [...tasks.TERMINAL_TASK_STATUSES].sort(),
+      "🔴 PART 0B THE TERMINAL SET: eve's `task.ended` outcome union is exactly OE's `TERMINAL_TASK_STATUSES`. This is the leg that reds if eve adds a non-terminal outcome, which would make `task.ended` stop meaning 'this can no longer change'",
+    );
+  }
+  ok(
+    /export interface TaskEndedData \{[^}]*readonly reason\?: string;/.test(taskTypes),
+    "🔴 PART 0B: eve 1.x's cancel reason is an OPEN string (0.x had a closed union). OE never matches on the word: the failure projection carries it, capped, as the CLASS, so a new word upstream is still carried (the `task-cancel` arm above)",
   );
   ok(
-    /status: "completed" \| "failed" \| "cancelled";/.test(message),
-    "🔴 PART 0B THE TERMINAL SET: eve's `task.settled` status union is exactly OE's `TERMINAL_TASK_STATUSES`. This is the leg that reds if eve adds a non-terminal settlement status, which would make `task.settled` stop meaning 'this can no longer change'",
+    /export interface ChildOpenedData \{\s*\/\*\* The child session; [^*]*\*\/\s*readonly sessionId: string;/.test(childTypes),
+    "🔴 PART 0B THE FIELD: eve publishes the opened child's own SESSION id on `child.opened`. The 0.54 comments in `access/background-tasks.ts` and the deleted `access/subagent-taint.ts` claimed eve stripped it before OE ever saw it",
   );
   ok(
-    /export type TaskCancelReason = "task_cancel" \| "turn_cancelled" \| "turn_ended";/.test(message),
-    "🔴 PART 0B: eve's cancel-reason vocabulary is closed and unchanged, which is why the failure projection carries it as a CLASS",
-  );
-  ok(
-    /interface AgentStartedStreamEvent {/.test(message) && /The opened session's id/.test(message) && /sessionId: string;/.test(message),
-    "🔴 PART 0B THE NEW FIELD: eve 0.70 publishes the opened child's own SESSION id on `agent.started`. The 0.54 comments in `access/background-tasks.ts` and the deleted `access/subagent-taint.ts` claimed eve stripped it before OE ever saw it, and this is the byte that disproved them",
+    /readonly owner: \{\s*readonly callId: string;\s*\} \| \{\s*readonly taskId: string;\s*\};/.test(childTypes),
+    "🔴 PART 0B: `child.opened` names its owner as a call OR a task, never both — which is why `childOpenedData` resolves the other id through the session view",
   );
 
-  const hookMap = readEveDist("public/definitions/hook.d.ts");
-  for (const ev of ["task.started", "task.settled", "agent.started"]) {
-    ok(
-      new RegExp(`readonly "${ev.replace(".", "\\.")}": ProtocolEvent<"${ev.replace(".", "\\.")}">;`).test(hookMap),
-      `🔴 PART 0B REACHABILITY: \`${ev}\` is in eve's PUBLIC \`HookEventMap\`. Without this, every assertion below tests a handler eve would never call, and the whole settlement edge does not exist on a real host`,
-    );
+  {
+    const authoring = readEveDist("protocol/session-events/authoring.js");
+    const hookMap = readEveDist("public/definitions/hook.d.ts");
+    ok(/readonly \[T in AuthoringEventType\]: ProtocolEvent<T>;/.test(hookMap), "PART 0B REACHABILITY: eve's PUBLIC `HookEventMap` is mapped over `authoringEventTypes`");
+    const authored = /authoringEventTypes=`([^`]*)`/.exec(authoring)?.[1]?.split(",") ?? [];
+    for (const ev of ["task.started", "task.ended", "child.opened", "call.started", "call.settled", "call.requested"]) {
+      ok(
+        authored.includes(ev),
+        `🔴 PART 0B REACHABILITY: \`${ev}\` is in eve's PUBLIC hook events. Without this, every assertion below tests a handler eve would never call, and the whole settlement edge does not exist on a real host`,
+      );
+    }
   }
 
   {
-    const start = readEveDist("execution/tasks/start.js");
-    const modelStep = readEveDist("execution/tasks/model-step.js");
-    const subagentTool = readEveDist("subagents/tool.js");
+    const machine = readEveDist("harness/session-machine/transitions.js");
     ok(
-      /function taskStartedEvent\(e,t\)\{return createTaskStartedEvent\(\{callId:e\.task\.callId,/.test(start),
-      "🔴 PART 0B THE JOIN, PARENT SIDE: `task.started` carries `e.task.callId` — the model's own tool-call id for the delegating call, not an id eve mints for the task",
+      /function startTask\((\w+),(\w+),\w+\)\{let (\w+)=\[\];return\([^]*?\1\.projection\.view\.tasks\[\2\.taskId\]!==void 0\)\|\|\([^]*?\3\.push\(\{type:`task\.started`,data:\{taskId:\2\.taskId,kind:\2\.kind,name:\2\.name,startedBy:\{callId:\2\.callId\}\}\}\)\),\3\.push\(\{type:`call\.started`,data:defined\(\{callId:\2\.callId,taskId:\2\.taskId,/.test(machine),
+      "🔴 PART 0B THE JOIN, PARENT SIDE: the session machine emits `task.started` with `startedBy.callId` — the model's own tool-call id for the delegating call — ONLY for a task the view does not yet hold, and `call.started {callId, taskId}` for every call. So a continuation reaches OE as `call.started`, not as a second `task.started` (T5 below)",
     );
     ok(
-      /createTask\(readTaskTable\(e\.state\),\{callId:t\.callId,/.test(modelStep),
-      "…and the task RECORD is created against that same `t.callId`, so the id on the event is the id of the call that started the task",
+      /function settleTask\((\w+),(\w+)\)\{let\{outcome:(\w+)\}=\2;[^]*?\2\.calls\.map\([^]*?fact\(`call\.settled`,\{callId:/.test(machine) &&
+        /reason:\w+\.status===`cancelled`\?\w+\.reason\?\?`task-cancelled`:void 0/.test(machine),
+      "🔴 PART 0B THE SETTLEMENT, PER CALL: a task's result settles EVERY call it serves with `call.settled` (outcome `interrupted` and a reason word for a cancel) — the edge `taskCallSettledData` reads",
+    );
+    ok(
+      /function endTask\((\w+),(\w+)\)\{let (\w+)=\1\.projection\.view\.tasks\[\2\.taskId\];if\(\3===void 0\|\|\3\.status===`ended`\)return unchanged\(\1,\[\]\);[^]*?fact\(`task\.ended`,\{[^]*?outcome:\w+\.status,reason:\w+\.status===`cancelled`\?\w+\.reason\?\?`task-ended`:void 0,taskId:\2\.taskId\}\)/.test(machine),
+      "🔴 PART 0B THE SETTLEMENT, PER TASK: a task ends ONCE with `task.ended {taskId, outcome}` — it carries no call id, which is why `taskEndedData` takes the opening call off the view",
+    );
+    ok(
+      /function openChild\((\w+),(\w+)\)\{return commitOf\(\[\{\.\.\.fact\(`child\.opened`,\1\),scope:scoped\(\2\)\}\]\)\}/.test(readEveDist("harness/session-machine/children.js")),
+      "PART 0B: the session machine commits `child.opened` as a fact, which is what reaches a hook",
+    );
+    ok(
+      /function commitTask\((\w+),(\w+),\w+,\w+\)\{let \w+=createTask\(readTaskTable\(\1\.state\),\{callId:\2\.callId,kind:isAgentTool\(\2\.definition\)\?`agent`:`tool`,/.test(readEveDist("execution/tasks/model-step.js")),
+      "🔴 PART 0B: the task RECORD is created against the delegating call's own `callId`, and eve's only producer of a task kind writes `agent` or `tool` — the two kinds `readTaskStarted` admits",
     );
     const dispatchStep = readEveDist("execution/coordination-dispatch-step.js");
     ok(
-      /agentContext:captureAgentSessionContext\(t,r\.callId,s\)/.test(dispatchStep) && /task:r\}\)/.test(dispatchStep),
-      "🔴 PART 0B THE JOIN, CHILD SIDE (1/4): eve captures the agent-session context with `r.callId` off the SAME plan entry it passes as `task:r`, so the lineage's call id and the task's are one id",
+      /agentContext:captureAgentSessionContext\(\w+,(\w+)\.callId\)[^]*?task:\1\}/.test(dispatchStep),
+      "🔴 PART 0B THE JOIN, CHILD SIDE (1/4): eve captures the agent-session context with the `callId` off the SAME plan entry it passes as `task`, so the lineage's call id and the task's are one id",
     );
     ok(
       /parent:\{callId:t,rootSessionId:/.test(readEveDist("execution/agent-sessions/context.js")),
       "…(2/4): and that argument becomes the lineage's own `parent.callId`",
     );
     ok(
-      /lineage:e\.parent,/.test(readEveDist("execution/agent-sessions/steps.js")),
+      /function createParentContext\(\w+,\w+\)\{return\{[^}]*lineage:\w+\.parent,/.test(readEveDist("execution/agent-sessions/start.js")),
       "…(3/4): which rides the PARENT CONTEXT as `lineage` (`createParentContext`); the run input carries it as `parent`, which (4/4) pins",
     );
+    const subagentTool = readEveDist("subagents/tool.js");
     ok(
       /parent:e\.parent\.lineage,/.test(subagentTool),
       "🔴 …(4/4): and `buildSubagentRunInput` sets the child's `parent` to that lineage — which `channel/types.d.ts` declares as `SessionParent.callId`, \"Parent runtime-action tool call id that created this child session\". THIS is the byte the delegation key depends on, and this is the leg that reds if eve re-keys it",
@@ -253,7 +291,7 @@ async function onParentTurn<T>(fn: () => Promise<T>): Promise<T> {
     "🔴 PART 0B: eve's `ctx.agent()` handle keys itself `<runId>:<index>` — one colon, always present",
   );
   ok(
-    /continuationKey:[a-z]\.key/.test(readEveDist("execution/agent-sessions/steps.js")),
+    /continuationKey:[a-z]\.key/.test(readEveDist("execution/agent-sessions/start.js")),
     "🔴 PART 0B: …and that key is what reaches `mintSubagentContinuationToken`, so a real token is `subagent:wrun_<id>:<index>`. `/^subagent:([^:]+):([^:]+)$/` parses THAT to a pair naming no session — the misparse the deleted arm would have made on every delegation",
   );
   ok(
@@ -299,15 +337,22 @@ await onParentTurn(async () => {
   );
 });
 
-const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-const startedHandler = events["task.started"]!;
-const settledHandler = events["task.settled"]!;
-const agentHandler = events["agent.started"]!;
+const bound = (hub.default as unknown as { events: Record<string, unknown> }).events;
+const events = v27Hooks(hub.default);
+const startedHandler = events.taskStarted;
+const settledHandler = events.taskEnded;
+const agentHandler = events.childOpened;
 
-ok(typeof startedHandler === "function", "🔴 T4 REACHABILITY: the settlement hub SUBSCRIBES to `task.started`. Without it the dispatch join is never written and every settlement below resolves `no-row`");
-ok(typeof settledHandler === "function", "🔴 T4 REACHABILITY: …and to `task.settled`, which is the whole settlement edge at 0.70");
-ok(typeof agentHandler === "function", "🔴 T4 REACHABILITY: …and to `agent.started`, which is where the child's session id comes from");
-eq(events["message.received"], undefined, "🔴 T4: the hook NO LONGER subscribes to `message.received`. It carried the 0.54 notification edge, and eve 0.70 sends no task notifications — a reader left matching that grammar would answer 'no settlement' on every call.");
+ok(typeof bound["task.started"] === "function", "🔴 T4 REACHABILITY: the settlement hub SUBSCRIBES to `task.started`. Without it the dispatch join is never written and every settlement below resolves `no-row`");
+ok(typeof bound["task.ended"] === "function", "🔴 T4 REACHABILITY: …and to `task.ended`, the end of a task on eve 1.x (0.x `task.settled`)");
+ok(typeof bound["call.settled"] === "function", "🔴 T4 REACHABILITY: …and to `call.settled`, which settles each call a task serves");
+ok(typeof bound["call.started"] === "function", "🔴 T4 REACHABILITY: …and to `call.started`, which is how a continuation of a task arrives (PART 0B above)");
+ok(typeof bound["child.opened"] === "function", "🔴 T4 REACHABILITY: …and to `child.opened`, which is where the child's session id comes from");
+{
+  const known: ReadonlySet<string> = new Set(EVE_EVENT_NAMES);
+  const stale = Object.keys(bound).filter((k) => !known.has(k));
+  eq(stale, [], "🔴 T4: every event the hub binds is one eve 1.x emits. The 0.54 notification edge and the 0.x `task.settled` / `agent.started` keys are gone — a handler left on a name eve no longer sends would answer 'no settlement' on every call");
+}
 
 {
   const call = "call_e2e_settle";
@@ -321,12 +366,51 @@ eq(events["message.received"], undefined, "🔴 T4: the hook NO LONGER subscribe
   });
   await new Promise((r) => setTimeout(r, 50));
   const settled = (await readAudit({ org: ORG, action: hub.TASK_SETTLED_ACTION })).filter((r) => r.detail?.task === task);
-  eq(settled.length, 1, "🔴 T4 E2E: a settlement through eve's real event, the real subscription and the real handler writes exactly ONE `delegation.task_settled` row");
+  eq(settled.length, 1, "🔴 T4 E2E: a settlement through eve's `task.ended`, the real subscription and the real handler writes exactly ONE `delegation.task_settled` row");
   eq(
     settled[0]?.detail,
     { task, status: "completed", session: PARENT, agent: "sess-child-e2e" },
-    "🔴 T4 E2E: …carrying ids and eve's status word ONLY. The taint verdict fields (`marker`, `adopted`, `kinds`) are gone with the carriage (OPE-2720), and the child's session id comes off the dispatch row `agent.started` filled in",
+    "🔴 T4 E2E: …carrying ids and eve's status word ONLY. The taint verdict fields (`marker`, `adopted`, `kinds`) are gone with the carriage (OPE-2720), and the child's session id comes off the dispatch row `child.opened` filled in",
   );
+}
+
+{
+  const call = "call_e2e_call_settle";
+  const task = "agent-eeee0002";
+  await onParentTurn(async () => {
+    await startedHandler({ data: startedData(call, task) }, parentCtx);
+    await agentHandler({ data: agentStartedData(call, task, "sess-child-e2e-2") }, parentCtx);
+  });
+  await onParentTurn(async () => {
+    await events.taskCallSettled({ data: settledData(call, task) }, parentCtx);
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  const settled = (await readAudit({ org: ORG, action: hub.TASK_SETTLED_ACTION })).filter((r) => r.detail?.task === task);
+  eq(settled.length, 1, "🔴 T4 E2E: the OTHER v27 edge — the `call.settled` of the call the task serves — writes exactly ONE `delegation.task_settled` row too");
+  eq(settled[0]?.detail?.agent, "sess-child-e2e-2", "…naming the child session `child.opened` recorded");
+}
+
+{
+  const failedRows = async (task: string) => (await readAudit({ org: ORG, action: hub.TASK_FAILED_ACTION })).filter((r) => r.detail?.task === task);
+  const settledRows = async (task: string) => (await readAudit({ org: ORG, action: hub.TASK_SETTLED_ACTION })).filter((r) => r.detail?.task === task);
+  const drive = async (call: string, task: string, status: "cancelled" | "failed", extra: Record<string, unknown>) => {
+    await onParentTurn(async () => {
+      await startedHandler({ data: startedData(call, task) }, parentCtx);
+    });
+    await onParentTurn(async () => {
+      await settledHandler({ data: settledData(call, task, status, extra) }, parentCtx);
+    });
+    await new Promise((r) => setTimeout(r, 50));
+  };
+  await drive("call_cancel_row", "agent-eeee0003", "cancelled", { cancel: { reason: "task-cancel" } });
+  eq((await failedRows("agent-eeee0003")).length, 0, "🔴 T4 CANCEL: a cancelled task's `task.ended` through the real hub writes NO `delegation.task_failed` row — only a `failed` task writes one, and the security doc says so");
+  eq(
+    (await settledRows("agent-eeee0003")).map((r) => r.detail?.status),
+    ["cancelled"],
+    "…and its `cancelled` status word lands on exactly one `delegation.task_settled` row",
+  );
+  await drive("call_failed_row", "agent-eeee0004", "failed", { error: { message: "the worker died" } });
+  eq((await failedRows("agent-eeee0004")).length, 1, "🔴 T4 CANCEL NEGATIVE CONTROL: a FAILED task in the same run writes exactly one `delegation.task_failed` row, so the zero above is the cancel arm and not a reader that sees nothing");
 }
 
 await onParentTurn(async () => {
@@ -337,7 +421,7 @@ await new Promise((r) => setTimeout(r, 50));
   const refused = await readAudit({ org: ORG, action: hub.TASK_UNREADABLE_ACTION });
   const mine = refused.filter((r) => r.detail?.task === "agent-ff0001");
   eq(mine.length, 1, "🔴 T4: an UNREADABLE settlement writes exactly one row, so a reader that refuses what eve sends is visible in an audit query instead of silent");
-  eq(mine[0]?.detail?.edge, "task.settled", "…and names the edge that refused it");
+  eq(mine[0]?.detail?.edge, "task.ended", "…and names the edge that refused it");
   const settledRows = await readAudit({ org: ORG, action: hub.TASK_SETTLED_ACTION });
   eq(
     settledRows.filter((r) => r.detail?.task === "agent-ff0001").length,
@@ -347,8 +431,8 @@ await new Promise((r) => setTimeout(r, 50));
 }
 
 {
-  const requestedHandler = events["actions.requested"]!;
-  eq(typeof requestedHandler, "function", "precondition: the hook still subscribes to `actions.requested`");
+  const requestedHandler = events.callRequested;
+  eq(typeof bound["call.requested"], "function", "precondition: the hook subscribes to `call.requested`, eve 1.x's per-call step edge (0.x `actions.requested`)");
 
   const unifiedCtx = { ...parentCtx, channel: { kind: "channel:unified", continuationToken: "unified:oe-dom:e2e:oe-sup:g1" } };
   eq(isUnifiedWindowContext(unifiedCtx as never), true, "precondition: the fixture really is a unified seat, read through the same predicate the handler uses");
@@ -362,7 +446,7 @@ await new Promise((r) => setTimeout(r, 50));
     const rows = await readAudit({ org: ORG, action: hub.DISPATCH_UNAUTHORIZED_ACTION });
     const mine = rows.filter((r) => r.detail?.call === "call_noauth");
     eq(mine.length, 1, "🔴 PART 4D: a unified delegating turn with no addressed wake writes ONE `delegation.dispatch_unauthorized` row — the state the swallowed throw used to pass over in silence");
-    eq(mine[0]?.detail?.edge, "actions.requested", "…naming the edge it fired on, because the same recorder also serves `task.started`");
+    eq(mine[0]?.detail?.edge, "call.requested", "…naming the edge it fired on, because the same recorder also serves `task.started`");
     eq(mine[0]?.detail?.reason, "unified-turn-no-wake", "…and the REASON, which is the only field separating this arm from the settlement-turn arms");
     eq("task" in (mine[0]?.detail ?? {}), false, "🔴 PART 4D: the `task` field is OMITTED at this edge, not written empty — eve mints the task id at `task.started`, and an empty joinable field would read as a lookup that found nothing");
   }
@@ -444,10 +528,47 @@ await onParentTurn(async () => {
   eq(again?.callId, "call_5", "🔴 T5: a continuation on the same taskId resolves the ORIGINAL call — no handle row needed to get there");
   eq(again, first, "…and the row is returned unchanged rather than rewritten, which is what makes a redelivered event idempotent");
   ok(
-    /async function sendToTask\(e\)/.test(readEveDist("execution/tasks/start.js")) && /started:taskStartedEvent\(e,a\)/.test(readEveDist("execution/tasks/start.js")),
-    "🔴 T5 PART 0B: a continuation really does reach this edge — eve's `sendToTask` answers `started: taskStartedEvent(...)` for a call that names an existing task. Without this byte the branch above would be testing an event eve never sends",
+    /async function sendToTask\((\w+)[^{]*\)\{[^]*?started:taskCallStart\(\1,\w+\)\}\}/.test(readEveDist("execution/tasks/start.js")) &&
+      /function taskCallStart\((\w+),(\w+)\)\{return\{callId:\1\.task\.callId,[^}]*taskId:\1\.taskId,/.test(readEveDist("execution/tasks/start.js")),
+    "🔴 T5 PART 0B: a continuation really does reach OE — eve's `sendToTask` answers `started` with the NEW call's id and the EXISTING task id, and the session machine turns that into `call.started {callId, taskId}` (PART 0B above). Without these bytes the branch below would be testing an event eve never sends",
   );
 });
+{
+  const TASK = "agent-bb0009";
+  const { viewOf, ev } = await import("./_hook-view.js");
+  await onParentTurn(async () => {
+    await startedHandler({ data: startedData("call_9", TASK) }, parentCtx);
+  });
+  const scope = { turnId: TURN };
+  const view = viewOf([
+    ev("session.started", {}),
+    ev("turn.started", { turnId: TURN, cause: { policy: "test" }, follows: null }, scope),
+    ev("model.requested", { runId: "r1", owner: { turnId: TURN } }, { ...scope, runId: "r1" }),
+    ev("call.requested", { callId: "call_9", owner: { runId: "r1" }, capability: { kind: "agent", name: "agent" } }, { ...scope, runId: "r1" }),
+    ev("call.started", { callId: "call_9", taskId: TASK }, scope),
+    ev("task.started", { taskId: TASK, startedBy: { callId: "call_9" }, kind: "agent", name: "agent" }, scope),
+    ev("call.requested", { callId: "call_9_again", owner: { runId: "r1" }, capability: { kind: "agent", name: "agent" } }, { ...scope, runId: "r1" }),
+    ev("call.started", { callId: "call_9_again", taskId: TASK }, scope),
+  ]);
+  await onParentTurn(async () => {
+    await (bound["call.started"] as (e: unknown, c: unknown) => Promise<void>)({ type: "call.started", data: { callId: "call_9_again", taskId: TASK }, scope }, { ...parentCtx, view });
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  const mine = (await readAudit({ org: ORG, action: hub.TASK_STARTED_ACTION })).filter((r) => r.detail?.task === TASK);
+  eq(mine.length, 2, "🔴 T5 REAL EDGE: a continuation's `call.started` through the hub's own handler earns its own dispatch row");
+  eq(mine.filter((r) => r.detail?.continuation === true).length, 1, "🔴 …marked `continuation: true`");
+  eq((await taskCall.taskCallLink(ORG, TASK))?.callId, "call_9", "…and the join row still names the ORIGINAL call");
+  const firstCall = (await readAudit({ org: ORG, action: hub.TASK_STARTED_ACTION })).filter((r) => r.detail?.task === TASK).length;
+  await onParentTurn(async () => {
+    await (bound["call.started"] as (e: unknown, c: unknown) => Promise<void>)({ type: "call.started", data: { callId: "call_9", taskId: TASK }, scope }, { ...parentCtx, view });
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  eq(
+    (await readAudit({ org: ORG, action: hub.TASK_STARTED_ACTION })).filter((r) => r.detail?.task === TASK).length,
+    firstCall,
+    "🔴 T5 NEGATIVE CONTROL: the OPENING call's own `call.started` is not a continuation and writes no second row — `task.started` already recorded it",
+  );
+}
 await new Promise((r) => setTimeout(r, 50));
 {
   const started = await readAudit({ org: ORG, action: hub.TASK_STARTED_ACTION });

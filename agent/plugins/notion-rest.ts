@@ -1575,7 +1575,7 @@ export const NOTION_REST_SKILL: SkillPackageDefinition = {
     "Reach Notion over its REST API on the organisation's integration key — the domain's " +
     "road to Notion. One raw `api` verb covers every endpoint; composite verbs cover " +
     "search, pages, blocks, databases, comments and users, with markdown in and out.",
-  markdown: NOTION_SKILL_MARKDOWN,
+  content: NOTION_SKILL_MARKDOWN,
   files: {
     "scripts/notion.mjs": NOTION_SCRIPT,
     "reference.md": NOTION_REFERENCE,

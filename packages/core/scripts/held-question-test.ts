@@ -77,7 +77,7 @@ function seatCtx(turnId: string) {
 
 function turnStarted(ctx: never): void {
   settlementHook.events["turn.started"]!({}, ctx);
-  settlementHook.events["step.started"]!({}, ctx);
+  settlementHook.events["model.requested"]!({}, ctx);
 }
 
 const store = getOperationalStore();
@@ -85,16 +85,21 @@ const store = getOperationalStore();
 ok(await heldQuestion.rememberNonMemberAnswer(store, ORG, "q1-guest"), "Q1 fixture: the guest's nonmember stamp is recorded through `rememberNonMemberAnswer`");
 ok((await store.getTaskResult(ORG, heldQuestionNonMemberKey("q1-guest"))) !== null, "Q1 fixture: …under the held-question key");
 
-const resolved = (kind: string, requestId: string) => ({ data: { resolutions: [{ kind, outcome: "answered", requestId }], sequence: 1, stepIndex: 1, turnId: "t" } });
+const { interactionView } = await import("./_hook-view.js");
+const resolve = (kind: string, requestId: string, ctx: never): Promise<void> | void =>
+  heldQuestionHook.events["interaction.settled"]!(
+    { type: "interaction.settled", data: { interactionId: requestId, outcome: "accepted" }, scope: { turnId: "t" } } as never,
+    Object.assign(Object.create(Object.getPrototypeOf(ctx) as object) as object, ctx as object, { view: interactionView(kind, requestId, "accepted", "t") }) as never,
+  );
 await contextStorage.run(new ContextContainer(), async () => {
   const ctx = seatCtx("turn_q2");
   turnStarted(ctx);
   const rowsNow = async (): Promise<number> => (await readAudit({ org: ORG, action: NONMEMBER_ANSWER_MARKED_AUDIT_ACTION, limit: 10 })).length;
-  await heldQuestionHook.events["input.resolved"]!(resolved("question", "q1-member"), ctx);
+  await resolve("question", "q1-member", ctx);
   eq(await rowsNow(), 0, "Q2 NEGATIVE CONTROL: a member's answer writes no row");
-  await heldQuestionHook.events["input.resolved"]!(resolved("tool-approval", "q1-guest"), ctx);
+  await resolve("tool-approval", "q1-guest", ctx);
   eq(await rowsNow(), 0, "Q2: a resolution that is not a question reads no stamp");
-  await heldQuestionHook.events["input.resolved"]!(resolved("question", "q1-guest"), ctx);
+  await resolve("question", "q1-guest", ctx);
   eq(await rowsNow(), 1, "🔴 Q2: the guest's answer writes the row");
 });
 {
@@ -124,10 +129,10 @@ await contextStorage.run(new ContextContainer(), async () => {
     await contextStorage.run(new ContextContainer(), async () => {
       const ctx = seatCtx("turn_q2_nostore");
       turnStarted(ctx);
-      await heldQuestionHook.events["input.resolved"]!(resolved("tool-approval", "q-nostore"), ctx);
+      await resolve("tool-approval", "q-nostore", ctx);
       let threw = false;
       try {
-        await heldQuestionHook.events["input.resolved"]!(resolved("question", "q-nostore"), ctx);
+        await resolve("question", "q-nostore", ctx);
       } catch {
         threw = true;
       }

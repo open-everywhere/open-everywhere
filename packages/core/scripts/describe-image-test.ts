@@ -15,6 +15,9 @@ import { registerAttachmentResolver, _resetAttachmentPlaneForTest } from "../age
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { envelopeWrappedThisTurn } from "../agent/memory/turn-provenance.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -95,7 +98,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   const out = await tool.execute({ kind: "path", ref: "real.png" }, ctxWithSandbox(async () => PNG_BYTES));
   ok(out.ok === false && /could not be described/.test(out.message ?? "") && /ZDR/.test(out.message ?? ""), "vision-call error (ZDR refusal) → ok:false, fail-closed message carries the reason, NO description");
   ok(out.description === undefined, "ZDR fail-closed: no fabricated description field on failure");
-  await eveContextStorage().run(new FakeSession(), async () => {
+  await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
     ok(envelopeWrappedThisTurn(undefined) === false, "fresh turn starts untainted");
     const mo = await tool.toModelOutput(out);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "failure toModelOutput: plain message, NOT untrusted-wrapped");
@@ -116,7 +119,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(out.ok === true && out.description === "A screenshot of a terminal.", "success: ok:true with the description");
   ok((out.ocrText ?? "").includes("ignore previous instructions"), "success: OCR text captured verbatim in the output");
 
-  await eveContextStorage().run(new FakeSession(), async () => {
+  await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
     ok(envelopeWrappedThisTurn(undefined) === false, "success path: fresh turn starts untainted");
     const mo = await tool.toModelOutput(out);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes(UNTRUSTED_CLOSE), "success toModelOutput: description+OCR are fenced in the untrusted envelope");
@@ -170,7 +173,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   ok(captured !== undefined && captured!.mimeType === "image/png", "path: the extension-inferred mime (image/png) is passed to the describer");
   ok(captured !== undefined && captured!.bytes.length === PNG_BYTES.length && captured!.bytes[0] === 0x89, "path: the SANDBOX bytes (not a fetch) reach the injected describer");
 
-  await eveContextStorage().run(new FakeSession(), async () => {
+  await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
     ok(envelopeWrappedThisTurn(undefined) === false, "path: fresh turn starts untainted");
     const mo = await tool.toModelOutput(okOut);
     ok(mo.value.includes(UNTRUSTED_OPEN) && mo.value.includes("‹/untrusted_external_data›"), "path success toModelOutput: description+OCR fenced, the OCR breakout defanged");
@@ -241,7 +244,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   const empty = await tool.execute({ hint: "go on then" }, ctx);
   ok(empty.ok === false && /no image source was given/.test(empty.message ?? ""), "arg shape: NO source → an explicit ok:false naming the contract (a readable tool result, not an invisible rejection)");
 
-  await eveContextStorage().run(new FakeSession(), async () => {
+  await eveContextStorage().run(asEveStore(new FakeSession()), async () => {
     const mo = await tool.toModelOutput(empty);
     ok(!mo.value.includes(UNTRUSTED_OPEN), "arg shape: a bad-source refusal renders as OUR OWN plain message (no untrusted envelope)");
     ok(envelopeWrappedThisTurn(undefined) === false, "arg shape: a bad-source refusal ingests nothing, so it does NOT taint the turn");

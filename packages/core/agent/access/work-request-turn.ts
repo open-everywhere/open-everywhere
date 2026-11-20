@@ -114,6 +114,28 @@ export function recordWorkRequestsThisTurn(turnId: string | undefined, message: 
   }
 }
 
+function decideWorkCallJoin(state: WorkRequestTurnState, message: unknown, stamp: string | undefined): { readonly result: WorkCallJoin; readonly claim?: WorkCallClaim } {
+  const open = state.open ?? [];
+  const claims = state.claims ?? [];
+  if (open.length === 0) return { result: { kind: "none-open" } };
+  const claimed = new Set(claims.map((c) => c.requestId));
+  const retired = new Set(state.retired ?? []);
+  if (stamp !== undefined && typeof message === "string" && !retired.has(stamp) && open.some((r) => r.requestId === stamp && r.brief === message)) {
+    const result: WorkCallJoin = { kind: "joined", requestId: stamp, by: "brief" };
+    return claims.some((c) => c.requestId === stamp) ? { result } : { result, claim: { message, requestId: stamp } };
+  }
+  const priors = typeof message === "string" ? claims.filter((c) => c.message === message) : [];
+  const prior = priors.find((c) => c.requestId === stamp) ?? priors[0];
+  if (prior !== undefined) return { result: { kind: "joined", requestId: prior.requestId, by: "brief" } };
+  const unclaimed = open.filter((r) => !claimed.has(r.requestId) && !retired.has(r.requestId));
+  if (typeof message === "string" && !unclaimed.some((r) => r.brief === message) && open.some((r) => retired.has(r.requestId) && r.brief === message)) {
+    return { result: { kind: "refused", reason: "no-match" } };
+  }
+  const result: WorkCallJoin = unclaimed.length === 0 ? { kind: "refused", reason: "no-match" } : joinWorkCall(unclaimed, message);
+  if (result.kind !== "joined" || typeof message !== "string") return { result };
+  return { result, claim: { message, requestId: result.requestId } };
+}
+
 export function claimWorkCall(turnId: string | undefined, message: unknown, stamp?: string): WorkCallJoin {
   if (turnId === undefined || turnId.length === 0) return { kind: "none-open" };
   let result: WorkCallJoin = { kind: "none-open" };
@@ -121,39 +143,27 @@ export function claimWorkCall(turnId: string | undefined, message: unknown, stam
     slot.update((cur) => {
       const state = readState(cur);
       if (state.turn !== turnId) return cur as WorkRequestTurnState;
-      const open = state.open ?? [];
-      const claims = state.claims ?? [];
-      if (open.length === 0) return cur as WorkRequestTurnState;
-      const claimed = new Set(claims.map((c) => c.requestId));
-      const retired = new Set(state.retired ?? []);
-      if (stamp !== undefined && typeof message === "string" && !retired.has(stamp) && open.some((r) => r.requestId === stamp && r.brief === message)) {
-        result = { kind: "joined", requestId: stamp, by: "brief" };
-        if (claims.some((c) => c.requestId === stamp)) return cur as WorkRequestTurnState;
-        return { ...state, claims: [...claims, { message, requestId: stamp }] };
-      }
-      const priors = typeof message === "string" ? claims.filter((c) => c.message === message) : [];
-      const prior = priors.find((c) => c.requestId === stamp) ?? priors[0];
-      if (prior !== undefined) {
-        result = { kind: "joined", requestId: prior.requestId, by: "brief" };
-        return cur as WorkRequestTurnState;
-      }
-      const unclaimed = open.filter((r) => !claimed.has(r.requestId) && !retired.has(r.requestId));
-      if (
-        typeof message === "string" &&
-        !unclaimed.some((r) => r.brief === message) &&
-        open.some((r) => retired.has(r.requestId) && r.brief === message)
-      ) {
-        result = { kind: "refused", reason: "no-match" };
-        return cur as WorkRequestTurnState;
-      }
-      result = unclaimed.length === 0 ? { kind: "refused", reason: "no-match" } : joinWorkCall(unclaimed, message);
-      if (result.kind !== "joined" || typeof message !== "string") return cur as WorkRequestTurnState;
-      return { ...state, claims: [...claims, { message, requestId: result.requestId }] };
+      const decided = decideWorkCallJoin(state, message, stamp);
+      result = decided.result;
+      if (decided.claim === undefined) return cur as WorkRequestTurnState;
+      return { ...state, claims: [...(state.claims ?? []), decided.claim] };
     });
   } catch {
     return { kind: "none-open" };
   }
   return result;
+}
+
+/** The job `claimWorkCall` joins (or joined) this call to, read without taking a claim. */
+export function peekWorkCallJoin(turnId: string | undefined, message: unknown, stamp?: string): WorkCallJoin {
+  if (turnId === undefined || turnId.length === 0) return { kind: "none-open" };
+  try {
+    const state = readState(slot.get());
+    if (state.turn !== turnId) return { kind: "none-open" };
+    return decideWorkCallJoin(state, message, stamp).result;
+  } catch {
+    return { kind: "none-open" };
+  }
 }
 
 export function workCallClaimed(turnId: string | undefined, message: unknown): boolean {

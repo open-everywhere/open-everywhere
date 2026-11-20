@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -88,8 +88,10 @@ function turnCtx(sessionId?: string, channel = "C_TXN"): BindableContext {
   } as unknown as BindableContext;
 }
 
+// The model resolver's event argument. `noteTurnStep` reads only `data.turnId` from it, and only when
+// the context has no turn id.
 function stepEvent(turnId?: string): unknown {
-  return { type: "step.started", data: { turnId } };
+  return { data: { turnId } };
 }
 
 function unroutableTurnCtx(sessionId?: string): BindableContext {
@@ -392,10 +394,16 @@ const smallSettings = (budget: number, multiple = 2): void => {
 {
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
-  const src = readFileSync(join(eveRoot, "dist/src/harness/tool-loop.js"), "utf8");
-  ok(src.includes("__oeProjectToolSet"), "retired: hunk 2 (OPE-73 untrusted projection) is UNTOUCHED and still in the installed bytes — it has no userland equivalent and must never be removed with the ceiling");
+  // eve 1.x ships no harness/tool-loop.js, so the retired ceiling is checked across every file the
+  // committed eve patch targets: a re-roll that ports the old __oe* block wholesale lands in one of them.
+  // The OPE-73 projection (patch part 1) is not carried onto 1.x; eve-install-integrity pins its absence.
+  ok(!existsSync(join(eveRoot, "dist/src/harness/tool-loop.js")), "retired: eve 1.x ships no harness/tool-loop.js — a 0.x eve is installed if it is back, and this block must read it again");
+  const patchFile = new URL(`../../../patches/eve+${JSON.parse(readFileSync(join(eveRoot, "package.json"), "utf8")).version}.patch`, import.meta.url);
+  const targets = [...readFileSync(patchFile, "utf8").matchAll(/^\+\+\+ b\/node_modules\/eve\/(\S+)$/gm)].map((m) => m[1]!);
+  ok(targets.length > 0, "retired: the committed eve patch names at least one target — the scan below reads real bytes");
+  const src = targets.map((rel) => readFileSync(join(eveRoot, rel), "utf8")).join("\n");
   for (const dead of ["__oeCeil", "__oeCeilTrip", "__oeCeilClear", "__oeCeilStop", "__oeCONT", "__oeStepCounts", "OE_TURN_STEP_CEILING"]) {
-    ok(!src.includes(dead), `retired: the installed bytes must NOT contain \`${dead}\` — the step ceiling left the patch in OPE-407 and lives in agent/model/step-boundary.ts. A re-roll that ports the old __oe* block wholesale drags it back; port ONLY the projection helper`);
+    ok(!src.includes(dead), `retired: the patched bytes must NOT contain \`${dead}\` — the step ceiling left the patch in OPE-407 and lives in agent/model/step-boundary.ts. A re-roll that ports the old __oe* block wholesale drags it back`);
   }
 }
 

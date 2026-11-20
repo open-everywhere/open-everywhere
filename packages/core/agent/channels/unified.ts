@@ -1,7 +1,9 @@
 import { checkInFromReportReply, vouchedReplier } from "../routines/report-thread.js";
 import { auditErrorDetail, scrubAuditText } from "../audit/tool-action.js";
 import { defineChannel, GET, POST } from "eve/channels";
-import type { ChannelEvents, Session, RouteHandlerArgs } from "eve/channels";
+import type { ChannelEvents, RouteHandlerArgs } from "eve/channels";
+import type { Delivery } from "eve/sessions";
+import type { ErrorInfo } from "eve/events";
 import { defineState } from "eve/context";
 import { DispatchNotDeliveredError, SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
@@ -25,15 +27,16 @@ import { withRetryAfterThrown, isRateLimitThrow, RateLimitExhaustedError } from 
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { postArm } from "./post-arms.js";
 import { containerAnsweredSince } from "./answered-container-ledger.js";
-import { detectBridgeableInputRequest, QUESTION_DROPPED_AUDIT_ACTION } from "./question-bridge.js";
+import { bridgeableQuestionOf, QUESTION_DROPPED_AUDIT_ACTION } from "./question-bridge.js";
 import { encodeCarriedWrites, OE_WORK_RESULT_WRITES_ATTR, type DurableMemoryWrite } from "../memory/write-evidence.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isWorkWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isWorkWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain, bareTokenFromEveContext, seatWindowKey, stripUnifiedSendPrefix } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { closeThreadSeat, type ThreadSeatCloseDeps } from "./thread-seat-close.js";
 import { touchThreadSeatActivity } from "./thread-seat-state.js";
 import { setSurfaceReaction } from "./surface-message-ops.js";
 import { drainGenerationRetirements } from "./generation-retirement.js";
+import { fenceTurnJoin } from "./turn-join-fence.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { INVOKER_POSTURE_ATTR, narrowerInvokerPosture, type InvokerPosture } from "../access/invoker-posture.js";
 import { currentInvokerPosture } from "../access/invoker-posture-state.js";
@@ -55,7 +58,8 @@ import { OE_WORK_REQUEST_ATTR, OE_WORK_RESULT_ATTR, OE_WORK_RESULT_OWED_ATTR, OE
 import { OE_OWN_ACCOUNT_ASK_ATTR } from "../connections/own-account-carriage.js";
 import { deliveryChangedThisTurn } from "../access/task-wake-signal.js";
 import { sourcesForWindow, windowSourcesNeedConfig } from "./window-sources.js";
-import { finalMessageActionForTurn, isBareStop, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
+import { contentTextOf, finalMessageActionForTurn, isBareStop, NO_REPLY_SENTINEL_REASON } from "./turn-delivery.js";
+import { syntheticEmptyReply } from "./ends-turn-final.js";
 import { auditNoReplySentinelObserved } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn, repliedWakesThisTurn, declinedWakesThisTurn, refusalsForWakeThisTurn } from "./reply-signal.js";
 import { replyCarriesSubstance } from "./reply-post.js";
@@ -151,7 +155,7 @@ export function windowEnabledFor(surfaceKey: string, token: string): boolean {
 }
 
 export function auditLabels(rawToken: string | undefined): { workspace: string; surface: string | undefined } {
-  const key = parseWindowToken(rawToken);
+  const key = seatWindowKey(rawToken);
   return {
     workspace: key ? platformWorkspaceForWindowDomain(key.domain) : "unknown",
     surface: key ? unifiedDomainSessionKey(key.windowId) : undefined,
@@ -264,22 +268,35 @@ export async function auditUnaccountedWakesForTurn(
   }
 }
 
-function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): AuditDetail {
+function failureDiag(error: ErrorInfo | undefined): AuditDetail {
   const out: AuditDetailBuilder = {};
-  if (typeof code === "string" && code.length > 0) out.code = code;
-  if (details && typeof details === "object") {
-    for (const k of ["errorId", "name", "statusCode", "generationId", "gatewayName", "gatewayType", "upstreamType", "upstreamStatusCode", "upstreamMessage"]) {
-      const v = details[k];
-      if (typeof v === "string" && v.length > 0) out[k] = auditErrorDetail(v).error;
-      else if (typeof v === "number" && Number.isFinite(v)) out[k] = scrubAuditText(String(v));
-    }
-  }
+  if (typeof error?.code === "string" && error.code.length > 0) out.code = error.code;
+  if (typeof error?.id === "string" && error.id.length > 0) out.errorId = auditErrorDetail(error.id).error;
+  if (typeof error?.hint === "string" && error.hint.length > 0) out.hint = scrubAuditText(error.hint);
   return out;
+}
+
+async function auditSupervisorFailure(kind: "turn" | "session", error: ErrorInfo | undefined, token: string | undefined): Promise<void> {
+  const { workspace, surface } = auditLabels(token);
+  const message = error?.message ?? "";
+  ulog(`supervisor ${kind} failed on domain ${workspace} (audited, nothing posted): ${message}`);
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "unified",
+    workspace,
+    surface,
+    action: kind === "turn" ? "unified.supervisor_turn_failed" : "unified.supervisor_session_failed",
+    detail: {
+      message: auditErrorDetail(message).error,
+      ...failureDiag(error),
+      ...unresumableAuditDetail(message, error?.code),
+    },
+  }).catch(() => undefined);
 }
 
 function windowSourcesForDivert(token: string, originPlatform: string): readonly string[] {
   try {
-    const key = parseWindowToken(token);
+    const key = seatWindowKey(token);
     if (key) {
       const domains = windowSourcesNeedConfig(key.windowId, key.domain) ? getConfig().loadDomains() : [];
       const s = sourcesForWindow(key.windowId, key.domain, domains);
@@ -307,8 +324,8 @@ async function windowSpendGate(input: {
   });
 }
 
-type UnifiedFinalMessageHandler = NonNullable<ChannelEvents<void>["message.completed"]>;
-type UnifiedTurnCompletedHandler = NonNullable<ChannelEvents<void>["turn.completed"]>;
+type UnifiedFinalMessageHandler = NonNullable<ChannelEvents<void>["content.completed"]>;
+type UnifiedTurnSettledHandler = NonNullable<ChannelEvents<void>["turn.settled"]>;
 
 const finalMessageHandled = defineState<string | null>("open-everywhere.unified.final-message-handled", () => null);
 
@@ -329,19 +346,22 @@ function finalMessageHandledFor(turnId: string | undefined): boolean {
   }
 }
 
-const onUnifiedFinalMessage: UnifiedFinalMessageHandler = async (data, channel, ctx) => {
+const onUnifiedFinalMessage: UnifiedFinalMessageHandler = async (event, ctx) => {
+  const text = contentTextOf(event.data);
+  if (text === undefined) return;
+  const channel = ctx.channel;
   const sessionId = ctx?.session?.id;
   const finalBind = { session: ctx.session } as unknown as BindableContext;
-  const finalTurnId = data.turnId ?? currentTurnId(finalBind);
-  if (data.finishReason === "stop" && typeof data.message === "string" && data.message.length > 0) {
+  const finalTurnId = event.scope?.turnId ?? currentTurnId(finalBind);
+  if (text.finishReason === "stop" && text.message.length > 0) {
     const wakeForPending = currentWakeId(finalBind);
     const owing = wakeForPending === undefined ? undefined : pendingDelegationOwing(finalTurnId, wakeForPending, addressedWakeThisTurn(finalTurnId));
     if (owing !== undefined) {
-      ulog(`pre-wait text (${data.message.length} chars) while worker task ${owing} still owes wake ${wakeForPending} — not this turn's final message; nothing posted, nothing re-driven`);
+      ulog(`pre-wait text (${text.message.length} chars) while worker task ${owing} still owes wake ${wakeForPending} — not this turn's final message; nothing posted, nothing re-driven`);
       return;
     }
   }
-  const action = finalMessageActionForTurn(data.finishReason, data.message);
+  const action = finalMessageActionForTurn(text.finishReason, text.message);
   if (action.kind === "buffer-tool-status") return;
   markFinalMessageHandled(finalTurnId);
   if (isWorkWindowToken(bareTokenFromEveContext(channel.continuation?.token))) {
@@ -442,8 +462,7 @@ const onUnifiedFinalMessage: UnifiedFinalMessageHandler = async (data, channel, 
   let redriven = false;
   if (proseDropMayRedrive({ replied, blockingRefusal, token: channel.continuation?.token, turnId: currentTurnId(bind) }) && channel.continuation?.token !== undefined) {
     const wakeId = currentWakeId(bind);
-    const rawToken = channel.continuation.token;
-    const domain = unifiedDomainFromToken(rawToken);
+    const { token: rawToken, domain } = redriveSeatOf(channel.continuation.token);
     const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
     delete baseAttrs[OE_ADDRESSING_ATTR];
     const reinject: RedriveReinject = buildRedriveReinject(domain, rawToken, baseAttrs);
@@ -478,10 +497,22 @@ const onUnifiedFinalMessage: UnifiedFinalMessageHandler = async (data, channel, 
   }
 };
 
-const onUnifiedTurnCompleted: UnifiedTurnCompletedHandler = async (data, channel, ctx) => {
-  const turnId = data.turnId ?? currentTurnId({ session: ctx.session } as unknown as BindableContext);
-  if (finalMessageHandledFor(turnId)) return;
-  await onUnifiedFinalMessage({ finishReason: "stop", message: "", sequence: data.sequence, stepIndex: 0, turnId }, channel, ctx);
+const onUnifiedTurnSettled: UnifiedTurnSettledHandler = async (event, ctx) => {
+  switch (event.data.outcome) {
+    case "completed": {
+      const turnId = event.data.turnId ?? currentTurnId({ session: ctx.session } as unknown as BindableContext);
+      if (turnId === undefined || finalMessageHandledFor(turnId)) return;
+      await onUnifiedFinalMessage(syntheticEmptyReply(turnId, event.scope), ctx);
+      return;
+    }
+    case "failed":
+      await auditSupervisorFailure("turn", event.data.error, ctx.channel.continuation?.token);
+      return;
+    case "cancelled":
+      return;
+    default:
+      return;
+  }
 };
 
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
@@ -489,9 +520,8 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     GET("/eve/v1/unified", async () => new Response("not found", { status: 404 })),
     POST(SELF_DISPATCH_PATH, async (req, { to }) => handleSelfDispatch(req, to, (r, i) => divertToUnifiedWindow(r, { ...i, internalDispatch: true }))),
   ],
-  kindHint: "unified",
   turnPolicy: "queue",
-  async receive(input, { from }): Promise<Session> {
+  async receive(input, { from }): Promise<Delivery> {
     const t = input.target as Partial<UnifiedReceiveTarget> | undefined;
     if (
       !t ||
@@ -521,26 +551,27 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     await registerUnifiedWakeTarget(store, org, t.wakeId, t.origin, new Date().toISOString(), t.token, t.inbound === true, t.addressing, t.surfaceKey, authority?.binding, authority);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     await drainGenerationRetirements(from, { org, incomingToken: t.token }, { labelsFor: auditLabels });
+    const wakeAuth = completeWakeAuth(input.auth);
     return from(t.token).send(input.message, {
-      auth: completeWakeAuth(input.auth),
+      auth: isWorkWindowToken(t.token) ? wakeAuth : fenceTurnJoin(wakeAuth, authority ?? null),
       ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
       ...(isWorkWindowToken(t.token) ? { turnPolicy: "steer" as const } : {}),
     });
   },
   events: {
-    "message.completed": onUnifiedFinalMessage,
-    "turn.completed": onUnifiedTurnCompleted,
-    async "input.requested"(data, channel) {
+    "content.completed": onUnifiedFinalMessage,
+    "turn.settled": onUnifiedTurnSettled,
+    async "interaction.opened"(event, ctx) {
       try {
-        const question = detectBridgeableInputRequest((data as { requests?: unknown } | undefined)?.requests);
+        const question = bridgeableQuestionOf(event.data);
         if (!question) return;
-        const { workspace, surface } = auditLabels(channel.continuation?.token);
-        const rawTaskId = (data as { taskId?: unknown } | undefined)?.taskId;
-        const taskId = typeof rawTaskId === "string" && rawTaskId.length > 0 ? rawTaskId : undefined;
-        const bare = bareTokenFromEveContext(channel.continuation?.token);
+        const token = ctx.channel.continuation?.token;
+        const { workspace, surface } = auditLabels(token);
+        const taskId = event.scope?.taskId !== undefined && event.scope.taskId.length > 0 ? event.scope.taskId : undefined;
+        const bare = bareTokenFromEveContext(token);
         const reason = bare !== undefined && isWorkWindowToken(bare) ? "work-session" : "no-question-road";
         console.warn(
-          `[open-everywhere:unified] input request ${question.toolName} (${question.kind}) NOT shown to the room (${reason}) — this channel has no question road; the session stays parked until eve lapses the request or takes a later plain message as its answer (audited)`,
+          `[open-everywhere:unified] input request ${question.toolName} (${question.kind}) NOT shown to the room (${reason}) — this channel has no question road; eve sets no lapse on it; a later plain message answers it only when its authority matches the turn's (on a seat, rarely), and a usage-limit park rotates the seat to a fresh generation on the next wake (audited)`,
         );
         await appendAudit({
           org: deploymentOrg(),
@@ -554,37 +585,9 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         console.warn(`[open-everywhere:unified] input-request drop skipped: ${String(err)}`);
       }
     },
-    async "turn.failed"(data, channel) {
-      const { workspace, surface } = auditLabels(channel.continuation?.token);
-      ulog(`supervisor turn failed on domain ${workspace} (audited, nothing posted): ${data.message}`);
-      await appendAudit({
-        org: deploymentOrg(),
-        platform: "unified",
-        workspace,
-        surface,
-        action: "unified.supervisor_turn_failed",
-        detail: {
-          message: auditErrorDetail(data.message).error,
-          ...failureDiag(data.code, data.details),
-          ...unresumableAuditDetail(data.message, data.code),
-        },
-      }).catch(() => undefined);
-    },
-    async "session.failed"(data, channel) {
-      const { workspace, surface } = auditLabels(channel.continuation?.token);
-      ulog(`supervisor session failed on domain ${workspace} (audited, nothing posted): ${data.message}`);
-      await appendAudit({
-        org: deploymentOrg(),
-        platform: "unified",
-        workspace,
-        surface,
-        action: "unified.supervisor_session_failed",
-        detail: {
-          message: auditErrorDetail(data.message).error,
-          ...failureDiag(data.code, data.details),
-          ...unresumableAuditDetail(data.message, data.code),
-        },
-      }).catch(() => undefined);
+    async "session.ended"(event, ctx) {
+      if (event.data.outcome !== "failed") return;
+      await auditSupervisorFailure("session", event.data.error, ctx.channel.continuation?.token);
     },
   },
 });
@@ -610,7 +613,7 @@ export async function divertToUnifiedWindow(
     await appendAudit({
       org: deploymentOrg(),
       platform: input.window.origin.platform,
-      workspace: parseWindowToken(input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token)?.domain ?? "unknown",
+      workspace: seatWindowKey(input.token)?.domain ?? "unknown",
       surface: input.surfaceKey,
       action: "provider.unselected_wake_refused",
       detail: { wakeId: input.window.wakeId, selected: [...(providerSelection() ?? [])] },
@@ -633,7 +636,7 @@ export async function divertToUnifiedWindow(
   }
   rememberUnifiedReceive(receive);
   const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
-  const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
+  const bareToken = stripUnifiedSendPrefix(input.token);
   const replyAnchor = unifiedPlacementRef(input.window.origin);
   const deliveryId = mintWakeId();
   const authorityAttributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}) };
@@ -740,7 +743,7 @@ export function bindingForDivert(input: {
   readonly wakeId: string;
   readonly token: string;
 }): SurfaceBinding | undefined {
-  const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
+  const bareToken = stripUnifiedSendPrefix(input.token);
   const attributes: Record<string, unknown> = { ...input.attributes };
   delete attributes[OE_FROZEN_SURFACE_BINDING_ATTR];
   const auth = stampUnifiedWindowAuth(
@@ -769,7 +772,7 @@ export async function divertInboundToUnifiedWindow(
   },
 ): Promise<void> {
   if (!oneshotAgentEnabled()) return divertToUnifiedWindow(receive, input);
-  const standing = parseWindowToken(input.token);
+  const standing = seatWindowKey(input.token);
   if (!standing || isTaskWindowId(standing.windowId) || isThreadSeatWindowId(standing.windowId)) {
     return divertToUnifiedWindow(receive, input);
   }
@@ -792,7 +795,7 @@ export async function divertInboundToUnifiedWindow(
   if (route.kind !== "task") {
     if (owner !== null) {
       const reaped = isThreadSeatWindowToken(owner)
-        ? (await closeThreadSeat({ org, ref, reason: "closed", seatToken: owner }, liveThreadSeatCloseDeps())).cleared
+        ? (await closeThreadSeat({ org, ref, reason: "closed", seatToken: owner, threadStoodDown: false }, liveThreadSeatCloseDeps())).cleared
         : await clearThreadOwner(store, org, ref);
       await audit({ routed: "standing", reason: "stale-owner", ownerId: owner, reaped });
     }
@@ -824,9 +827,17 @@ export function liveThreadSeatCloseDeps(): ThreadSeatCloseDeps & { readonly stor
   };
 }
 
+// The redrive's seat: the bare token it dispatches on, and the domain it resolves. eve hands a channel
+// handler the bare token today. This road strips the `unified:` namespace anyway, through the same
+// resolver as the seat prompt, so a namespaced token cannot cost the redrive its domain or its address.
+export function redriveSeatOf(channelToken: string): { readonly token: string; readonly domain: string | undefined } {
+  const token = stripUnifiedSendPrefix(channelToken);
+  return { token, domain: unifiedDomainFromToken(token) };
+}
+
 export function buildRedriveReinject(domain: string | undefined, rawToken: string, baseAttrs: Record<string, unknown>): RedriveReinject {
   if (!crossProcessDispatchAvailable()) return null;
-  const seatWindowId = parseWindowToken(rawToken)?.windowId;
+  const seatWindowId = seatWindowKey(rawToken)?.windowId;
   return async (origin, message, originalWakeId) => {
     const surfaceKey = pickRedriveSurfaceKey(domain, origin.platform, seatWindowId);
     if (!surfaceKey) throw new Error(`unified redrive: no crossSurfaceWindow surface key for domain ${domain ?? "?"}`);
@@ -917,7 +928,7 @@ async function dispatchAmbientSeatWake(input: {
   if (!crossProcessDispatchAvailable()) return false;
   const surfaceKey = input.binding
     ? `${input.binding.platform}/${input.binding.workspace}/${input.binding.domainSurface ?? input.binding.surface}`
-    : pickRedriveSurfaceKey(input.domain, input.origin.platform, parseWindowToken(input.token)?.windowId);
+    : pickRedriveSurfaceKey(input.domain, input.origin.platform, seatWindowKey(input.token)?.windowId);
   if (!surfaceKey) return false;
   try {
     await deliverUnifiedDispatch({

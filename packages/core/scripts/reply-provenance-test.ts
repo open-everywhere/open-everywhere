@@ -164,7 +164,7 @@ function ctxForSession(sessionId: string, turnId: string, channelId: string, ext
   } as unknown as BindableContext;
 }
 
-const hook = (connectorAudit.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> })["events"]!["action.result"]!;
+const hook = (await import("./_hook-view.js")).callSettledHandler(connectorAudit.default) as unknown as (e: unknown, c: unknown) => Promise<void>;
 
 const opResult = (toolName: string, isError = false) => ({
   data: { result: { callId: `call_${toolName}`, kind: "tool-result", toolName, output: {} , ...(isError ? { isError: true } : {}) }, status: isError ? "error" : "ok" },

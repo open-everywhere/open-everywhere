@@ -24,7 +24,7 @@ registerConfig({
 const hookMod = await import("../agent/hooks/connector-audit.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 
-const handler = (hookMod.default as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events["action.result"];
+const handler = (await import("./_hook-view.js")).callSettledHandler(hookMod.default);
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -46,8 +46,9 @@ const auth = {
 };
 const ctx = { session: { auth }, channel: { kind: "slack" }, agent: { name: "oe" } };
 
+// A tool result. `callSettledHandler` builds the v27 `call.settled` event and its view from it.
 function ev(result: unknown, status = "success") {
-  return { type: "action.result", data: { status, result } };
+  return { data: { status, result } };
 }
 
 await handler(ev({ kind: "tool-result", toolName: "notion__create_page", isError: false }), ctx);
@@ -56,7 +57,7 @@ await handler(ev({ kind: "tool-result", toolName: "notion__create_page", isError
   ok(rows.length === 1, "one connector.op row for a connector write");
   ok(rows[0].detail?.connection === "notion" && rows[0].detail?.op === "create_page", "row carries connection + op (ids only)");
   ok(rows[0].detail?.tier === "gate:member", "write op tier = gate:member (the plane made visible)");
-  ok(rows[0].detail?.status === "success", "row carries the outcome status");
+  ok(rows[0].detail?.status === "completed", "row carries the call's outcome");
 }
 
 await handler(ev({ kind: "tool-result", toolName: "notion__search", isError: false }), ctx);
@@ -77,7 +78,7 @@ await handler(ev({ kind: "tool-result", toolName: "notion__update_page", isError
 {
   const rows = await readAudit({ org: "default", action: "connector.op" });
   const errRow = rows.find((r) => r.detail?.op === "update_page");
-  ok(errRow?.detail?.isError === true && errRow?.detail?.status === "error", "an errored op row carries isError + status");
+  ok(errRow?.detail?.isError === true && errRow?.detail?.status === "failed", "an errored op row carries isError + the failed outcome");
 }
 
 await handler(ev({ kind: "tool-result", toolName: "grant__rowan_hale__read_page", isError: false }), ctx);
@@ -95,22 +96,12 @@ await handler(ev({ kind: "tool-result", toolName: "acme__server__search", isErro
 }
 
 {
-  const { FakeEveContext, inEveContext } = await import("./_eve-context-stub.js");
-  const { CONNECTION_REGISTRY_KEY_NAME } = await import("../agent/connections/connector-tool-hints.js");
-  const session = new FakeEveContext();
-  session.set({ name: CONNECTION_REGISTRY_KEY_NAME }, {
-    getConnectionNames: () => ["notion"],
-    getClient: () => ({
-      getToolMetadata: async () => [
-        { name: "frobnicate_widget", annotations: { readOnlyHint: true } },
-        { name: "search", annotations: { readOnlyHint: true } },
-      ],
-    }),
-  });
-  await inEveContext(session, async () => {
-    await handler(ev({ kind: "tool-result", toolName: "notion__frobnicate_widget", isError: false }), ctx);
-    await handler(ev({ kind: "tool-result", toolName: "notion__search", isError: false }), ctx);
-  });
+  const { recordConnectorListing, registerMountedConnector } = await import("../agent/connections/connector-catalogue.js");
+  const listed = (name: string) => ({ name, description: "", inputSchema: { type: "object" }, hasOutputSchema: false, annotations: { readOnlyHint: true } });
+  registerMountedConnector("notion");
+  recordConnectorListing("notion", [listed("frobnicate_widget"), listed("search")]);
+  await handler(ev({ kind: "tool-result", toolName: "notion__frobnicate_widget", isError: false }), ctx);
+  await handler(ev({ kind: "tool-result", toolName: "notion__search", isError: false }), ctx);
   const rows = await readAudit({ org: "default", action: "connector.op" });
   const hinted = rows.find((r) => r.detail?.op === "frobnicate_widget");
   ok(hinted?.detail?.opTier === "read" && hinted?.detail?.tier === "open", "🔴 a hint-read op audits at the read tier it ran at");

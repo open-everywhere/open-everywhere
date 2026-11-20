@@ -30,7 +30,7 @@ Slack's own shortcodes.
 ## Install
 
 ```sh
-npm i @open-everywhere/core eve@0.71.0
+npm i @open-everywhere/core eve@1.0.0-rc.18
 npx oe-eve-patch
 ```
 

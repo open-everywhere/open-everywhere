@@ -8,6 +8,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { appendAudit } from "../audit/audit.js";
 import { outboundKey, postOnce } from "../operational/post-once.js";
 import { rememberWorkAsked } from "../channels/work-surface-wait.js";
+import { refuseVerbIfStoodDown } from "../channels/stand-down-gate.js";
 
 export const WORK_QUESTION_TOOL = "ask_room";
 
@@ -67,6 +68,7 @@ export default defineTool({
     if (!isWorkSessionChildContext(c)) {
       throw new Error("ask_room: only a job of this conversation's work session can ask the room this way. Nothing was posted.");
     }
+    await refuseVerbIfStoodDown(c, WORK_QUESTION_TOOL);
     const where = roomAddress(c);
     const options = input.options ?? [];
     const p = resolvePartition(c);

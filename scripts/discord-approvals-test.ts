@@ -50,6 +50,7 @@ const {
   PUBLIC_DISCORD_ROUTE,
   INTERNAL_DISCORD_ROUTE,
   verifyDiscordInteraction,
+  verifyDiscordSignature,
   classifyDiscordInteraction,
   buildDiscordFrontHandler,
   frontDiscordChannel,
@@ -308,6 +309,13 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
   const stale = String(Math.floor(Date.now() / 1000) - 3600);
   ok(verifyDiscordInteraction(body, signedHeaders(body, stale), pubHex) === false, "a stale timestamp (outside the 5-min window) fails");
   ok(verifyDiscordInteraction(body, signedHeaders(body, ts), pubHex, Date.now() + 3600_000) === false, "the skew window is symmetric (future-dated check clock)");
+  const sig = signedHeaders(body, ts).get("x-signature-ed25519") ?? "";
+  ok(verifyDiscordSignature({ body, publicKey: pubHex, signature: sig, timestamp: ts }), "the provider's own Ed25519 check accepts a correct signature");
+  ok(!verifyDiscordSignature({ body, publicKey: pubHex, signature: sig, timestamp: String(Number(ts) + 1) }), "🔴 a signature over another timestamp is refused");
+  ok(!verifyDiscordSignature({ body, publicKey: pubHex, signature: sig.slice(0, -2), timestamp: ts }), "FAIL-CLOSED: a short signature is refused");
+  ok(!verifyDiscordSignature({ body, publicKey: pubHex, signature: `${sig.slice(0, -2)}zz`, timestamp: ts }), "FAIL-CLOSED: a signature with non-hex text is refused, not truncated");
+  ok(!verifyDiscordSignature({ body, publicKey: `${pubHex}00`, signature: sig, timestamp: ts }), "FAIL-CLOSED: a 33-byte key is refused");
+  ok(!verifyDiscordSignature({ body, publicKey: "", signature: "", timestamp: ts }), "FAIL-CLOSED: empty key and signature are refused without a throw");
 }
 
 {

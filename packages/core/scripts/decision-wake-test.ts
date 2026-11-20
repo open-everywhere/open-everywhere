@@ -151,7 +151,7 @@ const baseInput: ApprovalDecisionWakeInput = {
 }
 
 {
-  const cancel = "If a worker of yours is still running toward this act, cancel it (`task_cancel`) — the decision is final for that proposal.";
+  const cancel = "If a worker of yours is still running toward this act, cancel it (`eve__task_cancel`) — the decision is final for that proposal.";
   const arms: ReadonlyArray<[string, ApprovalDecisionWakeInput]> = [
     ["approved, no execution fact", baseInput],
     ["approved, ran", { ...baseInput, execution: { ran: "ok", line: "done" } }],
@@ -164,7 +164,7 @@ const baseInput: ApprovalDecisionWakeInput = {
     ok(body.split(cancel).length - 1 === 1, `OPE-2071: the ${label} closing carries the cancel-worker sentence exactly once (${body})`);
   }
   const rendered = renderApprovalDecisionMessage({ ...baseInput, outcome: "rejected" }, "2026-08-21T12:00:00.000Z");
-  ok(/<system-note>[\s\S]*task_cancel[\s\S]*<\/system-note>/.test(rendered), "OPE-2071: the cancel sentence reaches the rendered, trusted note");
+  ok(/<system-note>[\s\S]*eve__task_cancel[\s\S]*<\/system-note>/.test(rendered), "OPE-2071: the cancel sentence reaches the rendered, trusted note");
 }
 
 {
@@ -196,7 +196,7 @@ const baseInput: ApprovalDecisionWakeInput = {
   };
   const body = approvalDecisionBody(replayInput);
   const replayCall =
-    `\`connection_execute\` with \`connection\` set to \`notion\`, \`tool\` set to \`notion-create-pages\`, and \`input\` set to an object ` +
+    `\`eve__tool\` with \`name\` set to \`notion__notion-create-pages\`, and \`input\` set to an object ` +
     `whose ONLY key is \`${CONNECTOR_REPLAY_INPUT_KEY}\`, with the card id \`${baseInput.pendingId}\` as its value`;
   ok(body.includes(replayCall), `replay: the wake names the exact replay call by card id (${body})`);
   ok(body.includes("HAS NOT RUN") && !body.includes("ALREADY RUN"), "replay: the wake says the act has NOT run");

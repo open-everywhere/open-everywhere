@@ -251,7 +251,9 @@ const engCtx = teamsCtx({
 {
   const saved = { appId: getSettings().teams.appId, pw: process.env.MICROSOFT_APP_PASSWORD, teamsPw: process.env.TEAMS_APP_PASSWORD };
   overrideSettingsForTest({ teams: { appId: "" } });
-  delete process.env.MICROSOFT_APP_PASSWORD;
+  // Only the app id is missing. The mint resolves the credentials together, so with the password
+  // also unset either error can win the race.
+  process.env.MICROSOFT_APP_PASSWORD = "fixture-app-password";
   delete process.env.TEAMS_APP_PASSWORD;
   const org = deploymentOrg();
   const before = (await readAudit({ org, platform: "teams", action: "teams.token_mint_failed" })).length;
@@ -271,6 +273,7 @@ const engCtx = teamsCtx({
   n++;
   overrideSettingsForTest({ teams: { appId: saved.appId } });
   if (saved.pw !== undefined) process.env.MICROSOFT_APP_PASSWORD = saved.pw;
+  else delete process.env.MICROSOFT_APP_PASSWORD;
   if (saved.teamsPw !== undefined) process.env.TEAMS_APP_PASSWORD = saved.teamsPw;
   _resetTeamsGraphTokenCache();
 }

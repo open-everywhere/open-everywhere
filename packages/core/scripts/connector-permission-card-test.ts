@@ -31,6 +31,9 @@ import type { ApprovalStatus } from "eve/tools/approval";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
 import { setPlatformStandInForTest } from "../agent/identity/binding.js";
+// eve 1.x keeps `{ context, values }` in its ALS. The fixture container carries both shapes.
+const asEveStore = <T extends object>(c: T): T => Object.assign(c, { context: c, values: new Map<unknown, unknown>() });
+
 
 const routineDispatch = await import("../agent/schedules/routine-dispatch.js");
 const { connectorApprovalPolicy, ASK_UNATTENDED_SENTENCE, TAINTED_ASK_UNATTENDED_SENTENCE } = await import("../agent/connections/connector-auth.js");
@@ -91,7 +94,7 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 async function inSession<T>(fn: () => T | Promise<T>): Promise<T> {
-  return eveContextStorage().run(new FakeSession(), fn);
+  return eveContextStorage().run(asEveStore(new FakeSession()), fn);
 }
 
 const ORG = "default";
@@ -136,7 +139,6 @@ function webhookAuth(): unknown {
 function approvalCtx(auth: unknown, toolName: string): never {
   return {
     toolName,
-    approvedTools: new Set<string>(),
     callId: `call-${toolName}`,
     toolInput: { title: "x" },
     session: { id: `sess-${toolName}`, auth },

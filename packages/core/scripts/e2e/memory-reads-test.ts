@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readTaskSettled, readTaskStarted } from "../../agent/access/background-tasks.js";
 import { extractMemoryPathReads, normaliseMemoryPath, scoreNavigation, siloOfPath } from "./memory-reads.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 
@@ -14,25 +13,25 @@ const SILO = "e2e-ambient-brain";
 const call = (index: number, toolName: string, input: unknown): TranscriptWireEvent => ({
   index,
   at: `2026-01-18T01:00:${String(index).padStart(2, "0")}.000Z`,
-  type: "actions.requested",
-  data: { actions: [{ toolName, callId: `c${index}`, input }] },
+  type: "call.requested",
+  data: { callId: `c${index}`, owner: { turnId: "t1" }, capability: { kind: "tool", name: toolName }, input },
 });
 
 const result = (index: number, toolName: string, output: string): TranscriptWireEvent => ({
   index,
   at: `2026-01-18T01:00:${String(index).padStart(2, "0")}.500Z`,
-  type: "action.result",
-  data: { turnId: "t1", stepIndex: 0, status: "completed", result: { callId: `c${index - 1}`, kind: "tool-result", toolName, output } },
+  type: "call.settled",
+  data: { callId: `c${index - 1}`, outcome: "completed", output, label: toolName },
 });
 
 {
   const events: TranscriptWireEvent[] = [
-    { index: 0, at: "2026-01-23T01:00:00.000Z", type: "message.received", data: { message: `what is the OPE121 canary? look in memory/${SILO}/MEMORY.md` } },
+    { index: 0, at: "2026-01-23T01:00:00.000Z", type: "delivery.consumed", data: { deliveryId: "d0", turnId: "t1", parts: [{ kind: "text", text: `what is the OPE121 canary? look in memory/${SILO}/MEMORY.md` }] } },
     call(1, "read_file", { file_path: `/workspace/memory/${SILO}/MEMORY.md` }),
     result(2, "read_file", "# MEMORY\n- The OPE121 canary code is obsidian-50302\n"),
     call(3, "read_file", { file_path: `/workspace/memory/${SILO}/notes.md` }),
     result(4, "read_file", "- 2026-09-21: The OPE121 canary code is obsidian-50302\n"),
-    { index: 5, at: "2026-01-23T01:00:05.000Z", type: "message.completed", data: { message: `it is obsidian-50302, from memory/${SILO}/MEMORY.md` } },
+    { index: 5, at: "2026-01-23T01:00:05.000Z", type: "content.completed", data: { partId: "p", kind: "text", phase: "reply", value: `it is obsidian-50302, from memory/${SILO}/MEMORY.md` } },
   ];
   const reads = extractMemoryPathReads(events);
   ok(reads.length === 2, `read_file transcript: both calls count (got ${reads.length}: ${reads.join(", ")})`);
@@ -63,10 +62,10 @@ const result = (index: number, toolName: string, output: string): TranscriptWire
     "done",
   ].join("\n");
   const events: TranscriptWireEvent[] = [
-    { index: 0, at: "2026-01-23T01:00:00.000Z", type: "message.received", data: { message: "what is the OPE121 canary code? check the files on disk" } },
+    { index: 0, at: "2026-01-23T01:00:00.000Z", type: "delivery.consumed", data: { deliveryId: "d0", turnId: "t1", parts: [{ kind: "text", text: "what is the OPE121 canary code? check the files on disk" }] } },
     call(1, "bash", { command }),
     result(2, "bash", output),
-    { index: 3, at: "2026-01-23T01:00:33.000Z", type: "message.completed", data: { message: "The current OPE121 canary code is exactly `obsidian-50302`." } },
+    { index: 3, at: "2026-01-23T01:00:33.000Z", type: "content.completed", data: { partId: "p", kind: "text", phase: "reply", value: "The current OPE121 canary code is exactly `obsidian-50302`." } },
   ];
   const reads = extractMemoryPathReads(events);
   ok(reads.length > 0, `🔴 OPE-2016: a recursive grep over the memory root COUNTS (today's code scored 0; got ${reads.length})`);
@@ -111,36 +110,28 @@ const result = (index: number, toolName: string, output: string): TranscriptWire
 
   const taskId = "agent-8af998";
   const report = `I read memory/${SILO}/MEMORY.md and the OPE121 canary is obsidian-50302`;
-  const started: TranscriptWireEvent = {
-    index: 2,
-    at: "2026-01-23T01:00:02.000Z",
-    type: "task.started",
-    data: { callId: "c1", kind: "agent", name: "agent", taskId, turnId: "t1" },
-  };
-  const settled: TranscriptWireEvent = {
-    index: 4,
-    at: "2026-01-23T01:00:04.000Z",
-    type: "task.settled",
-    data: { callId: "c1", kind: "agent", name: "agent", output: report, status: "completed", taskId, turnId: "t1" },
-  };
-  ok(readTaskStarted(started.data)?.taskId === taskId, "the task.started fixture is a shape access/background-tasks.ts admits");
-  ok(readTaskSettled(settled.data)?.status === "completed", "the task.settled fixture is a shape access/background-tasks.ts admits");
+  const at = (i: number) => `2026-01-23T01:00:0${String(i)}.000Z`;
+  const requested: TranscriptWireEvent = { index: 1, at: at(1), type: "call.requested", data: { callId: "c1", owner: { turnId: "t1" }, capability: { kind: "agent", name: "agent" }, input: { message: brief } } };
+  const served: TranscriptWireEvent = { index: 2, at: at(2), type: "call.started", data: { callId: "c1", taskId } };
+  const started: TranscriptWireEvent = { index: 3, at: at(3), type: "task.started", data: { taskId, startedBy: { callId: "c1" }, kind: "agent", name: "agent" } };
+  const settled: TranscriptWireEvent = { index: 4, at: at(4), type: "call.settled", data: { callId: "c1", outcome: "completed", output: report } };
+  const ended: TranscriptWireEvent = { index: 5, at: at(5), type: "task.ended", data: { taskId, outcome: "completed" } };
 
-  const receipt = extractMemoryPathReads([
-    started,
-    {
-      index: 3,
-      at: "2026-01-23T01:00:02.500Z",
-      type: "action.result",
-      data: { status: "completed", result: { callId: "c1", kind: "tool-result", toolName: "agent", output: `Started task ${taskId}. Its result will arrive later.` } },
-    },
-  ]);
-  ok(receipt.length === 0, `a dispatch receipt and its task.started carry no path, so they score nothing (got ${receipt.join(", ")})`);
+  const receipt = extractMemoryPathReads([requested, served, started, ended]);
+  ok(receipt.length === 0, `a delegation, its task.started and its task.ended carry no path, so they score nothing (got ${receipt.join(", ")})`);
 
-  const reported = extractMemoryPathReads([settled]);
-  ok(reported.length === 0, `🔴 the worker's REPORT on task.settled is never the seat's read (got ${reported.join(", ")})`);
-  const reportedObject = extractMemoryPathReads([{ ...settled, data: { ...(settled.data as object), output: { text: report } } }]);
+  const reported = extractMemoryPathReads([requested, served, started, settled, ended]);
+  ok(reported.length === 0, `🔴 the worker's REPORT on the agent call's call.settled is never the seat's read (got ${reported.join(", ")})`);
+  const reportedObject = extractMemoryPathReads([requested, { ...settled, data: { ...(settled.data as object), output: { text: report } } }]);
   ok(reportedObject.length === 0, `…and neither is the report when the output is an object (got ${reportedObject.join(", ")})`);
+  const taskServed = extractMemoryPathReads([{ ...served, data: { callId: "c9", taskId } }, { ...settled, data: { ...(settled.data as object), callId: "c9" } }]);
+  ok(taskServed.length === 0, `🔴 …and neither is a report on a call that serves a task, whatever tool the call named (got ${taskServed.join(", ")})`);
+  const windowedOnly = extractMemoryPathReads([settled, ended]);
+  ok(windowedOnly.length === 1, `precondition: a window holding only the settle cannot tell the report from a read (got ${windowedOnly.join(", ")})`);
+  const windowed = extractMemoryPathReads([settled, ended], [requested, served, started, settled, ended]);
+  ok(windowed.length === 0, `🔴 …so the delegated calls are learnt from the WHOLE transcript: a task dispatched before the read window that settles inside it is still never a read (got ${windowed.join(", ")})`);
+  const unrelated = extractMemoryPathReads([requested, { ...settled, data: { ...(settled.data as object), callId: "c2" } }]);
+  ok(unrelated.length === 1, `🔴 NEGATIVE CONTROL: the same text on ANOTHER call's call.settled counts, so the skip is keyed on the delegated call (got ${unrelated.join(", ")})`);
   const asToolResult = extractMemoryPathReads([result(5, "bash", report)]);
   ok(asToolResult.length === 1 && asToolResult[0] === `memory/${SILO}/MEMORY.md`, `…while the same text as a tool RESULT counts (got ${asToolResult.join(", ")})`);
 
@@ -148,8 +139,8 @@ const result = (index: number, toolName: string, output: string): TranscriptWire
     {
       index: 2,
       at: "2026-01-23T01:00:02.500Z",
-      type: "action.result",
-      data: { status: "completed", result: { callId: "c1", kind: "tool-result", toolName: "spawn_thread_session", output: { brief, seat: "wrun_x" } } },
+      type: "call.settled",
+      data: { callId: "c1", outcome: "completed", output: { brief, seat: "wrun_x" } },
     },
   ]);
   ok(echoed.length === 0, `…and a result that echoes the brief back does not count it (got ${echoed.join(", ")})`);

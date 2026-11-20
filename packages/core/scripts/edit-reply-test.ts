@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string, diagnose?: () => void): void {
@@ -101,7 +102,7 @@ interface Armed {
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const armOf = (tool: unknown, ctx: unknown): Armed | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+  _dynamicResolverForTest(tool)({}, ctx) as Armed | null;
 
 function ctxFor(turnWake: string, turnId: string): BindableContext {
   return {

@@ -1,6 +1,5 @@
 import { defineSandbox, type RuntimeSandboxSession, type SandboxEnvironment, type SandboxSession } from "eve/sandbox";
 import { VercelSandbox } from "eve/sandbox/vercel";
-import { JustBashSandbox } from "eve/sandbox/just-bash";
 import { DockerSandbox } from "eve/sandbox/docker";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
@@ -8,6 +7,7 @@ import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { agentBrowserSandboxHooks, type BakeableSandbox } from "@open-everywhere/adapters/agent/browser/sandbox.js";
 import { registerSandboxFirewall } from "@open-everywhere/core/agent/sandbox/network-policy.js";
+import { justBashEnvironment } from "@open-everywhere/core/agent/sandbox/just-bash-exec-lane.js";
 import { resolveSandboxBackend, resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
 import type { SelfHostBackendKind } from "@open-everywhere/core/agent/adapter-api.js";
 import {
@@ -68,7 +68,7 @@ function selfHostEnvironment(): SelfHostSandbox {
   console.info(egressLog.info);
   startEgressDenialPoller();
   if (kind === "justbash") {
-    const environment = JustBashSandbox.environment({});
+    const environment = justBashEnvironment() as SandboxEnvironment<object | undefined, SandboxSession>;
     registerSandboxFirewall({ carries: "none", backend: "justbash" });
     return { kind, environment, open: async () => await environment.open() };
   }

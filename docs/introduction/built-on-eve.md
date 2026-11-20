@@ -15,7 +15,7 @@ team-centric memory system, multi-surface identity, and a control plane.**
 | The **agent loop** — model dispatch, tools, turns, the approval primitive | The **access resolver** + the **consequence registry** — bundles, domains, grants, narrowest-wins, default-deny, and the lint-pinned tier deciding which verbs pause for a human |
 | **Chat adapters** (Slack/Teams/Discord/Linear underneath) | The **identity seam** — one `SurfaceBinding` per message; app- vs user-principal |
 | The **sandbox** + network policy primitive | The **egress firewall** — default-deny hosts + credential injection at the boundary |
-| The **connection system** (`defineMcpClientConnection`, etc.) | The **connector plane** — per-surface scoping the connection system has no seam for |
+| The **dynamic tool system** (`defineDynamic`, deferred tools) | The **connector plane** — each MCP connection mounts as OE's own deferred connector tools (`connector-mount.ts`), because eve's MCP connection runtime has no per-result transform for the fence and no seam for per-surface scoping |
 | **Durability** (Workflows), **scheduling** (Cron), **tracing**, **evals** | The **memory system** — opt-in domains, silos, fail-closed visibility, pluggable backings |
 | `defineSandbox`, `defineSchedule`, model-as-`LanguageModel` — the swap seams | The **control plane** — runtime admin via MCP, audit/provenance, spend caps |
 

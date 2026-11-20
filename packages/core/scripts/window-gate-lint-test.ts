@@ -2,16 +2,17 @@
 // proves: AP-WG-complete_thread, AP-WG-create_skill, AP-WG-delete_skill, AP-WG-glob, AP-WG-grep
 // proves: AP-WG-message_thread_seat, AP-WG-open_pull_request, AP-WG-post_file, AP-WG-read_file
 // proves: AP-WG-read_thread_seat, AP-WG-spawn_thread_session, AP-WG-web_fetch, AP-WG-write_file
+// proves: AP-WG-edit_file
 // proves: AP-WGU-add_label, AP-WGU-add_routine_rule, AP-WGU-agent_version, AP-WGU-ask_question, AP-WGU-assign
 // proves: AP-WGU-aws, AP-WGU-browser_tools, AP-WGU-cancel_routine, AP-WGU-capture_events
 // proves: AP-WGU-check_pr_status, AP-WGU-clear_connector_override, AP-WGU-clear_spend_limit
-// proves: AP-WGU-complete_job, AP-WGU-confirm_link, AP-WGU-connection_search, AP-WGU-connector
+// proves: AP-WGU-complete_job, AP-WGU-confirm_link, AP-WGU-eve__search, AP-WGU-connector
 // proves: AP-WGU-create_agent, AP-WGU-create_routine, AP-WGU-create_ticket, AP-WGU-declare_webhook
 // proves: AP-WGU-describe_image, AP-WGU-dm_person, AP-WGU-edit_reply, AP-WGU-edit_routine
 // proves: AP-WGU-enable_routine, AP-WGU-explain_permission, AP-WGU-extend_workspace_time
 // proves: AP-WGU-fresh_eyes_review, AP-WGU-get_pr_feedback, AP-WGU-grant_tools, AP-WGU-halt
 // proves: AP-WGU-link_identity, AP-WGU-list_recent_events, AP-WGU-list_repos, AP-WGU-list_routines
-// proves: AP-WGU-list_skills, AP-WGU-list_webhooks, AP-WGU-load_skill, AP-WGU-memory_admin_list
+// proves: AP-WGU-list_skills, AP-WGU-list_webhooks, AP-WGU-eve__skill, AP-WGU-memory_admin_list
 // proves: AP-WGU-memory_admin_read, AP-WGU-no_reply, AP-WGU-notion_search, AP-WGU-permission_fit_report
 // proves: AP-WGU-post_message, AP-WGU-post_pr_walkthrough, AP-WGU-purge_memory, AP-WGU-query_analytics
 // proves: AP-WGU-react, AP-WGU-read_channel, AP-WGU-read_docs, AP-WGU-read_file_upload
@@ -23,10 +24,10 @@
 // proves: AP-WGU-revoke_credential_grant, AP-WGU-revoke_routine_permissions, AP-WGU-rotate_webhook
 // proves: AP-WGU-run_routine_now, AP-WGU-sandbox_tools, AP-WGU-search, AP-WGU-session_cost
 // proves: AP-WGU-set_dm_delivery, AP-WGU-set_spend_limit, AP-WGU-set_state, AP-WGU-spend_report
-// proves: AP-WGU-connection_execute, AP-WGU-connection_tools, AP-WGU-stand_down, AP-WGU-subscribe_pr
-// proves: AP-WGU-task_cancel, AP-WGU-task_wait, AP-WGU-unlink_identity
+// proves: AP-WGU-eve__tool, AP-WGU-eve__reply, AP-WGU-stand_down, AP-WGU-subscribe_pr
+// proves: AP-WGU-eve__task_cancel, AP-WGU-eve__task_wait, AP-WGU-unlink_identity
 // proves: AP-WGU-update_status, AP-WGU-usage_report, AP-WGU-walk_pr, AP-WGU-web_search
-// proves: AP-WGU-read_github_issue
+// proves: AP-WGU-read_github_issue, AP-WGU-notion, AP-WGU-slack-as-you
 
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -45,6 +46,9 @@ import {
   type WindowToolSource,
 } from "../agent/access/window-gate-manifest.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
+import { renderMcpServerStub, renderMountedShim } from "../agent/scaffold/roster-plan.js";
+
+const CONNECTOR_MOUNTS = ["notion", "slack-as-you"] as const;
 
 const eveFrameworkTools = await readEveFrameworkTools();
 const FRAMEWORK_TOOL_NAMES = [...eveFrameworkTools.all];
@@ -227,7 +231,7 @@ for (const [surfaceSpelling, label] of [
   );
 }
 
-for (const name of ["connection_tools", "task_wait"]) {
+for (const name of ["connection_tools", "eve__task_wait"]) {
   firesWith(
     checkWindowGateManifest(OPTIN_KIT, new Map([["sandbox_tools", KIT_SHIM]]), fw({ [name]: "reserved" }), g({ [name]: fullKit() }), u("sandbox_tools")),
     "Move the row to WINDOW_UNGATED_TOOLS",
@@ -295,8 +299,8 @@ ok(
   "a standing seat withholds the wide-hands set + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 21,
-  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle/coordinator set (agent/spawn_thread_session/complete_thread, since OPE-1696 read_thread_seat/message_thread_seat, and since OPE-2338 work and cancel_work), since OPE-2452 the domain question pair (ask_domain/answer_domain_question), since OPE-2426 the asked-thread verb (expect_bot_reply), AND the 11 wide-hands tools — 21 of them. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
+  withheldFromGrain("native").length === 22,
+  `under the ARMED shipped default (OPE-370) a native seat withholds the delegation/lifecycle/coordinator set (agent/spawn_thread_session/complete_thread, since OPE-1696 read_thread_seat/message_thread_seat, and since OPE-2338 work and cancel_work), since OPE-2452 the domain question pair (ask_domain/answer_domain_question), since OPE-2426 the asked-thread verb (expect_bot_reply), AND the 12 wide-hands tools — 22 of them. The T2 narrowing is the default posture (flag-off, native regains wide hands: the Stage-C byte-identical state, exercised via the injected crafted case above). Got ${withheldFromGrain("native").length}: ${JSON.stringify(withheldFromGrain("native"))}`,
 );
 
 firesWith(
@@ -427,6 +431,47 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   firesWith(stale, 'JOB_WAKE_TOOLS names "ghost_job_verb"', "a stale JOB_WAKE_TOOLS row FAILS (rule 6)");
   const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, fullKit(), subagentNames, JOB_WAKE_TOOLS);
   ok(cleanKit.length === 0, `the REAL job kit is clean against the real surface (problems: ${JSON.stringify(cleanKit)})`);
+
+  for (const name of CONNECTOR_MOUNTS) {
+    const shim = appShims.get(name);
+    ok(
+      shim !== undefined && /\bseatCut\(/u.test(shim),
+      `REAL surface: the generated connector mount agent/tools/${name}.ts exists and passes through seatCut (so the posture rows below are not vacuous)`,
+    );
+    ok(
+      WINDOW_UNGATED_TOOLS.has(name) && !Object.prototype.hasOwnProperty.call(WINDOW_GATED_TOOLS, name),
+      `connector mount "${name}" is WINDOW-UNGATED, as eve__tool and eve__search are: the seat cut decides per op, the connector grant per connection, not the window grain`,
+    );
+    firesWith(
+      checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOLS, WINDOW_GATED_TOOLS, new Set([...WINDOW_UNGATED_TOOLS].filter((n) => n !== name)), fullKit(), subagentNames),
+      `tool "${name}" has NO window-gate posture`,
+      `REAL surface: connector mount "${name}" with its WINDOW_UNGATED_TOOLS row removed FAILS (no default posture)`,
+    );
+  }
+
+  for (const [label, slug, shim] of [
+    ["a roster tool/<name> connector mount", "later_mount", renderMountedShim("@open-everywhere/core/agent/connections/later_mount.js", undefined, "later_mount")],
+    ["a declared MCP server", "later-mcp", renderMcpServerStub("later-mcp")],
+  ] as const) {
+    firesWith(
+      checkWindowGateManifest(coreTools, new Map([...appShims, [slug, shim]]), FRAMEWORK_TOOLS, ...realArgs),
+      `tool "${slug}" has NO window-gate posture`,
+      `REAL surface: a later generated mount from ${label} FAILS until its posture is declared`,
+    );
+    const declared = checkWindowGateManifest(
+      coreTools,
+      new Map([...appShims, [slug, shim]]),
+      FRAMEWORK_TOOLS,
+      WINDOW_GATED_TOOLS,
+      new Set([...WINDOW_UNGATED_TOOLS, slug]),
+      fullKit(),
+      subagentNames,
+    );
+    ok(
+      declared.length === 0,
+      `REAL surface: the same later mount from ${label} is clean once its WINDOW_UNGATED_TOOLS row exists (problems: ${JSON.stringify(declared)})`,
+    );
+  }
 }
 
 console.log(`✓ ${n} window-gate-manifest assertions passed`);

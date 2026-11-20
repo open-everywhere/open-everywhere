@@ -1,6 +1,7 @@
 // proves: notion.no_reply
 // proves: notion.no_target
 
+import { SessionNotActiveError } from "eve/sessions";
 import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
@@ -168,7 +169,7 @@ function baseDeps(
     ambientEnabled: () => true,
     fetch: fetchImpl,
     dispatch,
-    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+    attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
     engagement: { getEngagement: async () => null, markEventSeen: async () => true },
     ...extra,
   };
@@ -690,9 +691,34 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   const notionChannel = (await import("../agent/channels/notion.js")).default as unknown as {
     adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   };
-  const turnStarted = (ctx: unknown) => notionChannel.adapter["turn.started"]!({}, ctx);
-  const completed = (message: string | null, ctx: unknown) => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
-  const inputRequested = (requests: unknown, ctx: unknown) => notionChannel.adapter["input.requested"]!({ requests }, ctx);
+  const { emptySessionView: rawEmptyView } = await import(abs("dist/src/protocol/session-projection/fold.js"));
+  const adapterCtx = (ctx: unknown) => ({ ...(ctx as object), view: rawEmptyView() });
+  const turnStarted = (ctx: unknown) => notionChannel.adapter["turn.started"]!({ type: "turn.started", data: { turnId: "t1" } }, adapterCtx(ctx));
+  const completed = (message: string | null, ctx: unknown) =>
+    notionChannel.adapter["content.completed"]!(
+      { type: "content.completed", scope: { turnId: "t1" }, data: { partId: "p1", kind: "text", phase: "reply", value: message ?? "" } },
+      adapterCtx(ctx),
+    );
+  const inputRequested = async (
+    requests: ReadonlyArray<{ readonly action?: { readonly toolName?: string }; readonly kind?: string; readonly prompt?: string; readonly requestId: string }>,
+    ctx: unknown,
+  ) => {
+    for (const r of requests) {
+      const kind = r.kind === "tool-approval" ? "approval" : r.action?.toolName === "session_limit_continuation" ? "budget" : (r.kind ?? "question");
+      await notionChannel.adapter["interaction.opened"]!(
+        {
+          type: "interaction.opened",
+          data: {
+            interactionId: r.requestId,
+            subject: { turnId: "t1" },
+            request: { kind, prompt: r.prompt ?? "" },
+            origin: { sessionId: "notion-no-reply-test", interactionId: r.requestId, call: { callId: r.requestId, name: r.action?.toolName ?? "unknown" } },
+          },
+        },
+        adapterCtx(ctx),
+      );
+    }
+  };
 
   const realFetch = globalThis.fetch;
   let posts: Array<{ body: { discussion_id?: string } }> = [];
@@ -807,7 +833,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
         ctx,
       );
     }, attrs);
-    ok(posts.length === 1, "notion input.requested: a tool-approval prompt is posted into the discussion — before this fix, nothing was");
+    ok(posts.length === 1, "notion interaction.opened: a tool-approval prompt is posted into the discussion — before this fix, nothing was");
     ok(posts[0]?.body.discussion_id === DISCUSSION, "…into the SAME discussion the turn's reply target snapshotted");
 
     posts = [];
@@ -816,7 +842,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await turnStarted(ctx);
       await inputRequested([{ action: { toolName: "session_limit_continuation" }, requestId: "park-1" }], ctx);
     }, attrs);
-    ok(posts.length === 0, "notion input.requested: eve's session-limit park posts nothing here (not this handler's to answer)");
+    ok(posts.length === 0, "notion interaction.opened: eve's budget prompt (the old session-limit park) posts nothing here (not this handler's to answer)");
 
     posts = [];
     await inSession(async () => {
@@ -827,7 +853,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
         ctx,
       );
     }, {});
-    ok(posts.length === 0, "notion input.requested: no resolvable discussion this turn ⇒ posts nothing, never a guessed target");
+    ok(posts.length === 0, "notion interaction.opened: no resolvable discussion this turn ⇒ posts nothing, never a guessed target");
   } finally {
     globalThis.fetch = realFetch;
     resetRegisteredConnectorCredentials();

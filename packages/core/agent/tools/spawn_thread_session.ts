@@ -14,6 +14,7 @@ import {
   isThreadSeatWindowToken,
   threadSeatWindowId,
   formatWindowToken,
+  seatWindowKey,
   type WindowKey,
 } from "../channels/window-key.js";
 import { recordThreadOwner, resolveThreadOwner, isLiveThreadSeatOwner } from "../channels/thread-ownership.js";
@@ -43,8 +44,7 @@ export function canSpawnThreadFromWindow(ctx: BindableContext): boolean {
   if (!oneshotAgentEnabled()) return false;
   const raw = ctx.channel?.continuationToken;
   if (typeof raw !== "string" || raw.length === 0) return true;
-  const stripped = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
-  return parseWindowToken(stripped) !== undefined;
+  return seatWindowKey(raw) !== undefined;
 }
 
 export function renderThreadSeatBrief(brief: string): string {

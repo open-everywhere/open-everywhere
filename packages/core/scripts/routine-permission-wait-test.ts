@@ -89,7 +89,8 @@ function eveContextStorage(): AsyncLocalStorage<unknown> {
   return g[key] as AsyncLocalStorage<unknown>;
 }
 async function inSession<T>(fn: () => T | Promise<T>): Promise<T> {
-  return eveContextStorage().run(new FakeSession(), fn);
+  const session = new FakeSession();
+  return eveContextStorage().run(Object.assign(session, { context: session, values: new Map<unknown, unknown>() }), fn);
 }
 async function fireTelemetry(type: string, data: unknown, ctx: unknown = {}): Promise<void> {
   const events = telemetryHook.events as unknown as Record<string, (e: unknown, c: unknown) => unknown>;

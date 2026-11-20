@@ -1,6 +1,6 @@
 // proves: AP-LEAN-agent, AP-LEAN-complete_thread, AP-LEAN-no_reply, AP-LEAN-react
 // proves: AP-LEAN-read_channel, AP-LEAN-read_thread, AP-LEAN-reply
-// proves: AP-LEAN-spawn_thread_session, AP-LEAN-stand_down, AP-LEAN-task_cancel
+// proves: AP-LEAN-spawn_thread_session, AP-LEAN-stand_down, AP-LEAN-eve__task_cancel
 // proves: AP-LEAN-update_status, AP-MOD-core-access-lean-seat, AP-MOD-core-access-lean-seat-state
 // proves: AP-MOD-core-access-worker-seat, AP-MOD-core-access-worker-seat-state
 
@@ -21,7 +21,7 @@ import { renderSupervisorPersona } from "../agent/instructions/access.js";
 import { markJobSession, setJobWakeEscalated } from "../agent/access/job-session-state.js";
 import { HARNESS_INTERNAL_TOOLS, allowedOnRestrictedJobWake } from "../agent/access/job-posture.js";
 import { JOB_WAKE_TOOLS, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
-import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { seatCutToolset } from "../agent/access/seat-cut.js";
 import { setNativeDelegationSeat } from "../agent/access/native-delegation-state.js";
 import { grainBackstopAtExecute } from "../agent/access/window-gated.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
@@ -47,7 +47,7 @@ function removedBy(before: Record<string, unknown>, after: Record<string, unknow
     .sort();
 }
 
-const TASK_FAMILY = ["task_cancel", "task_wait"] as const;
+const TASK_FAMILY = ["eve__task_cancel", "eve__task_wait"] as const;
 
 const GRANT_TOOL = grantBorrowToolName("rowan", "notion", "notion_fetch_report");
 
@@ -85,15 +85,15 @@ for (const name of ["ask_question"]) {
   ok(!LEAN_SEAT_TOOLS.has(name), `…and ${name} is gone from the roster by NAME, not merely failing some other default`);
   ok(workerOnlyTools("standing").includes(name), `…while the seat is TOLD to route ${name}: without the index line it can only refuse a job that needs it`);
 }
-ok(allowedOnLeanSeat("final_output"), "the lean roster keeps eve's structured-output sink (a lean turn must still be able to return)");
+ok(allowedOnLeanSeat("eve__reply"), "the lean roster keeps eve's structured-output sink (a lean turn must still be able to return)");
 
-for (const name of ["task_cancel"]) {
+for (const name of ["eve__task_cancel"]) {
   ok(allowedOnLeanSeat(name), `OPE-583: the lean roster keeps ${name} — the seat can stop work it itself delegated`);
   ok(LEAN_SEAT_TOOLS.has(name), `${name} is a NAMED LEAN_SEAT_TOOLS member, not merely surviving on a different default`);
 }
-ok(allowedOnLeanSeat("task_wait"), "🔴 OPE-2254: a delegating seat HOLDS task_wait — eve injects it and instructs it by name, so a per-wake filter that removed it would leave the model told to call a tool it does not have");
-ok(HARNESS_INTERNAL_TOOLS.has("task_wait"), "…and it survives as a HARNESS-INTERNAL name, which is what makes the same exemption apply at every per-wake filter that shares this seam");
-ok(!LEAN_SEAT_TOOLS.has("task_wait"), "…and NOT as a lean roster row: the roster is the seat's own kit, and this verb is eve's turn plumbing");
+ok(allowedOnLeanSeat("eve__task_wait"), "🔴 OPE-2254: a delegating seat HOLDS eve__task_wait — eve injects it and instructs it by name, so a per-wake filter that removed it would leave the model told to call a tool it does not have");
+ok(HARNESS_INTERNAL_TOOLS.has("eve__task_wait"), "…and it survives as a HARNESS-INTERNAL name, which is what makes the same exemption apply at every per-wake filter that shares this seam");
+ok(!LEAN_SEAT_TOOLS.has("eve__task_wait"), "…and NOT as a lean roster row: the roster is the seat's own kit, and this verb is eve's turn plumbing");
 ok(!allowedOnLeanSeat("bash"), "…and the negative control holds: `bash` is still refused, so the filter is default-deny rather than open");
 for (const [name, why] of [
   ["task_peek", "DELETED by eve 0.40.0 — the worker's output now arrives inline on the settlement notification, so no seat-side read verb exists to grant"],
@@ -126,13 +126,13 @@ const mustBeRelocated: readonly [string, string][] = [
   ["rotate_webhook", "webhook plane"],
   ["link_identity", "identity linking (a DM seat keeps it — it cannot delegate; a channel seat routes it)"],
   ["connector", "connector discovery/offer"],
-  ["connection_search", "connector discovery"],
+  ["eve__search", "connector discovery"],
   ["request_access", "access plane"],
   ["create_agent", "config plane"],
   ["aws", "worker-only from conversation; fires keep it via granted capabilities"],
   ["explain_permission", "worker kit — the answer travels back in the worker's result"],
   ["web_search", "provider-executed read"],
-  ["load_skill", "worker-side"],
+  ["eve__skill", "worker-side"],
   ["session_cost", "telemetry read"],
   ["query_analytics", "analytics read"],
   ["memory_admin_list", "admin read"],
@@ -142,7 +142,7 @@ for (const [name, why] of mustBeRelocated) {
   ok(!allowedOnLeanSeat(name), `lean seat does NOT hold ${name} — ${why}`);
 }
 ok(!allowedOnLeanSeat("some_tool_nobody_declared"), "DEFAULT DENY: an unknown name is withheld, so the roster cannot rot open as tools are added");
-ok(!allowedOnLeanSeat("notion__search") && !allowedOnLeanSeat("notion__create_page"), "runtime-injected connector OPS are withheld too — operations are worker/DM business, and the seat cannot even discover them (connection_search is relocated)");
+ok(!allowedOnLeanSeat("notion__search") && !allowedOnLeanSeat("notion__create_page"), "runtime-injected connector OPS are withheld too — operations are worker/DM business, and the seat cannot even discover them (eve__search is relocated)");
 
 const surfaceNames = new Set<string>([...Object.keys(WINDOW_GATED_TOOLS), ...WINDOW_UNGATED_TOOLS, "ask_question", "todo"]);
 for (const name of LEAN_SEAT_TOOLS) {
@@ -195,7 +195,7 @@ for (const decoy of GRANT_DECOYS.filter((d) => d.startsWith("grant__") && !d.inc
 
 ok(allowedOnWorkerSeat("ask_question"), "🔴 OPE-565: a delegated WORKER holds ask_question again — the question posts AND the room's answer routes back to the child");
 ok(!allowedOnLeanSeat("ask_question"), "the INTERACTIVE seat still holds ask_question — parking a standing turn on a person stops the room being answered");
-for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "describe_image", "complete_thread", "reply", "final_output", "notion__search", "some_tool_nobody_declared"]) {
+for (const name of ["bash", "read_file", "write_file", "post_file", "web_search", "describe_image", "complete_thread", "reply", "eve__reply", "notion__search", "some_tool_nobody_declared"]) {
   ok(allowedOnWorkerSeat(name), `the worker keeps ${name} — this set is ALLOW-by-default, an exclusion of BROKEN verbs, never a narrowing of the worker's kit`);
 }
 ok(!allowedOnWorkerSeat("stand_down"), "🔴 OPE-877: a worker does NOT hold stand_down — it marks the DELEGATING SEAT's engagement row (the worker inherits the seat's binding), so a worker could make its own parent stop following a channel the worker never followed");
@@ -257,7 +257,7 @@ function makeToolset(): Record<string, { description: string; execute: () => unk
     "notion__search",
     "notion__create_page",
     "browser_navigate",
-    "final_output",
+    "eve__reply",
     GRANT_TOOL,
     ...GRANT_DECOYS,
   ];
@@ -332,13 +332,13 @@ inSession(() => {
   setLeanSeatWake(true);
   ok(currentLeanSeatPosture() === "lean", "a marked wake resolves LEAN inside a live session");
   const toolset = makeToolset();
-  projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("purge_memory" in toolset) && !("read_notion_page" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "projectToolSet withholds the relocated names on a lean wake");
-  ok("reply" in toolset && "no_reply" in toolset && "agent" in toolset && "spawn_thread_session" in toolset, "projectToolSet keeps the conversational roster");
-  ok(!("todo" in toolset) && !("ask_question" in toolset), "projectToolSet still hands a lean seat eve's turn plumbing — a standing seat must neither park a turn nor keep a planning scratch pad");
-  ok("read_channel" in toolset && "read_thread" in toolset, "projectToolSet KEEPS the recovery reads on a lean wake (OPE-829)");
-  ok("final_output" in toolset, "the harness sink survives");
-  ok(!(GRANT_TOOL in toolset), `projectToolSet WITHHOLDS this chat's mounted grant on a lean wake (${GRANT_TOOL}) — the seat hands a lent tool to a worker of this same conversation`);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
+  ok(!("purge_memory" in toolset) && !("read_notion_page" in toolset) && !("aws" in toolset) && !("describe_image" in toolset) && !("web_search" in toolset), "`seatCutToolset` (the pure rule) withholds the relocated names on a lean wake");
+  ok("reply" in toolset && "no_reply" in toolset && "agent" in toolset && "spawn_thread_session" in toolset, "`seatCutToolset` (the pure rule) keeps the conversational roster");
+  ok(!("todo" in toolset) && !("ask_question" in toolset), "`seatCutToolset` (the pure rule) still hands a lean seat eve's turn plumbing — a standing seat must neither park a turn nor keep a planning scratch pad");
+  ok("read_channel" in toolset && "read_thread" in toolset, "`seatCutToolset` (the pure rule) KEEPS the recovery reads on a lean wake (OPE-829)");
+  ok("eve__reply" in toolset, "the harness sink survives");
+  ok(!(GRANT_TOOL in toolset), `seatCutToolset (the pure rule) WITHHOLDS this chat's mounted grant on a lean wake (${GRANT_TOOL}) — the seat hands a lent tool to a worker of this same conversation`);
   ok(
     GRANT_DECOYS.every((d) => !(d in toolset)),
     "…and the seam still removes every grant look-alike — the arm reaches the seam as a structural match, not as a prefix",
@@ -350,7 +350,7 @@ inSession(() => {
   ok(currentLeanSeatPosture() === "full", "the slot's default is FULL — the fail direction that can never strand a seat");
   const toolset = makeToolset();
   const before = { ...toolset };
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   eq(removedBy(before, toolset), ["ask_room", "cancel_work", "work"], "an unmarked wake's toolset is unchanged by OPE-301 except the three-tier `work` verb, its stop `cancel_work` (OPE-2338, D15) and the work-session child's question card `ask_room` (OPE-2340), and there is no longer a child-only verb to lose (eve 0.54.1 removed `task_update`)");
   ok(GRANT_DECOYS.every((d) => d in toolset), "…and every grant look-alike SURVIVES an unmarked wake — nothing but the lean filter removes them");
 });
@@ -359,9 +359,9 @@ inSession(() => {
   ok(currentLeanSeatPosture() === "full", "outside an eve context the posture read fails soft to full");
   const toolset = makeToolset();
   const beforeSet = { ...toolset };
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   ok(!("agent" in toolset), "…while the delegation verdict fails CLOSED outside a context (unclassified ⇒ deny)");
-  eq(removedBy(beforeSet, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "a context-less projectToolSet call withholds nothing from the LEAN plane — only the fail-closed `agent`, the task family that follows it (OPE-564), and the three-tier `work` verb with its stop `cancel_work` (OPE-2338, D15)");
+  eq(removedBy(beforeSet, toolset), ["agent", ...TASK_FAMILY, "ask_room", "cancel_work", "work"].sort(), "a context-less `seatCutToolset` call withholds nothing from the LEAN plane — only the fail-closed `agent`, the task family that follows it (OPE-564), and the three-tier `work` verb with its stop `cancel_work` (OPE-2338, D15)");
 }
 
 inSession(() => {
@@ -369,7 +369,7 @@ inSession(() => {
   setJobWakeEscalated(false);
   setLeanSeatWake(true);
   const toolset = makeToolset();
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   ok("read_channel" in toolset && "record_job_state" in toolset, "a restricted JOB wake keeps the job kit's reads + ledger verbs — the lean filter never runs over it");
   ok(!("agent" in toolset) && !("spawn_thread_session" in toolset), "…and holds NO delegation verb (the job kit's own rule wins)");
   ok([...JOB_WAKE_TOOLS].filter((k) => k in makeToolset()).every((k) => k in toolset), "every job-kit name present in the assembled set survived — the lean filter subtracted nothing from the job wake");
@@ -383,10 +383,10 @@ inSession(() => {
   setWorkerWake(true);
   ok(currentWorkerWake(), "a marked wake resolves as a WORKER inside a live session");
   const toolset = makeToolset();
-  projectToolSet(toolset as unknown as Record<string, unknown>);
-  ok(!("no_reply" in toolset), "🔴 OPE-877: projectToolSet REMOVES no_reply on a worker wake — a worker owes its caller a report, not the room a reply, and on the native route a silent turn hands the seat nothing");
-  ok(!("stand_down" in toolset), "🔴 OPE-877: projectToolSet REMOVES stand_down on a worker wake — it would mark the DELEGATING SEAT's engagement row, which the worker inherited by binding");
-  ok("ask_question" in toolset, "🔴 OPE-565: projectToolSet leaves ask_question ON a worker wake — the room's answer now routes back to the child, so there is nothing to withhold");
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
+  ok(!("no_reply" in toolset), "🔴 OPE-877: `seatCutToolset` (the pure rule) REMOVES no_reply on a worker wake — a worker owes its caller a report, not the room a reply, and on the native route a silent turn hands the seat nothing");
+  ok(!("stand_down" in toolset), "🔴 OPE-877: `seatCutToolset` (the pure rule) REMOVES stand_down on a worker wake — it would mark the DELEGATING SEAT's engagement row, which the worker inherited by binding");
+  ok("ask_question" in toolset, "🔴 OPE-565: `seatCutToolset` (the pure rule) leaves ask_question ON a worker wake — the room's answer now routes back to the child, so there is nothing to withhold");
   ok("reply" in toolset && "update_status" in toolset, "…and the worker still POSTS and still shows progress — OPE-877 took two verbs, not the conversational family");
   ok("bash" in toolset && "write_file" in toolset && "post_file" in toolset && "web_search" in toolset && "purge_memory" in toolset, "…and the worker keeps everything else — this is NOT a second lean cut");
 });
@@ -395,7 +395,7 @@ inSession(() => {
   setNativeDelegationSeat("allow");
   ok(!currentWorkerWake(), "the worker slot's default is FALSE");
   const toolset = makeToolset();
-  projectToolSet(toolset as unknown as Record<string, unknown>);
+  seatCutToolset(toolset as unknown as Record<string, unknown>);
   ok("ask_question" in toolset, "an unmarked (non-worker) wake keeps ask_question");
   ok("no_reply" in toolset && "stand_down" in toolset, "🔴 an unmarked (non-worker) wake KEEPS no_reply and stand_down — the OPE-877 subtraction is keyed on the worker bit, and its fail direction is toward keeping the tool");
 });
@@ -557,8 +557,8 @@ const dmPreview = approvalPreviewFor("standing", undefined, undefined, undefined
 ok(dmPreview.member.includes("purge_memory"), "a NON-delegating standing seat's preview still holds `purge_memory` — the preview never contradicts the filter");
 
 ok(
-  HARNESS_INTERNAL_TOOLS.size === 2 && HARNESS_INTERNAL_TOOLS.has("final_output") && HARNESS_INTERNAL_TOOLS.has("task_wait"),
-  `the harness-internal set is exactly { final_output, task_wait } — eve's structured-output sink and eve's own park verb, which its task system block instructs by name (got ${[...HARNESS_INTERNAL_TOOLS].sort().join(",")})`,
+  HARNESS_INTERNAL_TOOLS.size === 2 && HARNESS_INTERNAL_TOOLS.has("eve__reply") && HARNESS_INTERNAL_TOOLS.has("eve__task_wait"),
+  `the harness-internal set is exactly { eve__reply, eve__task_wait } — eve's structured-output sink and eve's own park verb, which its task system block instructs by name (got ${[...HARNESS_INTERNAL_TOOLS].sort().join(",")})`,
 );
 for (const name of HARNESS_INTERNAL_TOOLS) {
   ok(allowedOnLeanSeat(name), `the lean filter admits harness-internal "${name}" (a lean turn must still be able to return)`);
@@ -567,14 +567,14 @@ for (const name of HARNESS_INTERNAL_TOOLS) {
 ok(!allowedOnLeanSeat("final_output_sink") && !allowedOnRestrictedJobWake("final_output_sink"), "a name outside the harness-internal set is withheld by BOTH filters");
 
 ok(
-  WORK_SESSION_TOOLS.size === 2 && WORK_SESSION_TOOLS.has("agent") && WORK_SESSION_TOOLS.has("task_cancel"),
-  `🔴 the work session's kit is exactly { agent, task_cancel } (got ${[...WORK_SESSION_TOOLS].sort().join(",")})`,
+  WORK_SESSION_TOOLS.size === 2 && WORK_SESSION_TOOLS.has("agent") && WORK_SESSION_TOOLS.has("eve__task_cancel"),
+  `🔴 the work session's kit is exactly { agent, eve__task_cancel } (got ${[...WORK_SESSION_TOOLS].sort().join(",")})`,
 );
 {
-  const toolset: Record<string, unknown> = { agent: {}, task_cancel: {}, task_wait: {}, final_output: {}, reply: {}, bash: {}, work: {}, connection_execute: {}, ask_question: {} };
+  const toolset: Record<string, unknown> = { agent: {}, eve__task_cancel: {}, eve__task_wait: {}, eve__reply: {}, reply: {}, bash: {}, work: {}, connection_execute: {}, ask_question: {} };
   const removed = restrictToolsetForWorkSession(toolset);
   ok(
-    JSON.stringify(Object.keys(toolset).sort()) === JSON.stringify(["agent", "final_output", "task_cancel", "task_wait"]),
+    JSON.stringify(Object.keys(toolset).sort()) === JSON.stringify(["agent", "eve__reply", "eve__task_cancel", "eve__task_wait"]),
     `the work-session cut keeps its kit plus the harness internals only (kept ${Object.keys(toolset).sort().join(",")})`,
   );
   ok(removed.includes("reply") && removed.includes("ask_question") && removed.includes("work") && removed.includes("bash"), "🔴 …and withholds `reply`, `ask_question`, `work` and `bash`: W speaks to no room, asks no person, forwards to nobody and touches no sandbox itself");
@@ -585,4 +585,4 @@ console.log(`\n✓ lean-seat (OPE-301 + the OPE-420 worker subtraction): ${n} as
 
 // proves: SEAT-chat-arm, SEAT-dm-carve-in, SEAT-harness-internal, SEAT-lean-default-deny, SEAT-lean-filter
 // proves: SEAT-lean-posture, SEAT-lean-roster, SEAT-worker-allow-by-default, SEAT-worker-withheld
-// proves: TOOL-task_wait, TOOL-web_search
+// proves: TOOL-eve__task_wait, TOOL-web_search

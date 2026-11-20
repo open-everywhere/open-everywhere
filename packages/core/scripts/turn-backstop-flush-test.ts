@@ -210,7 +210,7 @@ const settle = async (): Promise<void> => {
       "🔴 notification: `noteTaskSettled` RE-MARKS the tree dirty — asserted `=== true`. Delete that half and the backstop below returns null, and everything the child wrote after the retirement flush is lost at the next rotation",
     );
     const r = await flushDirtyTreeAtTurnEnd(seatCtx);
-    ok(r !== null && r.outcome === "flushed", "🔴 notification END TO END: the turn the notification arrived on PERSISTS the child's final edits — no `task_peek`, no `task_cancel`, no tool call at all");
+    ok(r !== null && r.outcome === "flushed", "🔴 notification END TO END: the turn the notification arrived on PERSISTS the child's final edits — no `task_peek`, no `eve__task_cancel`, no tool call at all");
   });
   await settle();
   ok((await flushEdges()).filter((e) => e === "turn-backstop").length - before === MAX_FLUSH_HOLDS + 2, "notification: every attempt is audited — the holds, the retirement flush and the settlement flush");

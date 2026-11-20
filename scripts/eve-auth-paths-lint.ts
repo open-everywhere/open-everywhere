@@ -14,9 +14,35 @@ interface AuthWriter {
 
 export const EVE_AUTH_WRITERS: readonly AuthWriter[] = [
   { file: "execution/runtime-context.js", path: "a new session's context: the delivery's `auth` (or the initiator's), as the channel route minted it" },
-  { file: "execution/session/turn-step.js", path: "each turn step: re-applies the session's stored auth" },
-  { file: "execution/proxied-deliver-step.js", path: "a proxied delivery that carries its own `delivery.auth`" },
+  {
+    file: "execution/session/turn-step.js",
+    path: "each turn step: the delivery's own auth, a sign-in challenge's requester, then a closing write that restores the earlier value — except a mid-turn message of the same principal, whose bag replaces it (continueTurnAuth)",
+  },
+  {
+    file: "execution/proxied-deliver-step.js",
+    path: "a proxied answers delivery: its own `delivery.auth` in a scratch context for the channel's `deliver`, and joinAnswerToTurn's continueTurnAuth write to the parent's slot",
+  },
   { file: "execution/tools/workflow/step-execution.js", path: "a durable tool step: re-applies the auth the step was queued under" },
+  {
+    file: "execution/cancelled-model-call-batch.js",
+    path: "a cancelled model-call batch: copies the turn step's own slot forward (a copy, never a new principal)",
+  },
+  {
+    file: "channel/schedule.js",
+    path: "a schedule-collection occurrence: the principal that created the schedule, from its stored envelope. OE deploys no collection (rule E), and eve refuses an occurrence of an undeployed one before the write",
+  },
+  {
+    file: "execution/invoke-tool.js",
+    path: "a tool call outside a conversation: the `auth` option of the `invokeTool` caller, verbatim. No OE module calls `invokeTool` (rule E)",
+  },
+  {
+    file: "runtime/connections/events/dispatch-step.js",
+    path: "a connection-event callback: the auth on the stored subscription binding. OE declares no connection events (rule C)",
+  },
+  {
+    file: "runtime/connections/events/owner.js",
+    path: "a connection-event owner: the same stored binding auth, a clone of the subscribing session's slot. OE declares no connection events (rule C)",
+  },
 ];
 
 export const AUTH_WRITE =
@@ -176,7 +202,7 @@ function memberPropName(node: AstNode): string | undefined {
   if (node.type !== "MemberExpression") return undefined;
   const property = node.property as AstNode;
   if (node.computed === false) return property.type === "Identifier" ? (property.name as string) : undefined;
-  return property.type === "Literal" && typeof property.value === "string" ? property.value : undefined;
+  return staticString(property);
 }
 
 function callsDefiner(node: AstNode, names: ReadonlySet<string>, exported: string): boolean {
@@ -198,6 +224,11 @@ function definerReference(node: AstNode, chain: readonly AstNode[], names: Reado
     return "the definer is referenced, not called";
   }
   if (memberPropName(node) === exported) return "the namespaced definer is referenced, not called";
+  if (node.type === "Property" && parent?.type === "ObjectPattern") {
+    const key = node.key as AstNode;
+    const name = node.computed === true || key.type !== "Identifier" ? staticString(key) : undefined;
+    if (name === exported) return "the definer is destructured by a string key, not called";
+  }
   return undefined;
 }
 
@@ -342,15 +373,81 @@ export function connectionEventFindings(file: string, text: string): Finding[] {
       unread(node, name, why ?? "the definition is not an inline object literal");
       return;
     }
+    const refuseEvents = (prop: AstNode, shape: string): void => {
+      findings.push({
+        file,
+        line: lineAt(text, prop.start),
+        rule: "connection events",
+        detail: `\`${name}({ ${shape} })\` subscribes to connection events, which run under an auth eve writes itself (rc.18: runtime/connections/events/owner.js). Pin the auth principal of that path with a spec first.`,
+      });
+    };
     for (const prop of (def.properties as AstNode[] | undefined) ?? []) {
-      if (prop.type === "Property" && propertyKey(prop) === "events") {
-        findings.push({
-          file,
-          line: lineAt(text, prop.start),
-          rule: "connection events",
-          detail: `\`${name}({ events })\` subscribes to connection events, which run under an auth eve writes itself (rc.18: runtime/connections/events/owner.js). Pin the auth principal of that path with a spec first.`,
-        });
+      if (prop.type === "Property" && propertyKey(prop) === "events") refuseEvents(prop, "events");
+      if (prop.type === "Property" && propertyKey(prop) === "experimental") {
+        const block = prop.value as AstNode | undefined;
+        const blockWhy = block?.type === "ObjectExpression" ? unreadDefinition(block) : "the `experimental` block is not an inline object literal";
+        if (blockWhy !== undefined) {
+          unread(prop, name, blockWhy.replace("the definition", "the `experimental` block"));
+          continue;
+        }
+        for (const inner of (block!.properties as AstNode[] | undefined) ?? []) {
+          if (inner.type === "Property" && propertyKey(inner) === "events") refuseEvents(inner, "experimental: { events }");
+        }
       }
+    }
+  });
+  return findings;
+}
+
+const OPT_IN_NAMES: Readonly<Record<string, string>> = {
+  invokeTool: "eve's `invokeTool` runs a tool outside a conversation under the `auth` its caller passes (rc.18: execution/invoke-tool.js), so a route could hand it a principal read from the request",
+  mcpChannel: "eve's `mcpChannel` publishes the agent's tools, and each call runs under the MCP caller's auth through `invokeTool` (rc.18: execution/invoke-tool.js)",
+  defineDynamicSchedules: "a schedule collection runs each occurrence under the principal that created the schedule, not under the room it posts to (rc.18: channel/schedule.js)",
+};
+const OPT_IN_SOURCES: Readonly<Record<string, string>> = {
+  "eve/channels/mcp": OPT_IN_NAMES.mcpChannel!,
+  "eve/experimental/schedules": OPT_IN_NAMES.defineDynamicSchedules!,
+};
+
+
+function staticString(node: AstNode): string | undefined {
+  if (node.type === "Literal" && typeof node.value === "string") return node.value;
+  if (node.type === "TemplateLiteral" && ((node.expressions as unknown[] | undefined)?.length ?? 0) === 0) {
+    const quasi = (node.quasis as { value?: { cooked?: string | null } }[] | undefined)?.[0];
+    return quasi?.value?.cooked ?? undefined;
+  }
+  return undefined;
+}
+
+export function optInWriterFindings(file: string, text: string): Finding[] {
+  const findings: Finding[] = [];
+  const refuse = (node: AstNode, what: string, why: string): void => {
+    findings.push({
+      file,
+      line: lineAt(text, node.start),
+      rule: "opt-in auth writer",
+      detail: `${what}: ${why}. OE holds its identity guarantees only while no module reaches this path. Pin the principal it carries with a spec first, then change this rule.`,
+    });
+  };
+  const sourceOf = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    return Object.keys(OPT_IN_SOURCES).find((s) => value === s || value.startsWith(`${s}/`));
+  };
+  visitAll(parse(file, text), (node) => {
+    if (node.type === "ImportDeclaration" || node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration" || node.type === "ImportExpression") {
+      const sourceNode = node.source as AstNode | null | undefined;
+      const source = sourceNode === null || sourceNode === undefined ? undefined : staticString(sourceNode);
+      const hit = sourceOf(source);
+      if (hit !== undefined) refuse(node, `an import of \`${String(source)}\``, OPT_IN_SOURCES[hit]!);
+    }
+    if (node.type === "Identifier" && Object.hasOwn(OPT_IN_NAMES, node.name as string)) refuse(node, `\`${node.name as string}\``, OPT_IN_NAMES[node.name as string]!);
+    const literal = staticString(node);
+    if (literal !== undefined && Object.hasOwn(OPT_IN_NAMES, literal)) refuse(node, `the string "${literal}"`, OPT_IN_NAMES[literal]!);
+    if (node.type === "CallExpression") {
+      const first = (node.arguments as AstNode[] | undefined)?.[0];
+      const spec = first === undefined ? undefined : staticString(first);
+      const hit = sourceOf(spec);
+      if (hit !== undefined) refuse(node, `a load of \`${spec!}\``, OPT_IN_SOURCES[hit]!);
     }
   });
   return findings;
@@ -427,8 +524,9 @@ function treeFindings(): Finding[] {
       if (text.includes("defineSchedule")) seenSchedules.add(file);
       findings.push(...scheduleFindings(file, text, OE_SCHEDULES[file], exists));
     }
-    if (text.includes("events") && /define(McpClient|OpenAPI)Connection/.test(text)) findings.push(...connectionEventFindings(file, text));
+    findings.push(...connectionEventFindings(file, text));
     if (/\.to\b|\[\s*["'`]to["'`]\s*\]|[{,]\s*to\b/.test(text)) findings.push(...crossRoomFindings(file, text));
+    findings.push(...optInWriterFindings(file, text));
   }
   for (const file of Object.keys(OE_SCHEDULES)) {
     if (!seenSchedules.has(file)) findings.push({ file, line: 1, rule: "stale row", detail: "OE_SCHEDULES names a schedule module that no longer calls `defineSchedule`. Drop the row." });
@@ -447,9 +545,9 @@ function ok(cond: boolean, label: string): void {
 
 function tier1(): void {
   const table = EVE_AUTH_WRITERS.map((w) => w.file);
-  const rcLike = [...table, "channel/schedule.js", "runtime/connections/events/owner.js", "execution/invoke-tool.js"];
+  const rcLike = [...table, "channel/future-writer.js", "runtime/future/owner.js", "execution/future-invoke.js"];
   const diff = censusDiff(rcLike, EVE_AUTH_WRITERS);
-  ok(diff.added.length === 3 && censusMessage("x", diff).includes("NEW WRITER  channel/schedule.js"), "tier 1 A: a bump that adds auth writers is refused, naming each new writer");
+  ok(diff.added.length === 3 && censusMessage("x", diff).includes("NEW WRITER  channel/future-writer.js"), "tier 1 A: a bump that adds auth writers is refused, naming each new writer");
   ok(censusDiff(table.slice(1), EVE_AUTH_WRITERS).gone.length === 1, "tier 1 A: a writer that disappears is refused");
   ok(censusDiff(table, EVE_AUTH_WRITERS).added.length === 0 && censusDiff(table, EVE_AUTH_WRITERS).gone.length === 0, "tier 1 A control: the table's own writers pass");
   ok(AUTH_WRITE.test("r.set(AuthKey,i)"), "tier 1 A: a `.set(AuthKey,` context write is a writer");
@@ -520,8 +618,82 @@ function tier1(): void {
   ok(connectionEventFindings("c.ts", `import { defineMcpClientConnection } from "eve/connections";\nconst make = defineMcpClientConnection;\nexport default make({ url: "x", events: {} });`).some((f) => f.rule === "unrecognised connection form"), "tier 1 C: an aliased-by-assignment connection definer is refused");
   ok(connectionEventFindings("c.ts", `import * as c from "eve/connections";\nconst d = c.defineMcpClientConnection;\nd({ events: {} });`).some((f) => f.rule === "unrecognised connection form"), "tier 1 C: a namespaced connection definer taken as a value is refused");
   ok(connectionEventFindings("c.ts", `import * as c from "eve/connections";\nexport default c["defineMcpClientConnection"]({ url: "x", events: {} });`).some((f) => f.rule === "connection events"), "tier 1 C: a computed-member connection definer call is read");
+  ok(
+    connectionEventFindings("c.ts", `export default defineMcpClientConnection({ url: "https://x", experimental: { events: { onEvent: async () => {} } } });`).some((f) => f.rule === "connection events"),
+    "tier 1 C: the rc.18 shape `experimental: { events }` is refused (eve reads connection events there, not at the top level)",
+  );
+  ok(
+    connectionEventFindings("c.ts", `const x = { events: {} };\nexport default defineMcpClientConnection({ url: "https://x", experimental: x });`).some((f) => f.rule === "unrecognised connection form"),
+    "tier 1 C: an `experimental` block passed as a variable is refused",
+  );
+  ok(
+    connectionEventFindings("c.ts", `export default defineMcpClientConnection({ url: "https://x", experimental: { ...more } });`).some((f) => f.rule === "unrecognised connection form"),
+    "tier 1 C: a spread `experimental` block is refused",
+  );
+  ok(
+    connectionEventFindings("c.ts", `export default defineMcpClientConnection({ url: "https://x", experimental: { other: true } });`).length === 0,
+    "tier 1 C control: an `experimental` block with no `events` passes",
+  );
+  {
+    const viaImport = `import { exp } from "./exp.js";\nexport default defineMcpClientConnection({ url: "https://x", experimental: exp });`;
+    ok(connectionEventFindings("c.ts", viaImport).some((f) => f.rule === "unrecognised connection form"), "tier 1 C: an `experimental` block imported from another module is refused");
+    const escapedDefiner = String.raw`import * as c from "eve/connections";` + "\n" + String.raw`export default c["defineMcp\ClientConnection"]({ url: "https://x", experimental: { events: {} } });`;
+    const ns = `import * as c from "eve/connections";\n`;
+    const templateMember = ns + "export default c[`defineMcpClientConnection`]({ url: \"x\", experimental: { events: { onEvent: async () => {} } } });";
+    ok(connectionEventFindings("c.ts", templateMember).some((f) => f.rule === "connection events"), "tier 1 C: a definer named by a template-string member is read");
+    const templateAlias = ns + "const d = c[`defineMcpClientConnection`];\nexport default d({ url: \"x\", experimental: { events: {} } });";
+    ok(connectionEventFindings("c.ts", templateAlias).some((f) => f.rule === "unrecognised connection form"), "tier 1 C: a definer taken by a template-string member is refused");
+    const stringKey = ns + `const { "defineMcpClientConnection": d } = c;\nexport default d({ url: "x", experimental: { events: {} } });`;
+    ok(connectionEventFindings("c.ts", stringKey).some((f) => f.rule === "unrecognised connection form"), "tier 1 C: a definer destructured by a string key is refused");
+    const computedKey = ns + `const { ["defineMcpClientConnection"]: d } = c;\nexport default d({ url: "x", experimental: { events: {} } });`;
+    ok(connectionEventFindings("c.ts", computedKey).some((f) => f.rule === "unrecognised connection form"), "tier 1 C: a definer destructured by a computed string key is refused");
+    ok(connectionEventFindings("c.ts", `const { ["other"]: o, "x": y } = z;\n`).length === 0, "tier 1 C control: a string-keyed destructure of another name passes");
+    ok(connectionEventFindings("c.ts", escapedDefiner).some((f) => f.rule === "connection events"), "tier 1 C: a definer named through an escaped computed key is read (the parser decodes the escape)");
+  }
   ok(connectionEventFindings("c.ts", `export default defineDynamic({ events: { "session.started": () => null } });`).length === 0, "tier 1 C control: a dynamic connection's resolver events pass");
   ok(connectionEventFindings("c.ts", `export default defineMcpClientConnection({ url: "https://x" }); // events: none`).length === 0, "tier 1 C control: a connection with no events block passes");
+
+  const route = `routes: [POST("/x", async (req, { invokeTool }) => invokeTool("t", await req.json(), { auth: (await req.json()).auth }))]`;
+  ok(optInWriterFindings("packages/core/agent/channels/x.ts", route).some((f) => f.rule === "opt-in auth writer"), "tier 1 E: a route that destructures `invokeTool` is refused");
+  ok(optInWriterFindings("x.ts", `async function h(req, args) { return args.invokeTool("t", {}, { auth }); }`).length === 1, "tier 1 E: a member call `args.invokeTool(` is refused");
+  ok(optInWriterFindings("x.ts", `async function h(req, args) { return args["invokeTool"]("t", {}, { auth }); }`).length === 1, "tier 1 E: a computed `args[\"invokeTool\"]` is refused");
+  ok(optInWriterFindings("x.ts", `import { mcpChannel } from "eve/channels/mcp";\nexport default mcpChannel({});`).length >= 2, "tier 1 E: eve's MCP channel is refused (the import and the name)");
+  ok(optInWriterFindings("x.ts", `const m = await import("eve/channels/mcp");`).length === 1, "tier 1 E: a dynamic import of eve's MCP channel is refused");
+  ok(
+    optInWriterFindings("packages/core/agent/schedules/c.ts", `import { defineDynamicSchedules } from "eve/experimental/schedules";\nexport default defineDynamicSchedules({});`).length >= 2,
+    "tier 1 E: a schedule collection is refused (the import and the definer)",
+  );
+  ok(optInWriterFindings("x.ts", `import { schedules } from "eve/experimental/schedules/vercel";`).length === 1, "tier 1 E: a subpath of eve's experimental schedules is refused");
+  ok(optInWriterFindings("x.ts", "async function h(req, args) { return args[`invokeTool`](\"t\", {}, { auth }); }").length === 1, "tier 1 E: a no-substitution template key `args[`invokeTool`]` is refused");
+  ok(optInWriterFindings("x.ts", `const require = createRequire(import.meta.url);\nconst m = require("eve/channels/mcp");`).length === 1, "tier 1 E: a `require(\"eve/channels/mcp\")` is refused");
+  ok(optInWriterFindings("x.ts", "const m = load(`eve/experimental/schedules`);").length === 1, "tier 1 E: any call that names an opt-in source by a static string is refused");
+  ok(optInWriterFindings("x.ts", "const k = `invoke${\"Tool\"}`; const m = require(\"eve/schedules\");").length === 0, "tier 1 E control: a template with a substitution and the static `eve/schedules` source pass (the doc names the run-time escape)");
+  {
+    const escapedKey = String.raw`async function h(req, args) { return args["\u0069nvokeTool"]("t", {}, { auth }); }`;
+    const escapedName = String.raw`async function h(req, args) { return args.\u0069nvokeTool("t", {}, { auth }); }`;
+    const escapedSource = String.raw`const m = await import("eve/channels/\x6dcp");`;
+    const identityEscape = String.raw`async function h(req, args) { return args["invoke\Tool"]("t", {}, { auth }); }`;
+    const continuation = 'async function h(req, args) { return args["invoke\\\nTool"]("t", {}, { auth }); }';
+    const templateImport = "const m = await import(`eve/channels/mcp`);";
+    const templateSubpath = "const m = await import(`eve/experimental/schedules/vercel`);";
+    const escapedTemplate = String.raw`const n = ` + "`mcp\\Channel`;";
+    for (const [src, what] of [
+      [escapedKey, "an escaped string key"],
+      [escapedName, "an escaped identifier"],
+      [escapedSource, "an escaped import source"],
+      [identityEscape, "an identity escape in a string key"],
+      [continuation, "a line continuation in a string key"],
+      [templateImport, "a template-string dynamic import"],
+      [templateSubpath, "a template-string dynamic import of a subpath"],
+      [escapedTemplate, "an identity escape in a template string"],
+    ] as const) {
+      ok(optInWriterFindings("x.ts", src).length >= 1, `tier 1 E: ${what} is refused`);
+    }
+  }
+  ok(
+    optInWriterFindings("x.ts", `// eve's invokeTool is not used here\nimport { defineSchedule } from "eve/schedules";\nexport const invoked = invokeToolkit; const t = "invoke tool";`).length === 0,
+    "tier 1 E control: a comment, the static `eve/schedules` path, a longer name and a near-miss string pass",
+  );
 
   const bareTool = `export default defineTool({ async execute(input, ctx) { await ctx.to(slack, { channelId: "C2" }).send("hi"); } });`;
   const bare = crossRoomFindings("packages/core/agent/tools/fixture.ts", bareTool);
@@ -572,5 +744,5 @@ passed++;
 const sending = Object.values(OE_SCHEDULES).filter((r) => r.sends).length;
 console.log(
   `✓ lint:eve-auth-paths: ${passed} checks — eve ${installed.version} has the ${installed.writers.length} known AuthKey writers; ` +
-    `${Object.keys(OE_SCHEDULES).length} OE schedules (${sending} send, each pinned); no connection events block; no bare ctx.to.`,
+    `${Object.keys(OE_SCHEDULES).length} OE schedules (${sending} send, each pinned); no connection events block; no opt-in auth writer (invokeTool, mcpChannel, a schedule collection); no bare ctx.to.`,
 );

@@ -27,7 +27,7 @@ import { setRegisteredConnectorCredentials, oauthConnectorHome } from "../agent/
 import { selectConnectorTransport } from "../agent/connections/connector-transport.js";
 import { fakeMcpServer } from "./_fake-mcp-server.js";
 import { approveCredentialGrant, askForCredentialGrant, revokeCredentialGrant } from "../agent/access/credential-grant-flow.js";
-import { _resetDynamicVariantsForTest, type ReplayableToolEntry } from "../agent/access/window-gated.js";
+import { _resetMountedVariantsForTest, type MountedToolEntry, evaluateDynamic } from "../agent/access/window-gated.js";
 import { recordRequesterIdentity } from "../agent/access/requester-identity.js";
 import { registerPostArm, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import type { ReplierLabel, ReplyTarget } from "../agent/channels/reply-post.js";
@@ -111,7 +111,7 @@ const slackArmMembers = {
 } as const;
 registerPostArm({ ...slackArmMembers, deliverDirectMessage: captureDirectMessage, platform: "slack" });
 
-_resetDynamicVariantsForTest();
+_resetMountedVariantsForTest();
 
 const sent: string[] = [];
 const MCP_URL = "https://mcp.notion.com/mcp";
@@ -168,10 +168,7 @@ const callThroughMount = async (scopeKey: string): Promise<{ ok: boolean; disclo
   return inEveContext(new FakeEveContext(), async () => {
     adoptSeatAuthority(scopeKey);
     recordRequesterIdentity(ctx, undefined, ENVELOPE);
-    const mounted = (await (grantTools as { events: Record<string, (e: unknown, c: unknown) => Promise<unknown>> }).events["session.started"](
-      { type: "session.started" },
-      ctx,
-    )) as Record<string, ReplayableToolEntry> | null;
+    const mounted = (await evaluateDynamic(grantTools, ctx)) as Record<string, MountedToolEntry> | null;
     const entry = mounted?.["grant__rowan_hale_notion__notion_fetch_launch_page"];
     assert.ok(entry !== undefined, "the mount projected the granted tool");
     return (await entry.execute({ id: "abc123" }, ctx)) as { ok: boolean; disclosure?: string; refused?: string };

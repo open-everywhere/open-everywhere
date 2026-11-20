@@ -172,13 +172,13 @@ ok(fires[0].authThreadTs === KICKOFF_TS, "first job fire binds to the SAME kicko
 ok((await store.getRoutine("default", "slack/T1/C1", "r-job1"))?.jobSessionAnchor === KICKOFF_TS, "the anchor is persisted on the routine");
 ok(fires[0].message.includes("DURABLE JOB"), "first job fire receives the job protocol message");
 ok(fires[0].jobFire, "a job fire carries the OPE-111 autonomous-fire stamp (⇒ restricted toolset for that wake)");
-const tokenFire1 = slackContinuationToken("C1", String(fires[0].target.threadTs));
+const tokenFire1 = slackContinuationToken({ channelId: "C1", threadTs: String(fires[0].target.threadTs) });
 
 await tick(new Date(at.getTime() + 61 * 60_000));
 ok(kickoffCalls === 1, "re-fire does NOT post another kickoff — it reuses the stored anchor");
 ok(fires.length === 2 && fires[1].target.threadTs === KICKOFF_TS, "re-fire pins the SAME anchor");
 ok(fires[1].authThreadTs === KICKOFF_TS, "re-fire keeps the binding snapshot aligned with the reused kickoff thread");
-const tokenFire2 = slackContinuationToken("C1", String(fires[1].target.threadTs));
+const tokenFire2 = slackContinuationToken({ channelId: "C1", threadTs: String(fires[1].target.threadTs) });
 ok(tokenFire1 === tokenFire2, "both fires resolve to the SAME continuation token ⇒ eve resumes ONE durable session (the JOIN)");
 
 ok(classifySessionId(tokenFire1).kind === "native", "the job session token is a plain native token — classifySessionId adds NO new shape (grammar frozen)");

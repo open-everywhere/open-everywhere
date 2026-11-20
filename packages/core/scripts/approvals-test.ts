@@ -1585,7 +1585,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     const replayMsg = wakes[0]?.message ?? "";
     ok(wakes.length === 1 && replayMsg.includes("HAS NOT RUN"), "decision wake (op.connector replay): an APPROVE emits one wake that says the write has NOT run");
     ok(
-      replayMsg.includes("`connection` set to `notion`, `tool` set to `notion-create-pages`, and `input` set to an object whose ONLY key is `oe_approved_card`, with the card id `p-dm-op-replay` as its value"),
+      replayMsg.includes("`eve__tool` with `name` set to `notion__notion-create-pages`, and `input` set to an object whose ONLY key is `oe_approved_card`, with the card id `p-dm-op-replay` as its value"),
       `decision wake (op.connector replay): the wake names the stored call's target and the card id (${replayMsg.slice(0, 400)})`,
     );
     ok(!replayMsg.includes("call the op again with exactly the same input"), "decision wake (op.connector replay): the wake never asks for a rebuilt call");

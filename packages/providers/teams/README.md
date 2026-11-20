@@ -15,7 +15,7 @@ the hosts `graph.microsoft.com` and `smba.trafficmanager.net`. Core's registries
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-teams eve@0.71.0
+npm i @open-everywhere/core @open-everywhere/provider-teams eve@1.0.0-rc.18
 npx oe-eve-patch
 ```
 

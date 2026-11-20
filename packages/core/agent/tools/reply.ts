@@ -1,11 +1,9 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, deploymentOrg, inheritedWakeStampOf, isUnifiedWindowContext, currentWakeId, currentSessionId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
-import { resolvePartition } from "../memory/partition.js";
+import { deploymentOrg, inheritedWakeStampOf, isUnifiedWindowContext, currentWakeId, currentTurnId, windowGrainOf, windowTaskLabelOf, type BindableContext } from "../identity/binding.js";
 import { flushWriteIntentMemory, type MemoryPersistContext } from "../hooks/memory.js";
-import { isThreadStopped } from "../channels/engagement.js";
 import { noteTurnCloseoutRefusal } from "../model/turn-closeout.js";
-import { durableTurnKey, noteStoppedAck, stoppedAckSpent } from "../model/turn-state.js";
+import { spendStoppedAck, standDownState, stoppedRefusalText } from "../channels/stand-down-gate.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
 import {
   resolveReplyTarget,
@@ -43,13 +41,10 @@ import {
   WAKE_DONE_FORCED_AUDIT_REASON,
   wakeDeclinedRefusalMessage,
   REPLY_STOPPED_REFUSAL_REASON,
-  markStoppedAckThisTurn,
-  wasStoppedAckSpentThisTurn,
   noteForcedOverrideThisTurn,
   FORCED_OVERRIDE_TURN_LIMIT,
   REPLY_FORCED_LOOP_REASON,
 } from "../channels/reply-signal.js";
-import { markStandDownSilenceThisTurn, REPLY_STAND_DOWN_ACK_ACTION } from "../channels/stand-down-silence.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import {
@@ -69,6 +64,7 @@ import {
   notePromisedReport,
   pendingDelegationOwing,
   pendingDelegationThisTurn,
+  delegationRequestedThisTurn,
   pendingDelegationsOwing,
   settlementReportOwedOn,
 } from "../access/pending-delegation-signal.js";
@@ -79,7 +75,7 @@ import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { postUnifiedReply, unifiedEditLocus, terminalPostClosesConversation } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { preRegisterDynamicVariants } from "../access/window-gated.js";
+import { sessionVariantTool } from "../access/window-gated.js";
 import { FOLLOW_UPS_INPUT } from "../channels/reply-follow-ups.js";
 import { answerSurfaceSession, surfaceTurnOf, SURFACE_SIGN_CLEARED_ACTION } from "../channels/surface-session-state.js";
 
@@ -87,73 +83,15 @@ function replierFor(ctx: BindableContext): ReplierLabel | undefined {
   return replierLabelFor(windowGrainOf(ctx), windowTaskLabelOf(ctx));
 }
 
-interface StandDownState {
-  readonly stopped: boolean;
-  readonly refuse: boolean;
-}
-
-const STAND_DOWN_CLEAR: StandDownState = { stopped: false, refuse: false };
-
-function stoppedRefusalText(): string {
-  return (
-    "You were asked to stand down in this conversation and that stop is recorded, so nothing was posted. " +
-    "You have already posted here once this turn; anything further is exactly what the person asked you to stop doing. " +
-    `${END_TURN_WITH_SENTINEL_INSTRUCTION} Someone @mentioning you is what brings you back.`
-  );
-}
-
-async function standDownState(
-  bind: BindableContext,
-  turnId: string | undefined,
-  namesBoundConversation?: () => Promise<boolean>,
-): Promise<StandDownState> {
-  try {
-    const binding = bindFrom(bind);
-    const stopped = await isThreadStopped(resolvePartition(bind), binding.engagementKey ?? binding.threadTs);
-    if (!stopped) return STAND_DOWN_CLEAR;
-    if (namesBoundConversation !== undefined && !(await namesBoundConversation())) return STAND_DOWN_CLEAR;
-    if (wasStoppedAckSpentThisTurn(turnId)) return { stopped, refuse: true };
-    const rowKey = standDownRowKey(bind, turnId);
-    return { stopped, refuse: rowKey !== undefined && (await stoppedAckSpent(rowKey)) };
-  } catch {
-    return STAND_DOWN_CLEAR;
-  }
-}
-
-function standDownRowKey(bind: BindableContext, turnId: string | undefined): string | undefined {
-  if (turnId === undefined || turnId.length === 0) return undefined;
-  try {
-    return durableTurnKey(currentSessionId(bind), turnId);
-  } catch {
-    return undefined;
-  }
-}
-
-async function spendStoppedAck(bind: BindableContext, turnId: string | undefined, arm: "unified" | "per-surface"): Promise<void> {
-  markStoppedAckThisTurn(turnId);
-  markStandDownSilenceThisTurn(turnId);
-  const rowKey = standDownRowKey(bind, turnId);
-  if (rowKey !== undefined) await noteStoppedAck(rowKey);
-  let anchor: string | undefined;
-  let sessionId: string | undefined;
-  try {
-    const binding = bindFrom(bind);
-    anchor = binding.engagementKey ?? binding.threadTs;
-    sessionId = currentSessionId(bind);
-  } catch {
-  }
-  await auditToolAction(bind, REPLY_STAND_DOWN_ACK_ACTION, {
-    arm,
-    ...(anchor !== undefined ? { anchor } : {}),
-    ...(sessionId !== undefined ? { sessionId } : {}),
-  });
-}
-
 export const unifiedReplyEntry = defineTool({
-    endsTurn: true,
+    endsTurn: (output) => output.continuesTurn !== true,
     description:
       "Post a reply into the conversation a specific wake came from. A successful reply ENDS " +
-      "your turn, so put what this wake needs into it. You are a cross-surface session: each " +
+      "your turn, so put what this wake needs into it. The one exception is a `done: false` reply " +
+      "in a turn where you requested no worker (`work`, `agent` or a subagent), stopped no running job " +
+      "with `cancel_work` earlier in this turn, and did not call `stand_down`: then your turn goes on, and " +
+      "you post the full answer in this same turn. So call every tool the wake needs (a `work` for a " +
+      "replacement job included) before a `done: false` reply. You are a cross-surface session: each " +
       "wake envelope carries a `wake-id` naming where it came from — pass the wake-id of the " +
       "wake you are answering, this turn's or any earlier wake in this session you have not yet " +
       "answered, and your reply is posted into exactly that conversation (its Slack thread, its " +
@@ -184,7 +122,7 @@ export const unifiedReplyEntry = defineTool({
         ),
       followUps: FOLLOW_UPS_INPUT,
     }),
-    outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
+    outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string(), continuesTurn: z.boolean().optional() }),
     async execute(input, ctx) {
       const bind = ctx as BindableContext;
       const turnWake = currentWakeId(bind);
@@ -219,7 +157,7 @@ export const unifiedReplyEntry = defineTool({
       if (standDown.refuse) {
         await noteTurnCloseoutRefusal(bind, REPLY_STOPPED_REFUSAL_REASON);
         await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), REPLY_STOPPED_REFUSAL_REASON);
-        throw new Error(stoppedRefusalText());
+        throw new Error(stoppedRefusalText(standDown.spentHere));
       }
 
       let doneOverrides = 0;
@@ -344,10 +282,12 @@ export const unifiedReplyEntry = defineTool({
           :
             ` Keep working if needed; your terminal prose is still discarded. If nothing is left to do: ${END_TURN_WITH_SENTINEL_INSTRUCTION}`;
       const pendingNote = owingTask !== undefined ? PENDING_WORK_INSTRUCTION : "";
+      const continuesTurn = input.done === false && !standDown.stopped && pendingDelegationThisTurn(turnId) === undefined && !delegationRequestedThisTurn(turnId);
       return {
         posted: true,
         id,
         note: `Turn reply requirement satisfied — posted to ${origin.platform}.${doneNote}${overrideNote}${pendingNote}${tailNote}`,
+        ...(continuesTurn ? { continuesTurn: true } : {}),
       };
     },
 });
@@ -380,7 +320,7 @@ export const baseReplyEntry = defineTool({
           if (standDownBase.refuse) {
             await noteTurnCloseoutRefusal(bindBase, REPLY_STOPPED_REFUSAL_REASON);
             await auditReplyRefused(replyAuditFor(bindBase, "tool"), REPLY_STOPPED_REFUSAL_REASON);
-            throw new Error(stoppedRefusalText());
+            throw new Error(stoppedRefusalText(standDownBase.spentHere));
           }
           const owingTask = pendingDelegationThisTurn(baseTurnId);
           const foldWindow = tailWindow();
@@ -405,16 +345,7 @@ export const baseReplyEntry = defineTool({
           };
         },
 });
-preRegisterDynamicVariants("reply", { _base: baseReplyEntry, _single: unifiedReplyEntry });
-
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const bind = ctx as BindableContext;
-      if (isUnifiedWindowContext(bind)) return unifiedReplyEntry;
-      const manifest = capabilitiesFor(bind);
-      if (!manifest.midTurnPost) return null;
-      return baseReplyEntry;
-    },
-  },
+export default sessionVariantTool("reply", { _base: baseReplyEntry, _single: unifiedReplyEntry }, (ctx) => {
+  if (isUnifiedWindowContext(ctx)) return "_single";
+  return capabilitiesFor(ctx).midTurnPost ? "_base" : null;
 });

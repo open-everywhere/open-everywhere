@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { reserveEphemeralPort } from "../../scripts/ephemeral-port.js";
+import { loadReadBundledCompiledArtifacts, type ReadBundledCompiledArtifacts } from "../../scripts/eve-deep-reads/bundled-artifacts.js";
+import { EveDeepReadError } from "../../scripts/eve-deep-reads/load.js";
+import { loadPrewarmAppSandboxes } from "../../scripts/eve-deep-reads/prewarm.js";
+import { loadResolveRuntimeAgentGraph, type ResolveRuntimeAgentGraph } from "../../scripts/eve-deep-reads/resolve-agent-graph.js";
 import { justBashTemplateDir } from "./prepare-cache.js";
 
 export type PrewarmVia = "built-bundle" | "authored-source";
@@ -44,56 +48,20 @@ function pinStateEnvForPrewarm(state: string): () => void {
   };
 }
 
-async function importEveDist(root: string, relative: string): Promise<Record<string, unknown> | undefined> {
-  const path = join(root, "node_modules", "eve", "dist", "src", relative);
-  if (!existsSync(path)) return undefined;
-  return (await import(pathToFileURL(path).href)) as Record<string, unknown>;
-}
-
 export async function loadFastPathSymbols(
   root: string,
-): Promise<{ ok: true; symbols: Record<string, (input: never) => unknown> } | { ok: false; missing: string }> {
-  const wanted: readonly { readonly module: string; readonly name: string }[] = [
-    { module: "runtime/loaders/bundled-artifacts.js", name: "readBundledCompiledArtifacts" },
-    { module: "runtime/resolve-agent-graph.js", name: "resolveRuntimeAgentGraph" },
-  ];
-  const symbols: Record<string, (input: never) => unknown> = {};
-  for (const { module, name } of wanted) {
-    const mod = await importEveDist(root, module);
-    if (mod === undefined) return { ok: false, missing: `eve/dist/src/${module} (the whole module)` };
-    const value = mod[name];
-    if (typeof value !== "function") return { ok: false, missing: `${name} from eve/dist/src/${module}` };
-    symbols[name] = value as (input: never) => unknown;
+): Promise<
+  | { ok: true; symbols: { readBundledCompiledArtifacts: ReadBundledCompiledArtifacts; resolveRuntimeAgentGraph: ResolveRuntimeAgentGraph } }
+  | { ok: false; missing: string }
+> {
+  try {
+    const readBundledCompiledArtifacts = await loadReadBundledCompiledArtifacts(root);
+    const resolveRuntimeAgentGraph = await loadResolveRuntimeAgentGraph(root);
+    return { ok: true, symbols: { readBundledCompiledArtifacts, resolveRuntimeAgentGraph } };
+  } catch (err) {
+    if (err instanceof EveDeepReadError) return { ok: false, missing: `eve/dist/src/${err.file} (${err.missing})` };
+    throw err;
   }
-  return { ok: true, symbols };
-}
-
-type PrewarmAppSandboxes = (input: {
-  readonly appRoot: string;
-  readonly compiledArtifactsSource?: unknown;
-  readonly loadAgentGraph?: (input: never) => Promise<unknown>;
-  readonly log?: (message: string) => void;
-}) => Promise<void>;
-
-async function loadPrewarmAppSandboxes(root: string): Promise<PrewarmAppSandboxes> {
-  const module = "execution/sandbox/prewarm.js";
-  const mod = await importEveDist(root, module);
-  if (mod === undefined) {
-    throw new Error(
-      `integration prepare: eve's sandbox prewarm module is gone from eve/dist/src/${module} — an eve bump moved it. ` +
-        "Find the new home of prewarmAppSandboxes under eve/dist and update tests/integration/prewarm.ts " +
-        "(and the eve-upgrade-check skill's checklist).",
-    );
-  }
-  if (typeof mod.prewarmAppSandboxes !== "function") {
-    throw new Error(
-      `integration prepare: eve/dist/src/${module} no longer exports prewarmAppSandboxes — an eve bump renamed it. ` +
-        "It is the ONLY prewarm export eve 0.69.0 ships (prewarmSandboxes went module-private and " +
-        "prewarmBuiltAppSandboxes was removed), so there is no second road left to take. Update " +
-        "tests/integration/prewarm.ts to the new export.",
-    );
-  }
-  return mod.prewarmAppSandboxes as PrewarmAppSandboxes;
 }
 
 export function builtTreeArtifactsSource(root: string): { readonly appRoot: string; readonly kind: "disk"; readonly sandboxAppRoot: string } {
@@ -106,14 +74,11 @@ async function prewarmFromBuiltBundle(root: string, log: (message: string) => vo
     log(
       `integration prepare: eve no longer exposes ${loaded.missing}, so the prewarm falls back to eve's own ` +
         "authored-source path (measured 147.7 s against 13.0 s, OPE-2235). Find the new home of that symbol under " +
-        "eve/dist and update tests/integration/prewarm.ts, and the eve-upgrade-check skill's checklist.",
+        "eve/dist and update its module in scripts/eve-deep-reads/, and the eve-upgrade-check skill's checklist.",
     );
     return false;
   }
-  const { readBundledCompiledArtifacts, resolveRuntimeAgentGraph } = loaded.symbols as {
-    readBundledCompiledArtifacts: () => { manifest?: unknown; metadata?: unknown; moduleMap?: unknown } | null | undefined;
-    resolveRuntimeAgentGraph: (input: { manifest: unknown; moduleMap: unknown }) => Promise<unknown>;
-  };
+  const { readBundledCompiledArtifacts, resolveRuntimeAgentGraph } = loaded.symbols;
   const reserved = await reserveEphemeralPort();
   const restoreListenerEnv = pinListenerEnvForPrewarm(reserved);
   try {
@@ -128,7 +93,7 @@ async function prewarmFromBuiltBundle(root: string, log: (message: string) => vo
       "integration prepare: the built bundle did not install its compiled artifacts on the shared runtime session, so the " +
         "prewarm falls back to eve's own authored-source path. eve keeps that session on globalThis under " +
         'Symbol.for("eve.runtime-session-storage"); an eve bump that made it module-private would do this. ' +
-        "See tests/integration/prewarm.ts.",
+        "See scripts/eve-deep-reads/runtime-session.ts.",
     );
     return false;
   }

@@ -153,10 +153,10 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
 
 {
   const events: TranscriptWireEvent[] = [
-    { index: 0, at: null, type: "message.received", data: { text: "read memory/misc/decisions.md maybe" } },
-    { index: 1, at: null, type: "tool.call", data: { name: "read_file", input: { file_path: "/workspace/memory/payments-brain/MEMORY.md" } } },
-    { index: 2, at: null, type: "tool.call", data: { name: "read_file", input: { file_path: "/workspace/memory/payments-brain/refunds/chargebacks/decisions.md" } } },
-    { index: 3, at: null, type: "message.completed", data: { text: "the codename is SCARLET WEASEL-123, ship 2030-05-01, ref R-4242" } },
+    { index: 0, at: null, type: "delivery.consumed", data: { deliveryId: "d0", turnId: "t", parts: [{ kind: "text", text: "read memory/misc/decisions.md maybe" }] } },
+    { index: 1, at: null, type: "call.requested", data: { callId: "c1", owner: { turnId: "t" }, capability: { kind: "tool", name: "read_file" }, input: { file_path: "/workspace/memory/payments-brain/MEMORY.md" } } },
+    { index: 2, at: null, type: "call.requested", data: { callId: "c2", owner: { turnId: "t" }, capability: { kind: "tool", name: "read_file" }, input: { file_path: "/workspace/memory/payments-brain/refunds/chargebacks/decisions.md" } } },
+    { index: 3, at: null, type: "content.completed", data: { partId: "p", kind: "text", phase: "reply", value: "the codename is SCARLET WEASEL-123, ship 2030-05-01, ref R-4242" } },
   ];
   const reads = extractMemoryPathReads(events);
   ok(reads.length === 2, "extractMemoryPathReads: counts only the tool-call reads, not the user/wake envelope");
@@ -246,7 +246,7 @@ ok(DOMAIN_REASONING_CEILING === "high", "DOMAIN_REASONING_CEILING is 'high' — 
 {
   const wakeId = "0d9f-uuid-1234";
   const events: TranscriptWireEvent[] = [
-    { index: 0, at: null, type: "message.received", data: { message: `<wake reason="mention" wake-id="${wakeId}">\n  <channel>hi</channel>\n</wake>` } },
+    { index: 0, at: null, type: "delivery.consumed", data: { deliveryId: "d0", turnId: "t", parts: [{ kind: "text", text: `<wake reason="mention" wake-id="${wakeId}">\n  <channel>hi</channel>\n</wake>` }] } },
     { index: 1, at: null, type: "tool.call", data: { name: "read_file", input: { file_path: "/workspace/memory/x/MEMORY.md" } } },
   ];
   ok(transcriptServedWake(events, wakeId) === true, "transcriptServedWake: the received envelope carries wake-id=\"…\" → served");

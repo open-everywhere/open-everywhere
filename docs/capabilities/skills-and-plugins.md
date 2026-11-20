@@ -39,9 +39,9 @@ Skills are deliberately **not** static files that auto-load for every session �
 would defeat per-surface scoping. Instead a session sees only the skills its access
 bundle grants.
 
-A dynamic resolver runs at `session.started` and re-runs at `turn.started` (so a
-mid-session re-tag picks up edited bundles), resolves the bundle's granted skills, and
-exposes only those to the model. This is the **visibility** half. The **teeth** half is
+A dynamic resolver runs before each model call, re-reads the domain skill rows once per
+turn (so a mid-session re-tag picks up edited bundles), resolves the bundle's granted
+skills, and exposes only those to the model. This is the **visibility** half. The **teeth** half is
 enforced underneath: a skill's scripts can only reach the hosts and credentials the
 bundle granted (the egress firewall + the connector gate), so an ungranted skill is both
 hidden *and* defanged. An empty grant means the session sees no plugin skills — any
@@ -149,11 +149,20 @@ A subagent lives in one directory under the deployer app:
 
 ```text
 agent/subagents/<name>/
-├── agent.ts            # required: description + model (NOT outputSchema — see below)
+├── agent.ts            # required: description + the root agent's model (NOT outputSchema — see below)
 ├── instructions.md     # its own prompt (nothing is inherited)
 ├── tools/              # its own tools — Open Everywhere ships these as disable sentinels
 └── hooks/spend.ts      # its own spend hook (hooks are not inherited either)
 ```
+
+**The model is the root agent's own.** `agent.ts` imports the root agent and sets
+`model: root.model` (`import root from "../../agent.js"`). eve inherits no model either, so a
+subagent that names a static model id calls that model directly. That call skips the primary model
+resolver, and with it the step budget, the closeout boundary, call capture, the empty-stop reissue,
+the toolset evidence and the scripted test valve. With the root's model, each one acts on the
+subagent's turns under the same conditions as on the root's turns. `scripts/subagents-lint.ts` refuses any other `model` value.
+`tests/integration/step-boundary.test.ts` drives a real `fresh_eyes_review` call and proves that its
+turn answers from the scripted valve.
 
 The directory name **is** the tool name the agent sees — bare and unprefixed, in the same
 namespace as everything in `agent/tools/`. So it is lower `snake_case` like every other
@@ -236,7 +245,7 @@ not Claude-only. It bundles four kinds of component:
 | --- | --- |
 | Skills | Skill-content registry entries (`agent/plugins/generated/<slug>.ts`) — **not** `agent/skills/` files; see below |
 | Slash commands | Skill-content registry entries (an autonomous agent doesn't type `/foo`) |
-| MCP connectors | Eve connections (`agent/connections/<ns>.ts`) — HTTP/SSE only |
+| MCP connectors | OE connector mounts (`agent/tools/<ns>.ts`, through `seatCut`) — HTTP only |
 | Sub-agents | Eve sub-agents (`agent/subagents/<ns>/`) — see [Declared subagents](#declared-subagents-the-specialist-unit) |
 
 A bundle grants a plugin **by name**. That name is an alias that expands — via the
@@ -282,8 +291,9 @@ Two consequences worth stating plainly:
   member *can* author at runtime; see [Runtime domain skills](#runtime-domain-skills) above.
 - **Some components can't be hosted.** The extractor's report flags components that need
   human action — for example a **stdio** MCP server (one launched as a local command
-  rather than an HTTP/SSE URL), which Eve can't host. Those are surfaced, not silently
-  dropped.
+  rather than a Streamable HTTP URL), which a connector mount can't reach. A server that
+  speaks only the legacy SSE transport lists no op either, and the report notes it. Those
+  are surfaced, not silently dropped.
 
 ## On Vercel / off Vercel
 

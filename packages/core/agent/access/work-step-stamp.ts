@@ -1,5 +1,6 @@
 import { OE_WORK_REQUEST_ATTR } from "../channels/work.js";
 import { OE_DELIVERY_ID_ATTR } from "../channels/unified-window.js";
+import { eveContextContainer } from "./wake-slot.js";
 
 export type WorkStampFailure = "stamp-names-another-request" | "stamp-absent";
 
@@ -17,7 +18,6 @@ export const WORK_CALL_NEEDS_REISSUE_MESSAGE =
   "agent: this job was NOT started. It reached this work session in an earlier step, so this step cannot start it under its own " +
   "requester. OE delivers it to you again; start it when a step delivers it. Do not retry it now; start only the job this step delivered.";
 
-const EVE_CONTEXT_STORAGE = Symbol.for("eve.context-storage");
 const EVE_AUTH_KEY_NAME = "eve.auth";
 
 function firstString(v: unknown): string | undefined {
@@ -35,8 +35,7 @@ export function liveStepDeliveryId(): string | undefined {
 
 function liveStepAttr(name: string): string | undefined {
   try {
-    const storage = (globalThis as Record<symbol, unknown>)[EVE_CONTEXT_STORAGE] as { getStore?: () => unknown } | undefined;
-    const container = storage?.getStore?.() as { get?: (key: { readonly name: string }) => unknown } | undefined;
+    const container = eveContextContainer() as { get?: (key: { readonly name: string }) => unknown } | undefined;
     if (container === undefined || container === null || typeof container.get !== "function") return undefined;
     const auth = container.get({ name: EVE_AUTH_KEY_NAME }) as { attributes?: Record<string, unknown>; current?: { attributes?: Record<string, unknown> } } | null | undefined;
     const attrs = auth?.attributes ?? auth?.current?.attributes;

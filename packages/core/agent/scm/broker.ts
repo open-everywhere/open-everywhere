@@ -1,5 +1,5 @@
-import type { SandboxNetworkPolicy } from "eve/sandbox";
-import { GIT_BROKER_HOSTS, type EgressRule } from "../access/egress.js";
+import type { SandboxNetworkPolicy, SandboxNetworkRule } from "eve/sandbox";
+import { GIT_BROKER_HOSTS, egressAllowMap, type EgressRule } from "../access/egress.js";
 import type { GitHubApp } from "./app.js";
 import { READ_PERMISSIONS } from "./mint.js";
 import { githubAuthMode, personalTokenValue, tokenReaches } from "./credential.js";
@@ -56,9 +56,9 @@ export function mergeGitReadBroker(
 
 export function mergeGitBrokerRules(base: SandboxNetworkPolicy, rules: readonly EgressRule[]): SandboxNetworkPolicy {
   if (rules.length === 0) return base;
-  const allow: Record<string, EgressRule[]> = typeof base === "string" ? {} : { ...(base.allow as Record<string, EgressRule[]>) };
+  const allow: Record<string, readonly SandboxNetworkRule[]> = egressAllowMap(base);
   for (const host of GIT_BROKER_HOSTS) allow[host] = [...rules];
-  return { allow };
+  return typeof base === "string" ? { allow } : { ...base, allow };
 }
 
 export function tokenGitReadRules(token: string, repos: readonly string[]): EgressRule[] {
@@ -102,7 +102,7 @@ export async function sessionGitBroker(repos: readonly string[]): Promise<Sessio
 
 export function withBareAllowHost(policy: SandboxNetworkPolicy, host: string): SandboxNetworkPolicy {
   if (typeof policy === "string") return policy;
-  const allow: Record<string, EgressRule[]> = { ...(policy.allow as Record<string, EgressRule[]>) };
+  const allow: Record<string, readonly SandboxNetworkRule[]> = egressAllowMap(policy);
   allow[host] = [];
   return { ...policy, allow };
 }

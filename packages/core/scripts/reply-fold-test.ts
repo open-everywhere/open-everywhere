@@ -6,6 +6,24 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
+// eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+// projection. A direct call carries an empty view.
+const v27Completed = (adapter: object) => async (event: unknown, ctx: unknown): Promise<void> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (adapter as Record<string, (e: unknown, c: unknown) => Promise<unknown>>)["content.completed"]!;
+  await handler(event, { ...(ctx as object), view: fold.emptySessionView() });
+};
+// eve 1.x delivers a final message as `content.completed` (a text part in the "reply" phase).
+const asV27Content = (f: { readonly finishReason: string; readonly message: string | null; readonly turnId?: string }) => ({
+  type: "content.completed" as const,
+  ...(f.turnId !== undefined ? { scope: { turnId: f.turnId } } : {}),
+  data: { partId: "part-1", kind: "text", phase: f.finishReason === "stop" ? "reply" : "narration", value: f.message ?? "" },
+});
+
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -87,7 +105,7 @@ interface Armed {
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const armOf = (tool: unknown, ctx: unknown): Armed | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+  _dynamicResolverForTest(tool)({}, ctx) as Armed | null;
 
 function ctxFor(turnWake: string, turnId: string): BindableContext {
   return {
@@ -422,11 +440,11 @@ let foldedMessageId = "";
   const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
     adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   }).adapter;
-  ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §14 REACHABILITY: the unified channel really registers message.completed — the bridge lives inside it");
+  ok(typeof unifiedAdapter["content.completed"] === "function", "🔴 §14 REACHABILITY: the unified channel really registers content.completed — the bridge lives inside it");
 
   const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
   const endTurnWithProse = (text: string): Promise<void> =>
-    unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
+    v27Completed(unifiedAdapter)(asV27Content({ finishReason: "stop", message: text }), adapterCtx);
 
   function bridgeSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
     const c = new ContextContainer();

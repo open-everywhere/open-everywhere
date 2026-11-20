@@ -1,6 +1,5 @@
 import { evePublicTool, registerSyntheticConfig, unifiedCtx } from "./eval/_offline-seat.js";
-import { serializeModelInputSchema } from "eve/tools";
-import { buildWorkerSeatToolset, workerSeatCtx, workerSeatRoster } from "./eval/_worker-seat.js";
+import { WORKER_SEAT_UNREACHABLE, buildWorkerSeatToolset, workerSeatCtx, workerSeatRoster } from "./eval/_worker-seat.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 import { WORKER_UNMOUNTED_TOOLS } from "../agent/access/worker-seat.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
@@ -79,8 +78,12 @@ function advertisedFieldNames(entry: unknown): readonly string[] {
   if (schema === undefined || schema === null) return [];
   const shape = (schema as { readonly shape?: Record<string, unknown> }).shape;
   if (shape !== undefined) return Object.keys(shape);
+  // eve 1.0 no longer exports `serializeModelInputSchema`. A v1 tool schema is a Standard JSON
+  // Schema, so read its JSON Schema through the `~standard` converter. Plain JSON Schema data
+  // carries its `properties` directly.
   try {
-    const serialized = serializeModelInputSchema(schema as never) as { readonly properties?: Record<string, unknown> };
+    const standard = (schema as { readonly "~standard"?: { readonly jsonSchema?: { readonly input?: (o: { target: string }) => unknown } } })["~standard"];
+    const serialized = (standard?.jsonSchema?.input?.({ target: "draft-2020-12" }) ?? schema) as { readonly properties?: Record<string, unknown> };
     return serialized.properties === undefined ? [] : Object.keys(serialized.properties);
   } catch {
     return [];
@@ -868,8 +871,23 @@ async function checkWorkerSeat(): Promise<void> {
   ok(cleanThrew === "", "buildWorkerSeatToolset: a roster it CAN resolve does not throw — the guard fires on drift, not on every build");
 
   const removed: string[] = [];
-  const set = await buildWorkerSeatToolset({ ctx, calls: [], resultFor: () => ({ ok: true }), onRemoved: (n) => removed.push(...n) });
+  const skips = new Map<string, string>();
+  const set = await buildWorkerSeatToolset({
+    ctx,
+    calls: [],
+    resultFor: () => ({ ok: true }),
+    onRemoved: (n) => removed.push(...n),
+    onSkip: (name, why) => skips.set(name, why),
+  });
   const mounted = Object.keys(set);
+  for (const mount of ["notion", "slack-as-you"]) {
+    ok(
+      roster.includes(mount) && skips.get(mount) === WORKER_SEAT_UNREACHABLE[mount],
+      `buildWorkerSeatToolset: the connector mount "${mount}" is on the worker roster and is skipped with its WORKER_SEAT_UNREACHABLE reason — the offline seat runs no live listing (got: ${JSON.stringify(skips.get(mount))})`,
+    );
+  }
+  const mountOps = mounted.filter((n) => n.startsWith("notion__") || n.startsWith("slack-as-you__"));
+  ok(mountOps.length === 0, `buildWorkerSeatToolset: no connector-mount op (\`<slug>__<op>\`) mounted on the offline seat (got: ${JSON.stringify(mountOps)})`);
   ok(mounted.length > 0 && mounted.every((n) => roster.includes(n)), "buildWorkerSeatToolset: every mounted name is on the worker roster");
   ok(!mounted.some((n) => WORKER_UNMOUNTED_TOOLS.has(n)), "buildWorkerSeatToolset: no withheld name survives the subtraction");
   ok(removed.length > 0 && removed.every((n) => WORKER_UNMOUNTED_TOOLS.has(n)), "buildWorkerSeatToolset: the subtraction RAN and removed only withheld names");

@@ -8,6 +8,7 @@ import {
   standDownAckOwedThisTurn,
   standDownAckOwedMessage,
   NO_REPLY_AFTER_STAND_DOWN_ACTION,
+  postedThisTurn,
 } from "../channels/reply-signal.js";
 import {
   SETTLEMENT_REPORT_SKIPPED_ACTION,
@@ -18,7 +19,11 @@ import {
   conversationEnrolledForSilence,
   NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL,
   NO_REPLY_ON_ENGAGED_ACTION,
+  ENGAGED_QUESTION_REFUSED_REASONS,
+  NO_REPLY_ON_ENGAGED_QUESTION_ACTION,
+  noReplyEngagedQuestionRefusal,
 } from "../channels/engaged-wake.js";
+import { engagedQuestionThisTurn } from "../channels/engaged-question-signal.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { standDownAckRoute } from "./stand_down.js";
@@ -134,6 +139,18 @@ export default defineTool({
         });
         throw new Error(NO_REPLY_ADDRESSED_TO_OTHER_REFUSAL);
       }
+    }
+    if (
+      ENGAGED_QUESTION_REFUSED_REASONS.has(input.reason) &&
+      peekNoReplyThisTurn() === null &&
+      engagedQuestionThisTurn(turnIdForGuards) &&
+      !postedThisTurn(turnIdForGuards)
+    ) {
+      await auditToolAction(ctx, NO_REPLY_ON_ENGAGED_QUESTION_ACTION, {
+        reason: input.reason,
+        ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+      });
+      throw new Error(noReplyEngagedQuestionRefusal(input.reason));
     }
     if (input.reason === "duplicate" && peekNoReplyThisTurn() === null && currentTurnAddressed(ctx as BindableContext)) {
       const window = await readWindowRing();

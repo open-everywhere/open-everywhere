@@ -1,4 +1,5 @@
-import { resolveTeamsAppId, splitTeamsMessageText, TEAMS_MESSAGE_TEXT_MAX_LENGTH } from "eve/channels/teams";
+import { resolveTeamsAppId } from "./teams-credentials.js";
+import { splitTeamsMessageText, TEAMS_MESSAGE_TEXT_MAX_LENGTH } from "./teams-message-text.js";
 import {
   teamsAppCredentials,
   teamsAppId,

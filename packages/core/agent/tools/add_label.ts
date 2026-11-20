@@ -1,11 +1,11 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
 import { workDestinationPlatforms } from "../channels/work-destinations.js";
 import { type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { auditToolAction } from "../audit/tool-action.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
 function safeDomains(): readonly Domain[] {
@@ -42,16 +42,10 @@ export const addLabelEntry = defineTool({
     return { platform: ref.platform, id: ref.id, label: input.label, message };
   },
 });
-preRegisterDynamicEntry("add_label", "_single", addLabelEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const bctx = ctx as BindableContext;
-      const destinations = workDestinationPlatforms(bctx, safeDomains());
-      const adapterPlatforms = supportedEntityActionPlatforms();
-      if (!destinations.some((s) => adapterPlatforms.includes(s)) && !currentTurnEntityRef(bctx)) return null;
-      return addLabelEntry;
-    },
-  },
+export default sessionMountedTool("add_label", addLabelEntry, (ctx) => {
+  const destinations = workDestinationPlatforms(ctx, safeDomains());
+  const adapterPlatforms = supportedEntityActionPlatforms();
+  if (!destinations.some((s) => adapterPlatforms.includes(s)) && !currentTurnEntityRef(ctx)) return false;
+  return true;
 });

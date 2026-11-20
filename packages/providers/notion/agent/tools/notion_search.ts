@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { resolveNotionCredential, searchNotion } from "../channels/notion-api.js";
 import { notionWorkGrant, notionWorkMount } from "../channels/notion-work.js";
@@ -6,7 +6,7 @@ import { assertNotionActingIdentity } from "../channels/notion-acting-identity.j
 import {
   ingestUntrustedModelOutput,
   getConfig,
-  preRegisterDynamicEntry,
+  sessionMountedTool,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -57,13 +57,8 @@ export const notionSearchEntry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("notion_search", "_single", notionSearchEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!notionWorkMount(ctx as BindableContext, () => getConfig().loadDomains())) return null;
-      return notionSearchEntry;
-    },
-  },
+export default sessionMountedTool("notion_search", notionSearchEntry, (ctx) => {
+  if (!notionWorkMount(ctx, () => getConfig().loadDomains())) return false;
+  return true;
 });

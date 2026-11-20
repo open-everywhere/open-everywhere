@@ -838,6 +838,67 @@ function ctxFor(opts: { channelId: string; channelType?: string; principalId: st
   _resetAccountDisplayNamesForTest();
 }
 
+{
+  const { registerSlackFixtureManifest } = await import("./_slack-test-stubs.js");
+  const linkClaimHook = (await import("../agent/hooks/link-claim.js")).default as unknown as {
+    events: Record<string, (event: unknown, c: unknown) => Promise<unknown>>;
+  };
+  registerSlackFixtureManifest();
+  const posted: { id: string; channelId: string; text: string; intent: unknown }[] = [];
+  registerPostArm({
+    platform: "slack",
+    resolveTarget: (bag) => {
+      const channelId = bag.str("channelId");
+      return channelId ? { platform: "slack", channelId } : null;
+    },
+    isDirectConversation: (locus) => locus.channelId.startsWith("D"),
+    dispatchReply: async (target, text, _replier, intent) => {
+      const id = `ts-2853-${posted.length + 1}`;
+      posted.push({ id, channelId: (target as { channelId: string }).channelId, text, intent });
+      return id;
+    },
+    deliverDirectMessage: async (input) => ({ surfaceId: `D-${input.principalId}`, messageId: "m-2853" }),
+  });
+  const claimCtx = (wakeId: string | undefined, principalId: string) => {
+    const c = ctxFor({ channelId: `D_${principalId}`, channelType: "im", principalId });
+    const attributes = (c.session!.auth!.current!.attributes ?? {}) as Record<string, string>;
+    attributes.oe_addressed = "1";
+    if (wakeId !== undefined) attributes.oe_wake_id = wakeId;
+    return c;
+  };
+  const fireClaim = async (code: string, c: BindableContext): Promise<void> => {
+    await linkClaimHook.events["delivery.consumed"]!({ data: { deliveryId: "d-2853", turnId: "t-2853", parts: [{ kind: "text", text: `link ${code}` }] } }, c);
+  };
+  const replyPostRows = async () =>
+    (await pg.readAudit({ org: ORG, action: "reply.post" })) as { action: string; detail?: Record<string, unknown> }[];
+
+  await linkIdentity.execute({}, ctxFor({ channelId: "D_U_2853A", channelType: "im", principalId: "U_2853A" }));
+  await fireClaim(latestIssuedCode(), claimCtx("wake-2853", "U_2853B"));
+  const codeBack = posted.find((p) => /enter this code where they started it/i.test(p.text));
+  ok(codeBack !== undefined && codeBack.channelId === "D_U_2853B", "OPE-2853 setup: the registered hook posted the claim confirmation carrying the code-back into the claimant's own DM");
+  const row = (await replyPostRows()).find((r) => r.detail?.id === codeBack!.id);
+  ok(row !== undefined, "🔴 OPE-2853: the hook's code-back post writes a reply.post row — a host post the room shows is never an unaudited one");
+  ok(row?.detail?.wakeId === "wake-2853", "🔴 OPE-2853: …and the row names the claim wake, so the post is attributed to it even though the hook runs before wake.turn_start");
+  ok(JSON.stringify(codeBack!.intent) === JSON.stringify({ terminal: true }), `OPE-2853: the post itself is unchanged — a plain host post with no generated-answer intent (got ${JSON.stringify(codeBack!.intent)})`);
+  ok(codeBack!.text.includes(codeBackFrom(codeBack!.text)) && codeBackFrom(codeBack!.text).length === LINK_CODE_LENGTH, "OPE-2853: the attributed post still carries the 8-symbol code-back, unchanged by the reply guards");
+
+  const { claimantNoticeAudit } = await import("../agent/hooks/link-claim.js");
+  const { replyAuditFor } = await import("../agent/channels/reply-post.js");
+  const fireCtx = claimCtx("wake-2853-fire", "U_2853E");
+  ((fireCtx.session!.auth!.current!.attributes ?? {}) as Record<string, string>).oe_work_fire_creator = "U_CREATOR";
+  ok(replyAuditFor(fireCtx, "tool", "wake-2853-fire").creatorId === "U_CREATOR", "OPE-2853 negative control: the ctx below DOES carry a fire creator — replyAuditFor stamps it");
+  const noticeAuditRow = claimantNoticeAudit(fireCtx);
+  ok(noticeAuditRow?.wakeId === "wake-2853-fire" && noticeAuditRow.creatorId === undefined, "🔴 OPE-2853: a hook notice's row names the claim wake and NO fire creator — a claimant's post is never attributed to a routine's owner");
+  ok(claimantNoticeAudit(claimCtx(undefined, "U_2853E")) === undefined, "OPE-2853: with no captured wake there is no notice audit, so no row");
+
+  const before = posted.length;
+  await linkIdentity.execute({}, ctxFor({ channelId: "D_U_2853C", channelType: "im", principalId: "U_2853C" }));
+  await fireClaim(latestIssuedCode(), claimCtx(undefined, "U_2853D"));
+  const unwoken = posted.slice(before).find((p) => /enter this code where they started it/i.test(p.text));
+  ok(unwoken !== undefined, "OPE-2853 negative control: a claim with no captured wake still gets its code-back — attribution is never a precondition of delivery");
+  ok(!(await replyPostRows()).some((r) => r.detail?.id === unwoken!.id), "OPE-2853 negative control: …and with no wake to name, it writes no reply.post row rather than a row with no wake");
+}
+
 console.log(
   `✓ link-flow: ${n} assertions (pure gates, account directory, directory-transport CAS incl. sqlite parity, claim venue, claim addressing, forced code-back, both tools, the actionable finalize peek, surface parity)`,
 );

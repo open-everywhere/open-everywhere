@@ -8,6 +8,7 @@ import { parseRosterConfig } from "../scaffold/roster-plan.js";
 import type { BareModelFact, SovereigntyInput, TranscriptionRouteFact } from "./sovereignty.js";
 import { bareModelRoutes, bareModelVia } from "../model/bare-model-via.js";
 import { EVE_TELEMETRY_SWITCH, eveCommands } from "./eve-scripts.js";
+import { usesRootAgentModel } from "../subagents/declared.js";
 
 export async function registerAppSettings(appRoot: string): Promise<string | undefined> {
   try {
@@ -95,10 +96,10 @@ async function stackRoleRoutes(appRoot: string, models: { readonly stack: string
   }
 }
 
-export interface DeclaredSubagentModel {
-  readonly where: string;
-  readonly id: string | undefined;
-}
+export type DeclaredSubagentModel =
+  | { readonly where: string; readonly id: string; readonly rootModel?: undefined }
+  | { readonly where: string; readonly id: undefined; readonly rootModel: true }
+  | { readonly where: string; readonly id: undefined; readonly rootModel?: undefined };
 
 export async function declaredSubagentModels(appRoot: string): Promise<DeclaredSubagentModel[] | undefined> {
   let dirs: string[];
@@ -112,10 +113,15 @@ export async function declaredSubagentModels(appRoot: string): Promise<DeclaredS
   }
   const out: DeclaredSubagentModel[] = [];
   for (const name of dirs) {
+    const where = `subagent ${name}`;
+    if (usesRootAgentModel(readText(join(appRoot, "agent", "subagents", name, "agent.ts")) ?? "")) {
+      out.push({ where, id: undefined, rootModel: true });
+      continue;
+    }
     try {
       const mod = await importAppModule<{ default?: { model?: unknown } }>(`agent/subagents/${name}/agent.ts`, appRoot);
       const model = mod.default?.model;
-      if (typeof model === "string" && model !== "") out.push({ where: `subagent ${name}`, id: model });
+      out.push(typeof model === "string" && model !== "" ? { where, id: model } : { where, id: undefined });
     } catch {
       out.push({ where: `subagent ${name}`, id: undefined });
     }
@@ -141,7 +147,9 @@ async function bareModelFacts(
   return {
     bareDefaultVia: routes.fallback,
     bareRoutesRegistered: registered,
-    ...(subagents !== undefined ? { bareModels: subagents.map((b) => (b.id === undefined ? { where: b.where, id: undefined } : { where: b.where, id: b.id, ...bareModelVia(b.id, routes) })) } : {}),
+    ...(subagents !== undefined ? { bareModels: subagents.map((b): BareModelFact =>
+          b.rootModel === true ? { where: b.where, id: undefined, rootModel: true } : b.id === undefined ? { where: b.where, id: undefined } : { where: b.where, id: b.id, ...bareModelVia(b.id, routes) },
+        ) } : {}),
   };
 }
 

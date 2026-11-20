@@ -29,20 +29,40 @@ that a deployment is "OWASP compliant", and no such status exists. Read the
 `<untrusted_external_data>` envelope with a fresh nonce, so the model reads it as data
 (`packages/core/agent/access/untrusted.ts`). A
 consequential tool asks a human through its registry tier on every turn; no approval verdict reads
-what the turn read (OPE-2716). The tool-set projection applies the same fence to connector and MCP results before each model
-call (`packages/core/agent/access/untrusted-projection.ts`).
+what the turn read (OPE-2716). The same fence applies to connector and MCP results: it is the `toModelOutput` of the OE-owned
+connector tools (`packages/core/agent/connections/connector-tools.ts`,
+`packages/core/agent/access/connector-result-fence.ts`). Every connection mounts them through the
+connector mount (`packages/core/agent/connections/connector-mount.ts`), in place of an eve MCP
+connection, so on eve 1.x a connector result reaches the model inside the envelope. Unit tests prove
+the mount (`npm run test:connector-mount`). The end-to-end proof is the board-row-1 integration spec (`tests/integration/connectors/connector-result-fence.test.ts`), which runs once core builds on eve 1.x.
 
-- Proved by: `npm run test:untrusted`, `npm run test:untrusted-projection`, `npm run test:core-route-fence`.
+- Proved by: `npm run test:untrusted`, `npm run test:authored-projection`, `npm run test:core-route-fence`, `npm run test:connector-fence-taint`, `npm run test:connector-tools` and `npm run test:connector-mount`.
 - **The gap.** An envelope tells the model what is data. It does not stop a model that ignores it,
-  which is why the approval chain exists beside it. Since OPE-2716 that chain does not tighten after a
+  which is why the approval chain exists beside it. A connector result that carries an image, audio
+  or a file passes it to the model as a file part beside the fenced text, as eve's own runtime did:
+  an envelope cannot fence a file, so text inside an image reaches the model outside it. Since OPE-2716 that chain does not tighten after a
   read of untrusted content: a lowering (a config allow, an armed judge) applies whatever the turn read. Provider-executed web search runs at the provider, so
-  no in-tree seam can fence its results.
+  no in-tree seam can fence its results. A connector op's `description` and input schema are
+  text the MCP server wrote, and `eve__search` shows both. The connector tool puts the server's text
+  inside the envelope and offers eve a schema reduced to its shape
+  (`packages/core/agent/connections/connector-catalog-text.ts`). The op name, the property names and
+  a bounded set of short-token literals still reach the model bare, and a run of tokens can spell a
+  sentence, and a search result does not
+  taint the turn.
+  `npm run test:connector-fence-taint` §7 proves the fence through eve's real search.
+  A credential-grant borrowed tool's input schema is the vendor's text too. It gets the same
+  reduction and fence, and the model reads it whole, so a `$defs` key must be a short token and
+  the root id goes. The same token residue reaches the model bare. Every frozen argument stays pinned
+  (`packages/core/agent/access/grant-schema-pin.ts`). `npm run test:credential-grant-schema-fence`
+  proves it.
 
 ## ASI02 — Tool misuse and exploitation
 
 **The control.** Each agent tool carries a declared consequence in one table, and lints refuse a new
 agent tool with no entry (`packages/core/agent/access/consequence.ts`). A connector or MCP operation
-has no row there: it takes its tier from the verb in its name. An unknown verb is gated, unless an
+has no row there: it takes its tier from the verb in its name. An op mounted under a short name
+(its whole name exceeds eve's 64 characters) takes its tier from its whole name, and an unregistered
+short name is destructive (`packages/core/agent/access/connector-op-alias.ts`). An unknown verb is gated, unless an
 org-admitted MCP server marks the tool read-only (`readOnlyHint`), which opens that one tool. The
 approver chain routes a consequential act to a human decision
 (`packages/core/agent/access/approver-chain.ts`).

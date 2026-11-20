@@ -6,6 +6,7 @@ import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/r
 import { consumeStandDownSilenceThisTurn, STAND_DOWN_SILENCE_REASON } from "./stand-down-silence.js";
 import { OE_GRAIN_ATTR, OE_TASK_LABEL_ATTR } from "./unified-window.js";
 import type { ChannelSessionRow } from "../operational/store.js";
+import type { ContentCompletedData } from "eve/events";
 import { filterClosingProse } from "../access/outbound-filter.js";
 
 export { NO_REPLY_SENTINEL };
@@ -21,14 +22,44 @@ export type FinalMessageAction =
 
 export const NO_REPLY_SENTINEL_REASON = "NO_REPLY sentinel — judged not warranted";
 
-export function finalMessageAction(finishReason: string, message: string | null): FinalMessageAction {
+export function finalMessageAction(content: ContentCompletedData): FinalMessageAction;
+export function finalMessageAction(finishReason: string, message: string | null): FinalMessageAction;
+export function finalMessageAction(first: string | ContentCompletedData, second?: string | null): FinalMessageAction {
+  if (typeof first !== "string") {
+    const text = contentTextOf(first);
+    if (text === undefined) return { kind: "buffer-tool-status" };
+    return finalMessageAction(text.finishReason, text.message);
+  }
+  const finishReason = first;
+  const message = second ?? null;
   if (finishReason === "tool-calls") return { kind: "buffer-tool-status" };
   if (!message || !message.trim()) return { kind: "silent", reason: "empty final message" };
   if (isNoReply(message)) return { kind: "silent", reason: NO_REPLY_SENTINEL_REASON };
   return { kind: "post", text: filterClosingProse(message) };
 }
 
-export function finalMessageActionForTurn(finishReason: string, message: string | null, turnId?: string): FinalMessageAction {
+export interface ContentText {
+  readonly finishReason: "stop" | "tool-calls";
+  readonly message: string;
+}
+
+export function contentTextOf(data: ContentCompletedData): ContentText | undefined {
+  if (data.kind !== "text") return undefined;
+  const message = typeof data.value === "string" ? data.value : (data.fallbackText ?? "");
+  return { finishReason: data.phase === "reply" ? "stop" : "tool-calls", message };
+}
+
+export function finalMessageActionForTurn(content: ContentCompletedData, turnId?: string): FinalMessageAction;
+export function finalMessageActionForTurn(finishReason: string, message: string | null, turnId?: string): FinalMessageAction;
+export function finalMessageActionForTurn(first: string | ContentCompletedData, second?: string | null, third?: string): FinalMessageAction {
+  if (typeof first !== "string") {
+    const text = contentTextOf(first);
+    if (text === undefined) return { kind: "buffer-tool-status" };
+    return finalMessageActionForTurn(text.finishReason, text.message, typeof second === "string" ? second : undefined);
+  }
+  const finishReason = first;
+  const message = second ?? null;
+  const turnId = third;
   const action = finalMessageAction(finishReason, message);
   if (action.kind === "buffer-tool-status") return action;
   const reason = consumeNoReplyThisTurn();

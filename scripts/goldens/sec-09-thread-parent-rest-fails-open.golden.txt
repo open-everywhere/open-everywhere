@@ -18,4 +18,4 @@ IN  relay message M91S · guild G9S channel TH9S (type 11) · from U_DEV9S · pl
       | </wake>
   ⇠ 200 ok
 EVT turn.started on discord:TH9S
-EVT message.completed on discord:TH9S {"finishReason":"stop","message":"Migration is at step 3 of 5 — on track."}
+EVT content.completed on discord:TH9S {"partId":"part-1","kind":"text","phase":"reply","value":"Migration is at step 3 of 5 — on track."}

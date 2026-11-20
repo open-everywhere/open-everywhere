@@ -7,8 +7,11 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  budgetSessionLimitPark,
   detectSessionLimitPark,
   handleSessionLimitPark,
+  sessionUsageWindowIndex,
+  type BudgetInteraction,
   parkRotateDelta,
   parkThrottleKey,
   SESSION_LIMIT_CONTINUATION_TOOL_NAME,
@@ -40,138 +43,74 @@ const read = (rel: string): string => readFileSync(join(distSrc, rel), "utf8");
 console.log(`session-park: pinning against installed eve ${eveVersion}`);
 
 {
-  const mod = read("harness/session-limit-enforcement.js");
-  const enfStart = mod.indexOf("async function enforceSessionUsageLimit(");
-  const parkStart = mod.indexOf("async function parkOnSessionUsageLimit(");
-  const fmtStart = mod.indexOf("function formatSessionLimitMessage(");
-  const failStart = mod.indexOf("async function failSessionUsageLimit(");
+  const budget = read("harness/hitl/budget.js");
+  ok(budget.includes("function checkSessionUsageLimit("), "hitl/budget.js still declares checkSessionUsageLimit");
   ok(
-    enfStart >= 0 && parkStart > enfStart && fmtStart > parkStart && failStart > fmtStart,
-    "session-limit-enforcement.js still declares enforceSessionUsageLimit → parkOnSessionUsageLimit → formatSessionLimitMessage → failSessionUsageLimit",
+    /\.canAsk\?\{kind:`ask`,ask:createSessionLimitContinuationRequest\(\{/.test(budget),
+    "checkSessionUsageLimit ASKS (the park) when the session can ask, through createSessionLimitContinuationRequest",
   );
-  const enforce = mod.slice(enfStart, parkStart);
-  const park = mod.slice(parkStart, mod.indexOf("function violationWindow("));
-  const fail = mod.slice(failStart);
-  ok(park.length > 0, "the park arm was sliced from real bytes — an empty slice would pass its regexes vacuously");
-
-  const param = /^async function enforceSessionUsageLimit\((\w+)\)/.exec(enforce)?.[1];
-  const emitVar = /\{emit:(\w+)\}=/.exec(enforce)?.[1];
-  ok(param !== undefined && emitVar !== undefined, "enforceSessionUsageLimit still takes one input object and destructures its `emit`");
-  const branch = new RegExp(
-    `${emitVar as string}!==void 0&&` + `${param as string}\\.config\\.capabilities\\?\\.requestInput===!0\\?parkOnSessionUsageLimit\\(`,
-  );
-  ok(branch.test(enforce), "enforceSessionUsageLimit still PARKS when an emitter exists AND capabilities?.requestInput===true");
-  ok(!/\.config\.mode\b/.test(enforce), "…and no `mode` arm survives — eve 0.67 removed it, so a session without the capability FAILS at the bound");
-  ok(/:failSessionUsageLimit\(/.test(enforce), "…and only the ELSE arm reaches failSessionUsageLimit");
-
-  ok(/createSessionLimitContinuationRequest\(\{/.test(park), "parkOnSessionUsageLimit still builds a createSessionLimitContinuationRequest");
-  ok(/\.emit\(createInputRequestedEvent\(/.test(park), "…emits it via createInputRequestedEvent (the event authored hooks see)");
-  ok(/\{next:null,session:setHarnessEmissionState\(/.test(park), "…and returns `{ next: null }` — the session PARKS, it does not end");
-
-  ok(/`SESSION_TOKEN_LIMIT_REACHED`/.test(fail), "failSessionUsageLimit still emits the SESSION_TOKEN_LIMIT_REACHED code");
-  ok(!/\bthrow\b/.test(fail), "failSessionUsageLimit still RETURNS a step result — it never throws");
-  ok(/\{next:\{done:!0/.test(fail), "…returning a done step result");
-
-  ok(/`SESSION_TOKEN_COST_LIMIT_REACHED`/.test(fail), "the fail arm also mints SESSION_TOKEN_COST_LIMIT_REACHED for the token-COST bound");
-  ok(/`token-cost`/.test(enforce) === false, "the park-vs-fail branch does NOT discriminate on the violation kind — a cost park is still a park");
-  ok(/violationWindow\(\w+\)>0/.test(enforce), "…the branch's only extra guard is a positive violation window, which both kinds carry for a seat — a delegated worker with a zero budget share has a zero window and takes the fail arm (OPE-2256)");
-
-  const producers = ["harness/session-limit-enforcement.js"];
-  ok(producers.every((f) => read(f).includes("SESSION_TOKEN_LIMIT_REACHED")), "session-limit-enforcement.js is a producer of SESSION_TOKEN_LIMIT_REACHED");
-
+  ok(/:\{kind:`fail`,code:`SESSION_USAGE_LIMIT_REACHED`/.test(budget), "…and only the ELSE arm FAILS, with SESSION_USAGE_LIMIT_REACHED");
   ok(
-    /`The session reached its configured \$\{\w+\} token limit\.`/.test(mod),
-    "formatSessionLimitMessage still formats `The session reached its configured <kind> token limit.`",
+    /windowIndex:\w+\?\.index\?\?0\}/.test(budget),
+    "…and the ask carries the usage window's index, which is 0 until a person accepts a budget ask",
+  );
+  ok(
+    /\.limit\(\{total:\{\.\.\.\w+\},window:\{\.\.\.\w+\}\}\)/.test(budget),
+    "eve still calls the agent's sessionUsage function with {total, window}, so OE's budget is the bound that trips",
   );
 
-  ok(!mod.includes("n_REACHED"), "the 0.22.x `n_REACHED` minifier artifact is absent from this dist (why the classifier's third pattern was removed in OPE-171)");
+  const req = read("harness/hitl/budget-request.js");
+  const createStart = req.indexOf("function createSessionLimitContinuationRequest(");
+  const create = req.slice(createStart, req.indexOf("function toJsonUsage("));
+  ok(createStart >= 0 && create.length > 0, "budget-request.js still declares createSessionLimitContinuationRequest (sliced from real bytes)");
+  ok(
+    /interactionId:`\$\{\w+\}:\$\{\w+\}:limit:usage:\$\{\w+\}`/.test(create),
+    "eve's budget ask id is `<session>:<turn>:limit:usage:<window>` — the grammar OE's SESSION_USAGE_WINDOW_RE reads",
+  );
+  ok(create.includes("kind:`budget`"), "…and the request's kind is `budget`, the kind the park hook claims");
+  ok(
+    !/[{,](?:limit|usedTokens|inputTokens):/.test(create),
+    "🔴 the budget ask carries NO limit and NO usage — so OE records the bound from its own budget and the usage from the session view",
+  );
+  ok(req.includes(`/${SESSION_LIMIT_REQUEST_ID_RE.source}/u`), "eve's isSessionLimitContinuationRequestId carries OE's token pattern verbatim");
+  ok(req.includes(`/${SESSION_LIMIT_COST_REQUEST_ID_RE.source}/iu`), "…and OE's token-COST pattern verbatim");
+  ok(SESSION_LIMIT_REQUEST_ID_RE.flags === "u" && SESSION_LIMIT_COST_REQUEST_ID_RE.flags === "iu", "…with eve's flags on each arm");
+
+  const hitl = read("harness/hitl/index.js");
+  const enforce = hitl.slice(hitl.indexOf("async function enforceBudget("), hitl.indexOf("function humanInputContext("));
+  ok(enforce.length > 0, "hitl/index.js still declares enforceBudget (sliced from real bytes)");
+  ok(
+    /canAsk:\w+\.emit!==void 0&&\w+\.config\.capabilities\?\.requestInput===!0/.test(enforce),
+    "enforceBudget can ask only with an emitter AND capabilities.requestInput===true",
+  );
+  ok(/limit:\w+\.config\.sessionUsageLimit\?\?DEFAULT_SESSION_USAGE_LIMIT/.test(enforce), "…it reads the agent's own limit before eve's default");
+  ok(
+    /usage:\w+\.view\(\)\.projection\.view\.usage\.total/.test(enforce),
+    "🔴 …and it measures `view.usage.total` — the same totals a hook reads as `ctx.view.usage.total`",
+  );
+  ok(/window:\w+\.view\(\)\.projection\.usageWindow/.test(enforce), "…against the private usage window, which a hook cannot read");
+
+  const proj = read("protocol/session-projection.js");
+  ok(
+    /usageWindow:\{interactionId:\w+\.interactionId,index:\(\w+\.usageWindow\?\.index\?\?0\)\+1,start:\w+\.view\.usage\.total\}/.test(proj),
+    "🔴 only an ACCEPTED budget ask opens a new window (index+1, start = the totals then) — so window 0 starts at zero and its usage IS the session total",
+  );
+
+  const hookMap = readFileSync(join(distSrc, "public", "definitions", "hook.d.ts"), "utf8");
+  ok(/readonly "interaction\.opened": /.test(hookMap), "`interaction.opened` is in eve's PUBLIC hook event map (the park hook subscribes to it)");
+  ok(
+    /interface HookBaseContext extends [^{]*Omit<SessionFrame, "session">/.test(hookMap),
+    "every hook context extends SessionFrame (less its `session`)…",
+  );
+  ok(/readonly view: SessionView;/.test(readFileSync(join(distSrc, "dynamic", "definition.d.ts"), "utf8")), "…and SessionFrame carries the session `view`, so every hook context carries it");
 }
 
 {
   const send = read("channel/channel-address.js");
-  ok(!/mode\?\?`conversation`/.test(send), "channel-address.js no longer defaults a `mode` — eve 0.67 removed the run mode");
   ok(
     /capabilities:\{requestInput:!0\}/.test(send),
     "channel-address.js declares `capabilities: { requestInput: true }` unconditionally — every OE seat and fire can park at the bound",
   );
-  ok(
-    /=await \w+\.runtime\.dispatchContinuation\(\{command:\w+,continuationToken:\w+\}\)/.test(send),
-    "the send still awaits only runtime.dispatchContinuation on the continuation path (0.31's rename of runtime.deliver)",
-  );
-  const inlineCreate = /createSession\(\(await \w+\.runtime\.createSession\(\w+\)\)\.sessionId,/.test(send);
-  const hoistedCreate = /(\w+)=await \w+\.runtime\.createSession\(\w+\);?/.exec(send)?.[1];
-  const hoistedCreatePlacement = hoistedCreate !== undefined && new RegExp(`createSession\\(${hoistedCreate}\\.sessionId,`).test(send);
-  ok(
-    inlineCreate || hoistedCreatePlacement,
-    "…and only runtime.createSession on the fresh-session path (0.31's rename of runtime.run — the turn still runs elsewhere), written inline or through a hoisted local",
-  );
-}
-
-{
-  const cont = read("harness/session-limit-continuation.js");
-  ok(
-    cont.includes("toolName:`session_limit_continuation`"),
-    "eve still stamps the continuation prompt's action.toolName as `session_limit_continuation`",
-  );
-  ok(cont.includes("kind:`session-limit`"), "…and the request carries eve's own `kind: \"session-limit\"`");
-  ok(/kind:\w+\.kind,limit:\w+\.limit,usedTokens:\w+\.usedTokens\}/.test(cont), "a token-count violation still carries {kind, limit, usedTokens} as the action input");
-  ok(/kind:\w+\.kind,limitUsd:\w+\.limitUsd,usedCostUsd:\w+\.usedCostUsd\}/.test(cont), "…and a token-COST violation carries {kind, limitUsd, usedCostUsd} instead");
-  ok(/isSessionLimitContinuationRequestId[\s\S]{0,140}?\/:limit:\(\?:input\|output\):\\d\+\$\/u/.test(cont), "eve's requestId grammar still carries the token-count pattern OE's SESSION_LIMIT_REQUEST_ID_RE mirrors");
-  ok(/isSessionLimitContinuationRequestId[\s\S]{0,240}?:limit:token-cost:/.test(cont), "…and eve added a SECOND requestId pattern for the token-cost bound");
-  ok(cont.includes(`\`${SESSION_LIMIT_CONTINUATION_TOOL_NAME}\``), "OE's SESSION_LIMIT_CONTINUATION_TOOL_NAME matches eve's literal");
-  ok(SESSION_LIMIT_REQUEST_ID_RE.source === ":limit:(?:input|output):\\d+$", "OE's token-COUNT source is byte-identical to eve's");
-  ok(SESSION_LIMIT_REQUEST_ID_RE.flags === "u", "…with eve's flags on that arm (no `i`)");
-  ok(SESSION_LIMIT_COST_REQUEST_ID_RE.source === ":limit:token-cost:\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?$", "OE's token-COST source is byte-identical to eve's");
-  ok(SESSION_LIMIT_COST_REQUEST_ID_RE.flags === "iu", "…with eve's flags on that arm (`i`, as eve wrote it)");
-  ok(cont.includes(`/${SESSION_LIMIT_REQUEST_ID_RE.source}/u`), "eve's dist still carries OE's token-COUNT pattern verbatim");
-  ok(cont.includes(`/${SESSION_LIMIT_COST_REQUEST_ID_RE.source}/iu`), "…and OE's token-COST pattern verbatim");
-
-  ok(isSessionLimitRequestId("sess-1:limit:input:31000000"), "the mirrored predicate admits a token-count id");
-  ok(isSessionLimitRequestId("sess-1:limit:output:31000000"), "…on both token-count kinds");
-  ok(isSessionLimitRequestId("sess-1:limit:token-cost:12.5"), "…a cost id whose figure carries a decimal point");
-  ok(isSessionLimitRequestId("sess-1:limit:token-cost:12"), "…a bare integer cost figure");
-  ok(isSessionLimitRequestId("sess-1:limit:token-cost:1.5e-3"), "…and an exponent, which eve's own pattern admits");
-  ok(!isSessionLimitRequestId("sess-1:limit:input:notanumber"), "…and does NOT admit a non-numeric token-count figure");
-  ok(!isSessionLimitRequestId("sess-1:limit:token-cost:"), "…nor a token-cost id with no figure at all");
-  ok(!isSessionLimitRequestId("sess-1:limit:wallclock:30"), "…nor a FOURTH bound eve has not shipped — the mirror stays a mirror, not a wildcard");
-  ok(!isSessionLimitRequestId("sess-1:limit:INPUT:5"), "…nor an upper-cased token-count kind, which eve's own `/u` arm rejects too");
-  ok(!isSessionLimitRequestId("q1"), "…nor an unrelated request id");
-}
-
-{
-  const proto = read("protocol/message.js");
-  const inlineData = /function createInputRequestedEvent\((\w+)\)\{return\{data:\{requests:\1\.requests[\s\S]{0,120}?type:`input\.requested`\}\}/.test(proto);
-  const hoisted = /function createInputRequestedEvent\((\w+)\)\{let (\w+)=\{requests:\1\.requests[\s\S]{0,200}?return[\s\S]{0,80}?\{data:\2,type:`input\.requested`\}\}/.test(proto);
-  ok(
-    inlineData || hoisted,
-    "createInputRequestedEvent still emits a `input.requested` event carrying `requests`, inline or through a hoisted local",
-  );
-
-  const hookMap = readFileSync(join(distSrc, "public", "definitions", "hook.d.ts"), "utf8");
-  ok(
-    /readonly "input\.requested": ProtocolEvent<"input\.requested">;/.test(hookMap),
-    "`input.requested` is still in eve's PUBLIC HookEventMap (authored hooks may subscribe)",
-  );
-
-  const handler = read("execution/session/turn-event-handler.js");
-  ok(
-    /function createTurnEventHandler\(\w+\)\{[\s\S]{0,200}?return async\((\w+),\w+\)=>\{let (\w+)=await \w+\.emit\(\1\)[\s\S]{0,600}?await \w+\.dispatcher\.runHooks\(\2,/.test(handler),
-    "turn-event-handler.js still publishes each harness event and then runs authored hooks on the SAME published event",
-  );
-  const turnStep = read("execution/session/turn-step.js");
-  const handlerVar = /(\w+)=createTurnEventHandler\(\{/.exec(turnStep)?.[1];
-  ok(handlerVar !== undefined, "turn-step.js still builds its emitter with createTurnEventHandler");
-  ok(
-    new RegExp(`handleEvent:${handlerVar as string}[,}]`).test(turnStep) ||
-      (new RegExp(
-        `[,{]handleEvent=async\\((\\w+),(\\w+)\\)=>\\{\\1\\.type===\`compaction\\.completed\`&&\\(\\w+=!0\\),await ${handlerVar as string}\\(\\1,\\2\\)\\}`,
-      ).test(turnStep) &&
-        /createExecutionNodeStep\(\{[^{}]*?[,{]handleEvent,/.test(turnStep)),
-    "…and hands THAT handler to the harness as `handleEvent` (so harness-emitted events, input.requested included, reach hooks)",
-  );
-
-  const loop = read("harness/tool-loop.js");
-  ok(/await enforceSessionUsageLimit\(\{[^}]{0,80}?emit:\w+/.test(loop), "the tool loop still calls enforceSessionUsageLimit WITH an emitter (so the park branch is reachable)");
 }
 
 {
@@ -226,6 +165,77 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
     { requestId: "x", action: { toolName: "session_limit_continuation", input: { kind: "wallclock", limit: 5 } } },
   ]);
   ok(alien?.kind === "unknown", "an UNKNOWN violation kind degrades to `unknown` rather than being carried through");
+}
+
+{
+  const usage = { inputTokens: 31_000_000, cacheReadTokens: 1_000_000, cacheWriteTokens: 0, outputTokens: 500 };
+  const ask = (over: Partial<BudgetInteraction> = {}): BudgetInteraction => ({
+    interactionId: "sess-1:4:limit:usage:0",
+    requestKind: "budget",
+    relayed: false,
+    budget: 30_000_000,
+    sessionUsage: usage,
+    ...over,
+  });
+
+  ok(SESSION_LIMIT_REQUEST_ID_RE.test("sess-1:4:limit:usage:0"), "OE's mirrored id pattern admits eve 1.x's usage-window id");
+  ok(sessionUsageWindowIndex("sess-1:4:limit:usage:0") === 0 && sessionUsageWindowIndex("sess-1:4:limit:usage:3") === 3, "the window index reads off the id");
+  ok(sessionUsageWindowIndex("sess-1:limit:input:31000000") === undefined && sessionUsageWindowIndex("q1") === undefined, "…and no other id has a window index");
+
+  ok(isSessionLimitRequestId("sess-1:limit:input:31000000"), "the mirrored predicate admits a token-count id");
+  ok(isSessionLimitRequestId("sess-1:limit:output:31000000"), "…on both token-count kinds");
+  ok(isSessionLimitRequestId("sess-1:limit:token-cost:12.5"), "…a cost id whose figure carries a decimal point");
+  ok(isSessionLimitRequestId("sess-1:limit:token-cost:12"), "…a bare integer cost figure");
+  ok(isSessionLimitRequestId("sess-1:limit:token-cost:1.5e-3"), "…and an exponent, which eve's own pattern admits");
+  ok(!isSessionLimitRequestId("sess-1:limit:input:notanumber"), "…and does NOT admit a non-numeric token-count figure");
+  ok(!isSessionLimitRequestId("sess-1:limit:token-cost:"), "…nor a token-cost id with no figure at all");
+  ok(!isSessionLimitRequestId("sess-1:limit:wallclock:30"), "…nor a bound eve has not shipped — the mirror stays a mirror, not a wildcard");
+  ok(!isSessionLimitRequestId("sess-1:limit:INPUT:5"), "…nor an upper-cased token-count kind, which eve's own `/u` arm rejects too");
+  ok(!isSessionLimitRequestId("sess-1:4:limit:usage:"), "…nor a usage-window id with no index");
+  ok(!isSessionLimitRequestId("sess-1:4:limit:usage:x"), "…nor a non-numeric usage-window index");
+  ok(!isSessionLimitRequestId("sess-1:4:limit:USAGE:0"), "…nor an upper-cased usage kind");
+  ok(!isSessionLimitRequestId("q1"), "…nor an unrelated request id");
+
+  const hit = budgetSessionLimitPark(ask());
+  ok(hit?.kind === "input", "🔴 a budget ask parks as an INPUT-token park — OE's only session bound is its input-token budget");
+  ok(hit?.limit === 30_000_000, "🔴 the park carries the configured budget as its limit");
+  ok(hit?.usedTokens === 30_000_000, "🔴 …and the window-0 usage the budget counts: input minus cache reads (31M − 1M)");
+  ok(hit?.requestId === "sess-1:4:limit:usage:0" && isSessionLimitRequestId(hit.requestId), "…and eve's interaction id as its requestId");
+  ok(hit?.limitUsd === undefined && hit?.usedCostUsd === undefined, "…and no dollar figures");
+
+  ok(budgetSessionLimitPark(ask({ requestKind: "question" })) === undefined, "a question is NOT a park (negative control)");
+  ok(budgetSessionLimitPark(ask({ requestKind: "approval" })) === undefined, "…nor an approval");
+  ok(budgetSessionLimitPark(ask({ requestKind: "sign-in" })) === undefined, "…nor a sign-in");
+
+  const later = budgetSessionLimitPark(ask({ interactionId: "sess-1:9:limit:usage:2" }));
+  ok(later?.limit === 30_000_000 && later.usedTokens === undefined, "after an accepted ask (window > 0) the limit stays, but the hook cannot see the window start, so it records no usage");
+  const relayed = budgetSessionLimitPark(ask({ relayed: true }));
+  ok(relayed?.limit === 30_000_000 && relayed.usedTokens === undefined, "a RELAYED ask records no usage — this session's view is not the asker's");
+  ok(budgetSessionLimitPark(ask({ sessionUsage: undefined }))?.usedTokens === undefined, "a missing view records no usage");
+  ok(budgetSessionLimitPark(ask({ sessionUsage: { inputTokens: "x", cacheReadTokens: 0 } }))?.usedTokens === undefined, "…nor does a malformed one");
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, undefined, "30000000"]) {
+    const p = budgetSessionLimitPark(ask({ budget: bad }));
+    ok(p !== undefined && p.limit === undefined, `a budget of ${String(bad)} still parks, with no limit recorded`);
+  }
+
+  const { sessionLimitParkOf, sessionUsageTotalOf } = await import("../agent/hooks/session-park.js");
+  const { getSettings } = await import("../agent/settings/settings.js");
+  const { emptySessionView } = await import("eve/events");
+  const configured = getSettings().agent.sessionInputTokenBudget;
+  const data = { interactionId: "sess-h:2:limit:usage:0", subject: { turnId: "t1" }, request: { kind: "budget", prompt: "This session has hit its usage limit." } } as const;
+  const viaHook = sessionLimitParkOf(data as never, usage);
+  ok(configured > 0 && viaHook?.limit === configured, "🔴 the hook's park carries the deployment's configured sessionInputTokenBudget");
+  ok(viaHook?.usedTokens === 30_000_000, "🔴 …and the usage totals it is handed");
+  ok(sessionLimitParkOf({ ...data, origin: { sessionId: "child", interactionId: "c:1:limit:usage:0" } } as never, usage)?.usedTokens === undefined, "…but not on a relayed ask");
+  ok(sessionLimitParkOf(data as never, undefined)?.limit === configured, "…and a context with no usage still parks with the limit");
+
+  const realTotal = sessionUsageTotalOf(emptySessionView()) as { inputTokens?: unknown } | undefined;
+  ok(realTotal?.inputTokens === 0, "🔴 the hook reads a REAL eve view's totals through eve's public `usage()` accessor");
+  ok(
+    sessionUsageTotalOf({ usage: { total: usage } }) === undefined,
+    "🔴 …and NOT a plain `view.usage` property: eve 1.x's view is an opaque handle, so a property read finds nothing",
+  );
+  ok(sessionUsageTotalOf(undefined) === undefined, "…and a missing view degrades to no usage, not a throw");
 }
 
 {

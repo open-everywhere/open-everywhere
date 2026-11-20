@@ -427,9 +427,10 @@ registerConfig({
 }
 
 {
-  const retirementVerb = /\.reset\(/;
+  const retirementVerb = /\.(?:end|reset)\(/;
   const RETIREMENT_CALL_SITES = ["packages/core/agent/channels/generation-retirement.ts"];
   const CREDENTIAL_CACHE_RESETS = ["teamsGraphToken", "installationToken", "linearAppActorToken"] as const;
+  const HTTP_RESPONSE_ENDS = ["res"] as const;
   const sourceRoots = [
     "agent",
     "packages/core/agent",
@@ -442,7 +443,8 @@ registerConfig({
     const code = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "")
-      .replace(new RegExp(`\\b(?:${CREDENTIAL_CACHE_RESETS.join("|")})\\.reset\\(`, "g"), "");
+      .replace(new RegExp(`\\b(?:${CREDENTIAL_CACHE_RESETS.join("|")})\\.reset\\(`, "g"), "")
+      .replace(new RegExp(`\\b(?:${HTTP_RESPONSE_ENDS.join("|")})\\.end\\(`, "g"), "");
     return retirementVerb.test(code);
   };
   const walk = (dir: string, into: string[]): void => {
@@ -462,7 +464,7 @@ registerConfig({
   eq(
     offenders.sort(),
     RETIREMENT_CALL_SITES,
-    `🔴 exactly ONE OE source calls eve's session retirement verb, and it is the generation-retirement drain (found: ${offenders.join(", ") || "none"})`,
+    `🔴 exactly ONE OE source calls eve's session retirement verb (end(), which was reset() before eve 1.x), and it is the generation-retirement drain (found: ${offenders.join(", ") || "none"})`,
   );
   const retirement = readFileSync(join(REPO_ROOT, RETIREMENT_CALL_SITES[0]!), "utf8");
   ok(
@@ -484,15 +486,15 @@ registerConfig({
     const probeAbs = join(scratchDir, "retirement-probe.ts");
     writeFileSync(
       probeAbs,
-      ['// a comment mentioning .reset() must NOT count', 'export async function p(s: { reset: (o: { reason: string }) => Promise<void> }): Promise<void> {', '  await s.reset({ reason: "rotate" });', "}", ""].join("\n"),
+      ['// a comment mentioning .end() must NOT count', 'export async function p(s: { end: (o: { reason: string }) => Promise<void> }): Promise<void> {', '  await s.end({ reason: "rotate" });', "}", ""].join("\n"),
     );
     try {
-      ok(scanFile(probeAbs), "NEGATIVE CONTROL: a planted `.reset({…})` IS seen through the real comment-stripper");
+      ok(scanFile(probeAbs), "NEGATIVE CONTROL: a planted `.end({…})` IS seen through the real comment-stripper");
     } finally {
       unlinkSync(probeAbs);
     }
     const commentOnlyAbs = join(scratchDir, "retirement-probe-comment.ts");
-    writeFileSync(commentOnlyAbs, ["// this file only mentions .reset() in a comment", "export const q = 1;", ""].join("\n"));
+    writeFileSync(commentOnlyAbs, ["// this file only mentions .end() and .reset() in a comment", "export const q = 1;", ""].join("\n"));
     try {
       ok(!scanFile(commentOnlyAbs), "NEGATIVE CONTROL: …while a comment-only mention is not — the scan reads code, not prose");
     } finally {
@@ -517,16 +519,37 @@ registerConfig({
       `NEGATIVE CONTROL: \`${name}.reset()\` still exists in the tree — a dead exclusion silently widens this tripwire`,
     );
   }
+  for (const name of HTTP_RESPONSE_ENDS) {
+    ok(
+      rawSources.some((s) => s.includes(`${name}.end(`)),
+      `NEGATIVE CONTROL: \`${name}.end()\` still exists in the tree — a dead exclusion silently widens this tripwire`,
+    );
+  }
 
   const unified = readFileSync(join(REPO_ROOT, "packages/core/agent/channels/unified.ts"), "utf8");
   const slack = readFileSync(join(REPO_ROOT, "packages/providers/slack/agent/channels/slack.ts"), "utf8");
+  const endedHead = (src: string): string | undefined =>
+    /^\s*(?:async )?"session\.ended"\s*(?::\s*async\s*)?\(([^)]*)\)\s*(?:=>\s*)?\{\s*([^\n]*)/m.exec(src)?.[2]?.trim();
+  const returnsUnlessFailed = (src: string): boolean => {
+    const head = endedHead(src);
+    if (head === undefined) return !/"session\.ended"/.test(src);
+    return /^if \(\w+\.data\.outcome !== "failed"\) return;$/.test(head);
+  };
   ok(
-    !/^\s*(?:async )?"session\.completed"/m.test(unified),
-    "🔴 the `unified` channel declares NO `session.completed` adapter handler — a retired unified seat runs nothing",
+    returnsUnlessFailed(unified),
+    "🔴 the `unified` channel's `session.ended` handler runs NOTHING on a session that did not fail — eve 1.x folds `session.completed` and `session.failed` into one `session.ended` event, so a retired unified seat runs nothing only while that handler returns at once on every other outcome (a handler this matcher cannot read counts as running something)",
   );
   ok(
-    /^\s*"session\.completed":/m.test(slack),
-    "NEGATIVE CONTROL: the `slack` channel DOES declare one (👀 removal + syncPinnedStatus) — the check above measures a real asymmetry",
+    endedHead(slack) !== undefined && !returnsUnlessFailed(slack),
+    "MATCHER CONTROL: slack's `session.ended` head (`if (…) { await next(); return; }`) is not a bare early return, so the predicate answers false on a real handler",
+  );
+  ok(
+    !returnsUnlessFailed('async "session.ended"(e, ctx) {\n  await audit(e);'),
+    "MATCHER CONTROL: a handler whose first line does work is read as running something",
+  );
+  ok(
+    !returnsUnlessFailed('"session.ended": endedHandler,'),
+    "MATCHER CONTROL: a handler the matcher cannot read counts as running something",
   );
 }
 

@@ -64,11 +64,14 @@ test("a forwarded job returns a receipt at once, ends the seat's turn, comes bac
   const dispatchStep = first.requests.find((r) => r.role === "parent" && r.stepIndex === 0)!;
   const offered = new Set(dispatchStep.tools);
   expect(offered.has("work")).toBe(true);
-  expect(offered.has("agent")).toBe(false);
+  // On eve 1.x eve mounts its built-in `agent`, and the `eve__task_*` verbs with it, on every root
+  // session, so the seat is OFFERED them. The guarantee moved to call time: the seat's `agent` call
+  // is refused before a task starts, so its task verbs reach no `agent` task. They still reach a
+  // declared subagent's task (tests/integration/tasks/seat-native-agent-gate.test.ts). This test's own work session starts
+  // its worker through `agent`, so it is that gate's negative control.
 
   {
     expect(offered.has("cancel_work")).toBe(true);
-    expect(offered.has("task_cancel")).toBe(false);
     expect(offered.has("task_update")).toBe(false);
     expect(offered.has("task_sleep")).toBe(false);
     expect(offered.has("task_peek")).toBe(false);
@@ -96,7 +99,7 @@ test("a forwarded job returns a receipt at once, ends the seat's turn, comes bac
   const arc = [...first.requests, ...settlement.requests];
   expect(arc.flatMap((r) => r.toolResults.map((t) => t.name)).filter((t) => t.startsWith("task_"))).toEqual([]);
 
-  const cancels = arc.flatMap((r) => r.toolResults.filter((t) => t.name === "task_cancel" || t.name === "cancel_work"));
+  const cancels = arc.flatMap((r) => r.toolResults.filter((t) => t.name === "eve__task_cancel" || t.name === "cancel_work"));
   expect(cancels).toEqual([]);
   expect(arc.filter((r) => r.fault !== undefined)).toEqual([]);
   expect([...first.resolves, ...settlement.resolves].filter((r) => r.fault !== undefined)).toEqual([]);

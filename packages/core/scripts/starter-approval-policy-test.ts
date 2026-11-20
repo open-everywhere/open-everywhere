@@ -426,7 +426,7 @@ async function verdictRow(kind: string, where: (d: Record<string, unknown>) => b
     tainted: () => false,
     credentialOf: async () => "domain",
   } as never);
-  const opCtx = { toolName: "notion__create_pages", toolInput: { title: "x" }, approvedTools: new Set<string>(), session: { auth: {} } } as never;
+  const opCtx = { toolName: "notion__create_pages", toolInput: { title: "x" }, session: { auth: {} } } as never;
   await eq(await seam(opCtx), "not-applicable", "6 connector seam: a judge lift lets this call run");
   await eq(await seam(opCtx), "not-applicable", "6 connector seam: the next call runs only through a NEW offer…");
   await eq(offers, 2, "6 connector seam: …so each call was judged again (one call per allow)");

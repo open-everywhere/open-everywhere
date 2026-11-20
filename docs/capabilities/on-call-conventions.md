@@ -145,23 +145,23 @@ from the turn's start to the **end of that step**. It carries three labels and n
 | `oe.kind` | the trigger type (`channel`, `dm`, `mpim`, `routine`, `webhook`) |
 | `oe.latency.bucket` | `<5s` · `5-15s` · `15-60s` · `1-5m` · `>5m` |
 
-- Emitted by: `packages/core/agent/hooks/telemetry.ts`, on `step.completed`.
+- Emitted by: `packages/core/agent/hooks/telemetry.ts`, on the turn's first model `usage.recorded`.
 - Declared in: `packages/core/agent/observability/telemetry.ts` (`EVENT_SCHEMA`).
 - Proved by: `npm run test:telemetry`, which drives the shipped hook and reads the row back off the
   wire — a source scan alone would stay green over a metric that stopped being measured.
 
 Three things to be exact about, because a latency number is easy to over-read:
 
-- 🔴 **The step's own tool execution is inside the window, so this is an UPPER BOUND — not a floor.**
-  eve raises `step.completed` from the AI SDK's `onStepFinish`, which fires once that step's tool
-  calls have run. A turn whose first act is a three-minute `bash` reports `1-5m`, not the moment the
-  model emitted the call. Read the number as "how long before the first step was done", and expect
-  tool-heavy work to sit higher than the model's own latency.
+- 🔴 **The window ends when the first model run settles, before that run's tool calls execute.**
+  On eve 1.x the edge is the run's `usage.recorded`, which eve writes when the model run settles.
+  So a turn whose first act is a three-minute `bash` still reports the model's own latency, and the
+  tool's three minutes appear in no `first_output` bucket. (On eve 0.71 the edge was
+  `step.completed`, which fired after the step's tool calls, so it was an upper bound.)
 - 🔴 **It is not a measure of usefulness.** Nothing reads what the first step produced. A turn whose
   first act is a wasted tool call scores the same as one whose first act is the answer.
 - **It is a separate event, not an attribute on `oe.turn.completed`.** A turn that hangs never
   completes, so an attribute there would go missing in exactly the window worth watching. This row
-  is written the moment the first step lands.
+  is written the moment the first model run settles.
 - **One row per turn.** Later steps of the same turn emit nothing more; the next turn on the same
   session reports its own first output.
 

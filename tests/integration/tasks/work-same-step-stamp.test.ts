@@ -84,7 +84,7 @@ const DISPATCH: SeatScript = {
     },
     { say: NO_REPLY_SENTINEL },
   ],
-  work: [{ delayMs: W_FIRST_STEP_HOLD_MS, calls: [{ tool: "task_cancel", input: { taskId: "agent-ope2339-none" }, id: "ope2339s-w-stall" }] }],
+  work: [{ delayMs: W_FIRST_STEP_HOLD_MS, calls: [{ tool: "eve__task_cancel", input: { taskId: "agent-ope2339-none" }, id: "ope2339s-w-stall" }] }],
 };
 
 const CHILDREN: SeatScript = { parent: [{ say: NO_REPLY_SENTINEL }], child: [{ delayMs: CHILD_HOLD_MS, say: RESULT }] };

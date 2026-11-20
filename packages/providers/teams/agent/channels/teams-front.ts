@@ -1,6 +1,8 @@
 import { auditErrorDetail } from "@open-everywhere/core/agent/adapter-api.js";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import { verifyTeamsRequest, parseTeamsActivity, teamsThreadRootActivityId, isTeamsInputResponseActivity, type TeamsMessageActivity } from "eve/channels/teams";
+import type { TeamsMessageActivity } from "eve/channels/teams";
+import { isTeamsAnswerActivity, parseTeamsActivity, teamsThreadRootActivityId } from "./teams-inbound.js";
+import { verifyTeamsInbound } from "./teams-verify.js";
 import { sendTeamsActivityBackedOff, teamsAppCredentials } from "./teams-connector.js";
 import { isTeamsChannelActivity } from "./teams-origin-codec.js";
 import {
@@ -641,7 +643,7 @@ export async function liveTeamsDmDivert(
 }
 
 export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFrontOptions = {}): RouteHandler {
-  const verify = opts.verify ?? ((req: Request) => verifyTeamsRequest(req, { appId: teamsAppCredentials().appId }));
+  const verify = opts.verify ?? ((req: Request) => verifyTeamsInbound(req, { appId: teamsAppCredentials().appId }));
   const dedupe = opts.dedupe ?? new EventDedupe();
   const fifo = opts.fifo ?? new ThreadFifo(recordTeamsWakeFailure);
   const now = opts.now ?? (() => Date.now());
@@ -776,7 +778,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       }
     }
     if (seam?.kind === "hold" && seam.stopped) {
-      if (isTeamsInputResponseActivity(activity)) {
+      if (isTeamsAnswerActivity(activity)) {
         tlog(`activity ${activity.id} in ${activity.conversation.id}: stood down, but this is an answer to a parked question — forwarded`);
         return forward();
       }
@@ -787,7 +789,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     if (activity.scope === "personal" || activity.scope === "groupChat") {
       if (machineAuthored) return OK();
       if (seam?.kind === "hold") {
-        if (isTeamsInputResponseActivity(activity)) {
+        if (isTeamsAnswerActivity(activity)) {
           tlog(`activity ${activity.id} in ${activity.conversation.id}: group chat not engaged, but this is an answer to a parked question — forwarded`);
           return forward();
         }
@@ -825,7 +827,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
     if (addressedHere) {
       await clearRoomStop(plan.partition, new Date(now()).toISOString(), activity.id).catch(() => undefined);
     } else if (await roomStopped(plan.partition)) {
-      if (isTeamsInputResponseActivity(activity)) {
+      if (isTeamsAnswerActivity(activity)) {
         tlog(`activity ${activity.id} on ${plan.surfaceKey}: room stood down, but this is an answer to a parked question — forwarded`);
         return forward();
       }

@@ -7,6 +7,7 @@ import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { confineToWorkspacePath } from "./describe_image.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
+import { refuseVerbIfStoodDown } from "../channels/stand-down-gate.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -193,6 +194,7 @@ export default windowGated("post_file", defineTool({
     platform: z.string(),
   }),
   async execute(input, ctx) {
+    await refuseVerbIfStoodDown(ctx as BindableContext, "post_file");
     const platform = bindFrom(ctx as BindableContext).platform;
     if (platform !== "slack" && platform !== "discord" && platform !== "notion") {
       throw new Error(

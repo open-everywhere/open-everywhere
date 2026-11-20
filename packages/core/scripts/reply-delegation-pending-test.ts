@@ -6,6 +6,25 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { z } from "zod";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { filesMatching } from "./eve-dist-search.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
+import { v27Hooks } from "./_hook-view.js";
+// eve 1.x's channel wrapper reads the session view from the adapter context, or else from a live
+// projection. A direct call carries an empty view.
+const v27Completed = (adapter: object) => async (event: unknown, ctx: unknown): Promise<void> => {
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = createRequire(import.meta.url).resolve("eve/package.json").replace(/package\.json$/u, "");
+  const fold = (await import(pathToFileURL(`${eveRoot}dist/src/protocol/session-projection/fold.js`).href)) as { emptySessionView: () => unknown };
+  const handler = (adapter as Record<string, (e: unknown, c: unknown) => Promise<unknown>>)["content.completed"]!;
+  await handler(event, { ...(ctx as object), view: fold.emptySessionView() });
+};
+// eve 1.x delivers a final message as `content.completed` (a text part in the "reply" phase).
+const asV27Content = (f: { readonly finishReason: string; readonly message: string | null; readonly turnId?: string }) => ({
+  type: "content.completed" as const,
+  ...(f.turnId !== undefined ? { scope: { turnId: f.turnId } } : {}),
+  data: { partId: "part-1", kind: "text", phase: f.finishReason === "stop" ? "reply" : "narration", value: f.message ?? "" },
+});
+
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -81,13 +100,13 @@ interface Armed {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
-const arm = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+const arm = (ctx: unknown): Armed | null => _dynamicResolverForTest(replyTool)({}, ctx) as Armed | null;
 
-const hooks = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-const hook = hooks["action.result"]!;
-const startedHook = hooks["task.started"]!;
-const requestedHook = hooks["actions.requested"]!;
-const settledHook = hooks["task.settled"]!;
+const hooks = v27Hooks(hub.default);
+const hook = hooks.callSettled;
+const startedHook = hooks.taskStarted;
+const requestedHook = hooks.callRequested;
+const settledHook = hooks.taskCallSettled;
 
 const receiptResult = (callId: string, taskId: string, _agentId = "ag_agent:6666") => ({
   callId,
@@ -158,19 +177,19 @@ async function callReply(
   wake: string,
   text: string,
   done: boolean,
-): Promise<{ posted?: boolean; note?: string; error?: string }> {
+): Promise<{ posted?: boolean; note?: string; continuesTurn?: boolean; error?: string }> {
   const ctx = ctxFor(turnWake, turnId);
   const armed = arm(ctx);
   if (!armed) return { error: "reply did not arm" };
   return armed
     .execute({ text, wake, done }, ctx)
-    .then((r) => r as { posted?: boolean; note?: string })
+    .then((r) => r as { posted?: boolean; note?: string; continuesTurn?: boolean })
     .catch((e: unknown) => ({ error: String(e) }));
 }
 
 const editTool = (await import("../agent/tools/edit_reply.js")).default;
 const armEdit = (ctx: unknown): { readonly execute: (i: Record<string, unknown>, c: unknown) => Promise<unknown> } | null =>
-  (editTool as unknown as { events: Record<string, (e: unknown, c: unknown) => unknown> }).events["session.started"]!({}, ctx) as never;
+  _dynamicResolverForTest(editTool)({}, ctx) as never;
 
 async function callEdit(
   turnWake: string,
@@ -244,6 +263,10 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
 
     const ack = await callReply(wAsk, "turn_696", wAsk, "I've handed this to a worker and will report back.", false);
     ok(ack.posted === true, "🔴 §1: the `done:false` hand-off note POSTS — the guard must never silence a delegating seat");
+    ok(
+      ack.continuesTurn === undefined,
+      "🔴 §1: the hand-off note carries no `continuesTurn`, so it ends the turn, and the worker's result comes later — a further model call now would have no answer to give",
+    );
     ok(posted.length === before + 1, "§1/ROOM: exactly one message so far, and it is the ack");
     ok(
       typeof ack.note === "string" && ack.note.includes("has NOT reported yet"),
@@ -394,11 +417,11 @@ const roomHas = (needle: string): boolean => posted.some((m) => m.text.includes(
 const unifiedAdapter = ((await import("../agent/channels/unified.js")).default as unknown as {
   adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
 }).adapter;
-ok(typeof unifiedAdapter["message.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register message.completed — the drop branch lives inside it");
+ok(typeof unifiedAdapter["content.completed"] === "function", "🔴 §9 REACHABILITY: the unified channel really does register content.completed — the drop branch lives inside it");
 
 const adapterCtx = { session: { continuation: { token: `unified:${TOKEN}` } } };
 const completeWithProse = (text: string): Promise<void> =>
-  unifiedAdapter["message.completed"]!({ finishReason: "stop", message: text }, adapterCtx);
+  v27Completed(unifiedAdapter)(asV27Content({ finishReason: "stop", message: text }), adapterCtx);
 
 function proseSession(turnWake: string, turnId: string): <T>(fn: () => Promise<T>) => Promise<T> {
   const c = new ContextContainer();
@@ -997,10 +1020,12 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
     );
 
     const eveSrc = (rel: string): string => readFileSync(join(eveRoot, rel), "utf8");
-    const dynamicToolBuild = eveSrc("dist/src/context/build-dynamic-tools.js");
+    // eve 1.x rebuilds a tool from its serialized definition in `runtime/resolve-tool.js`: it attaches
+    // the rebuilt output schema and the authored module's own `execute`, side by side.
+    const dynamicToolBuild = eveSrc("dist/src/runtime/resolve-tool.js");
     ok(
-      dynamicToolBuild.includes("toOutputSchema") && dynamicToolBuild.includes("execute"),
-      "🔴 §12e/CONTROL: eve's dynamic-tool REBUILD path still both attaches the output schema (`toOutputSchema`) and wires the tool's `execute` — so this reader is looking at the live code the tripwire below asserts about, not at a moved, split or emptied file",
+      /outputSchema:toOutputSchema\(\w+\.outputSchema\)/.test(dynamicToolBuild) && /let (\w+)=isToolSchema\(\w+\.outputSchema\)\?\w+\.outputSchema:toOutputSchema\(\w+\.outputSchema\);/.test(dynamicToolBuild),
+      "🔴 §12e/CONTROL: eve's tool REBUILD path still attaches the rebuilt output schema (`toOutputSchema`) — so this reader is looking at the live code the tripwire below asserts about, not at a moved, split or emptied file",
     );
     const SEAMS = /~standard|\.validate\(|safeParse|\.parse\(/;
     const fnBody = (src: string, name: string): string => {
@@ -1009,14 +1034,17 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
       const next = src.indexOf("function ", at + name.length + 10);
       return src.slice(at, next === -1 ? undefined : next);
     };
-    const rebuiltExecute = fnBody(dynamicToolBuild, "bindDynamicCallback");
-    ok(rebuiltExecute.includes("callDurableDynamicCallback("), "§12e/CONTROL: the rebuilt `execute` (bindDynamicCallback) was read whole — it calls the durable callback");
+    const rebuiltExecute = fnBody(dynamicToolBuild, "resolveToolDefinition");
+    ok(
+      /let (\w+)=[^;]*expectFunction\(\w+\.execute,[^;]*;[^]*execute:\1,/.test(rebuiltExecute),
+      "§12e/CONTROL: the rebuild (`resolveToolDefinition`) was read whole — it hands the authored module's `execute` through as the tool's `execute`, unwrapped",
+    );
     ok(
       !SEAMS.test(rebuiltExecute),
-      "🔴 §12e/TRIPWIRE: the rebuilt `execute` returns the durable callback's value with NO validation seam (`~standard`, `.validate(`, `safeParse`, `.parse(`) — so the strict schema attached beside it is never applied to a tool RESULT. When this goes red, adding a key to a live tool's output schema is a breaking change for every in-flight session",
+      "🔴 §12e/TRIPWIRE: the rebuilt tool's `execute` is the authored function with NO validation seam (`~standard`, `.validate(`, `safeParse`, `.parse(`) — so the strict schema attached beside it is never applied to a tool RESULT. When this goes red, adding a key to a live tool's output schema is a breaking change for every in-flight session",
     );
     const harnessTools = eveSrc("dist/src/harness/tools.js");
-    const wrapper = fnBody(harnessTools, "wrapToolExecute") + fnBody(harnessTools, "normalizeToolExecuteOutput");
+    const wrapper = fnBody(harnessTools, "invokeTool") + fnBody(harnessTools, "normalizeToolExecuteOutput");
     ok(wrapper.includes("normalizeToolJsonOutput("), "§12e/CONTROL: the harness execute wrapper was read whole");
     ok(!SEAMS.test(wrapper), "🔴 §12e/TRIPWIRE: …and eve's harness execute wrapper validates no result either");
     const UI_VALIDATE = /\b(?:safeV|v)alidateUIMessages\(/u;
@@ -1092,9 +1120,9 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
 }
 
 {
-  const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-  const turnStarted = events["turn.started"]!;
-  const settlementWake = events["task.settled"]!;
+  const events = v27Hooks(hub.default);
+  const turnStarted = events.turnStarted;
+  const settlementWake = events.taskCallSettled;
   const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
     readonly execute: (i: Record<string, unknown>, c: unknown) => Promise<{ acknowledged?: boolean }>;
   };
@@ -1316,9 +1344,9 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   });
 
   {
-    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
-    const turnStarted = events["turn.started"]!;
-    const settlementWake = events["task.settled"]!;
+    const events = v27Hooks(hub.default);
+    const turnStarted = events.turnStarted;
+    const settlementWake = events.taskCallSettled;
 
     const failedEvent = (callId: string, taskId: string, extra: Record<string, unknown> = {}) => ({
       ...settledEvent(callId, taskId, "failed"),
@@ -1541,20 +1569,20 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 
   {
-    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = v27Hooks(hub.default);
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_LATER", "154.1");
     const wOther = await wake("C_STATUS_OTHER", "154.2");
     const TASK = "task_2668e";
     const before = answered.length;
     await inTurn(async () => {
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e_a"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668e_a"));
       await dispatchReceipt(wAsk, "turn_2668e_a", "call_2668e", receiptResult("call_2668e", TASK), ctxFor(wAsk, "turn_2668e_a"));
       const ack = await callReply(wAsk, "turn_2668e_a", wAsk, "I've handed this to a worker and will report back.", false);
       ok(ack.posted === true && answered.length === before, "§15e: the hand-off note posts and clears nothing");
 
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e_b"));
-      await events["task.settled"]!({ data: { ...settledEvent("call_2668e", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668e_b"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668e_b"));
+      await events.taskCallSettled({ data: { ...settledEvent("call_2668e", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668e_b"));
       const minted = await taskWakeId(ORG, TASK);
       ok(typeof minted === "string" && minted !== wAsk, "🔴 §15e/REACHABILITY: the settlement turn holds the task's own wake, not the asking one — the shape a bare wake match misses");
       const sib = await callReply(wAsk, "turn_2668e_b", wOther, "An answer for the other conversation.", true);
@@ -1566,18 +1594,18 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 
   {
-    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = v27Hooks(hub.default);
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_MINTED");
     const TASK = "task_2668e2";
     const before = answered.length;
     await inTurn(async () => {
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e2_a"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668e2_a"));
       await dispatchReceipt(wAsk, "turn_2668e2_a", "call_2668e2", receiptResult("call_2668e2", TASK), ctxFor(wAsk, "turn_2668e2_a"));
       await callReply(wAsk, "turn_2668e2_a", wAsk, "I've handed this to a worker and will report back.", false);
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668e2_b"));
-      await events["step.started"]!({}, ctxFor(wAsk, "turn_2668e2_b"));
-      await events["task.settled"]!({ data: { ...settledEvent("call_2668e2", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668e2_b"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668e2_b"));
+      await events.modelRequested({}, ctxFor(wAsk, "turn_2668e2_b"));
+      await events.taskCallSettled({ data: { ...settledEvent("call_2668e2", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668e2_b"));
       const minted = (await taskWakeId(ORG, TASK))!;
       const real = await callReply(wAsk, "turn_2668e2_b", minted, "The worker's result.", true);
       ok(real.posted === true, "§15e2: the settled answer under the minted wake posts");
@@ -1585,18 +1613,18 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
     });
   }
   {
-    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = v27Hooks(hub.default);
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_STEER");
     const wNewer = await wake("C_STATUS_STEER");
     const TASK = "task_2668g";
     const before = answered.length;
     await inTurn(async () => {
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668g_a"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668g_a"));
       await dispatchReceipt(wAsk, "turn_2668g_a", "call_2668g", receiptResult("call_2668g", TASK), ctxFor(wAsk, "turn_2668g_a"));
       await callReply(wAsk, "turn_2668g_a", wAsk, "I've handed this to a worker and will report back.", false);
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668g_b"));
-      await events["task.settled"]!({ data: { ...settledEvent("call_2668g", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668g_b"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668g_b"));
+      await events.taskCallSettled({ data: { ...settledEvent("call_2668g", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668g_b"));
       const real = await callReply(wNewer, "turn_2668g_b", wAsk, "The worker's result.", true);
       ok(real.posted === true, "§15g: the settled answer to the asking message posts");
       ok(answered.length === before, "🔴 §15g: the sign of the newer, still-owed message stays up — the answer went to another message of the same DM");
@@ -1604,20 +1632,20 @@ const answeredAt = async (wakeId: string): Promise<string | undefined> => (await
   }
 
   {
-    const events = (hub.default as unknown as { events: Record<string, (e: unknown, c: unknown) => Promise<void> | void> }).events;
+    const events = v27Hooks(hub.default);
     const inTurn = newSession();
     const wAsk = await wake("C_STATUS_STEER_M");
     const wNewer = await wake("C_STATUS_STEER_M");
     const TASK = "task_2668h";
     const before = answered.length;
     await inTurn(async () => {
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668h_a"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668h_a"));
       await dispatchReceipt(wAsk, "turn_2668h_a", "call_2668h", receiptResult("call_2668h", TASK), ctxFor(wAsk, "turn_2668h_a"));
       await callReply(wAsk, "turn_2668h_a", wAsk, "I've handed this to a worker and will report back.", false);
-      await events["turn.started"]!({}, ctxFor(wAsk, "turn_2668h_b"));
-      await events["step.started"]!({}, ctxFor(wAsk, "turn_2668h_b"));
-      await events["task.settled"]!({ data: { ...settledEvent("call_2668h", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668h_b"));
-      await events["step.started"]!({}, ctxFor(wNewer, "turn_2668h_b"));
+      await events.turnStarted({}, ctxFor(wAsk, "turn_2668h_b"));
+      await events.modelRequested({}, ctxFor(wAsk, "turn_2668h_b"));
+      await events.taskCallSettled({ data: { ...settledEvent("call_2668h", TASK, "completed"), output: "The worker's result." } }, ctxFor(wAsk, "turn_2668h_b"));
+      await events.modelRequested({}, ctxFor(wNewer, "turn_2668h_b"));
       const minted = (await taskWakeId(ORG, TASK))!;
       const real = await callReply(wNewer, "turn_2668h_b", minted, "The worker's result.", true);
       ok(real.posted === true, "§15h: the settled answer under the minted wake posts");

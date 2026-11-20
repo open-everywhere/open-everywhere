@@ -89,6 +89,7 @@ const corpus: Array<[string, string]> = [
   ["WORK_FORWARD_SECTION", WORK_FORWARD_SECTION],
   ["work receipt FORWARDED_NOTE", FORWARDED_NOTE],
   ["work receipt freshFollowUpNote", freshFollowUpNote("task_0")],
+  ["work receipt freshFollowUpNote, result carried", freshFollowUpNote("task_0", true)],
   ["reply refusal delegationPendingRefusalMessage", delegationPendingRefusalMessage()],
   ["no_reply refusal settlementReportOwedMessage", settlementReportOwedMessage()],
   ["reply note PENDING_WORK_INSTRUCTION", PENDING_WORK_INSTRUCTION],

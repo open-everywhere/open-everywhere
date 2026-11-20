@@ -37,6 +37,13 @@ import {
 } from "@open-everywhere/core/agent/model/policy.js";
 import { resolveRoute, type ModelBackend, type RoutingDeps } from "@open-everywhere/core/agent/model/routing.js";
 import { defineDomain, type Domain, type ModelTier } from "@open-everywhere/core/agent/memory/domain.js";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const EVE_DIST = join(dirname(createRequire(import.meta.url).resolve("eve/package.json")), "dist", "src");
 
 let passed = 0;
 const reds: string[] = [];
@@ -210,6 +217,39 @@ for (const alias of Object.keys(STACKS) as StackAlias[]) {
   }
 
   ok(compactionThresholdTokens(1, 0.2) === 1, `a 1-token window must floor to a threshold of 1, got ${compactionThresholdTokens(1, 0.2)}.`);
+
+  for (const rel of ["agent/agent.ts", "packages/create/template/agent/agent.ts"]) {
+    const src = readFileSync(join(REPO_ROOT, rel), "utf8");
+    ok(
+      /const COMPACTION_THRESHOLD = getSettings\(\)\.agent\.compactionThresholdPercent;/.test(src) &&
+        /compaction: \{\s*threshold: COMPACTION_THRESHOLD,?\s*\}/.test(src),
+      `${rel} must hand eve the setting's fraction as \`compaction.threshold\` (eve 1.x). eve refuses the old ` +
+        `\`compaction.thresholdPercent\` key at build.`,
+    );
+    ok(
+      /compactionThresholdTokens\(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD\)/.test(src),
+      `${rel} must derive the threshold it reports from the SAME fraction it hands eve, over the registry window.`,
+    );
+  }
+
+  const eveConfig = readFileSync(join(EVE_DIST, "harness/compaction/config.js"), "utf8");
+  ok(
+    /let ([\w$]+)=agentSettings\([\w$]+\)\.thresholdPercent\?\?\.9;/.test(eveConfig) &&
+      /[\w$]+===void 0\?UNKNOWN_WINDOW_THRESHOLD:Math\.max\(1,Math\.floor\([\w$]+\*[\w$]+\)\)/.test(eveConfig),
+    `eve's compaction config no longer computes max(1, floor(window × threshold)). compactionThresholdTokens ` +
+      `mirrors that arithmetic, so /oe status would print a count eve does not use. Re-derive it.`,
+  );
+  const eveCompiler = readFileSync(join(EVE_DIST, "compiler/normalize-agent-config.js"), "utf8");
+  ok(
+    /([\w$]+)\.compaction\?\.threshold!==void 0&&\([\w$]+\.thresholdPercent=\1\.compaction\.threshold\)/.test(eveCompiler),
+    `eve's compiler no longer reads the authored \`compaction.threshold\` into the manifest. Compaction would ` +
+      `silently fall back to eve's 0.9 default.`,
+  );
+  const eveDefinitions = readFileSync(join(EVE_DIST, "definitions/agent-definitions.js"), "utf8");
+  ok(
+    /compaction:\{model:[\w$]+\.compactionModel,thresholdPercent:[\w$]+\.compactionThresholdPercent\}/.test(eveDefinitions),
+    `eve no longer carries the compiled threshold into the setting its compaction config reads.`,
+  );
 }
 
 {

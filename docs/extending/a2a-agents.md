@@ -19,7 +19,7 @@ The two protocols answer different questions, and a deployment can use both.
 | How long one call runs | One request and its response | A task, which can run for minutes and report its state while it runs |
 | Where it is declared | `agent/access/mcp-servers.ts` | `agent/access/a2a-agents.ts` |
 | Whose identity it carries | The grant's credential: a person's own account in a DM, or the org's account in a channel | The deployment's credential for the agent, plus the asker's identity in the message metadata |
-| Its tools | `connection_search`, `connection_execute` | `delegate_to_agent`, `check_agent_task` |
+| Its tools | one deferred `<connection>__<operation>` tool per operation, reached through `eve__search` and `eve__tool` | `delegate_to_agent`, `check_agent_task` |
 
 Pick MCP when you want the agent to operate a system step by step. Pick A2A when the system already
 has its own agent and you want that agent to own the task.

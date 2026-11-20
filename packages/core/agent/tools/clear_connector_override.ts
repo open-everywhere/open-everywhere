@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -8,7 +8,7 @@ import { getConfig } from "../access/config.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 
 export interface ClearConnectorOverrideInput {
   readonly connector: string;
@@ -106,10 +106,5 @@ const clearConnectorOverrideEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("clear_connector_override", "_single", clearConnectorOverrideEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => clearConnectorOverrideEntry,
-  },
-});
+export default sessionMountedTool("clear_connector_override", clearConnectorOverrideEntry);

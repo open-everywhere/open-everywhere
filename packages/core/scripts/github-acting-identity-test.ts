@@ -163,7 +163,8 @@ registerIdentityMapper(PLATFORM, (c) => {
   function producerCtx(sessionId: string, attrs: Record<string, unknown>): HookContext {
     return { session: { auth: { current: { attributes: attrs } }, id: sessionId, turn: { id: "turn_1" } } } as unknown as HookContext;
   }
-  const delivery = (message: string): HookEvent<"message.received"> => ({ data: { message } }) as unknown as HookEvent<"message.received">;
+  const delivery = (message: string): HookEvent<"delivery.consumed"> =>
+    ({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: message }] } }) as unknown as HookEvent<"delivery.consumed">;
 
   const bag: Record<string, unknown> = {};
   stampOwnAccountAsk(delivery("read acme/api#7 with my own GitHub account"), producerCtx("seat-1", bag));

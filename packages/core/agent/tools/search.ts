@@ -1,8 +1,8 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import type { BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { searchGrantedConnectors, workSearchAdapterFor, type WorkSearchAbsence, type WorkSearchHit } from "../channels/work-search.js";
 import { callerWorkDomain } from "../access/work-grant.js";
@@ -111,14 +111,8 @@ export const searchEntry = defineTool({
     });
   },
 });
-preRegisterDynamicEntry("search", "_single", searchEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const bctx = ctx as BindableContext;
-      if (searchGrantedConnectors(bctx, safeDomains()).length === 0) return null;
-      return searchEntry;
-    },
-  },
+export default sessionMountedTool("search", searchEntry, (ctx) => {
+  if (searchGrantedConnectors(ctx, safeDomains()).length === 0) return false;
+  return true;
 });

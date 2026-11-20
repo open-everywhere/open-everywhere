@@ -59,7 +59,7 @@ console.log(`\nRepos: ${access.repos.length ? access.repos.join(", ") : "(none)"
 console.log(`Plugins: ${access.plugins.length ? access.plugins.join(", ") : "(none)"}`);
 console.log(`Skills (granted, scoped): ${access.skills.length ? access.skills.join(", ") : "(none)"}`);
 console.log(`Subagents: ${access.subagents.length ? access.subagents.join(", ") : "(none)"}`);
-console.log(`Connectors (host-side, agent/connections/*): ${access.connectors.length ? access.connectors.join(", ") : "(none)"}`);
+console.log(`Connectors (host-side connector mounts): ${access.connectors.length ? access.connectors.join(", ") : "(none)"}`);
 const credEntries = Object.entries(access.connectorCredentials);
 console.log(`Connector credentials (narrowest-wins per connector, secrets hidden): ${credEntries.length ? "" : "(none)"}`);
 for (const [slug, cred] of credEntries) {

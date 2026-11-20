@@ -7,8 +7,9 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-outbound-filter
 process.env.OE_OPERATIONAL_PROVIDER = "sqlite";
 delete process.env.OE_PLATFORM;
 
-import { generateText, jsonSchema, stepCountIs, tool, type LanguageModel, type ToolSet } from "ai";
-import { MockLanguageModelV3 } from "ai/test";
+import { jsonSchema } from "ai";
+import { defineTool } from "eve/tools";
+import { z } from "zod";
 
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { overrideSettingsForTest, registerSettings, sensitivePatternsProblem, defineSettings } from "../agent/settings/settings.js";
@@ -24,7 +25,9 @@ import {
   CLOSING_PROSE_SINK,
   type OutboundRefusal,
 } from "../agent/access/outbound-filter.js";
-import { projectToolSet } from "../agent/access/untrusted-projection.js";
+import { authoredInputSchema, transformAuthoredTool } from "../agent/access/authored-tool-transforms.js";
+import { driveEveToolCall } from "./_eve-tool-path.js";
+import { SEAT_CUT_STATIC_SLOTS } from "../agent/access/seat-cut-slots.js";
 import { finalMessageAction } from "../agent/channels/turn-delivery.js";
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 import { HARNESS_INTERNAL_TOOLS } from "../agent/access/job-posture.js";
@@ -149,42 +152,27 @@ const MRZ_LINE_2 = "L898902C36UTO7408122F1204159ZE184226B<<<<<10";
 
 type Json = Record<string, unknown>;
 
-async function driveToolCall(toolName: string, input: Json, opts: { asked?: string; envelope?: string; workChild?: boolean; project?: boolean } = {}): Promise<{ ran: boolean; error: string | undefined }> {
-  let ran = false;
+// The eve 1.x path (scripts/_eve-tool-path.ts): the roster shim `seatCut(name, tool)`, eve's schema
+// conversion, eve's own input check, then execute. `project: false` skips the seat cut: the NEGATIVE
+// CONTROL that shows the seat cut is the filter's caller.
+async function driveToolCall(
+  toolName: string,
+  input: Json,
+  opts: { asked?: string; envelope?: string; workChild?: boolean; project?: boolean; plainSchema?: boolean } = {},
+): Promise<{ ran: boolean; error: string | undefined; atValidation: boolean }> {
   const ctx = new FakeEveContext();
   ctx.set({ name: "open-everywhere.continuation-turn" }, { sessionId: "sess-1", turnId: "turn-1", unified: false });
   return inEveContext(ctx, async () => {
     if (opts.asked !== undefined) recordRequesterAsk("turn-1", { wakeId: "w1", authorId: "U1", body: opts.asked });
     if (opts.envelope !== undefined) recordRequesterMessage("turn-1", opts.envelope);
     if (opts.workChild === true) ctx.set({ name: "open-everywhere.work-tier" }, "child");
-    const toolset: Record<string, unknown> = {
-      [toolName]: tool({
-        description: "probe",
-        inputSchema: jsonSchema({ type: "object", properties: { text: { type: "string" }, channel: { type: "string" } }, required: ["text"] }) as never,
-        execute: async () => {
-          ran = true;
-          return "posted";
-        },
-      }),
-    };
-    if (opts.project !== false) projectToolSet(toolset);
-    let step = 0;
-    const model = new MockLanguageModelV3({
-      doGenerate: async () => {
-        step++;
-        const content = step === 1 ? [{ type: "tool-call" as const, toolCallId: "c1", toolName, input: JSON.stringify(input) }] : [{ type: "text" as const, text: "done" }];
-        return {
-          content,
-          finishReason: { unified: step === 1 ? ("tool-calls" as const) : ("stop" as const), raw: undefined },
-          usage: { inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } },
-          warnings: [],
-        };
-      },
-    } as never) as unknown as LanguageModel;
-    const result = await generateText({ model, prompt: "go", tools: toolset as ToolSet, stopWhen: stepCountIs(2) });
-    const errorPart = result.steps.flatMap((s) => s.content).find((p) => (p as { type: string }).type === "tool-error") as { error?: unknown } | undefined;
-    const err = errorPart?.error;
-    return { ran, error: err === undefined ? undefined : err instanceof Error ? err.message : String(err) };
+    const inputSchema =
+      opts.plainSchema === true
+        ? { type: "object", properties: { text: { type: "string" }, channel: { type: "string" } }, required: ["text"] }
+        : z.object({ text: z.string(), channel: z.string().optional() });
+    const authored = defineTool({ description: "probe", inputSchema: inputSchema as never, execute: async () => "posted" });
+    const call = await driveEveToolCall(toolName, authored as never, input, { bypassSeatCut: opts.project === false });
+    return { ran: call.ran, error: call.error, atValidation: call.refusedAtValidation };
   });
 }
 
@@ -192,11 +180,12 @@ const auditRows = async (action: string) => (await readAudit({ org: "acme", acti
 
 {
   const control = await driveToolCall("post_message", { channel: "C1", text: `card ${VISA}` }, { project: false });
-  ok(control.ran === true, "control: without the projection the post runs");
+  ok(control.ran === true, "NEGATIVE CONTROL: without the seat cut the post runs — eve 1.x itself filters nothing");
 
   const posted = await driveToolCall("post_message", { channel: "C1", text: `card ${VISA} and passport ${PASSPORT}` });
   ok(posted.ran === false, "🔴 e2e: a card number and a passport number never reach the post's execute");
   ok(posted.error !== undefined && posted.error.includes("withheld"), `🔴 e2e: the model reads the withheld refusal (${posted.error})`);
+  ok(posted.atValidation, "🔴 e2e: eve's own input check refuses the call, so no approval card is posted and execute never starts");
   ok(posted.error!.includes("a card number") && posted.error!.includes("a government ID number"), "e2e: the refusal names both categories");
   const ours = posted.error!.slice(posted.error!.indexOf("post_message: Open Everywhere"));
   ok(ours.length > 0 && !ours.includes("4539") && !ours.includes(PASSPORT), "🔴 e2e: the refusal OE writes carries no value");
@@ -273,6 +262,65 @@ const auditRows = async (action: string) => (await readAudit({ org: "acme", acti
 }
 
 {
+  const before = (await auditRows(OUTBOUND_WITHHELD_ACTION)).length;
+  const plain = await driveToolCall("acme_crm__create_note", { text: `card ${VISA}` }, { plainSchema: true });
+  ok(plain.ran === false && plain.error !== undefined && plain.error.includes("withheld"), "🔴 eve 1.x: a tool with a plain JSON Schema (a connector-shaped tool) is filtered at execute");
+  ok(!plain.atValidation, "eve 1.x: …at execute, because eve keeps its own validator for a plain schema");
+  ok((await auditRows(OUTBOUND_WITHHELD_ACTION)).length === before + 1, "eve 1.x: …and writes one withheld row, not two");
+  const plainClean = await driveToolCall("acme_crm__create_note", { text: "the deploy is green" }, { plainSchema: true });
+  ok(plainClean.ran === true, "eve 1.x: a clean call to the plain-schema tool runs");
+  const plainBad = await driveToolCall("acme_crm__create_note", { channel: "C1" }, { plainSchema: true });
+  ok(plainBad.ran === false && plainBad.atValidation, "eve 1.x: eve's own validator still refuses a plain-schema call that misses a required field");
+  const internal = await driveToolCall("write_file", { text: `card ${VISA}` });
+  ok(internal.ran === true, "eve 1.x: an internal tool (write_file) is not filtered: the command that sends the file is");
+
+  const refusals: OutboundRefusal[] = [];
+  const deps = { record: async (r: OutboundRefusal) => void refusals.push(r), asked: () => [] };
+  const source = z.object({ text: z.string() });
+  const once = authoredInputSchema("reply", source);
+  ok(once !== undefined && authoredInputSchema("reply", source) === once, "idempotent: the same source schema and name give the same production wrapper");
+  ok(authoredInputSchema("reply", once) === once, "idempotent: a wrapper is never wrapped twice");
+  const own = authoredInputSchema("reply", source, deps);
+  ok(own !== undefined && own !== once && authoredInputSchema("reply", source, deps) !== own, "cache: a call with its own deps gets a fresh wrapper, never one that closes over other deps");
+  const std = (own as { "~standard": { validate: (v: unknown) => Promise<{ issues?: unknown }> } })["~standard"];
+  ok((await std.validate({ text: `card ${VISA}` })).issues !== undefined && refusals.length === 1, "one refusal per call, recorded through the call's own deps");
+
+  // eve re-validates an approved call in the turn that delivers the approval (call-executor's
+  // `recheck`). That turn carries no fresh ask, so an asked-for explicit value is held there.
+  const IBAN = "pay the supplier: IBAN GB82 WEST 1234 5698 7654 32";
+  const askTurn = authoredInputSchema("dm_person", source, { record: async () => undefined, asked: () => ["please send our bank details to Bob"] });
+  const approvalTurn = authoredInputSchema("dm_person", source, { record: async () => undefined, asked: () => [] });
+  const validateIn = (w: unknown) => (w as { "~standard": { validate: (v: unknown) => Promise<{ issues?: readonly { message: string }[] }> } })["~standard"].validate({ text: IBAN });
+  ok((await validateIn(askTurn)).issues === undefined, "recheck NEGATIVE CONTROL: in the turn with the member's ask, the explicit value passes and the card is raised");
+  // The doc's claim that eve validates an approved call again rests on eve's own source: the
+  // `recheck` arm of harness/call-executor.js runs the tool's input schema before it executes.
+  const { readFileSync } = await import("node:fs");
+  const { installedEveRoot } = await import("./eve-tool-schema.js");
+  const executor = readFileSync(`${installedEveRoot(import.meta.url)}/dist/src/harness/call-executor.js`, "utf8");
+  const RECHECK_ARM = /===`recheck`\?await asSchema\(toModelSchema\(\w+\.inputSchema,`input`\)\)\.validate\?\.\(\w+\):void 0\)\?\.success===!1\)\{let \w+=`The approved input is no longer valid/u;
+  ok(RECHECK_ARM.test(executor), "🔴 recheck: eve's call executor validates an approved call's input again and, on a failed check, settles the call as no longer valid instead of running it (call-executor.js `recheck` arm); if eve changes it, re-read security model § 7");
+  ok(!RECHECK_ARM.test(executor.replace("?.success===!1){", "?.success===!0){")), "recheck NEGATIVE CONTROL: an executor that rejects on SUCCESS instead does not match the pin");
+  const recheck = await validateIn(approvalTurn);
+  ok(recheck.issues !== undefined && recheck.issues[0]!.message.includes("held"), "🔴 recheck: in the approval turn, with no fresh ask, the same input is HELD — it fails closed (pinned; changing it is a design choice)");
+  ok(authoredInputSchema("reply", { type: "object" }, deps) === undefined, "wrapper: a plain JSON Schema is left to eve's own validator");
+
+  const unemittable = { "~standard": { version: 1, vendor: "probe", validate: (v: unknown) => ({ value: v }), jsonSchema: { input: () => { throw new Error("cannot emit"); } } } };
+  ok(transformAuthoredTool("post_message", { description: "x", inputSchema: unemittable, execute: async () => "ok" }) === null, "🔴 fail closed: an outbound sink whose schema cannot be wrapped is withheld from the seat");
+  ok(transformAuthoredTool("write_file", { description: "x", inputSchema: unemittable, execute: async () => "ok" }) !== null, "fail closed: …an internal tool keeps its seat");
+  ok(transformAuthoredTool("post_message", { description: "x", inputSchema: { type: "object" } }) === null, "🔴 fail closed: an outbound sink with a plain schema and no execute is withheld: no route reaches it");
+
+  // A static slot skips the seat cut, so no transform reaches it. The only one is eve's built-in
+  // ask_question workflow tool: eve resolves it from its compiled schema and never loads a wrapper.
+  // A new static slot must state how the outbound filter reaches it before it lands here.
+  ok(JSON.stringify(Object.keys(SEAT_CUT_STATIC_SLOTS)) === JSON.stringify(["ask_question"]), "🔴 bypass: the only roster slot the seat cut (and so the outbound filter) does not reach is ask_question");
+
+  const workflowExecute = async () => "ok";
+  const workflowTool = { description: "x", inputSchema: z.object({ text: z.string() }), execute: workflowExecute, [Symbol.for("eve:workflow-tool-brand")]: true };
+  const wf = transformAuthoredTool("post_message", workflowTool) as { execute: unknown; inputSchema: unknown };
+  ok(wf.execute === workflowExecute && wf.inputSchema !== workflowTool.inputSchema, "workflow tool: its entry point stays untouched (it carries the workflow id), and the schema carries the filter");
+}
+
+{
   const action = finalMessageAction("stop", `Here it is: ${VISA}. Anything else?`);
   ok(action.kind === "post", "closing: the reply still posts");
   const text = action.kind === "post" ? action.text : "";
@@ -324,3 +372,5 @@ const auditRows = async (action: string) => (await readAudit({ org: "acme", acti
 
 console.log(`✓ outbound-filter: ${passed} checks passed`);
 process.exit(0);
+
+// proves: AP-MOD-core-access-authored-tool-transforms, AP-MOD-core-access-seat-cut-slots

@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
@@ -13,7 +13,7 @@ import { approvalPostDeps } from "./set_spend_limit.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketSetStateArgs } from "../approvals/ticket-actions.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
 function safeDomains(): readonly Domain[] {
@@ -119,16 +119,10 @@ export const setStateEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("set_state", "_single", setStateEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const bctx = ctx as BindableContext;
-      const destinations = workDestinationPlatforms(bctx, safeDomains());
-      const adapterPlatforms = supportedEntityActionPlatforms();
-      if (!destinations.some((s) => adapterPlatforms.includes(s)) && !currentTurnEntityRef(bctx)) return null;
-      return setStateEntry;
-    },
-  },
+export default sessionMountedTool("set_state", setStateEntry, (ctx) => {
+  const destinations = workDestinationPlatforms(ctx, safeDomains());
+  const adapterPlatforms = supportedEntityActionPlatforms();
+  if (!destinations.some((s) => adapterPlatforms.includes(s)) && !currentTurnEntityRef(ctx)) return false;
+  return true;
 });

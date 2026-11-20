@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
+import type { SandboxNetworkMatcher } from "eve/sandbox";
 import { registerConfig } from "../agent/access/config.js";
 import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { defineSettings, getSettings, overrideSettingsForTest, resetSettingsForTest } from "../agent/settings/settings.js";
@@ -131,15 +132,17 @@ resetGitHubApp();
 
 {
   const rules = tokenGitReadRules(TOKEN, ["acme/bot"]);
-  ok(rules.length === 2 && rules.every((r) => r.match?.path?.startsWith === undefined), "§5 🔴 two rules, and neither is a path PREFIX (a prefix would stamp a dot-segment path)");
+  ok(rules.length === 2 && rules.every((r) => r.match?.path === undefined || !("startsWith" in r.match.path)), "§5 🔴 two rules, and neither is a path PREFIX (a prefix would stamp a dot-segment path)");
   ok(rules.every((r) => r.transform[0]?.headers?.Authorization === brokerAuthHeader(TOKEN).Authorization), "§5 each rule carries the token in the broker's header shape");
   const vercelStamps = (method: string, path: string, query: Record<string, string> = {}) =>
     rules.some((r) => {
       const m = r.match!;
       if (m.method && !m.method.includes(method)) return false;
-      if (m.path?.exact !== undefined && path !== m.path.exact) return false;
-      if (m.path?.regex !== undefined && !new RegExp(m.path.regex).test(path)) return false;
-      return (m.queryString ?? []).every((q) => query[q.key?.exact ?? ""] === q.value?.exact);
+      if (m.path && "exact" in m.path && path !== m.path.exact) return false;
+      if (m.path && "regex" in m.path && !new RegExp(m.path.regex).test(path)) return false;
+      if (m.path && "startsWith" in m.path && !path.startsWith(m.path.startsWith)) return false;
+      const exactOf = (x: SandboxNetworkMatcher | undefined): string | undefined => (x && "exact" in x ? x.exact : undefined);
+      return (m.queryString ?? []).every((q) => query[exactOf(q.key) ?? ""] === exactOf(q.value));
     });
   ok(vercelStamps("GET", "/acme/bot.git/info/refs", { service: "git-upload-pack" }) && vercelStamps("POST", "/acme/bot.git/git-upload-pack"), "§5 positive control: a clone's two requests are stamped");
   ok(!vercelStamps("GET", "/acme/bot.git/info/refs", { service: "git-receive-pack" }), "§5 🔴 a push's ref advertisement (service=git-receive-pack) is not stamped");

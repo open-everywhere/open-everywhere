@@ -412,6 +412,8 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
 
 {
   const outcomeHook = (await import("../agent/hooks/routine-outcome.js")).default;
+  const turnSettled = (outcome: "completed" | "failed" | "cancelled"): never => ({ type: "turn.settled", data: { turnId: "t-fire", outcome } }) as never;
+  const sessionEnded = (outcome: "completed" | "failed"): never => ({ type: "session.ended", data: { outcome } }) as never;
   const r = routine({ id: "r-manual-fold" });
   await store.addRoutine(partition, r);
 
@@ -444,7 +446,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
   const fireOnce = async (ctx: never): Promise<void> => {
     await inEveContext(new FakeEveContext(), async () => {
       await outcomeHook.events!["turn.started"]!({} as never, ctx);
-      await outcomeHook.events!["turn.completed"]!({} as never, ctx);
+      await outcomeHook.events!["turn.settled"]!(turnSettled("completed"), ctx);
     });
   };
 

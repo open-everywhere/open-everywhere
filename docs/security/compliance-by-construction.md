@@ -55,8 +55,9 @@ apply a fine-grained policy, and on any backend running the policy in dry-run
 - 🔴 **A failed apply refuses the turn, and two settings turn that off.** At `session.started` a
   rejected policy apply refuses the turn with `ctx.cancel()`, so the agent never runs a turn
   unenforced — the platform's own session default is allow-all, so an unenforced session is an
-  unfirewalled one. The hook does not throw, because eve logs and swallows a hook's throw
-  (OPE-2249, `agent/hooks/control-refusal.ts`). A failed turn-level re-apply refuses the turn too
+  unfirewalled one. The hook does not throw. On eve 1.x an uncaught hook error FAILS the turn with
+  an error, and only `ctx.cancel()` ends it as a refusal that a `hook.refused` row names (OPE-2249,
+  `agent/hooks/control-refusal.ts`). A failed turn-level re-apply refuses the turn too
   when no policy is in force yet. It only logs when the new policy covers the one still in force.
   When the new policy narrows it, the turn is refused instead (OPE-2158,
   [Revocation latency](./revocation-latency.md)).
@@ -165,7 +166,9 @@ block its own removal.
   (OPE-1758).
 - 🔴 **The host says that it is halted, not the turn.** The chat `halt` posts the confirmation
   itself, and the `admin.halt.set` row carries `announced`. A brake defended on being LOUD cannot
-  leave the announcement to the model.
+  leave the announcement to the model. The one exception is a conversation that stood down: the
+  halt still takes effect, the host posts no confirmation there, and the row carries
+  `announceWithheld: true` (OPE-2812).
 
 ### The agent cannot edit its own guardrails
 

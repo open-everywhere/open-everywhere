@@ -49,8 +49,8 @@ async function driveTurn(input: {
 }): Promise<readonly Awaited<ReturnType<typeof usageForSession>>[number][]> {
   await contextStorage.run(new ContextContainer(), async () => {
     stampModelCall(MODEL);
-    await spendHook.events!["step.completed"]!(
-      { data: { usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 400, costUsd: 0.0021 } } } as never,
+    await spendHook.events!["usage.recorded"]!(
+      { data: { kind: "model", owner: { runId: `run-${input.sessionId}` }, usage: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 400, costUsd: 0.0021 } } } as never,
       {
         channel: input.channel,
         session: { id: input.sessionId, auth: { current: { attributes: input.attributes, principalId: "AAD-1", principalType: "teams-user" } } },

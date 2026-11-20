@@ -67,18 +67,16 @@ for (const tiering of [false, true]) {
   resetSettingsForTest();
   if (tiering) registerSettings({ connectors: { opTiering: true } });
   for (const toolName of OPS) {
-    for (const approved of [new Set<string>(), new Set<string>([toolName])]) {
-      const decision = await connectorApprovalPolicy()({ toolName, approvedTools: approved, callId: `c-${toolName}`, toolInput: { title: "x" } } as never);
-      const label = `§3 opTiering=${String(tiering)} ${toolName} approvedTools=${approved.size}`;
-      ok(!prompts(decision), `${label}: the seam answered a native prompt (${JSON.stringify(decision)})`);
-      ok(allowsOrDenies(decision), `${label}: the seam answered neither not-applicable nor denied (${JSON.stringify(decision)})`);
-    }
+    const decision = await connectorApprovalPolicy()({ toolName, callId: `c-${toolName}`, toolInput: { title: "x" } } as never);
+    const label = `§3 opTiering=${String(tiering)} ${toolName}`;
+    ok(!prompts(decision), `${label}: the seam answered a native prompt (${JSON.stringify(decision)})`);
+    ok(allowsOrDenies(decision), `${label}: the seam answered neither not-applicable nor denied (${JSON.stringify(decision)})`);
   }
 }
 resetSettingsForTest();
 registerSettings({ connectors: { opTiering: true } });
 ok(
-  (await connectorApprovalPolicy()({ toolName: "notion__search", approvedTools: new Set<string>(), callId: "c-read" } as never)) === "not-applicable",
+  (await connectorApprovalPolicy()({ toolName: "notion__search", callId: "c-read" } as never)) === "not-applicable",
   "§3 control: under opTiering a READ is still open",
 );
 resetSettingsForTest();
@@ -88,7 +86,7 @@ const builderSites = findEveApprovalSites("mcp-server-connection.ts", builderSou
 ok(builderSites.length === 1, "§4 the shared MCP connection builder carries exactly one approval line");
 ok(/^\s*approval:\s*connectorApprovalPolicy\(\),?\s*$/m.test(builderSource), "§4 the builder's approval is connectorApprovalPolicy() and nothing else");
 const notionSource = readFileSync(join(repoRoot, "packages/core/agent/connections/notion.ts"), "utf8");
-ok(findEveApprovalSites("notion.ts", notionSource).length === 0 && /export default buildMcpConnection\(/.test(notionSource), "§4 notion.ts builds through the shared builder and sets no approval of its own");
+ok(findEveApprovalSites("notion.ts", notionSource).length === 0 && /export const NOTION_MOUNT = mcpConnectionMountSpec\(/.test(notionSource), "§4 notion.ts builds through the shared builder and sets no approval of its own");
 const notionReason = NON_TOOL_APPROVAL_SITES["packages/core/agent/connections/mcp-server-connection.ts"] ?? "";
 ok(/never prompts/i.test(notionReason), "§5 the notion allowlist row says the seam never prompts");
 ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "§5 the notion allowlist row no longer describes a live once()");
@@ -121,7 +119,7 @@ ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "
     withOeConnectorCard(prompt, { store: store as never, offer: offer as never, grantScope: () => (key === undefined ? undefined : { key, reach }), tainted: () => false });
   let callSeq = 0;
   const call = (toolName: string, input: unknown, key: string | null = "win-1", callId = `c-${++callSeq}`, reach: Reach = "call") =>
-    wrap(key ?? undefined, reach)({ toolName, approvedTools: new Set<string>(), callId, toolInput: input } as never);
+    wrap(key ?? undefined, reach)({ toolName, callId, toolInput: input } as never);
   const reasonOf = (d: unknown) => String((d as { reason?: string }).reason ?? "");
 
   resetSettingsForTest();
@@ -156,7 +154,7 @@ ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "
   await call("notion__create_page", { title: "top" }, "oe-grant:slack/T1/C1:call", undefined, "call");
   await call("notion__create_page", { title: "top" }, "oe-grant:slack/T1/C1:thread:1.1", undefined, "call");
   ok(offers.length === 2 && offers.every((o) => o.grain === "call") && offers[0]!.memoKind === offers[1]!.memoKind, "§6 OPE-2363: a thread and a channel's top level card a write the SAME way: one call, the same digest kind");
-  ok((await withOeConnectorCard(() => "not-applicable", { store: store as never, offer: offer as never, grantScope: () => ({ key: "win-1", reach: "call" }) })({ toolName: "notion__search", approvedTools: new Set<string>(), callId: "c" } as never)) === "not-applicable", "§6 a verdict that does not prompt passes through");
+  ok((await withOeConnectorCard(() => "not-applicable", { store: store as never, offer: offer as never, grantScope: () => ({ key: "win-1", reach: "call" }) })({ toolName: "notion__search", callId: "c" } as never)) === "not-applicable", "§6 a verdict that does not prompt passes through");
   resetSettingsForTest();
   offerAnswer = "carded";
   offers.length = 0;
@@ -183,7 +181,7 @@ ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "
     ContextContainer: new () => unknown;
     contextStorage: { run<T>(store: unknown, fn: () => T): T };
   };
-  const { projectToolSet } = await import("../agent/access/untrusted-projection.js");
+  const { seatCutToolset } = await import("../agent/access/seat-cut.js");
   const { setWorkTierWake } = await import("../agent/access/lean-seat-state.js");
   const { WORK_QUESTION_TOOL } = await import("../agent/tools/ask_room.js");
   ok(WORK_QUESTION_TOOL === "ask_room", "§8 the tool's export and the projection's literal are one spelling");
@@ -192,11 +190,11 @@ ok(!/once\(\)/.test(notionReason.replace(/never returns `?once\(\)`?/gi, "")), "
     contextStorage.run(new ContextContainer(), () => {
       setWorkTierWake(tier);
       const t = kit();
-      projectToolSet(t);
+      seatCutToolset(t);
       return Object.keys(t);
     });
   const child = project("child");
-  ok(!child.includes("ask_question") && child.includes("ask_room"), `§8 a child of W holds ask_room and not ask_question (got ${child.join(",")})`);
+  ok(!child.includes("ask_question") && child.includes("ask_room"), `§8 seatCutToolset (the pure rule) gives a child of W ask_room and not ask_question; on eve 1.x the static ask_question slot is out of its reach, see seat-cut-test §5 (got ${child.join(",")})`);
   for (const tier of ["none", "forwards"] as const) {
     const keys = project(tier);
     ok(keys.includes("ask_question") && !keys.includes("ask_room"), `§8 a ${tier} wake keeps ask_question and never holds ask_room (got ${keys.join(",")})`);

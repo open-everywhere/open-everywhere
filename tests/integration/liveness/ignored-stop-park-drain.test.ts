@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 import { appendAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
@@ -91,6 +92,6 @@ test("a parked session drains a due ignored-stop check — no new turn has to st
   expect(row.detail?.endedAs).toBe("completed");
   expect(row.principalId).toBe(STOPPER_ID);
   expect(b.requests.filter((r) => r.role === "parent").map((r) => r.turnId)).toEqual([bCall.turnId]);
-  expect(await rowsSinceCursor(cursor, ["turn.cancelled"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION])).toEqual([]);
   expect([...a.requests, ...b.requests].filter((r) => r.fault !== undefined)).toEqual([]);
 });

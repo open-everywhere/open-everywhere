@@ -571,7 +571,7 @@ A halt stops **the consequential acts the seven arrows below reach** at one addr
 | control MCP | `halt` | `resume` |
 | direction | narrows | widens |
 
-**A card in front of a brake pedal is a brake that works only when you do not need it.** A card needs an approver who is present and clicking, which during an incident is exactly what is not guaranteed. The tree already ruled that way three times at smaller blast radius — `task_cancel`, `set_dm_delivery`, `stand_down` — and this is the same rule at deployment scale. Resuming *widens*, so it is carded: WIDEN-SLOW / NARROW-FAST, the same doctrine that makes `revoke_connector` instant and `clear_connector_override` an admin decision.
+**A card in front of a brake pedal is a brake that works only when you do not need it.** A card needs an approver who is present and clicking, which during an incident is exactly what is not guaranteed. The tree already ruled that way three times at smaller blast radius — `eve__task_cancel`, `set_dm_delivery`, `stand_down` — and this is the same rule at deployment scale. Resuming *widens*, so it is carded: WIDEN-SLOW / NARROW-FAST, the same doctrine that makes `revoke_connector` instant and `clear_connector_override` an admin decision.
 
 **The stated cost.** An `open` verb is one a poisoned turn can call, so a halt is a denial of service the model can trigger. That is accepted, not overlooked: the failure is loud (every seat says it is halted), visible (one `admin.halt.set` row) and reversible by an admin. The opposite trade fails silently, because nothing stopped. Neither chat verb takes an address from the model — `scope` is a two-value enum and the key is derived host-side from the seat's own binding.
 
@@ -608,7 +608,9 @@ It is true for the sandbox firewall and for every host-side fetch OE itself disp
 - a **subagent's own framework `web_fetch`**, which falls back to eve's built-in — unwrapped, with no hooks behind it;
 - **`web_search`**, which is provider-executed: the results reach the model server-side, inside the same model call, before any byte passes through this process.
 
-While halted, both names are **subtracted** from the toolset at `projectToolSet` — absence, not refusal, which is the only control that reaches them. Absence lands on the *next* model call, so a call already in flight is not reached.
+While halted, the seat cut (`packages/core/agent/access/seat-cut.ts`) **subtracts** the sandbox-tools kit's `web_fetch` (`packages/core/agent/tools/sandbox_tools.ts`) and `web_search` from the root toolset (a subagent's own default `web_fetch` is not reached) — absence, not refusal. Absence lands on the *next* model call, so a call already in flight is not reached. The seat cut therefore re-decides the posture before each model call and keeps no seat memo. The dynamic-tool doctrine lint (`npm run lint:dynamic-tools`) names `seat-cut.ts` in its closed exemption list for this reason, and `test:seat-cut` §3 pins it: a halt set in the middle of a session withholds `web_fetch` on the next model call of the same session.
+
+On eve 1.x `web_search` is a provider configuration, not a `defineTool` entry, so no seat-cut shim can return it or take it away. The model-call cut (`packages/core/agent/model/seat-tool-cut.ts`) takes it off the list that the halted seat's model call offers. That is the only edge for this name: the provider runs the search, so no call-time refusal can stop it.
 
 ### The other two bounds, stated because a doc that overclaims is worse than one that admits
 
@@ -1069,15 +1071,21 @@ Authorization: Bearer <service token value>
 ```
 
 **Session transcript** replays one session's durable event stream — inbound messages, model
-reasoning, tool calls with their arguments, tool results with status, per-step
-tokens/cost/generation id, and turn/session boundaries — each with its write-time `meta.at`
-timestamp, in order. It reads eve's own public per-session replay (`attachSession(id)
-.getEventStream({ startIndex })`); nothing is captured or stored a second time, so no new
-at-rest copy is created. `startIndex` + `limit` (default 2000, capped) is the pager
-(`nextIndex` = the cursor to resume from); a **parked** session — one that has replayed all
-recorded events and is waiting for its next turn — is drained to what is durably recorded
-and returned with `complete:false` (`idleMs` is the parked stop signal; a hard wall-clock
-cap bounds the request regardless), never held open. The join key is `detail.sessionId`,
+reasoning, tool calls with their arguments, tool results with their outcome, token usage per
+model run (`usage.recorded`), the gateway generation id (`model.settled`), and turn/session
+boundaries — each with its `meta.at` timestamp and its eve `scope` (the turn, model run, task or
+context change it belongs to), in order. `meta.at` is the time of the stored line that holds the
+event; a progress record (`content.delta`, `call.input`, `call.progress`) carries the time of the
+event line before it, so it gives no time of its own. It reads eve's own public
+per-session replay of recorded history (`attachSession(id).stream({ startIndex, follow: false,
+signal })`); nothing is captured or stored a second time, so no new at-rest copy is created.
+`startIndex` + `limit` (default 2000, capped) is the pager. Both count eve's stored LINES, not
+events: one line can hold several events, and each event's `index` is its line. A page ends
+only at a line boundary, so it can exceed `limit` by the rest of one line, and `nextIndex` is
+the first line the next page reads. Only `session.ended` sets `complete:true`. A **parked**
+session — one that is waiting for its next turn — is read to its durable tail and returned
+with `complete:false`; `idleMs` and a hard wall-clock cap bound the request regardless, so it
+is never held open. The join key is `detail.sessionId`,
 stamped onto the reply/no_reply/dropped-prose audit rows: poll `/control/v1/audit` for the
 row, take its `sessionId`, then fetch its transcript.
 
@@ -1119,7 +1127,7 @@ deltas and per-step token accounting. The tool returns the **render** instead
 answer is the lines that say what the run did.
 
 **It is a client of the route, not a second way in.** A session's durable stream is reachable only
-through eve's `attachSession(id).getEventStream()`, which eve hands to route handlers only. Neither
+through eve's `attachSession(id).stream()`, which eve hands to route handlers only. Neither
 mount of the control server is a route handler — the local stdio entry is a plain CLI process, and
 the streamable-HTTP transport is not an Eve route — so the tool dials the deployment's own
 `GET /control/v1/session/<id>/transcript` with a control-plane read token, exactly as `deploy:smoke`
@@ -1705,28 +1713,30 @@ The `work.forwarded` audit row counts the asks it carried (`askCount`) and never
 session and the executing code still needs to know which card armed it. **It is never an authorisation
 input**: the click's own authorisation is decided before the arming context exists.
 
-**A foreign responder is refused on both legs, Approve and Cancel.** `decideResponder`
+**A foreign responder is refused on both legs, Approve and Deny.** `decideResponder`
 (`packages/core/agent/approvals/eve-response-policy.ts`) binds a response to the REQUESTER: eve's
 `request.principal`, the caller whose turn made the tool call. It falls back to the session initiator
 only when eve records no requester, and it allows when neither exists. Every other responder is
-rejected, and the request stays pending. eve 0.69.0 runs the policy for Cancel as well as Approve, and
-OE applies the same rule to both (OPE-2255): a bystander can no longer cancel another person's pending
-action. eve's Slack channel posts the refusal privately to the refused responder.
-🔴 Authoring that response policy is also the **switch** that routes the request onto eve's candidate
-path: a call site that forgets it silently keeps the older "any authenticated clicker may approve"
-behaviour.
+rejected, and the request stays pending. eve runs the policy for Deny as well as Approve, and OE
+applies the same rule to both (OPE-2255): a bystander cannot deny another person's pending action.
+eve's Slack channel posts the refusal privately to the refused responder.
+An approval with NO response policy is requester-only in eve itself: eve refuses every responder
+except the requester. It admits any responder when it records no requester: the turn had no
+authenticated caller, or the caller was anonymous.
+`packages/core/scripts/eve-approval-response-test.ts` drives eve's own responder check with a
+requester and a bystander, for both shapes, so a change in eve's default reds the suite.
+An approved call runs as the requester. eve names the approver to the call as `ctx.approval.responder`.
 
 **An eve-native `approval:` written outside the scanned tool directory is listed with a reason.**
-`NON_TOOL_APPROVAL_SITES` (`packages/core/agent/access/consequence.ts`) carries three entries, and a
+`NON_TOOL_APPROVAL_SITES` (`packages/core/agent/access/consequence.ts`) carries two entries, and a
 new one reds the lint. The scan is line-based, so it cannot tell a real policy from a property inside a
 template literal — and the entries say which each one is rather than narrowing the regex, because
 narrowing it is how a scan stops seeing the true positives too:
 
 | Site | What it actually is |
 | --- | --- |
-| `packages/core/agent/connections/notion.ts` | **Real and deliberate** — a connector approval policy on an eve connection, not a tool. It is defence in depth over the hard credential gates, never the gate itself. The value must stay a bare request policy: eve's connection resolver keeps `approval` only when it is a function, so an approval *configuration* object is dropped at boot. There is therefore **no responder check** on a connector-op card. |
-| `packages/core/agent/plugins/extract.ts` | **Not a live policy** — the match is inside a template literal, the line the plugin extractor generates into a scaffolded connection file. It is reviewed where it lands. |
-| `packages/core/agent/access/window-gated.ts` | **Not a policy** — eve's deterministic replay step names for a dynamic tool entry, each value a string identifier. |
+| `packages/core/agent/connections/mcp-server-connection.ts` | **Real and deliberate** — the connector approval policy of every connector mount (the shipped Notion mount and each declared MCP server), not of one authored tool. The mount puts it on each op's deferred tool, behind the outbound filter (`connector-tools.ts`, `outboundFirst`). It is defence in depth over the hard credential gates, never the gate itself. The value stays a bare request policy, not an approval *configuration* object. There is therefore **no responder check** on a connector-op card. |
+| `packages/core/agent/plugins/extract.ts` | **Not a live policy** — the match is inside a template literal, the line the plugin extractor generates into a scaffolded connector-mount tool file (`agent/tools/<slug>.ts`). It is reviewed where it lands. |
 
 **Three exports are human-only, and no agent tool file may import them.**
 `PROTECTED_HUMAN_ONLY_EXPORTS` (`packages/core/agent/access/human-only-invariants-manifest.ts`) names

@@ -341,9 +341,9 @@ different matcher, 13 a `reversed` one, 10 no recognised helper; 11 of the 202 s
 convert). The edge cases outside step 4, also over converting files only:
 
 - **25 call `process.exit` more than once**, so a call survives the helper's deletion. Each becomes
-  `throw new Error(...)` — unless it is one of the deliberate clean stops above. 🔴 Four more
+  `throw new Error(...)` — unless it is one of the deliberate clean stops above. 🔴 Three more
   multi-exit files are `off-chain` and **keep their exits**: `sandbox-live-test.ts`,
-  `agent-version-seam-bundle-test.ts`, `dynamic-callback-closure-bundle-test.ts` and
+  `agent-version-seam-bundle-test.ts` and
   `sandbox-docker-turn-live-test.ts` stay `tsx` scripts, where the exit IS the failure signal.
 - **5 set `process.exitCode = 1`** instead of throwing. Same treatment.
 - **1 carries a top-level `export`** (`scripts/sandbox-region-test.ts:129`, an `export interface`).
@@ -368,7 +368,7 @@ signal names 11; the eleventh, `scripts/sandbox-docker-turn-live-test.ts`, is `o
 | **9** `subprocess-bound` | They build an import specifier with a substitution. vite rewrites that shape into a lookup over a glob it expands at TRANSFORM time, and a converted `.spec.ts` is transformed by the same vite. The failure differs by file: six build `` `../agent/tools/${name}.js` `` against `.ts` files on disk, so the map comes out empty; `worker-continuation-test.ts:43` and `e2e-driver-test.ts:167` substitute into a path under eve's built `dist`, which really is `.js`; `response-behaviour-scoring-test.ts:101` substitutes a query string, not a filename. The shape is what vite cannot transform, not the `.js`/`.ts` mismatch. | Stay `tsx` scripts, spawned by one surviving spec — what `runLegInSubprocess` does today. |
 | **1** `subprocess-bound` — `scripts/memory-eval-fixture-test.ts` | 🔴 A **different** reason, and the one a slice author will get wrong: it has no variable dynamic import at all. It is named in `_legs.ts`'s `ROOT_SUBPROCESS_LEGS` because it respawns itself through `process.execArgv`, which carries tsx's loader flags only when `npx tsx` launched it. A vitest worker has no such flags. | Same — stays a `tsx` script. |
 | 1 `indirect` — `packages/core/scripts/wake-origin-fixtures-test.ts` | A **frozen** stored-data compatibility oracle. Its header says it must never change, and the fold is a change. | Stays a `tsx` script. So does its boot wrapper, `scripts/wake-origin-fixtures-boot.ts`: that file is not named `*-test.ts`, so it is one of the **48 non-runner legs** stage 12 keeps, and `test:wake-origin-fixtures` keeps naming it. Converting the wrapper while the oracle stays would leave the leg pointing at a renamed file and red `lint:script-chain`. |
-| 2 `off-chain` bundle tests — `agent-version-seam-bundle-test.ts`, `dynamic-callback-closure-bundle-test.ts` | They run in `postbuild`, inside the `build` `OE_PROOF` suite, and read the just-built `.output/server/index.mjs`. Converting them would put vitest in the build path for no gain. | Stay `tsx` scripts. |
+| 1 `off-chain` bundle test — `agent-version-seam-bundle-test.ts` | It runs in `postbuild`, inside the `build` `OE_PROOF` suite, and reads the just-built `.output/server/index.mjs`. Converting it would put vitest in the build path for no gain. | Stays a `tsx` script. |
 | 2 `off-chain` live tests — `sandbox-live-test.ts`, `sandbox-docker-turn-live-test.ts` | Opt-in, credentialed, deliberately outside the deterministic tier. | Stay `tsx` scripts. |
 
 The 10 subprocess-bound files are the reason a piece of `scripts/chain/` survives the fold: the spawn
@@ -580,8 +580,8 @@ That is § How `OE_PROOF` stays byte-exact item 2, exactly.
   which excludes the root, so a root `test:*` script that no chain named used to be unguarded. The
   root arm of the gate now reads the root chain's transitive closure (`rootChainScriptNames()`) and
   refuses any root `test:*` script that neither the chain reaches nor `OFF_CHAIN_BY_DESIGN`
-  explains. Seven are declared off-chain: `test:suites` (the batched runner itself),
-  `test:integration` (its own tier), `test:dynamic-closure-bundle` (a `postbuild` leg),
+  explains. Six are declared off-chain: `test:suites` (the batched runner itself),
+  `test:integration` (its own tier),
   `test:e2e-driver` (an argument-taking passthrough), and three live packs — `test:pg-real`,
   `test:docker-smoke`, `test:docker-sandbox-stop-live`. A second assertion runs the other way: a
   script declared off-chain that the chain DOES reach is also a red, so the list cannot rot into a

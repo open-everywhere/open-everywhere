@@ -1,4 +1,4 @@
-import { jwtHmac, oauthResource, readOAuthResourceOptions, routeAuth, type AuthFn } from "eve/channels/auth";
+import { jwtHmac, oauthResource, routeAuth, type AuthFn, type OAuthResourceOptions } from "eve/channels/auth";
 import {
   CONTROL_OAUTH_ISSUER,
   controlOAuthAudiences,
@@ -24,6 +24,15 @@ export function controlMcpResource(issuer: string): string {
   return new URL(CONTROL_MCP_PATH, issuer).toString();
 }
 
+/**
+ * The protected-resource options for the control MCP door. `controlResourceAuth` decorates the
+ * door with them, and `controlProtectedResourceMetadata` publishes them. Both read this one
+ * builder, so the published document cannot drift from the door.
+ */
+export function controlResourceOptions(issuer: string): OAuthResourceOptions {
+  return { issuer, resource: controlMcpResource(issuer), scopes: CONTROL_ADVERTISED_SCOPES };
+}
+
 export async function controlResourceAuth(
   signingSecret: SigningSecretSource = storedSigningSecret,
   declaredIssuer: string = CONTROL_OAUTH_ISSUER,
@@ -41,7 +50,7 @@ export async function controlResourceAuth(
       secret,
       clockSkewSeconds: 30,
     }),
-    { issuer, resource, scopes: CONTROL_ADVERTISED_SCOPES },
+    controlResourceOptions(issuer),
   );
 }
 
@@ -109,8 +118,7 @@ export async function controlProtectedResourceMetadata(
   const auth = await controlResourceAuth(signingSecret, declaredIssuer);
   const issuer = controlOAuthIssuer(declaredIssuer);
   if (auth === null || issuer === null) return null;
-  const options = readOAuthResourceOptions(auth);
-  if (options === undefined) return null;
+  const options = controlResourceOptions(issuer);
   const authorizationServers = options.issuer === undefined ? [...(options.authorizationServers ?? [])] : [options.issuer];
   return {
     resource: options.resource ?? controlMcpResource(issuer),

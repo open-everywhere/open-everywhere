@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 delete process.env.DATABASE_URL;
 process.env.OE_SQLITE_PATH = ":memory:";
 
+import type { InteractionKind, InteractionOpenedData } from "eve/events";
 import {
+  bridgeableQuestionOf,
   detectBridgeableInputRequest,
   renderQuestionForSurface,
   EMPTY_QUESTION_FALLBACK,
@@ -32,6 +34,7 @@ const { ContextContainer, contextStorage } = (await import(eveDist("container.js
   contextStorage: { run<T>(c: unknown, fn: () => Promise<T>): Promise<T> };
 };
 const { SessionKey } = (await import(eveDist("keys.js"))) as { SessionKey: unknown };
+const { emptySessionView: rawEmptyView } = (await import(pathToFileURL(join(eveRoot, "dist/src/protocol/session-projection/fold.js")).href)) as { emptySessionView: () => unknown };
 const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
   const c = new ContextContainer();
   c.set(SessionKey, { sessionId: "sess-qb", auth: { current: null, initiator: null }, turn: { id: "turn-qb" }, parent: undefined });
@@ -128,6 +131,29 @@ const approvalRequest = {
   const empty = renderQuestionForSurface({ requestId: "r", toolName: "ask_question", kind: "question", prompt: "   ", options: [] });
   ok(empty === EMPTY_QUESTION_FALLBACK, "2: an empty prompt posts the HOST-authored fallback — a parked turn the room can still unpark");
 }
+const V27_KIND: Record<string, string> = { question: "question", "tool-approval": "approval", "session-limit": "budget" };
+type V26Request = typeof questionRequest | typeof approvalRequest | typeof parkRequest;
+const opened = (r: V26Request, taskId?: string): { type: "interaction.opened"; scope?: { taskId: string }; data: InteractionOpenedData } => ({
+  type: "interaction.opened" as const,
+  ...(taskId ? { scope: { taskId } } : {}),
+  data: {
+    interactionId: r.requestId,
+    subject: { callId: r.action.callId },
+    request: { kind: V27_KIND[r.kind] as InteractionKind, prompt: r.prompt, options: r.options.map((o) => ({ id: o.id, label: o.label, ...("style" in o && o.style === "danger" ? { style: "danger" as const } : {}) })) },
+    origin: { sessionId: "sess-qb", interactionId: r.requestId, call: { callId: r.action.callId, name: r.action.toolName } },
+  },
+});
+{
+  const q = bridgeableQuestionOf(opened(questionRequest).data);
+  ok(q !== undefined && q.requestId === questionRequest.requestId, "1b: a v27 question bridges, keyed on its interaction id");
+  ok(q?.toolName === "ask_question" && q.kind === "question", "1b: …naming the asking tool from the interaction's origin call, and the v27 kind");
+  ok(q?.options.map((o) => o.label).join("|") === `${LABEL_YES}|${LABEL_NO}`, "1b: …with the option labels in order");
+  ok(bridgeableQuestionOf(opened(approvalRequest).data)?.kind === "approval", "1b: a v27 approval bridges too");
+  ok(bridgeableQuestionOf(opened(parkRequest).data) === undefined, "1b: 🔴 a v27 budget prompt (the old session-limit park) is NOT bridgeable");
+  const signIn = { ...opened(questionRequest).data, request: { kind: "sign-in" as const, prompt: "Sign in to Notion" } };
+  ok(bridgeableQuestionOf(signIn) === undefined, "1b: 🔴 a v27 sign-in is NOT bridgeable — a sign-in is no question the room can answer");
+  ok(bridgeableQuestionOf({ ...opened(questionRequest).data, origin: undefined })?.toolName === "unknown", "1b: an interaction with no origin call degrades to toolName \"unknown\" and still bridges");
+}
 const { registerSlackFixtureMapper, registerSlackFixturePostArm, registerSlackFixtureCodec, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
 registerSlackFixturePostArm();
@@ -136,10 +162,10 @@ registerSlackTestBridge();
 const unified = (await import("../agent/channels/unified.js")).default as unknown as {
   adapter?: Record<string, unknown>;
 };
-type InputRequestedHandler = (data: unknown, adapterCtx: { session?: { continuation?: { token: string } } }) => Promise<void>;
-const rawOnInputRequested = unified.adapter?.["input.requested"] as InputRequestedHandler;
-const onInputRequested = (data: unknown, token?: string): Promise<void> =>
-  inSession(() => rawOnInputRequested(data, token === undefined ? {} : { session: { continuation: { token } } }));
+type InteractionOpenedHandler = (event: unknown, adapterCtx: Record<string, unknown>) => Promise<void>;
+const rawOnInteractionOpened = unified.adapter?.["interaction.opened"] as InteractionOpenedHandler;
+const onInteractionOpened = (event: unknown, token?: string): Promise<void> =>
+  inSession(() => rawOnInteractionOpened(event, token === undefined ? { view: rawEmptyView() } : { continuation: { token }, view: rawEmptyView() }));
 const ORG = deploymentOrg();
 const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_AUDIT_ACTION });
 {
@@ -157,7 +183,7 @@ const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_A
   for (const c of cases) {
     for (const request of [questionRequest, approvalRequest]) {
       const before = (await droppedRows()).length;
-      await onInputRequested({ requests: [request], taskId: "task_7" }, `unified:${c.token}`);
+      await onInteractionOpened(opened(request, "task_7"), `unified:${c.token}`);
       const rows = await droppedRows();
       ok(rows.length === before + 1, `3: ${c.label} — a ${request.kind} writes exactly ONE turn.question_dropped row`);
       const row = rows.find((r) => {
@@ -166,7 +192,7 @@ const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_A
       });
       ok(row !== undefined, `3: ${c.label} — …with reason "${c.reason}" and the request id`);
       const detail = (row?.detail ?? {}) as Record<string, unknown>;
-      ok(detail.toolName === request.action.toolName && detail.kind === request.kind, `3: ${c.label} — …naming the tool and the eve kind (ids and enums only)`);
+      ok(detail.toolName === request.action.toolName && detail.kind === V27_KIND[request.kind], `3: ${c.label} — …naming the tool and the eve kind (ids and enums only)`);
       ok(detail.taskId === "task_7", `3: ${c.label} — …and the owning task eve stated on the event, for the audit join`);
       ok((await readBridgedQuestion(store, ORG, c.token)) === undefined, `3: 🔴 ${c.label} — no outstanding-question row is written, so nothing can route an answer`);
     }
@@ -179,10 +205,10 @@ const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_A
   }
   ok(!isUnifiedSupervisorToken(UNCLASSIFIED) && classifySessionId(UNCLASSIFIED).grain === "native", "3: 🔴 a token that classifies native is not a window token, so the unified receive refuses it");
   const before = (await droppedRows()).length;
-  await onInputRequested({ requests: [parkRequest] }, `unified:${STANDING}`);
-  ok((await droppedRows()).length === before, "3: a session-limit PARK writes no drop row — the park hook owns it");
-  for (const junk of [undefined, null, {}, { requests: "x" }, { requests: [null] }]) {
-    await onInputRequested(junk);
+  await onInteractionOpened(opened(parkRequest), `unified:${STANDING}`);
+  ok((await droppedRows()).length === before, "3: a budget prompt (the old session-limit PARK) writes no drop row — the park hook owns it");
+  for (const junk of [undefined, null, {}, { data: "x" }, { data: { request: null } }]) {
+    await onInteractionOpened(junk);
   }
   ok((await droppedRows()).length === before, "3: junk input writes no row and does not throw");
 }
@@ -195,11 +221,19 @@ const droppedRows = async () => readAudit({ org: ORG, action: QUESTION_DROPPED_A
 }
 
 {
-  ok(typeof unified.adapter?.["input.requested"] === "function", "5: the unified channel registers an input.requested handler through eve's own defineChannel builder");
-  ok(typeof unified.adapter?.["message.completed"] === "function", "5: message.completed still registers");
+  ok(typeof unified.adapter?.["interaction.opened"] === "function", "5: the unified channel registers an interaction.opened handler through eve's own defineChannel builder");
+  ok(typeof unified.adapter?.["content.completed"] === "function", "5: content.completed still registers");
+  {
+    const { EVE_EVENT_NAMES } = await import("../../../scripts/eve-event-names.generated.js");
+    const known: ReadonlySet<string> = new Set(EVE_EVENT_NAMES);
+    const eventKeys = Object.keys(unified.adapter ?? {}).filter((k) => /^[a-z]+\.[a-z_.]+$/.test(k));
+    ok(eventKeys.length >= 2, `5: precondition: the unified adapter's event keys are read (got ${eventKeys.join(", ")})`);
+    const stale = eventKeys.filter((k) => !known.has(k));
+    ok(stale.length === 0, `5: 🔴 every event key on the unified adapter is an event the installed eve emits — no v26 key is left (eve would never fire it): ${stale.join(", ")}`);
+  }
 
   const parkHook = (await import("../agent/hooks/session-park.js")).default as unknown as { events: Record<string, unknown> };
-  ok(typeof parkHook.events["input.requested"] === "function", "5: hooks/session-park.ts STILL subscribes to input.requested — the park path is untouched");
+  ok(typeof parkHook.events["interaction.opened"] === "function", "5: hooks/session-park.ts subscribes to interaction.opened — the park path reads the v27 budget prompt");
 }
 {
   const TASK_REQUEST_ID = "task_abc123:call_child_1";

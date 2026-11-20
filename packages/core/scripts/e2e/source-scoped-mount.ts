@@ -65,11 +65,13 @@ async function transcriptOf(sessionId: string, sinceIso: string): Promise<{ tool
       const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
       for (const e of tr.events) {
         if (e.at !== null && e.at < sinceIso) continue;
-        if (e.type === "message.completed") { text += "\n" + JSON.stringify(e.data ?? {}); continue; }
-        if (e.type !== "actions.requested") continue;
-        for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
-          if (typeof a.toolName === "string") tools.push(a.toolName);
+        if (e.type === "content.completed") {
+          if ((e.data as { kind?: unknown } | undefined)?.kind === "text") text += "\n" + JSON.stringify(e.data ?? {});
+          continue;
         }
+        if (e.type !== "call.requested") continue;
+        const name = (e.data as { capability?: { name?: unknown } } | undefined)?.capability?.name;
+        if (typeof name === "string") tools.push(name);
       }
       if (tr.events.length === 0) break;
       start = tr.nextIndex ?? start + tr.events.length;

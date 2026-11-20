@@ -1,9 +1,9 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { resolveAccessFor } from "../access/request.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { githubWorkMount } from "../scm/github-work.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
@@ -188,10 +188,5 @@ export const postPrWalkthroughEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("post_pr_walkthrough", "_single", postPrWalkthroughEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => (githubWorkMount(ctx as BindableContext) ? postPrWalkthroughEntry : null),
-  },
-});
+export default sessionMountedTool("post_pr_walkthrough", postPrWalkthroughEntry, (ctx) => githubWorkMount(ctx));

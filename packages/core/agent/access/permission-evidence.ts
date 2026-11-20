@@ -72,6 +72,11 @@ export interface ConnectorRefusalEvidence {
   readonly ops: readonly CountedLabel[];
   readonly tiers: readonly CountedLabel[];
   readonly ungranted: number;
+  /**
+   * The `ungranted` rows an `eve__search` wrote (`via: "eve__search"`): a search whose query named a
+   * connection the surface does not hold. No operation ran for these rows.
+   */
+  readonly ungrantedSearches: number;
   readonly liftableUnattended: number;
   readonly unroutedUnattended: number;
   readonly armedSinceUnattended: number;
@@ -212,6 +217,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
     ops: Map<string, number>;
     tiers: Map<string, number>;
     ungranted: number;
+    searches: number;
     liftable: number;
     unrouted: number;
     armedSince: number;
@@ -287,6 +293,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
           ops: new Map(),
           tiers: new Map(),
           ungranted: 0,
+          searches: 0,
           liftable: 0,
           unrouted: 0,
           armedSince: 0,
@@ -305,6 +312,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       const tier = str(d.tier);
       if (tier !== undefined) bump(acc.tiers, tier);
       if (reason === "ungranted") acc.ungranted++;
+      if (reason === "ungranted" && str(d.via) === "eve__search") acc.searches++;
       if (reason === "ask-unattended" && tier === "write") {
         const routineKey = str(d.routine);
         const permissionKind = str(d.grant);
@@ -403,6 +411,7 @@ export function refusalEvidence(rows: readonly EvidenceRow[], window: EvidenceWi
       ops: counted(c.ops),
       tiers: counted(c.tiers),
       ungranted: c.ungranted,
+      ungrantedSearches: c.searches,
       liftableUnattended: c.liftable,
       unroutedUnattended: c.unrouted,
       armedSinceUnattended: c.armedSince,

@@ -40,8 +40,8 @@ export type StackAlias = keyof typeof STACKS;
 
 export const STACK_ALIASES: readonly StackAlias[] = (Object.keys(STACKS) as StackAlias[]).sort();
 
-export function compactionThresholdTokens(contextWindowTokens: number, thresholdPercent: number): number {
-  return Math.max(1, Math.floor(contextWindowTokens * thresholdPercent));
+export function compactionThresholdTokens(contextWindowTokens: number, threshold: number): number {
+  return Math.max(1, Math.floor(contextWindowTokens * threshold));
 }
 
 export type StackOverrides = {

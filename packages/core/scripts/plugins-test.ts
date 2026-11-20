@@ -61,16 +61,16 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   const deploy = skillContent["acme-tools__deploy-runbook"];
   ok(!!deploy, "packaged skill lands in the skill-content map, namespaced");
   ok(deploy?.description === "Use when deploying Acme services.", "packaged skill description carried over from frontmatter");
-  ok(deploy?.markdown === "Steps go here.\n", "packaged skill markdown is the frontmatter-stripped body");
+  ok(deploy?.content === "Steps go here.\n", "packaged skill content is the frontmatter-stripped body");
   ok(deploy?.files?.["references/checklist.md"] === "# checklist\n", "skill sibling files copied into the package's files map");
 
   const lint = skillContent["acme-tools__lint"];
-  ok(!!lint && lint.markdown === "Run the linter before committing.\n", "flat skill (no frontmatter) becomes a skill-content entry");
+  ok(!!lint && lint.content === "Run the linter before committing.\n", "flat skill (no frontmatter) becomes a skill-content entry");
   ok(lint?.description === 'Use when the task relates to "lint".', "flat skill with no description gets one synthesized");
 
   const bare = skillContent["acme-tools__bare"];
   ok(!!bare && bare.description === 'Use when the task relates to "bare".', "a description is synthesized when the packaged skill lacks one");
-  ok(bare?.markdown === "Do the thing.\n", "bare skill's frontmatter is stripped from the markdown");
+  ok(bare?.content === "Do the thing.\n", "bare skill's frontmatter is stripped from the content");
 
   ok(report.skills.length === 3, "report counts all three skills");
   ok(!byPath(`agent/skills/${pluginName}__deploy-runbook/SKILL.md`), "no agent/skills/ file is ever emitted for a skill");
@@ -80,8 +80,8 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   const triage = skillContent["acme-tools__cmd-triage"];
   ok(!!triage, "command lands in the skill-content map");
   ok(triage?.description === "Triage an incoming bug.", "command description carried over");
-  ok(!!triage && triage.markdown.includes("Investigate $ARGUMENTS"), "command body preserved in the markdown");
-  ok(!!triage && triage.markdown.includes("slash command"), "command skill explains the $ARGUMENTS mapping");
+  ok(!!triage && triage.content.includes("Investigate $ARGUMENTS"), "command body preserved in the content");
+  ok(!!triage && triage.content.includes("slash command"), "command skill explains the $ARGUMENTS mapping");
 
   const summary = skillContent["acme-tools__cmd-summary"];
   ok(summary?.description === 'Use when the user asks to run the "summary" workflow.', "missing command description is synthesized");
@@ -90,12 +90,18 @@ const byPath = (p: string) => files.find((f) => f.path === p);
 }
 
 {
-  const conn = byPath("agent/connections/acme-tools__search.ts");
-  ok(!!conn, "url MCP server emitted as an Eve connection");
-  ok(!!conn && conn.content.includes("defineMcpClientConnection"), "connection uses defineMcpClientConnection");
+  const conn = byPath("agent/tools/acme-tools__search.ts");
+  ok(!!conn, "url MCP server emitted as an OE connector mount under agent/tools/");
+  ok(!byPath("agent/connections/acme-tools__search.ts"), "🔴 no eve connection file is emitted: eve would refuse the connector tool names while it is mounted");
+  ok(!!conn && !conn.content.includes("defineMcpClientConnection("), "🔴 the mount never calls defineMcpClientConnection (its results reach the model unfenced)");
+  ok(!!conn && conn.content.includes('connection: "acme-tools__search",'), "the mount names its connection after the slug");
+  ok(
+    !!conn && conn.content.includes('export default seatCut("acme-tools__search", defineConnectorMount({'),
+    "🔴 the mount passes through seatCut, so every seat cut applies to each op by name",
+  );
   ok(!!conn && conn.content.includes('"https://mcp.acme.com/sse"'), "connection carries the url");
-  ok(!!conn && conn.content.includes('assertConnectorGranted("acme-tools__search", ctx.session.auth)'), "connection keeps the per-surface hard gate, wired through the resolver ctx (eve#299)");
-  ok(!!conn && conn.content.includes("auth: (ctx: SessionContext) =>"), "connection auth is the resolver form, not a static provider");
+  ok(!!conn && conn.content.includes('assertConnectorGranted("acme-tools__search", ctx.session.auth, { audit: !isListingTokenRequest(o) })'), "connection keeps the per-surface hard gate, wired through the resolver ctx (eve#299)");
+  ok(!!conn && conn.content.includes("auth: async (ctx: SessionContext) =>"), "connection auth is the resolver form, not a static provider");
   ok(!!conn && conn.content.includes("process.env.ACME_API_KEY"), "token env detected from the server's headers");
   ok(!!conn && conn.content.includes("approval: connectorApprovalPolicy(),"), "connection wires the unattended fence via connectorApprovalPolicy(), matching notion.ts — a bare once() would park an unattended write on a card nobody clicks");
   ok(
@@ -114,7 +120,7 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   ok(!!conn && !conn.content.includes('from "eve/tools/approval"'), "…and its import went with it, so the scaffold leaves no unused binding behind");
   ok(report.connectors.length === 1, "only the url server became a connector");
   ok(report.manual.some((m) => m.kind === "mcp" && m.name === "local"), "the stdio server is reported as MANUAL, not silently dropped");
-  ok(!byPath("agent/connections/acme-tools__local.ts"), "no connection emitted for the stdio server");
+  ok(!byPath("agent/connections/acme-tools__local.ts") && !byPath("agent/tools/acme-tools__local.ts"), "no connection emitted for the stdio server");
 }
 
 {
@@ -250,11 +256,11 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   ok(relativeSeen >= 1, "…and the loop's accept path ran on a real relative specifier — the aggregator's sibling import");
 
   ok(
-    !selfContained("agent/connections/acme-tools__search.ts", "./connector-auth.js"),
+    !selfContained("agent/tools/acme-tools__search.ts", "./connector-auth.js"),
     "control: the exact pre-OPE-1337 relative specifier is rejected — this is what reds if the scaffold regresses",
   );
   ok(
-    !selfContained("agent/connections/acme-tools__search.ts", "../access/connector-scope.js"),
+    !selfContained("agent/tools/acme-tools__search.ts", "../access/connector-scope.js"),
     "control: the pre-OPE-1337 parent-relative specifier is rejected too",
   );
   ok(!Object.hasOwn(coreExports, "./agent/connections/connector-auth.ts"), "control: the exports map is keyed by .js subpaths, so a .ts subpath is correctly absent");

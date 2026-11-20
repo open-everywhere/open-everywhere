@@ -64,9 +64,13 @@ export function selectChangedSilos(rows: readonly AuditEntry[], opts: RenderMemo
   return [...agg.values()].sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0)).map((e) => e.pointer);
 }
 
+// The wake delta reaches a standing seat on the window topology. That seat forwards to its work
+// session, so it hands a lookup off with `work`. Its call to eve's `agent` is refused.
+const FORWARDING_SEAT_RECALL = (): MemoryRecallRoute => memoryRecallRouteFor("standing", undefined, undefined, true, "work");
+
 export function formatMemoryDelta(
   pointers: readonly MemoryDeltaPointer[],
-  recall: MemoryRecallRoute = memoryRecallRouteFor("standing"),
+  recall: MemoryRecallRoute = FORWARDING_SEAT_RECALL(),
 ): string | null {
   if (pointers.length === 0) return null;
   const lines = pointers.map((p) => {
@@ -125,7 +129,7 @@ export function selectIndexChanges(rows: readonly AuditEntry[], opts: RenderInde
 
 export function formatIndexDelta(
   changes: IndexDeltaChanges,
-  recall: MemoryRecallRoute = memoryRecallRouteFor("standing"),
+  recall: MemoryRecallRoute = FORWARDING_SEAT_RECALL(),
 ): string | null {
   if (changes.healed.length === 0) return null;
   const names = changes.healed.map((n) => `"${n}"`).join(", ");

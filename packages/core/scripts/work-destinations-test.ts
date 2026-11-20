@@ -8,6 +8,7 @@ import { registerTicketCreateAdapter, resolveTicketCreate } from "../agent/chann
 import { registerEntityActionAdapter, resolveEntityAction } from "../agent/channels/entity-actions.js";
 import { registerIdentityMapper, type BindableContext } from "../agent/identity/binding.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -154,7 +155,7 @@ registerEntityActionAdapter({
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 async function armed(tool: unknown, c: BindableContext): Promise<unknown> {
-  const handler = (tool as { events: Record<string, Handler> }).events["session.started"];
+  const handler = _dynamicResolverForTest(tool);
   return await handler({}, c);
 }
 

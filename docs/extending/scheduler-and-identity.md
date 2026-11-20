@@ -51,7 +51,39 @@ auth principal of that path with a spec first. It also refuses a `markdown:` sch
 a code-only row whose module starts to send, and a module there that default-exports anything but a
 `defineSchedule({ … })` call (eve runs any default export under that tree as a schedule). The same lint keeps a census of the eve files that
 write the session auth (eve's `AuthKey`), so an eve bump that adds a writer goes red and names it
-(OPE-2686).
+(OPE-2686). Each row of that census (`EVE_AUTH_WRITERS`) says which principal its writer carries.
+
+eve 1.0.0-rc.18 added five writers. `test:eve-auth-writers` (core) pins the principal each one
+carries and the road that reaches it:
+
+- A **cancelled model-call batch** copies the turn step's own slot forward. It is a copy, not a new
+  principal.
+- A **schedule-collection occurrence** runs under the principal that created the schedule, stored in
+  the schedule's envelope. The authored `auth` callback can add attributes but cannot name another
+  principal. eve refuses an occurrence of a collection the agent does not deploy, before the write.
+  The queue consumer checks the delivered schedule's id, name and namespace against the stored
+  record, but not the envelope's principal. A provider's own deliver target runs no check.
+- **`invokeTool`** runs a tool outside a conversation under the `auth` option its caller passes,
+  verbatim. eve hands it to the route handlers of every channel, eve's own vendor channels included.
+  Today only eve's opt-in `mcpChannel` calls it. The leg pins the set of eve modules that name it,
+  so an eve channel that starts to call it goes red.
+- A **connection-event callback** and its **owner** run under the auth stored on the subscription
+  binding. That auth is a clone of the subscribing session's slot, not a field of the event. Both
+  delivery roads (direct, and queued until the subscription opens) use the stored binding.
+
+OE reaches none of the last three, and the lint keeps it that way for OE's own modules. Rules C and
+E parse every agent module, and they read names and strings after the parser decodes any escape.
+Rule C refuses a connection that declares events, at the top level or as `experimental: { events }`
+(the rc.18 shape), and a connection whose `experimental` block it cannot read. It reads a definer
+that a module calls by name, or as a namespace member named by an identifier, a string or a template
+string with no substitution. It refuses a definer that a module takes as a value by one of those
+names, or destructures. Rule E refuses any
+agent module that names `invokeTool`, `mcpChannel` or `defineDynamicSchedules` by an identifier, a
+string or a template string with no substitution. It also refuses a load of `eve/channels/mcp` or
+`eve/experimental/schedules` by an import, a dynamic import or a call with such a string. Both rules are
+static name checks. A name that a module builds at run time (for example `args["invoke" + "Tool"]`)
+escapes rules C and E, and so does a definer that a module reads through a call such as
+`Reflect.get`.
 
 ## Control-plane identity
 

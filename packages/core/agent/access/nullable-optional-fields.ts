@@ -2,10 +2,6 @@ import { asSchema, jsonSchema } from "ai";
 
 type Json = Record<string, unknown>;
 
-interface ToolWithInputSchema {
-  inputSchema?: unknown;
-}
-
 interface ValidatingSchema {
   readonly jsonSchema: unknown;
   readonly validate?: (value: unknown) => unknown;
@@ -149,18 +145,4 @@ export function nullableOptionalSchema(current: unknown): unknown {
   replacements.set(current, replacement);
   ours.add(replacement as object);
   return replacement;
-}
-
-export function nullableOptionalToolSet(toolset: Record<string, unknown>): void {
-  for (const raw of Object.values(toolset)) {
-    if (raw === null || typeof raw !== "object") continue;
-    const tool = raw as ToolWithInputSchema;
-    let replacement: unknown;
-    try {
-      replacement = nullableOptionalSchema(tool.inputSchema);
-    } catch {
-      continue;
-    }
-    if (replacement !== undefined) tool.inputSchema = replacement;
-  }
 }

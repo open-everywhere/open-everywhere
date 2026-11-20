@@ -21,6 +21,7 @@ import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 registerSlackProvider();
 registerDiscordProvider();
@@ -338,7 +339,7 @@ ok(allowedOnWorkerSeat("read_work_thread") === true, "the WORK thread read REACH
     });
   }
   type Resolver = (event: unknown, ctx: unknown) => unknown;
-  const resolverOf = (tool: unknown): Resolver => (tool as { events: Record<string, Resolver> }).events["session.started"];
+  const resolverOf = (tool: unknown): Resolver => _dynamicResolverForTest(tool);
 
   const discordWorker = workerOf(discordCtx(bothSources), "discord");
   const slackWorker = workerOf(slackCtx(bothSources), "slack");

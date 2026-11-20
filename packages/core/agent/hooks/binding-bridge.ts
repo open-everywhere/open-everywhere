@@ -90,7 +90,9 @@ async function refreshHealAndGuard(ctx: RefusableContext, phase: "session.starte
 
 export default defineHook({
   events: {
+    // hook-path: REFUSAL — an unreadable binding cancels the turn, so a child never runs on the standing seat's surface
     "session.started": async (_event, ctx) => refreshHealAndGuard(ctx as RefusableContext, "session.started"),
+    // hook-path: REFUSAL — the same guard at the turn edge
     "turn.started": async (_event, ctx) => refreshHealAndGuard(ctx as RefusableContext, "turn.started"),
   },
 });

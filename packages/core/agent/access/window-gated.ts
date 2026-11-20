@@ -1,4 +1,4 @@
-import { defineDurableSchema, defineDynamic, defineTool, type ToolDefinition } from "eve/tools";
+import { defineDynamic, defineTool, type DynamicContext, type DynamicToolResult, type ToolDefinition } from "eve/tools";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface GatedToolEntry {
@@ -14,8 +14,8 @@ export type LooseApproval = ((ctx: any) => any) | { readonly request: (ctx: any)
 
 import { bindFrom, windowGrainOf, currentWakeId, currentWindowToken, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
-import { classifySessionId } from "../channels/window-key.js";
-import { registerAuthoredProjectionName, setVariantProjectedName } from "./untrusted-projection.js";
+import { classifySessionId, stripUnifiedSendPrefix } from "../channels/window-key.js";
+import { setVariantProjectedName } from "./connector-result-fence.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, fullKit } from "./window-gate-manifest.js";
 import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
@@ -57,7 +57,7 @@ export function domainLabelOf(ctx: BindableContext): string {
     if (sid.kind === "window" || sid.kind === "task" || sid.kind === "thread-seat" || sid.kind === "work") return sid.key.domain;
     if (sid.kind === "container-supervisor") return sid.containerKey.length > 0 ? sid.containerKey : "unknown";
     if (typeof raw !== "string") return "unknown";
-    const token = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
+    const token = stripUnifiedSendPrefix(raw);
     const suffix = token.lastIndexOf(":oe-sup:g");
     return suffix > 0 ? token.slice(0, suffix) : "unknown";
   } catch {
@@ -188,274 +188,156 @@ function gatedExecute(name: string, entry: GatedToolEntry): (input: unknown, ctx
   };
 }
 
-const STEP_REGISTRY_KEY = Symbol.for("@workflow/core//registeredSteps");
-
-function stepRegistry(): Map<string, unknown> {
-  const g = globalThis as Record<symbol, unknown>;
-  let reg = g[STEP_REGISTRY_KEY] as Map<string, unknown> | undefined;
-  if (reg === undefined) {
-    reg = new Map();
-    g[STEP_REGISTRY_KEY] = reg;
-  }
-  return reg;
-}
-
-export function replayStepNames(slug: string, entryKey: string): { execute: string; approval: string; approvalResponse: string; toModelOutput: string } {
-  return {
-    execute: `eve:framework-dynamic:${slug}:${entryKey}`,
-    approval: `eve:dynamic-tool-approval:${slug}:${entryKey}`,
-    approvalResponse: `eve:dynamic-tool-approval-response:${slug}:${entryKey}`,
-    toModelOutput: `eve:dynamic-tool-model-output:${slug}:${entryKey}`,
-  };
-}
-
-const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
-
-const DURABLE_SCHEMA = Symbol.for("eve:durable-dynamic-schema");
-
-function isSchemaValidator(schema: unknown): schema is object {
-  if (typeof schema !== "object" || schema === null || !("~standard" in schema)) return false;
-  const std = (schema as { "~standard"?: { validate?: unknown } })["~standard"];
-  return typeof std === "object" && std !== null && typeof std.validate === "function";
-}
-
-function durableSchemaOf(schema: unknown): unknown {
-  if (!isSchemaValidator(schema) || Reflect.get(schema, DURABLE_SCHEMA) !== undefined) return schema;
-  return defineDurableSchema({ closure: {} as Record<string, never>, schema: () => schema as never });
-}
-
-function withDurableSchemas<T extends { readonly inputSchema?: unknown; readonly outputSchema?: unknown }>(tool: T): T {
-  const out: Record<string, unknown> = { ...tool };
-  if (tool.inputSchema !== undefined) out.inputSchema = durableSchemaOf(tool.inputSchema);
-  if (tool.outputSchema !== undefined) out.outputSchema = durableSchemaOf(tool.outputSchema);
-  return out as T;
-}
-
-type ReplayCallback = (closure: Record<string, never>, ...args: never[]) => unknown;
-
-type CallbackPhase = "approvalRequest" | "approvalResponse" | "execute" | "toModelOutput";
-
-interface DurableCallbackReference {
-  readonly callback: ReplayCallback;
-  readonly closure: Record<string, never>;
-}
-
-function isDurableClosureSerializable(value: unknown, seen: WeakSet<object> = new WeakSet()): boolean {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every((item) => isDurableClosureSerializable(item, seen));
-  if (typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value);
-  if (proto !== null && proto !== Object.prototype) return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  for (const item of Object.values(value)) {
-    if (item === undefined) continue;
-    if (!isDurableClosureSerializable(item, seen)) return false;
-  }
-  seen.delete(value);
-  return true;
-}
-
-function fillDurableCallbackDescriptors(
-  entry: ReplayableToolEntry,
-  callbacks: Partial<Record<CallbackPhase, ReplayCallback>>,
-  options: { readonly closure?: Record<string, string>; readonly overwrite?: boolean } = {},
-): void {
-  const holder = entry as unknown as Record<symbol, unknown>;
-  const existing = (holder[DURABLE_TOOL_CALLBACKS] as Record<string, DurableCallbackReference | undefined> | undefined) ?? {};
-  const next: Record<string, DurableCallbackReference> = {};
-  for (const [phase, reference] of Object.entries(existing)) if (reference !== undefined) next[phase] = reference;
-  const closure = (options.closure ?? {}) as Record<string, never>;
-  for (const [phase, callback] of Object.entries(callbacks)) {
-    if (callback === undefined) continue;
-    const held = next[phase];
-    if (held !== undefined && options.overwrite !== true) {
-      if (isDurableClosureSerializable(held.closure)) continue;
-      console.error(
-        `[open-everywhere:dynamic-tools] the build transform's "${phase}" descriptor carries a non-serializable ` +
-          "capture, which eve would refuse — taking the slot back with an empty closure. Hoist the callback out of " +
-          "the defineTool literal into a module-level factory (OPE-1063; see scripts/dynamic-callback-closure-bundle-test.ts).",
-      );
-    }
-    next[phase] = { callback, closure: { ...closure } };
-  }
-  Object.defineProperty(holder, DURABLE_TOOL_CALLBACKS, { configurable: true, value: next });
-}
-
-export interface ReplayableToolEntry {
+export interface MountedToolEntry {
   execute(input: any, ctx: any): any;
   readonly approval?: LooseApproval;
   toModelOutput?(output: any): any;
 }
 
-const MOUNTED_ENTRIES = new Map<string, { readonly entries: Set<ReplayableToolEntry>; variantManaged: boolean }>();
+const MOUNTED_ENTRIES = new Map<string, Set<MountedToolEntry>>();
 
 function mountedNameOf(slug: string, entryKey: string): string {
   return entryKey.startsWith("_") ? slug : entryKey;
 }
 
-function claimMountedName(mountedName: string, entry: ReplayableToolEntry, variantManaged: boolean): void {
+function claimMountedName(mountedName: string, entry: MountedToolEntry): void {
   const held = MOUNTED_ENTRIES.get(mountedName);
-  if (held === undefined) {
-    MOUNTED_ENTRIES.set(mountedName, { entries: new Set([entry]), variantManaged });
-    return;
-  }
-  held.entries.add(entry);
-  if (variantManaged) held.variantManaged = true;
+  if (held === undefined) MOUNTED_ENTRIES.set(mountedName, new Set([entry]));
+  else held.add(entry);
 }
 
-export function registeredMountedEntries(): ReadonlyMap<string, ReadonlySet<ReplayableToolEntry>> {
-  return new Map([...MOUNTED_ENTRIES].map(([name, held]) => [name, held.entries]));
-}
-
-export interface MountedEntryCollision {
-  readonly name: string;
-  readonly entryCount: number;
-  readonly variantManaged: boolean;
-  readonly distinctExecuteCallbacks: number;
-}
-
-export function mountedEntryCollisions(): MountedEntryCollision[] {
-  const out: MountedEntryCollision[] = [];
-  for (const [name, held] of MOUNTED_ENTRIES) {
-    if (held.entries.size < 2) continue;
-    const callbacks = new Set<unknown>();
-    for (const entry of held.entries) {
-      const described = (entry as unknown as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as
-        | Record<string, DurableCallbackReference | undefined>
-        | undefined;
-      callbacks.add(described?.execute?.callback);
-    }
-    out.push({ distinctExecuteCallbacks: callbacks.size, entryCount: held.entries.size, name, variantManaged: held.variantManaged });
-  }
-  return out;
+export function registeredMountedEntries(): ReadonlyMap<string, ReadonlySet<MountedToolEntry>> {
+  return new Map(MOUNTED_ENTRIES);
 }
 
 export function authoredModelProjectionFor(mountedName: string): ((output: unknown) => unknown) | undefined {
   const held = MOUNTED_ENTRIES.get(mountedName);
   if (held === undefined) return undefined;
-  if (held.entries.size !== 1) {
+  if (held.size !== 1) {
     throw new Error(
-      `authoredModelProjectionFor("${mountedName}"): ${held.entries.size} entries mount under this name — a variant family has no single projection to return.`,
+      `authoredModelProjectionFor("${mountedName}"): ${held.size} entries mount under this name — a variant family has no single projection to return.`,
     );
   }
-  const [entry] = held.entries;
+  const [entry] = held;
   const project = entry?.toModelOutput;
   if (typeof project !== "function") return undefined;
   return (output: unknown) => project(output);
 }
 
-export function preRegisterDynamicVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>): void {
-  const entryKeys = Object.keys(variants);
-  if (entryKeys.length < 2) {
-    throw new Error(`preRegisterDynamicVariants("${mountedName}"): needs at least two variants — use preRegisterDynamicEntry for one.`);
+export function registerMountedEntry(slug: string, entryKey: string, entry: MountedToolEntry): void {
+  const mountedName = mountedNameOf(slug, entryKey);
+  claimMountedName(mountedName, entry);
+}
+
+function registerMountedVariants(mountedName: string, variants: Readonly<Record<string, MountedToolEntry>>): void {
+  if (Object.keys(variants).length < 2) {
+    throw new Error(`registerMountedVariants("${mountedName}"): needs at least two variants — use registerMountedEntry for one.`);
   }
   installVariants(mountedName, variants);
 }
 
-const INCREMENTAL_VARIANTS = new Map<string, Record<string, ReplayableToolEntry>>();
+const INCREMENTAL_VARIANTS = new Map<string, Record<string, MountedToolEntry>>();
 
-export function registerDynamicVariant(mountedName: string, entryKey: string, entry: ReplayableToolEntry): void {
+export function registerMountedVariant(mountedName: string, entryKey: string, entry: MountedToolEntry): void {
   const held = INCREMENTAL_VARIANTS.get(mountedName) ?? {};
   held[entryKey] = entry;
   INCREMENTAL_VARIANTS.set(mountedName, held);
   installVariants(mountedName, held);
 }
 
-export function _resetDynamicVariantsForTest(): void {
+export function _resetMountedVariantsForTest(): void {
   INCREMENTAL_VARIANTS.clear();
 }
 
-function installVariants(mountedName: string, variants: Readonly<Record<string, ReplayableToolEntry>>): void {
-  const entryKeys = Object.keys(variants);
-  const pick = (closure: unknown): { entryKey: string; entry: ReplayableToolEntry } => {
-    const entryKey = (closure as { entryKey?: unknown } | undefined)?.entryKey;
-    if (typeof entryKey !== "string" || variants[entryKey] === undefined) {
-      throw new Error(
-        `Dynamic tool "${mountedName}" was replayed with no variant key in its durable closure (got ${JSON.stringify(entryKey)}). ` +
-          `Its metadata predates the variant dispatcher and cannot say which implementation the session mounted. Start a new session.`,
-      );
-    }
-    return { entry: variants[entryKey], entryKey };
-  };
-  const shared: Partial<Record<CallbackPhase, ReplayCallback>> = {};
-  shared.execute = ((closure: unknown, input: unknown, ctx: unknown) => pick(closure).entry.execute(input, ctx)) as ReplayCallback;
-  const hasApprovalRequest = entryKeys.some((k) => approvalRequestOf(variants[k]) !== undefined);
-  const hasApprovalResponse = entryKeys.some((k) => approvalResponseOf(variants[k]) !== undefined);
-  if (hasApprovalRequest) {
-    shared.approvalRequest = ((closure: unknown, actx: unknown) => {
-      const { entry, entryKey } = pick(closure);
-      const request = approvalRequestOf(entry);
-      if (request === undefined) throw new Error(`Dynamic tool "${mountedName}" variant "${entryKey}" has no approval request policy.`);
-      return request(actx);
-    }) as ReplayCallback;
-  }
-  if (hasApprovalResponse) {
-    shared.approvalResponse = ((closure: unknown, rctx: unknown) => {
-      const { entry, entryKey } = pick(closure);
-      const response = approvalResponseOf(entry);
-      if (response === undefined) throw new Error(`Dynamic tool "${mountedName}" variant "${entryKey}" has no approval response policy.`);
-      return response(rctx);
-    }) as ReplayCallback;
-  }
-  const hasModelOutput = entryKeys.some((k) => typeof variants[k].toModelOutput === "function");
-  if (hasModelOutput) {
-    shared.toModelOutput = ((closure: unknown, out: unknown) => {
-      const { entry, entryKey } = pick(closure);
-      const project = entry.toModelOutput;
-      if (typeof project !== "function") throw new Error(`Dynamic tool "${mountedName}" variant "${entryKey}" authors no toModelOutput.`);
-      return project.call(entry, out);
-    }) as ReplayCallback;
-  }
-  setVariantProjectedName(mountedName, entryKeys.length > 0 && entryKeys.every((k) => typeof variants[k].toModelOutput === "function"));
-  const reg = stepRegistry();
-  for (const entryKey of entryKeys) {
-    const entry = variants[entryKey];
-    const names = replayStepNames(mountedName, entryKey);
-    reg.set(names.execute, ((_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx)) as ReplayCallback);
-    const approval = approvalRequestOf(entry);
-    if (approval !== undefined) reg.set(names.approval, ((_cv: unknown, actx: unknown) => approval(actx)) as ReplayCallback);
-    const approvalResponse = approvalResponseOf(entry);
-    if (approvalResponse !== undefined) reg.set(names.approvalResponse, ((_cv: unknown, rctx: unknown) => approvalResponse(rctx)) as ReplayCallback);
-    const project = entry.toModelOutput;
-    if (typeof project === "function") reg.set(names.toModelOutput, ((_cv: unknown, out: unknown) => project.call(entry, out)) as ReplayCallback);
-    const own: Partial<Record<CallbackPhase, ReplayCallback>> = { execute: shared.execute };
-    if (approval !== undefined) own.approvalRequest = shared.approvalRequest;
-    if (approvalResponse !== undefined) own.approvalResponse = shared.approvalResponse;
-    if (typeof project === "function") own.toModelOutput = shared.toModelOutput;
-    fillDurableCallbackDescriptors(entry, own, { closure: { entryKey }, overwrite: true });
-    claimMountedName(mountedName, entry, true);
-  }
+function installVariants(mountedName: string, variants: Readonly<Record<string, MountedToolEntry>>): void {
+  const entries = Object.values(variants);
+  setVariantProjectedName(mountedName, entries.length > 0 && entries.every((entry) => typeof entry.toModelOutput === "function"));
+  for (const entry of entries) claimMountedName(mountedName, entry);
 }
 
-export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: ReplayableToolEntry): void {
-  const names = replayStepNames(slug, entryKey);
-  const reg = stepRegistry();
-  claimMountedName(mountedNameOf(slug, entryKey), entry, false);
-  const callbacks: Partial<Record<CallbackPhase, ReplayCallback>> = {};
-  callbacks.execute = ((_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx)) as ReplayCallback;
-  reg.set(names.execute, callbacks.execute);
-  const approval = approvalRequestOf(entry);
-  if (approval !== undefined) {
-    callbacks.approvalRequest = ((_cv: unknown, actx: unknown) => approval(actx)) as ReplayCallback;
-    reg.set(names.approval, callbacks.approvalRequest);
-  }
-  const approvalResponse = approvalResponseOf(entry);
-  if (approvalResponse !== undefined) {
-    callbacks.approvalResponse = ((_cv: unknown, rctx: unknown) => approvalResponse(rctx)) as ReplayCallback;
-    reg.set(names.approvalResponse, callbacks.approvalResponse);
-  }
-  if (typeof entry.toModelOutput === "function") {
-    registerAuthoredProjectionName(mountedNameOf(slug, entryKey));
-    callbacks.toModelOutput = ((_cv: unknown, out: unknown) => (entry.toModelOutput as (o: unknown) => unknown)(out)) as ReplayCallback;
-    reg.set(names.toModelOutput, callbacks.toModelOutput);
-  }
-  fillDurableCallbackDescriptors(entry, callbacks);
+type Memo = DynamicContext["memo"];
+
+const DYNAMIC_FUNCTION = Symbol.for("eve.dynamic");
+
+function sessionIdOf(ctx: unknown): string | null {
+  const id = (ctx as { session?: { id?: unknown } } | undefined)?.session?.id;
+  return typeof id === "string" ? id : null;
+}
+
+export function seatMemoKey(ctx: unknown): readonly unknown[] {
+  return ["seat", sessionIdOf(ctx)];
+}
+
+export function turnMemoKey(ctx: unknown): readonly unknown[] {
+  const turnId = (ctx as { turn?: { id?: unknown } | null } | undefined)?.turn?.id;
+  return ["turn", sessionIdOf(ctx), typeof turnId === "string" ? turnId : null];
+}
+
+export async function memoized<T>(ctx: unknown, key: unknown, fn: () => T | Promise<T>): Promise<T> {
+  const memo = (ctx as { memo?: Memo } | undefined)?.memo;
+  if (typeof memo !== "function") return await fn();
+  return await memo(key, () => fn());
+}
+
+function seatDecision<T>(ctx: unknown, fn: () => T): T | Promise<Awaited<T>> {
+  const memo = (ctx as { memo?: Memo } | undefined)?.memo;
+  if (typeof memo !== "function") return fn();
+  return memo(seatMemoKey(ctx), async () => await fn()) as Promise<Awaited<T>>;
+}
+
+function thenOrNow<T, R>(value: T | Promise<T>, next: (resolved: T) => R): R | Promise<R> {
+  return value instanceof Promise ? value.then(next) : next(value);
+}
+
+function dynamicFunctionOf(sentinel: unknown): (ctx: unknown) => unknown {
+  const fn = typeof sentinel === "object" && sentinel !== null ? (sentinel as Record<symbol, unknown>)[DYNAMIC_FUNCTION] : undefined;
+  if (typeof fn !== "function") throw new Error("evaluateDynamic: not a defineDynamic() value");
+  return fn as (ctx: unknown) => unknown;
+}
+
+export async function evaluateDynamic(sentinel: unknown, ctx: unknown): Promise<unknown> {
+  return await dynamicFunctionOf(sentinel)(ctx);
+}
+
+export function _dynamicResolverForTest(sentinel: unknown): (event: unknown, ctx: unknown) => any {
+  const fn = dynamicFunctionOf(sentinel);
+  return (_event, ctx) => fn(ctx);
+}
+
+export function sessionMountedTool(
+  slug: string,
+  entry: MountedToolEntry,
+  mount?: (ctx: BindableContext) => boolean | Promise<boolean>,
+): unknown {
+  registerMountedEntry(slug, "_single", entry);
+  const mounted = entry as unknown as DynamicToolResult;
+  return defineDynamic((ctx) => {
+    if (mount === undefined) return mounted;
+    return thenOrNow(
+      seatDecision(ctx, () => thenOrNow(mount(ctx as unknown as BindableContext), (allowed) => allowed === true)),
+      (allowed) => (allowed ? mounted : null),
+    );
+  });
+}
+
+export function sessionVariantTool(
+  mountedName: string,
+  variants: Readonly<Record<string, MountedToolEntry>>,
+  pick: (ctx: BindableContext) => string | null,
+): unknown {
+  registerMountedVariants(mountedName, variants);
+  return defineDynamic((ctx) =>
+    thenOrNow(seatDecision(ctx, () => pick(ctx as unknown as BindableContext)), (key) => {
+      if (key === null) return null;
+      const entry = variants[key];
+      if (entry === undefined) throw new Error(`Dynamic tool "${mountedName}" has no variant "${key}".`);
+      return entry as unknown as DynamicToolResult;
+    }),
+  );
 }
 
 function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
-  return defineTool({ ...withDurableSchemas(entry), execute: gatedExecute(name, entry) } as unknown as ToolDefinition) as unknown as GatedToolEntry;
+  return defineTool({ ...entry, execute: gatedExecute(name, entry) } as unknown as ToolDefinition) as unknown as GatedToolEntry;
 }
 
 export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ctx: BindableContext) => boolean): unknown {
@@ -463,22 +345,19 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
     throw new Error(`windowGated("${name}"): not in WINDOW_GATED_TOOLS — add the kit row (the table is the single source of truth)`);
   }
   const armed = armEntry(name, entry);
-  preRegisterDynamicEntry(name, "_single", armed);
-  const dyn = defineDynamic({
-    events: {
-      "session.started": async (_event, ctx) => {
-        const c = ctx as BindableContext;
-        const grain = grainOf(c);
-        if (!WINDOW_GATED_TOOLS[name].includes(grain)) {
-          if (isNarrowedGrain(grain)) await auditGateOnce(c, grain);
-          return null;
-        }
-        if (mountGate && !mountGate(c)) return null;
-        return armed;
-      },
-    },
+  registerMountedEntry(name, "_single", armed);
+  return defineDynamic(async (ctx) => {
+    const seat = await memoized(ctx, seatMemoKey(ctx), async () => {
+      const c = ctx as unknown as BindableContext;
+      const grain = grainOf(c);
+      if (!WINDOW_GATED_TOOLS[name].includes(grain)) {
+        if (isNarrowedGrain(grain)) await auditGateOnce(c, grain);
+        return { grain, mounted: false };
+      }
+      return { grain, mounted: !(mountGate && !mountGate(c)) };
+    });
+    return seat.mounted && WINDOW_GATED_TOOLS[name].includes(seat.grain) ? (armed as unknown as DynamicToolResult) : null;
   });
-  return dyn;
 }
 
 export function windowGatedKit(
@@ -492,37 +371,41 @@ export function windowGatedKit(
       throw new Error(`windowGatedKit("${slug}"): "${name}" is not in WINDOW_GATED_TOOLS — add the kit row`);
     }
     armed[name] = armEntry(name, entry);
-    preRegisterDynamicEntry(slug, name, armed[name]);
+    registerMountedEntry(slug, name, armed[name]);
   }
   for (const name of Object.keys(mountGates)) {
     if (armed[name] === undefined) {
       throw new Error(`windowGatedKit("${slug}"): mountGates names "${name}", which is not a key of this kit — a predicate on a name the kit doesn't provide gates nothing (fix the name)`);
     }
   }
-  return defineDynamic({
-    events: {
-      "session.started": async (_event, ctx) => {
-        const c = ctx as BindableContext;
-        const grain = grainOf(c);
-        const mounted: Record<string, GatedToolEntry> = {};
-        let withheldAny = false;
-        for (const name of Object.keys(armed)) {
-          if (!WINDOW_GATED_TOOLS[name].includes(grain)) { withheldAny = true; continue; }
-          const gate = mountGates[name];
-          if (gate && !gate(c)) continue;
-          mounted[name] = armed[name];
+  return defineDynamic(async (ctx) => {
+    const seat = await memoized(ctx, seatMemoKey(ctx), async () => {
+      const c = ctx as unknown as BindableContext;
+      const grain = grainOf(c);
+      const kept: string[] = [];
+      let withheldAny = false;
+      for (const name of Object.keys(armed)) {
+        if (!WINDOW_GATED_TOOLS[name].includes(grain)) {
+          withheldAny = true;
+          continue;
         }
-        if (withheldAny && isNarrowedGrain(grain)) await auditGateOnce(c, grain);
-        return Object.keys(mounted).length > 0 ? mounted : null;
-      },
-    },
+        const gate = mountGates[name];
+        if (gate && !gate(c)) continue;
+        kept.push(name);
+      }
+      if (withheldAny && isNarrowedGrain(grain)) await auditGateOnce(c, grain);
+      return { grain, names: kept };
+    });
+    const mounted: Record<string, GatedToolEntry> = {};
+    for (const name of seat.names) {
+      if (armed[name] !== undefined && WINDOW_GATED_TOOLS[name].includes(seat.grain)) mounted[name] = armed[name];
+    }
+    return Object.keys(mounted).length > 0 ? (mounted as unknown as DynamicToolResult) : null;
   });
 }
 
 export async function resolveWindowGated(gated: unknown, ctx: BindableContext): Promise<unknown> {
-  const resolver = (gated as { events?: Record<string, (event: unknown, ctx: unknown) => unknown> }).events?.["session.started"];
-  if (typeof resolver !== "function") throw new Error("resolveWindowGated: not a windowGated dynamic tool");
-  return await resolver({ type: "session.started" }, ctx);
+  return await evaluateDynamic(gated, ctx);
 }
 
 export function leanSeatRefusal(name: string, grain: string): string {

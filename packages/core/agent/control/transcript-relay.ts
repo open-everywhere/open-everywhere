@@ -2,7 +2,7 @@ import type { AttachSessionFn } from "eve/channels";
 import { createHmac } from "node:crypto";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { readCappedBody, selfDispatchBaseUrl } from "../channels/self-dispatch.js";
-import { drainSessionStream, probeSessionExists, type ProbeableSession, type SourceStreamEvent } from "./read-route.js";
+import { drainSessionStream, probeSessionExists, SessionStreamOpenError, type ProbeableSession, type SourceStreamEvent } from "./read-route.js";
 import { renderTranscript } from "./transcript-render.js";
 import { listRoutineFires } from "../routines/fire-audit.js";
 import { appendAudit } from "../audit/audit.js";
@@ -149,15 +149,13 @@ export async function handleTranscriptRelay(
     return json(410, { error: "that run's transcript is no longer available (expired or unreadable)" });
   }
 
-  let stream: ReadableStream<SourceStreamEvent>;
   try {
-    stream = (await session.getEventStream({ startIndex: 0 })) as unknown as ReadableStream<SourceStreamEvent>;
-  } catch {
-    return json(410, { error: "that run's transcript is no longer available (expired or unreadable)" });
-  }
-
-  try {
-    const { events, complete } = await drainSessionStream(stream, 0, TRANSCRIPT_RELAY_MAX_EVENTS, TRANSCRIPT_RELAY_IDLE_MS);
+    const { events, complete } = await drainSessionStream(
+      (signal) => session.stream({ startIndex: 0, follow: false, signal }) as AsyncIterable<SourceStreamEvent>,
+      0,
+      TRANSCRIPT_RELAY_MAX_EVENTS,
+      TRANSCRIPT_RELAY_IDLE_MS,
+    );
     const text = renderTranscript(events, { complete, eventCount: events.length });
     const result: TranscriptRelayResult = {
       routineId: request.routineId,
@@ -172,6 +170,7 @@ export async function handleTranscriptRelay(
     };
     return json(200, result);
   } catch (err) {
+    if (err instanceof SessionStreamOpenError) return json(410, { error: "that run's transcript is no longer available (expired or unreadable)" });
     return json(502, { error: `transcript read failed: ${err instanceof Error ? err.message : String(err)}` });
   }
 }

@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { resolveReplyTarget, replyEditLocus, replyAuditFor } from "../channels/reply-post.js";
@@ -14,7 +14,8 @@ import {
 import { platformFailureClass } from "../channels/platform-failure.js";
 import { FOLLOW_UPS_INPUT } from "../channels/reply-follow-ups.js";
 import type { ReplyAudit } from "../channels/reply-post.js";
-import { resolveEditableWakeTarget, replyRefusalMessage } from "../channels/unified-window.js";
+import { resolveEditableWakeTarget, replyRefusalMessage, boundConversationOrigin, sameUnifiedConversation } from "../channels/unified-window.js";
+import { refuseVerbIfStoodDown } from "../channels/stand-down-gate.js";
 import { END_TURN_WITH_SENTINEL_INSTRUCTION } from "../channels/normalized-wake.js";
 import { editPostTail } from "../channels/session-tail-record.js";
 import { markWakeRepliedThisTurn } from "../channels/reply-signal.js";
@@ -24,7 +25,7 @@ import { addressedWakeThisTurn } from "../access/dispatch-origin-signal.js";
 import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/delegation-mount.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { preRegisterDynamicVariants } from "../access/window-gated.js";
+import { sessionVariantTool } from "../access/window-gated.js";
 
 const editedNote = (platform: string): string =>
   `Message updated on ${platform}. Nobody was notified — an edit changes what is already there, so anything NEW to say still needs a \`reply\`. If nothing new is left to say: ${END_TURN_WITH_SENTINEL_INSTRUCTION}`;
@@ -87,6 +88,14 @@ export const unifiedEditReplyEntry = defineTool({
       throw new Error(replyRefusalMessage(resolution.reason, input.wake, { turnWake, silent: silentRoutineThisTurn() }));
     }
     const origin = resolution.origin;
+    await refuseVerbIfStoodDown(bind, "edit_reply", {
+      namesBoundConversation: async () => {
+        if (input.wake === turnWake) return true;
+        const boundOrigin = await boundConversationOrigin(store, org, turnWake);
+        return boundOrigin !== undefined && sameUnifiedConversation(boundOrigin, origin);
+      },
+      auditRefused: (reason) => auditReplyEditRefused(replyAuditFor(bind, "tool", input.wake), reason),
+    });
     const locus = await resolveUnifiedEditLocus(origin);
     if (!locus) {
       await auditReplyEditRefused(replyAuditFor(bind, "tool", input.wake), EDIT_NO_ARM_REFUSAL_REASON);
@@ -119,6 +128,9 @@ const baseEditReplyEntry = defineTool({
         "edit_reply couldn't resolve this conversation — try again from a real channel, thread, or discussion, not a synthetic context.",
       );
     }
+    await refuseVerbIfStoodDown(bind, "edit_reply", {
+      auditRefused: (reason) => auditReplyEditRefused(replyAuditFor(bind, "tool"), reason),
+    });
     const locus = replyEditLocus(target);
     if (!locus) {
       await auditReplyEditRefused(replyAuditFor(bind, "tool"), EDIT_NO_ARM_REFUSAL_REASON);
@@ -130,13 +142,6 @@ const baseEditReplyEntry = defineTool({
     return owingTask === undefined ? result : { ...result, note: `${result.note}${PENDING_WORK_INSTRUCTION}` };
   },
 });
-preRegisterDynamicVariants("edit_reply", { _base: baseEditReplyEntry, _single: unifiedEditReplyEntry });
-
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const c = ctx as BindableContext;
-      return isUnifiedWindowContext(c) ? unifiedEditReplyEntry : baseEditReplyEntry;
-    },
-  },
+export default sessionVariantTool("edit_reply", { _base: baseEditReplyEntry, _single: unifiedEditReplyEntry }, (ctx) => {
+  return isUnifiedWindowContext(ctx) ? "_single" : "_base";
 });

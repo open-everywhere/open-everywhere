@@ -11,10 +11,14 @@ export const MIN_PLAUSIBLE_HOOK_FILES = 20;
 
 export const MARKER = /hook-throw:\s*(CONTROL|DEFECT|INTERNAL\(([A-Za-z_$][\w$]*)\))/;
 
+export const REFUSAL_MARKER = /hook-path:\s*REFUSAL\b/;
+
+export const OPTIONAL_WRAPPER = "optional";
+
 export const PENDING_CONVERSION: readonly { readonly file: string; readonly ticket: string; readonly why: string }[] = [];
 
 export interface HookThrowFinding {
-  readonly rule: "unclassified" | "control" | "stale-pending-row" | "internal-unproven";
+  readonly rule: "unclassified" | "control" | "stale-pending-row" | "internal-unproven" | "optional-unwrapped" | "refusal-without-cancel" | "events-unreadable";
   readonly file: string;
   readonly line: number;
   readonly detail: string;
@@ -134,9 +138,9 @@ export function hookThrowFindings(
           file,
           line,
           detail:
-            `classified CONTROL, which eve 0.68+ cannot honour: an authored hook's throw is logged and ` +
-            `swallowed, so this refuses nothing. Call refuseTurn (agent/hooks/control-refusal.ts), which ` +
-            `cancels the turn, and delete the marker`,
+            `classified CONTROL. On eve 1.x a throw from a hook does stop the turn, but as a FAILED turn ` +
+            `with an error, not as a refusal: no \`hook.refused\` row names the hook or the reason. Call ` +
+            `refuseTurn (agent/hooks/control-refusal.ts), which cancels the turn, and delete the marker`,
         });
         continue;
       }
@@ -150,9 +154,9 @@ export function hookThrowFindings(
         file,
         line,
         detail:
-          `an unclassified throw in a hook module. If it exists to STOP a turn, it does not — call ` +
-          `refuseTurn (agent/hooks/control-refusal.ts). If it is a bug path, mark it ` +
-          `\`// hook-throw: DEFECT — <why>\``,
+          `an unclassified throw in a hook module. On eve 1.x an uncaught hook throw FAILS the running ` +
+          `turn. If it exists to STOP a turn, call refuseTurn (agent/hooks/control-refusal.ts) instead. ` +
+          `If it is a bug path, mark it \`// hook-throw: DEFECT — <why>\``,
       });
     }
   }
@@ -170,6 +174,100 @@ export function hookThrowFindings(
     });
   }
 
+  return findings;
+}
+
+function lineAt(source: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < source.length; i++) if (source.charCodeAt(i) === 10) line++;
+  return line;
+}
+
+function propertyName(node: AstNode): string | undefined {
+  const key = node.key as AstNode | undefined;
+  if (key === undefined) return undefined;
+  if (key.type === "Identifier") return key.name as string;
+  if (key.type === "Literal" && typeof key.value === "string") return key.value;
+  return undefined;
+}
+
+function eventsObjects(program: AstNode): { readonly at: number; readonly events: AstNode | undefined }[] {
+  const out: { at: number; events: AstNode | undefined }[] = [];
+  const walk = (node: AstNode): void => {
+    if (node.type === "CallExpression") {
+      const callee = node.callee as AstNode;
+      if (callee.type === "Identifier" && callee.name === "defineHook") {
+        const arg = (node.arguments as AstNode[])[0];
+        const prop =
+          arg?.type === "ObjectExpression"
+            ? (arg.properties as AstNode[]).find((p) => p.type === "Property" && propertyName(p) === "events")
+            : undefined;
+        const value = prop?.value as AstNode | undefined;
+        out.push({ at: node.start, events: value?.type === "ObjectExpression" ? value : undefined });
+      }
+    }
+    for (const child of childNodes(node)) walk(child);
+  };
+  walk(program);
+  return out;
+}
+
+export function importsOptional(source: string): boolean {
+  return new RegExp(`import\\s*\\{[^}]*\\b${OPTIONAL_WRAPPER}\\b[^}]*\\}\\s*from\\s*["']\\./control-refusal\\.js["']`).test(source);
+}
+
+export function hookPathFindings(files: readonly { readonly file: string; readonly source: string }[]): readonly HookThrowFinding[] {
+  const findings: HookThrowFinding[] = [];
+  for (const { file, source } of files) {
+    const parsed = parseSource(source, file);
+    const raw = source.split("\n");
+    const code = blankCommentsAndStrings(source, parsed);
+    const wrapperImported = importsOptional(source);
+    const cancels = /\brefuseTurn\s*\(|\.cancel\s*\(/.test(code);
+    for (const { at, events } of eventsObjects(parsed.program)) {
+      if (events === undefined) {
+        findings.push({
+          rule: "events-unreadable",
+          file,
+          line: lineAt(source, at),
+          detail: "defineHook is called without an object literal under `events`, so no handler can be classified. Write the handlers inline",
+        });
+        continue;
+      }
+      for (const prop of events.properties as AstNode[]) {
+        const line = lineAt(source, prop.start);
+        const name = prop.type === "Property" && prop.computed !== true ? propertyName(prop) : undefined;
+        if (name === undefined) {
+          findings.push({ rule: "events-unreadable", file, line, detail: "a spread or computed handler key cannot be classified. Write each handler under its own literal key" });
+          continue;
+        }
+        const value = prop.value as AstNode;
+        const callee = value.type === "CallExpression" ? (value.callee as AstNode) : undefined;
+        if (callee?.type === "Identifier" && callee.name === OPTIONAL_WRAPPER && wrapperImported) continue;
+        if (REFUSAL_MARKER.test(markerScope(raw, line))) {
+          if (cancels) continue;
+          findings.push({
+            rule: "refusal-without-cancel",
+            file,
+            line,
+            detail:
+              `the "${name}" handler is marked REFUSAL, but this file never calls refuseTurn or ctx.cancel(). ` +
+              `A REFUSAL path stops the turn: give it the refusal, or drop the marker and wrap it in ${OPTIONAL_WRAPPER}(...)`,
+          });
+          continue;
+        }
+        findings.push({
+          rule: "optional-unwrapped",
+          file,
+          line,
+          detail:
+            `the "${name}" handler is OPTIONAL (it carries no \`// hook-path: REFUSAL — <why>\` marker), but it is not ` +
+            `wrapped in ${OPTIONAL_WRAPPER}(...) from ./control-refusal.js. On eve 1.x an uncaught error or rejected await ` +
+            `in a hook FAILS the running turn, so optional work such as metrics, audit rows or best-effort records must catch it`,
+        });
+      }
+    }
+  }
   return findings;
 }
 
@@ -200,7 +298,7 @@ function main(): void {
     );
     process.exit(1);
   }
-  const findings = hookThrowFindings(files);
+  const findings = [...hookThrowFindings(files), ...hookPathFindings(files)];
   if (findings.length > 0) {
     console.error(`✗ lint:hook-throw: ${findings.length} finding(s) across ${files.length} hook file(s)\n`);
     for (const f of findings) {
@@ -211,7 +309,8 @@ function main(): void {
   }
   const pendingNote = PENDING_CONVERSION.map((p) => `${p.file} (${p.ticket})`).join(", ");
   console.log(
-    `✓ lint:hook-throw: ${files.length} hook files scanned, no unclassified or CONTROL throw. ` +
+    `✓ lint:hook-throw: ${files.length} hook files scanned, no unclassified or CONTROL throw, and every handler is ` +
+      `wrapped in ${OPTIONAL_WRAPPER}(...) or marked REFUSAL. ` +
       `Pending conversion by another ticket: ${pendingNote || "none"}.`,
   );
 }

@@ -59,7 +59,8 @@ const baglessCtx = (sessionId: string): HookContext =>
     session: { auth: { current: null }, id: sessionId },
   }) as unknown as HookContext;
 
-const delivery = (message: string): HookEvent<"message.received"> => ({ data: { message } }) as unknown as HookEvent<"message.received">;
+const delivery = (message: string): HookEvent<"delivery.consumed"> =>
+  ({ data: { deliveryId: "d1", turnId: "t1", parts: [{ kind: "text", text: message }] } }) as unknown as HookEvent<"delivery.consumed">;
 
 const OWN_ACCOUNT_SENTENCE = "please use my own notion account for this";
 const ORG = resolvePartition(askCtx("probe") as unknown as BindableContext).org;
@@ -68,7 +69,7 @@ const rowsFor = async (): Promise<{ action: string; detail?: Record<string, unkn
   (await readAudit({ org: ORG })).filter((r) => r.action === CONNECTOR_OWN_ACCOUNT_ASK_ACTION) as { action: string; detail?: Record<string, unknown> }[];
 
 const fireHook = (message: string, ctx: HookContext): void => {
-  (ownAccountAskHook as unknown as { events: Record<string, (event: unknown, c: unknown) => unknown> }).events["message.received"](delivery(message), ctx);
+  (ownAccountAskHook as unknown as { events: Record<string, (event: unknown, c: unknown) => unknown> }).events["delivery.consumed"](delivery(message), ctx);
 };
 
 const awaitRows = async (want: number): Promise<{ action: string; detail?: Record<string, unknown> }[]> => {
@@ -80,7 +81,7 @@ const awaitRows = async (want: number): Promise<{ action: string; detail?: Recor
   }
 };
 
-console.log("1. the wired message.received handler writes one decision-point row:");
+console.log("1. the wired delivery.consumed handler writes one decision-point row:");
 {
   fireHook(OWN_ACCOUNT_SENTENCE, askCtx("seat-1"));
   const rows = await awaitRows(1);

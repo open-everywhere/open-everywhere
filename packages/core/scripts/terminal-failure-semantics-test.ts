@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -105,7 +106,7 @@ interface Armed {
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const armOf = (tool: unknown, ctx: unknown): Armed | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+  _dynamicResolverForTest(tool)({}, ctx) as Armed | null;
 
 function ctxFor(turnWake: string, turnId: string): BindableContext {
   return {
@@ -257,7 +258,14 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
 {
   const { readFileSync } = await import("node:fs");
   const unified = armOf(replyTool, ctxFor("wake-4", "turn_4")) as unknown as { endsTurn?: unknown } | null;
-  ok(unified?.endsTurn === true, "§4: the UNIFIED `reply` declares `endsTurn: true` — a successful reply ends the turn with no further model call");
+  const unifiedEnds = unified?.endsTurn;
+  ok(typeof unifiedEnds === "function", "§4: the UNIFIED `reply` declares `endsTurn` as a function of its output");
+  const endsOn = (output: Record<string, unknown>): unknown => (typeof unifiedEnds === "function" ? (unifiedEnds as (o: unknown) => unknown)(output) : undefined);
+  ok(endsOn({ posted: true, id: "m1", note: "n" }) === true, "§4: a successful reply ends the turn with no further model call");
+  ok(
+    endsOn({ posted: true, id: "m1", note: "n", continuesTurn: true }) === false,
+    "🔴 §4: a reply whose output says `continuesTurn` (a `done:false` part with no worker running) does NOT end the turn — eve 1.x ends a step on ANY ending call, so the interim part must not end it",
+  );
   const base = armOf(replyTool, slackCtx("turn_4b")) as unknown as { endsTurn?: unknown } | null;
   ok(base?.endsTurn === true, "§4: the per-surface `reply` declares `endsTurn: true` too — one word, one meaning on every door");
   ok((noReplyTool as unknown as { endsTurn?: unknown }).endsTurn === true, "§4: `no_reply` declares `endsTurn: true` — silence ends the turn natively");
@@ -267,18 +275,25 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
   ok(edit !== null && edit.endsTurn !== true, "§4: `edit_reply` declares NO `endsTurn` — an edit may be followed by a `reply` with anything new");
 
   const eveRootDir = dirname(nodeRequire.resolve("eve/package.json"));
-  const toolLoop = readFileSync(join(eveRootDir, "dist/src/harness/tool-loop.js"), "utf8");
+  // eve 1.x: the step's end decision lives in harness/step/after-model.js (stepEndsTurn → callsEndTurn).
+  const toolLoop = readFileSync(join(eveRootDir, "dist/src/harness/step/after-model.js"), "utf8");
   const stepEndsTurn = /async function stepEndsTurn\([^)]*\)\{[^]*?\}async function callEndsTurn/.exec(toolLoop)?.[0] ?? "";
-  ok(stepEndsTurn.length > 0, "§4: eve's `stepEndsTurn` is present in the installed tool loop (if eve moved it, re-derive this leg)");
-  ok(stepEndsTurn.includes("isToolResultError("), "§4: eve's `stepEndsTurn` refuses to end on an ERROR result — so a thrown terminal verb keeps the turn open with no OE code at all");
-  ok(/r\.every\(|\.every\(/.test(stepEndsTurn), "§4: eve ends the turn only when EVERY call in the step ends it — a mixed step continues");
-  const lifecycle = readFileSync(join(eveRootDir, "dist/src/context/dynamic-tool-lifecycle.js"), "utf8");
+  ok(stepEndsTurn.length > 0, "§4: eve's `stepEndsTurn` and `callsEndTurn` are present in the installed step (if eve moved them, re-derive this leg)");
   ok(
-    /function readDynamicEndsTurn\([^)]*\)\{if\(typeof [a-z]+==`function`\)throw/.test(lifecycle),
-    "§4: eve REFUSES an `endsTurn` function on a dynamic tool — the reason `reply` takes `true` and not a function of its output",
+    /failed:\w+===void 0\|\|isToolResultError\(\w+\)/.test(stepEndsTurn) && /\w+===void 0\|\|\w+\.failed\|\|/.test(stepEndsTurn),
+    "§4: eve's `stepEndsTurn` refuses to end on an ERROR result — a call whose result is an error (or missing) is marked failed and skipped, so a thrown terminal verb keeps the turn open with no OE code at all",
   );
   ok(
-    !toolLoop.includes("__oeThrowEmptyResponseUnlessTerminal") && !toolLoop.includes("__oeTurnTerminalActionScan"),
+    !/\.every\(/.test(stepEndsTurn) && /&&\(\w+=!0\)/.test(stepEndsTurn),
+    "§4: eve 1.x ends the turn when ANY successful call in the step ends it (0.x needed EVERY call) — a step that holds a successful `reply` ends at that step, whatever else it called",
+  );
+  const dynamicTools = readFileSync(join(eveRootDir, "dist/src/definitions/tools.js"), "utf8");
+  ok(
+    /endsTurn:\w+\.endsTurn,/.test(dynamicTools),
+    "§4: eve's live dynamic tool keeps the `endsTurn` it was given, a function included — the reason `reply` can decide from its output",
+  );
+  ok(
+    !toolLoop.includes("__oeThrowEmptyResponseUnlessTerminal") && !toolLoop.includes("__oeTurnTerminalActionScan") && !dynamicTools.includes("__oeTurnTerminalActionScan"),
     "§4: patch part 5 and its scan hook are GONE from the installed bytes (retired at OPE-2252)",
   );
 }
@@ -286,10 +301,16 @@ for (const outcome of ["definitive", "ambiguous"] as const) {
 {
   const { readFileSync } = await import("node:fs");
   const eveRootDir = dirname(nodeRequire.resolve("eve/package.json"));
-  const definition = readFileSync(join(eveRootDir, "dist/src/tools/definition.d.ts"), "utf8");
+  // eve 1.x states no `endsTurn` caveat in its contract; its code ignores the flag instead. A step whose
+  // context has a parent session or a session callback (a delegated session) runs with `endsTurn`
+  // false, and with that flag false the step's ending-tool map is empty, so no tool ends its turn.
+  const stepContext = readFileSync(join(eveRootDir, "dist/src/harness/step/context.js"), "utf8");
+  const modelTools = readFileSync(join(eveRootDir, "dist/src/harness/model-call/tools.js"), "utf8");
+  const delegated = /let (\w+)=\w+\?\.get\(ParentSessionKey\)!==void 0\|\|\w+\?\.get\(SessionCallbackKey\)!==void 0;[^]*?endsTurn:!\1&&/.test(stepContext);
+  const emptyWhenOff = /function endsTurnTools\(\w+,(\w+)\)\{return \1\?new Map\([^]*?\):new Map\}/.test(modelTools);
   ok(
-    definition.includes("Ignored in delegated sessions, which must return") && definition.includes("a reply to their caller"),
-    "§5: eve's contract says `endsTurn` is IGNORED in a delegated session — a worker always returns a result to its caller",
+    delegated && emptyWhenOff,
+    "§5: eve ignores `endsTurn` in a delegated session (a parent session or a session callback turns the step's endsTurn off, and then no tool ends the turn) — a worker always returns a result to its caller",
   );
   for (const verb of ["reply", "react", "no_reply", "edit_reply"]) {
     const src = readFileSync(new URL(`../agent/tools/${verb}.ts`, import.meta.url), "utf8");

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { withPatchedFetch } from "../packages/core/scripts/_fetch-test-utils.js";
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -113,7 +114,7 @@ interface Armed {
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const armOf = (tool: unknown, ctx: unknown): Armed | null =>
-  (tool as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+  _dynamicResolverForTest(tool)({}, ctx) as Armed | null;
 
 function ctxFor(turnWake: string, turnId: string): BindableContext {
   return {

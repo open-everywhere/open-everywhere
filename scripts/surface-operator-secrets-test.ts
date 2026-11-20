@@ -103,7 +103,7 @@ console.log("§1 every surface reads its stored secret, with no env var");
 
 console.log("§2 the Linear route accepts a delivery signed with the stored secret");
 {
-  const { signLinearWebhookBody } = await import("eve/channels/linear");
+  const { signLinearWebhookBody } = await import("@open-everywhere/provider-linear/agent/channels/linear-webhook-verify.js");
   const channel = (await import("@open-everywhere/provider-linear/agent/channels/linear.js")).default;
   const route = channel.routes.find((r) => r.transport !== "websocket" && r.method === "POST" && r.path === "/eve/v1/linear");
   ok(route !== undefined, "fixture: the provider exposes the POST /eve/v1/linear route");

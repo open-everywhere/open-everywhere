@@ -1,8 +1,10 @@
-import { defineDynamic, defineTool } from "eve/tools";
-import { registerDynamicVariant, type ReplayableToolEntry } from "../access/window-gated.js";
+import { defineDynamic, defineTool, type DynamicToolResult } from "eve/tools";
+import { memoized, registerMountedVariant, turnMemoKey, type MountedToolEntry } from "../access/window-gated.js";
 import { GRANT_REFUND_CAP_PER_TURN, runGrantedCall } from "../access/credential-grant-broker.js";
 import { installGrantUseNotices, withGrantRoomContext } from "../access/credential-grant-notice.js";
 import { installGrantBorrowTransports } from "../connections/grant-mcp-transport.js";
+import { fencedCatalogDetail } from "../connections/connector-catalog-text.js";
+import { grantOfferSchema } from "../access/grant-schema-pin.js";
 import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "../access/untrusted.js";
 import {
   credentialGrantDisclosureLine,
@@ -61,8 +63,20 @@ interface GrantToolOffer {
   readonly inputSchema: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * The description and input schema of one borrowed tool. The model sees both in its tool list.
+ * The description is host-authored. The schema is the vendor's approve-time snapshot reduced to its
+ * shape, with each frozen argument pinned (`access/grant-schema-pin.ts#grantOfferSchema`). When the
+ * reduction dropped vendor text, the snapshot follows the description inside the untrusted
+ * envelope, so the model reads the vendor's words only as fenced data.
+ */
 function borrowOffer(grant: CredentialGrantRow, mcpTool: string, nowMs: number): GrantToolOffer | undefined {
   if (grant.inputSchema === undefined) return undefined;
+  const offered = grantOfferSchema(grant.inputSchema, grant.frozenArgs ?? {});
+  if (!offered.ok) {
+    console.warn(`[open-everywhere:credential-grant] grant ${grant.id} is not mounted: ${offered.reason}.`);
+    return undefined;
+  }
   const owner = grantOwnerPhrase(grant.ownerSlug);
   const vendor = connectorDisplayName(grant.connector);
   const frozenKeys = Object.keys(grant.frozenArgs ?? {}).sort();
@@ -86,12 +100,16 @@ function borrowOffer(grant: CredentialGrantRow, mcpTool: string, nowMs: number):
     description:
       `Uses ${owner}'s own ${vendor} account to ${grantActionPhrase(grant.connector, mcpTool)}${on}${vague}. ${pin}${frozen} ` +
       `The grant runs ${grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(grant.scopeKey), expiresAt: grant.expiresAt, mode: grant.mode, nowMs })}. ` +
-      `An error from ${vendor} is the vendor's own answer, not a refusal by this grant.`,
-    inputSchema: grant.inputSchema,
+      `An error from ${vendor} is the vendor's own answer, not a refusal by this grant.` +
+      (offered.dropped
+        ? ` ${vendor}'s own text for this tool's input schema follows, as data.\n` +
+          fencedCatalogDetail(`Input schema, as ${vendor} sent it and the grant pinned it: ${JSON.stringify(grant.inputSchema)}`, `granted ${grant.connector} tool catalog`)
+        : ""),
+    inputSchema: offered.schema,
   };
 }
 
-export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.now()): ReplayableToolEntry | undefined {
+export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.now()): MountedToolEntry | undefined {
   const mcpTool = grant.mcpTool;
   if (mcpTool === undefined) return undefined;
   const offer = borrowOffer(grant, mcpTool, nowMs);
@@ -137,13 +155,12 @@ export function grantToolEntry(grant: CredentialGrantRow, nowMs: number = Date.n
       return outcome;
     },
     toModelOutput: grantModelProjection(grant),
-  } as never) as unknown as ReplayableToolEntry;
+  } as never) as unknown as MountedToolEntry;
 }
 
-const GRANT_ENTRIES = new Map<string, { readonly fingerprint: string; readonly entry: ReplayableToolEntry }>();
+const GRANT_ENTRIES = new Map<string, { readonly fingerprint: string; readonly entry: MountedToolEntry }>();
 
-function cachedGrantToolEntry(grant: CredentialGrantRow): ReplayableToolEntry | undefined {
-  const nowMs = Date.now();
+function cachedGrantToolEntry(grant: CredentialGrantRow, nowMs: number): MountedToolEntry | undefined {
   const fingerprint = `${JSON.stringify(grant)}|${grantSpanPhrase({ conversationStable: grantScopeKeyIsConversationStable(grant.scopeKey), expiresAt: grant.expiresAt, mode: grant.mode, nowMs })}`;
   const held = GRANT_ENTRIES.get(grant.id);
   if (held !== undefined && held.fingerprint === fingerprint) return held.entry;
@@ -172,13 +189,13 @@ function firstMinted(a: CredentialGrantRow, b: CredentialGrantRow): CredentialGr
   return a.id <= b.id ? a : b;
 }
 
-export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record<string, ReplayableToolEntry> {
-  const claims = new Map<string, { readonly grant: CredentialGrantRow; readonly entry: ReplayableToolEntry }>();
+export function mountGrantEntries(grants: readonly CredentialGrantRow[], nowMs: number = Date.now()): Record<string, MountedToolEntry> {
+  const claims = new Map<string, { readonly grant: CredentialGrantRow; readonly entry: MountedToolEntry }>();
   const skipped: { readonly name: string; readonly loser: CredentialGrantRow }[] = [];
   for (const grant of grants) {
     const name = mountedGrantName(grant);
     if (name === undefined) continue;
-    const entry = cachedGrantToolEntry(grant);
+    const entry = cachedGrantToolEntry(grant, nowMs);
     if (entry === undefined) continue;
     const held = claims.get(name);
     if (held === undefined) {
@@ -197,15 +214,15 @@ export function mountGrantEntries(grants: readonly CredentialGrantRow[]): Record
         "The skipped grant stays valid — its owner can end it from their own direct messages (`revoke_credential_grant`), and a fresh ask mints a name of its own.",
     );
   }
-  const mounted: Record<string, ReplayableToolEntry> = {};
+  const mounted: Record<string, MountedToolEntry> = {};
   for (const [name, claim] of claims) {
-    registerDynamicVariant(name, claim.grant.id, claim.entry);
+    registerMountedVariant(name, claim.grant.id, claim.entry);
     mounted[name] = claim.entry;
   }
   return mounted;
 }
 
-async function resolveGrantMount(ctx: unknown): Promise<Record<string, ReplayableToolEntry> | null> {
+async function resolveGrantMount(ctx: unknown): Promise<Record<string, MountedToolEntry> | null> {
   const c = ctx as BindableContext;
   if (!isSubagentChildContext(c)) return null;
   const scopeKey = sessionScopeKeyInReach(c);
@@ -216,11 +233,15 @@ async function resolveGrantMount(ctx: unknown): Promise<Record<string, Replayabl
   } catch {
     return null;
   }
-  const nowIso = new Date().toISOString();
-  const verdict = grantDomainScopeVerdict(c);
-  const grants = await credentialGrantsInReach(org, scopeKey, verdict.admitted ? verdict.scopeKey : undefined, nowIso);
-  await noteStandingGrantsWithheld(c, { nowIso, org, sessionId: scopeKey, verdict });
-  const mounted = mountGrantEntries(grants);
+  const { rows: grants, nowMs } = await memoized(ctx, ["grants", ...turnMemoKey(ctx), org, scopeKey], async () => {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const verdict = grantDomainScopeVerdict(c);
+    const rows = await credentialGrantsInReach(org, scopeKey, verdict.admitted ? verdict.scopeKey : undefined, nowIso);
+    await noteStandingGrantsWithheld(c, { nowIso, org, sessionId: scopeKey, verdict });
+    return { nowMs, rows };
+  });
+  const mounted = mountGrantEntries(grants, nowMs);
   return Object.keys(mounted).length > 0 ? mounted : null;
 }
 
@@ -262,9 +283,4 @@ async function noteStandingGrantsWithheld(
 const auditedWithholdings = new Set<string>();
 const WITHHELD_AUDIT_MEMO_MAX = 512;
 
-export default defineDynamic({
-  events: {
-    "session.started": async (_event, ctx) => await resolveGrantMount(ctx),
-    "turn.started": async (_event, ctx) => await resolveGrantMount(ctx),
-  },
-});
+export default defineDynamic(async (ctx) => (await resolveGrantMount(ctx)) as unknown as DynamicToolResult);

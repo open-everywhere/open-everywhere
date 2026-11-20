@@ -114,10 +114,11 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
           direction: "widen",
           subject: `Connector \`${r.connection}\` — not granted to this scope`,
           summary:
-            `${r.ungranted} operation(s) on \`${r.connection}\` were refused by the credential gate: the connection is not in this ` +
+            `${ungrantedAttempts(r)} on \`${r.connection}\` fell outside this scope's grant: the connection is not in this ` +
             `scope's granted set, and no bundle EFFECTIVE IN THIS SCOPE declares it. The work keeps arriving; the grant does not exist.`,
           evidence: [
-            `${r.refusals} \`connector.refused\` row(s) for \`${r.connection}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.ungranted} with reason \`ungranted\`.`,
+            `${r.refusals} \`connector.refused\` row(s) for \`${r.connection}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.ungranted} with reason \`ungranted\`` +
+              `${r.ungrantedSearches > 0 ? `, ${r.ungrantedSearches} of them from an \`eve__search\` that named the connection` : ""}.`,
             `Reasons: ${reasonsSeen}.`,
             `Ops: ${opsSeen}.`,
           ],
@@ -288,6 +289,19 @@ function tightenProposals(ev: PermissionEvidence): PermissionProposal[] {
 }
 
 export type ProposalDirection = "both" | "widen" | "tighten";
+
+/**
+ * What the `ungranted` rows were. The credential gate refused an operation for a row without
+ * `via`. A row with `via: "eve__search"` is a search whose query named the connection: the surface
+ * was offered no op, so no operation ran and the gate refused nothing.
+ */
+function ungrantedAttempts(r: { readonly ungranted: number; readonly ungrantedSearches: number }): string {
+  const refused = r.ungranted - r.ungrantedSearches;
+  const parts: string[] = [];
+  if (refused > 0) parts.push(`${refused} operation(s) refused by the credential gate`);
+  if (r.ungrantedSearches > 0) parts.push(`${r.ungrantedSearches} \`eve__search\` quer${r.ungrantedSearches === 1 ? "y" : "ies"} that named the connection (no operation ran)`);
+  return parts.join(" and ");
+}
 
 export function proposePermissionChanges(ev: PermissionEvidence, direction: ProposalDirection = "both"): readonly PermissionProposal[] {
   return [

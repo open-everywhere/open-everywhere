@@ -7,7 +7,7 @@ import { admitProviderRegistration } from "../access/provider-selection.js";
 import { declaredSurfaceTrust, type SurfaceTrust } from "./trust.js";
 
 import { UNNAMED_TENANT } from "./principal-key.js";
-import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
+import { classifySessionId, seatWindowKey } from "../channels/window-key.js";
 import { conversationGrantKey, roomCallGrantKey, type GrantReach } from "../approvals/session-grant.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { ROUTINE_MARKER, routinePermissionKeyStamped } from "../routines/routine.js";
@@ -350,9 +350,18 @@ export function deliveryStampOf(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_delivery_id", "oeDeliveryId"]) ?? inheritedWakeStampOf(ctx);
 }
 
+/**
+ * The running turn's id. A hook or tool context carries it on `session.turn`; a dynamic context
+ * (eve's `SessionFrame`, which the `model` function receives) carries it on `turn`. The frame's
+ * `turn` is the session's LATEST turn, so a settled one is no running turn and gives no id.
+ */
 export function currentTurnId(ctx: BindableContext): string | undefined {
-  const turn = (ctx as { session?: { turn?: { id?: string } } }).session?.turn;
-  return typeof turn?.id === "string" && turn.id.length > 0 ? turn.id : undefined;
+  const c = ctx as { session?: { turn?: { id?: unknown } }; turn?: { id?: unknown; status?: unknown } | null };
+  const own = c.session?.turn?.id;
+  if (typeof own === "string" && own.length > 0) return own;
+  const frame = c.turn;
+  if (frame?.status === "settled") return undefined;
+  return typeof frame?.id === "string" && frame.id.length > 0 ? frame.id : undefined;
 }
 
 export function currentSessionId(ctx: BindableContext): string | undefined {
@@ -486,8 +495,7 @@ export function resolveWindowSources(ctx: BindableContext, domains: readonly Dom
   const stamped = windowSourcesOf(ctx);
   if (stamped) return stamped;
   const tok = ctx.channel?.continuationToken ?? currentWindowToken(ctx);
-  const raw = typeof tok === "string" && tok.startsWith("unified:") ? tok.slice("unified:".length) : tok;
-  const key = parseWindowToken(raw);
+  const key = seatWindowKey(tok);
   if (key) {
     const recomputed = sourcesForWindow(key.windowId, key.domain, domains);
     if (recomputed.length > 0) return recomputed;

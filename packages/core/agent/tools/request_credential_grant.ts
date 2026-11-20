@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { getConfig } from "../access/config.js";
 import { credentialGrantRefusalNote, resolveGrantOwner } from "../access/credential-grant-ask.js";
@@ -8,7 +8,7 @@ import { resolveRequesterLabel } from "../access/credential-grant-notice.js";
 import { credentialGrantConnectors, domainsAdmitCredentialGrant } from "../access/credential-grant.js";
 import { grantDomainScopeKey } from "../access/credential-grant-scope.js";
 import { requesterThisTurn } from "../access/requester-identity.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { adoptedOwnAccountAsk } from "../connections/own-account-carriage.js";
 import { ownAccountVendorFor } from "../connections/own-account-vendors.js";
 import { resolveReplyTarget } from "../channels/reply-post.js";
@@ -330,7 +330,6 @@ export const requestCredentialGrantEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("request_credential_grant", "_single", requestCredentialGrantEntry);
 
 function jsonObjectProblem(value: unknown, path = "the fixed arguments", depth = 0): string | undefined {
   if (depth > 32) return `${path} nests too deeply`;
@@ -368,8 +367,4 @@ function replyTargetJson(ctx: BindableContext): string | undefined {
   }
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => (requestCredentialGrantMount(ctx as BindableContext) ? requestCredentialGrantEntry : null),
-  },
-});
+export default sessionMountedTool("request_credential_grant", requestCredentialGrantEntry, (ctx) => requestCredentialGrantMount(ctx));

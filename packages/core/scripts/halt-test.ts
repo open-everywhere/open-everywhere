@@ -613,8 +613,7 @@ registerConfig({
 }
 
 {
-  const { AsyncLocalStorage } = await import("node:async_hooks");
-  const { HALTED_WITHHELD_TOOLS, projectToolSet } = await import("../agent/access/untrusted-projection.js");
+  const { HALTED_WITHHELD_TOOLS, seatCutToolset } = await import("../agent/access/seat-cut.js");
   const { stampHalted } = await import("../agent/access/halt-state.js");
 
   ok(
@@ -622,41 +621,21 @@ registerConfig({
     "§10 the subtracted set is EXACTLY the two names no arrow can reach — every other consequential verb is REFUSED, which is the stronger control",
   );
 
-  class FakeSession {
-    private readonly store = new Map<string, unknown>();
-    get<T>(key: { name: string }): T | undefined {
-      return this.store.get(key.name) as T | undefined;
-    }
-    has(key: { name: string }): boolean {
-      return this.store.has(key.name);
-    }
-    require<T>(key: { name: string }): T {
-      if (!this.has(key)) throw new Error(`missing ${key.name}`);
-      return this.get(key) as T;
-    }
-    set<T>(key: { name: string }, v: T | ((c: T | undefined) => T)): T {
-      const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(key)) : v;
-      this.store.set(key.name, next);
-      return next;
-    }
-    ensure<T>(key: { name: string }, create: () => T): T {
-      return this.has(key) ? this.require(key) : this.set(key, create());
-    }
-    clearVirtualContext(): void {}
-    setVirtualContext(): void {}
-    *entries(): Generator<readonly [unknown, unknown]> {}
-  }
-  const g = globalThis as Record<PropertyKey, unknown>;
-  const alsKey = Symbol.for("eve.context-storage");
-  g[alsKey] ??= new AsyncLocalStorage();
-  const als = g[alsKey] as InstanceType<typeof AsyncLocalStorage>;
-  const inTurn = <T>(fn: () => T): Promise<T> => als.run(new FakeSession(), fn) as Promise<T>;
+  const { createRequire } = await import("node:module");
+  const { dirname: dirOf, join: joinPath } = await import("node:path");
+  const { pathToFileURL: toUrl } = await import("node:url");
+  const eveRoot = dirOf(createRequire(import.meta.url).resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = (await import(toUrl(joinPath(eveRoot, "dist/src/context/container.js")).href)) as {
+    ContextContainer: new () => unknown;
+    contextStorage: { run<T>(store: unknown, fn: () => T): T };
+  };
+  const inTurn = async <T>(fn: () => T): Promise<T> => contextStorage.run(new ContextContainer(), fn);
 
   const set = () => ({ web_search: {}, web_fetch: {}, reply: {}, bash: {} }) as Record<string, unknown>;
 
   const unstamped = await inTurn(() => {
     const s = set();
-    projectToolSet(s);
+    seatCutToolset(s);
     return s;
   });
   ok("web_search" in unstamped && "web_fetch" in unstamped, "🔴 §10 NEGATIVE CONTROL: with no halt read stamped, NOTHING is subtracted — `null` is not fail-open, it is 'no read happened in this session'");
@@ -664,7 +643,7 @@ registerConfig({
   const clear = await inTurn(() => {
     stampHalted(false);
     const s = set();
-    projectToolSet(s);
+    seatCutToolset(s);
     return s;
   });
   ok("web_search" in clear && "web_fetch" in clear, "🔴 §10 NEGATIVE CONTROL: a stamp of NOT-halted leaves both names mounted");
@@ -672,10 +651,10 @@ registerConfig({
   const halted = await inTurn(() => {
     stampHalted(true);
     const s = set();
-    projectToolSet(s);
+    seatCutToolset(s);
     return s;
   });
-  ok(!("web_search" in halted) && !("web_fetch" in halted), "§10 a halted stamp SUBTRACTS both names — absence, the only control that reaches them");
+  ok(!("web_search" in halted) && !("web_fetch" in halted), "§10 a halted stamp makes the pure rule SUBTRACT both names — on eve 1.x the seat cut reaches only the sandbox kit's `web_fetch`; `web_search` is a provider configuration no file can withhold");
   ok("reply" in halted, "§10 and it subtracts nothing else: a halted deployment still converses");
 }
 
@@ -730,7 +709,7 @@ registerConfig({
   ok(halt.haltSeatParagraph(halt.NOT_HALTED) === null, "§11d NEGATIVE CONTROL: no halt, no paragraph");
 
   ok(description.includes("A REQUEST TO STOP ONE PIECE OF WORK IS NOT THIS VERB"), "🔴 §11b the description separates a task-scoped stop from the brake");
-  ok(description.includes("`task_cancel`"), "🔴 §11b …and names the verb a NAMED piece of work routes to");
+  ok(description.includes("`eve__task_cancel`"), "🔴 §11b …and names the verb a NAMED piece of work routes to");
   ok(description.includes("`stand_down`"), "🔴 §11b …and the verb 'go quiet' routes to");
   ok(
     !description.includes("the moment someone in the conversation asks you to stop"),
@@ -783,13 +762,13 @@ registerConfig({
     return "1757-0001";
   };
 
-  ok(await announceHalt({} as never, "surface", { resolveTarget: () => TARGET, post: record }), "§12 a halt ANNOUNCES itself through the reply path");
+  ok((await announceHalt({} as never, "surface", { resolveTarget: () => TARGET, post: record })) === "posted", "§12 a halt ANNOUNCES itself through the reply path");
   ok(posted.length === 1, "§12 …exactly once");
   ok(posted[0] === haltConfirmation("surface"), "🔴 §12 …and the bytes are the host's own confirmation, never a paraphrase the turn chose");
 
   posted.length = 0;
   ok(
-    (await announceHalt({} as never, "surface", { resolveTarget: () => null, post: record })) === false,
+    (await announceHalt({} as never, "surface", { resolveTarget: () => null, post: record })) === "failed",
     "🔴 §12 NEGATIVE CONTROL: a surface with no resolvable reply target is NOT announced",
   );
   ok(posted.length === 0, "§12 …and nothing was posted");
@@ -799,11 +778,11 @@ registerConfig({
       post: async () => {
         throw new Error("slack is down");
       },
-    })) === false,
+    })) === "failed",
     "🔴 §12 NEGATIVE CONTROL: a throwing transport is NOT announced — and does not throw out of the brake",
   );
   ok(
-    (await announceHalt({} as never, "org", { resolveTarget: () => TARGET, post: async () => REPLY_DEDUPE_SKIPPED_ID })) === false,
+    (await announceHalt({} as never, "org", { resolveTarget: () => TARGET, post: async () => REPLY_DEDUPE_SKIPPED_ID })) === "failed",
     "🔴 §12 NEGATIVE CONTROL: a DEDUPED post is not a delivered one — the sentinel is an id, so 'it did not throw' would record a delivery the room never got (defensive: see §12b on why this path cannot produce one today)",
   );
 
@@ -818,7 +797,11 @@ registerConfig({
   const haltToolSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools", "halt.ts"), "utf8");
   const execute = haltToolSource.slice(haltToolSource.indexOf("async execute("));
   ok(execute.includes("announceHalt("), "§12b STRUCTURAL: the tool's execute calls the announcement — the room is told by the host, not by the turn");
-  ok(execute.includes("announced,"), "§12b STRUCTURAL: …and the `admin.halt.set` row carries `announced`, so a brake nobody heard leaves a row");
+  ok(execute.includes('announced: announced === "posted",'), "§12b STRUCTURAL: …and the `admin.halt.set` row carries `announced`, so a brake nobody heard leaves a row");
+  ok(
+    execute.includes('...(announced === "withheld" || announced === "withheld-ack-owed" ? { announceWithheld: true } : {}),'),
+    "§12b STRUCTURAL: …and a confirmation withheld in a conversation that stood down leaves `announceWithheld` on the row",
+  );
   ok(execute.includes("const wakeId = currentWakeId(ctx)"), "§12b the halt audit join reads the host-owned wake id");
   ok(execute.includes("const sessionId = currentSessionId(ctx)"), "§12b …and the host-owned session id");
   ok(execute.includes("...(wakeId ? { wakeId } : {})"), "§12b …and records a non-empty wake join without inventing one");

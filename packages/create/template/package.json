@@ -34,7 +34,7 @@
     "@open-everywhere/provider-notion": "{{OE_VERSION}}",
     "@open-everywhere/provider-slack": "{{OE_VERSION}}",
     "@open-everywhere/provider-teams": "{{OE_VERSION}}",
-    "eve": "0.71.0",
+    "eve": "1.0.0-rc.18",
     "just-bash": "^3.1.0"
   },
   "devDependencies": {
@@ -46,7 +46,8 @@
   "overrides": {
     "zod": "4.5.4",
     "@agent-browser/eve": {
-      "zod": "4.5.4"
+      "zod": "4.5.4",
+      "eve": "$eve"
     },
     "eve": {
       "undici": "8.11.2",
@@ -56,6 +57,9 @@
     },
     "guarded-fetch": {
       "undici": "7.30.0"
+    },
+    "just-bash": {
+      "typescript": "$typescript"
     }
   },
   "allowScripts": {

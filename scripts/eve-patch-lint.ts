@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const PATCH_DIR = "patches";
@@ -66,17 +66,26 @@ for (const patch of patches) {
   }
 }
 
-const TOOL_LOOP = "node_modules/eve/dist/src/harness/tool-loop.js";
+const EVE_DIST = "node_modules/eve/dist";
+const eveDistFiles = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? eveDistFiles(join(dir, e.name)) : e.name.endsWith(".js") ? [join(dir, e.name)] : [],
+  );
+let distFiles: string[] = [];
 try {
-  if (readFileSync(TOOL_LOOP, "utf8").includes("__oeForceContinue")) {
+  distFiles = eveDistFiles(EVE_DIST);
+} catch {
+  reds.push(`MISSING: ${EVE_DIST} is not installed — run \`npm install\`.`);
+}
+if (distFiles.length === 0 && existsSync(EVE_DIST)) reds.push(`EMPTY: ${EVE_DIST} holds no .js file — this check would verify nothing.`);
+for (const file of distFiles) {
+  if (readFileSync(file, "utf8").includes("__oeForceContinue")) {
     reds.push(
-      `RETIRED HOOK PRESENT: "__oeForceContinue" is back in ${TOOL_LOOP}. It was retired in OPE-172; its return ` +
+      `RETIRED HOOK PRESENT: "__oeForceContinue" is back in ${file}. It was retired in OPE-172; its return ` +
         `means the patch was regenerated against a stale node_modules and has clobbered the committed one. ` +
         `Restore patches/ from git and re-run \`rm -rf node_modules/eve && npm install\`.`,
     );
   }
-} catch {
-  reds.push(`MISSING: ${TOOL_LOOP} is not installed — run \`npm install\`.`);
 }
 
 const WEB_FETCH_REQUEST = "node_modules/eve/dist/src/execution/web-fetch/request.js";

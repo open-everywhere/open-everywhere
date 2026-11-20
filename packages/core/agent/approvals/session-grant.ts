@@ -1,3 +1,4 @@
+import { canonicalConnectorOpName } from "../access/connector-op-alias.js";
 import { friendlyWhen } from "../channels/person-text.js";
 import type { PendingActionRow } from "./types.js";
 
@@ -11,8 +12,9 @@ export function connectorSessionKind(connector: string): string {
 
 const CONNECTOR_TOOL_KIND_PREFIX = "connector.tool:";
 
+/** The permission kind of one connector op. A mounted short name keys on its qualified name. */
 export function connectorToolPermissionKind(tool: string): string {
-  return `${CONNECTOR_TOOL_KIND_PREFIX}${tool}`;
+  return `${CONNECTOR_TOOL_KIND_PREFIX}${canonicalConnectorOpName(tool)}`;
 }
 
 const ROUTINE_CARD_ASKED_PREFIX = "routine.permission.asked:";

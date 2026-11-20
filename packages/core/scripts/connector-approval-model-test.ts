@@ -65,12 +65,13 @@ ok(sessionGrantKind({ kind: "connector.op:notion", argsJson: "{}" }) === null, "
 
 {
   const approve = connectorOpApproval();
-  ok((await approve({ toolName: "notion__search", approvedTools: new Set<string>() } as never)) === "not-applicable", "read never prompts");
-  const approvedWrite = new Set<string>(["notion__create_page"]);
-  ok((await approve({ toolName: "notion__create_page", approvedTools: approvedWrite } as never)) === "not-applicable", "an already-approved WRITE is silenced (once-per-op)");
-  const approvedDelete = new Set<string>(["notion__delete_page"]);
-  ok((await approve({ toolName: "notion__delete_page", approvedTools: approvedDelete } as never)) === "user-approval", "a DESTRUCTIVE op prompts PER CALL even when already approved (never honours the memo)");
-  ok((await approve({ toolName: "notion__delete_page", approvedTools: new Set<string>() } as never)) === "user-approval", "an unapproved destructive op prompts");
+  ok((await approve({ toolName: "notion__search" } as never)) === "not-applicable", "read never prompts");
+  ok((await approve({ toolName: "notion__create_page" } as never)) === "user-approval", "a WRITE prompts: the request policy keeps no per-op memo, and the card plane's one-call memo decides a repeat");
+  ok((await approve({ toolName: "notion__delete_page" } as never)) === "user-approval", "a DESTRUCTIVE op prompts");
+  ok(
+    (await approve({ toolName: "notion__create_page", approvedTools: new Set<string>(["notion__create_page"]) } as never)) === "user-approval",
+    "🔴 a context that still carries a remembered-approval set does not silence a WRITE: the policy reads no eve approval memory",
+  );
 }
 
 console.log(`✓ connector-approval-model: ${passed} assertions passed (tier + REST map + session-grant + destructive-per-call)`);

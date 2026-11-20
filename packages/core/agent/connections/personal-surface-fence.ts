@@ -14,6 +14,23 @@ export function declarePersonalSurfaceConnection(connector: string, platform: st
   PERSONAL_SURFACE_CONNECTIONS.set(connector, platform);
 }
 
+/**
+ * True when `connector` is a personal-surface connection and this surface is not the 1:1 DM on its
+ * platform. It writes no row: it is the read-only form of `personalSurfaceRefusal`, for evidence that
+ * must not read a fenced connection as a missing grant.
+ */
+export async function personalSurfaceFenced(
+  connector: string,
+  auth: SessionAuth | null | undefined,
+  deps: Pick<PersonalSurfaceFenceDeps, "dmPrincipal"> = {},
+): Promise<boolean> {
+  const platform = PERSONAL_SURFACE_CONNECTIONS.get(connector);
+  if (platform === undefined) return false;
+  const read = deps.dmPrincipal ?? resolveDmPrincipal;
+  const surface: FenceSurface = auth === undefined || auth === null ? {} : await read(auth).catch((): FenceSurface => ({}));
+  return !(surface.mode === "dm" && surface.platform === platform);
+}
+
 export async function personalSurfaceApprovalRefusal(
   toolName: string,
   auth: SessionAuth | null | undefined,

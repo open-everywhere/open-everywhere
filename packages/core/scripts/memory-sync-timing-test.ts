@@ -205,7 +205,7 @@ function makeCtx(sessionId: string, sandbox: FakeSandbox, attrs: Record<string, 
 async function fireStart(sessionId: string, attrs: Record<string, string> = {}): Promise<FakeSandbox> {
   const sandbox = new FakeSandbox();
   const als = new FakeEveContext();
-  await eveContextStorage().run(als, async () => {
+  await eveContextStorage().run(Object.assign(als, { context: als, values: new Map<unknown, unknown>() }), async () => {
     await hook.events["session.started"]({ type: "session.started" }, makeCtx(sessionId, sandbox, attrs));
   });
   return sandbox;
@@ -394,7 +394,7 @@ function leakSurfaceOf(row: unknown): string {
   const events = [
     { index: 0, at: "2026-02-27T06:20:08.000Z", type: "session.started", data: {} },
     { index: 1, at: "2026-02-27T06:20:10.200Z", type: "turn.started", data: { turnId: "t1" } },
-    { index: 2, at: "2026-02-27T06:20:10.300Z", type: "step.started", data: { turnId: "t1", stepIndex: 0 } },
+    { index: 2, at: "2026-02-27T06:20:10.300Z", type: "model.started", data: { runId: "r0", modelId: "m", attempt: 1 }, scope: { turnId: "t1", runId: "r0" } },
   ];
   const session = decomposeSession(events);
   ok(session.bootMs === 2200, "the transcript half is unchanged — boot is still session.started → first turn.started");

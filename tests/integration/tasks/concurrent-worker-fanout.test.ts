@@ -26,12 +26,23 @@ test("two work calls in one step start two workers that both run", async () => {
 
   let workerToolCalls = 0;
   const workerIdentities: (ToolSessionIdentity | undefined)[] = [];
-  const optionsBagKeys: string[][] = [];
+  const toolContexts: { readonly keys: readonly string[]; readonly callId: unknown; readonly toolName: unknown; readonly sessionId: unknown; readonly parentSessionId: unknown }[] = [];
   afterThisTest(
     wrapToolExecute("post_file", async (_input: unknown, options: unknown) => {
       workerToolCalls += 1;
       workerIdentities.push(toolSessionIdentity());
-      optionsBagKeys.push(options !== null && typeof options === "object" ? Object.keys(options as object) : []);
+      const ctx = (options !== null && typeof options === "object" ? options : {}) as {
+        callId?: unknown;
+        toolName?: unknown;
+        session?: { id?: unknown; parent?: { sessionId?: unknown } };
+      };
+      toolContexts.push({
+        keys: Object.keys(ctx),
+        callId: ctx.callId,
+        toolName: ctx.toolName,
+        sessionId: ctx.session?.id,
+        parentSessionId: ctx.session?.parent?.sessionId,
+      });
       return { posted: true, count: 1 };
     }),
   );
@@ -129,10 +140,21 @@ test("two work calls in one step start two workers that both run", async () => {
 
   expect(workerToolCalls).toBeGreaterThanOrEqual(2);
 
-  expect(optionsBagKeys.length).toBeGreaterThanOrEqual(2);
-  for (const keys of optionsBagKeys) {
-    expect(keys).toContain("toolCallId");
-    expect(keys).not.toContain("session");
+  // eve 1.x passes its tool context (`context/build-base-tool-context.js`) as the second argument:
+  // `callId` and `toolName` for the call, and the public `session` view of the context container.
+  expect(
+    new Set(toolContexts.map((c) => `${String(c.sessionId)}\u0000${String(c.callId)}`)).size,
+    "each tool call is unique within its session (both workers run the same scripted call id)",
+  ).toBe(toolContexts.length);
+  expect(toolContexts.length).toBeGreaterThanOrEqual(2);
+  for (const [i, ctx] of toolContexts.entries()) {
+    expect(ctx.keys).toContain("callId");
+    expect(ctx.keys).not.toContain("toolCallId");
+    expect(ctx.callId, `call ${i}'s callId is the model's own tool-call id`).toMatch(/^ope584-probe(#\d+)?$/);
+    expect(ctx.toolName).toBe("post_file");
+    const identity = workerIdentities[i];
+    expect(ctx.sessionId, "the tool context's session is the session the context container names").toBe(identity?.sessionId);
+    expect(ctx.parentSessionId, "the tool context's parent is the parent the context container names").toBe(identity?.parentSessionId);
   }
 
   const identities = workerIdentities.filter((i): i is ToolSessionIdentity => i !== undefined);

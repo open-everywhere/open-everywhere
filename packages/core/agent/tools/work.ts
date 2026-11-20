@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { windowGated } from "../access/window-gated.js";
@@ -11,7 +12,7 @@ import { dispatchWorkRequest } from "../channels/unified.js";
 import { clearGenerationDelegation, generationOfTask, noteGenerationDelegation } from "../channels/generation-retirement.js";
 import { continuationRoute, resolveWorkGeneration, workSessionLedgerId, type ContinuationRoute, type WorkGeneration } from "../channels/work-generation.js";
 import { notifyLostWorkRequests } from "../channels/work-loss.js";
-import { OE_WORK_RESULT_QUIET_ATTR, readWorkBrief, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderJobBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, WORK_FORWARD_FAILED_ACTION, type WorkRowStore } from "../channels/work.js";
+import { addMissingAttachments, dropWorkTaskAttachments, mergeWorkAttachments, workTaskFilesMark, mergeWorkTaskAttachments, OE_WORK_RESULT_QUIET_ATTR, readWorkAttachmentsKnown, readWorkBrief, readWorkTaskAttachmentsKnown, rememberWorkAttachments, readWorkRequest, readWorkTaskRequest, renderFreshFollowUpBrief, renderJobBrief, renderWorkRequest, rememberWorkBrief, rememberWorkReportPromised, rememberWorkRequest, workLedgerId, workRequestIdFor, workTokenForSeat, WORK_FORWARDED_ACTION, WORK_FORWARD_FAILED_ACTION, type WorkFilesStore, type WorkRowStore, readWorkResult, type WorkResultRow } from "../channels/work.js";
 import { parseWindowToken, isWorkWindowToken } from "../channels/window-key.js";
 import { ownAccountStampToForward } from "../connections/own-account-carriage.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -25,6 +26,8 @@ import { requesterAsksForWake } from "../access/requester-messages.js";
 import { auditTaskContinuation, continuationAdmitted, taskContinuationRefusalMessage } from "../channels/task-provenance.js";
 import { NO_HANDOFF_NARRATION_RULE } from "../instructions/seat-prompt.js";
 import { noteJobForwarded } from "../channels/work-surface-wait.js";
+import { wakeAttachmentsFor } from "../access/worker-continuation.js";
+import { briefAttachmentsOf, mergeBriefAttachments, withDelegatedAttachments, type BriefAttachment } from "../channels/attachments.js";
 
 function quietResultWake(ctx: BindableContext): boolean {
   const v = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } } } }).session?.auth?.current?.attributes?.[OE_WORK_RESULT_QUIET_ATTR];
@@ -41,7 +44,7 @@ export function canForwardWork(ctx: BindableContext): boolean {
 export interface ForwardWorkDeps {
   readonly forwards: (ctx: BindableContext) => boolean;
   readonly org: () => string;
-  readonly store: () => WorkRowStore & Parameters<typeof resolveUnifiedWakeAuthority>[0];
+  readonly store: () => WorkFilesStore & Parameters<typeof resolveUnifiedWakeAuthority>[0];
   readonly dispatch: typeof dispatchWorkRequest;
   readonly markEventSeen?: MarkEventSeen;
   readonly forgetEventSeen?: ForgetEventSeen;
@@ -148,25 +151,92 @@ export async function forwardWork(input: { readonly message: string; readonly ta
     recorded !== undefined ? recorded.fresh : route.kind === "ended" && input.taskId !== undefined ? { taskId: input.taskId, from: route.from, reason: route.reason } : undefined;
   const deliveryToken = recorded !== undefined ? recorded.token : route.kind === "holding" ? route.token : generation.token;
   const deliveredTaskId = fresh !== undefined ? undefined : input.taskId;
-  const seatBrief =
+  // A fresh follow-up carries the earlier job's brief and the task's latest result, the one its result
+  // wake reported back to this conversation. The room check above admitted this task, so a result of
+  // another room's task never carries. The first execution records what it read on the delivery row
+  // (`carry`), and a replay reuses it, so the brief it records is the brief that went out. A delivery
+  // row written before the carry existed has none, so a replay of it reads the rows again.
+  const carry: FreshCarry | undefined =
     fresh === undefined
-      ? input.message
-      : renderFreshFollowUpBrief({
-          taskId: fresh.taskId,
-          message: input.message,
-          ...(await (async () => {
-            const earlier = openingRequest === undefined ? undefined : await readWorkBrief(store, org, openingRequest).catch(() => undefined);
-            return earlier !== undefined ? { earlierBrief: earlier } : {};
-          })()),
-        });
-  const brief = renderJobBrief(seatBrief, requesterAsks);
+      ? undefined
+      : (recorded?.carry ??
+        (await (async (): Promise<FreshCarry> => {
+          const earlier = openingRequest === undefined ? undefined : await readWorkBrief(store, org, openingRequest).catch(() => undefined);
+          const result = await readWorkResult(store, org, fresh.taskId);
+          return { ...(earlier !== undefined ? { earlierBrief: earlier } : {}), ...(result !== undefined ? { earlierResult: result } : {}) };
+        })()));
+  const seatBrief = fresh === undefined ? input.message : renderFreshFollowUpBrief({ taskId: fresh.taskId, message: input.message, ...carry });
+  // The requester's files ride in the brief the work session passes to `agent` verbatim. They come
+  // from THIS forward's wake only (its backscroll included), so a file from another wake or another
+  // room never reaches the worker. eve 1.x gives a policy no way to change a call's input, so the
+  // seat carries them.
+  //
+  // A follow-up on a task also reads the files that task's jobs carried. A continuation's worker
+  // already holds them, so its brief adds only this wake's files. A follow-up that starts as a NEW
+  // job after a rotation has no earlier context, so its brief carries the earlier files too. The
+  // earlier rows are the row of the job the task names, which the room check above admitted, and the
+  // task's own files row, so a file of another task never carries. The job's row alone is not enough:
+  // it is a copy of the files its forward read, and when two continuations of one task run at the same
+  // time, `task.started` can re-point the task to the one whose copy lacks the other's file. Every
+  // continuation also merges its files into the task's files row before its dispatch (see `addTaskFiles`
+  // below), and that row does not depend on which job the task names. This job's row names the task
+  // (`task`), so a later read of it adds the task's files row too (`readWorkAttachmentsKnown`). When the
+  // earlier job's read fails, the row links the earlier job's row instead (`from`), and a later read
+  // follows the link. When only the task's files row reads as unknown, this brief lacks that row's files,
+  // but this job's row still names the task, so a later read adds them. A replay reuses the files of the
+  // first execution (the delivery row), so the brief it records is the brief that went out.
+  const files: NonNullable<WorkDelivery["files"]> =
+    recorded?.files ??
+    (await (async () => {
+      const own = wakeAttachmentsFor(wakeId);
+      if (openingRequest === undefined || input.taskId === undefined) return { own, earlier: [] };
+      const [earlier, added] = await Promise.all([readWorkAttachmentsKnown(store, org, openingRequest), readWorkTaskAttachmentsKnown(store, org, input.taskId)]);
+      const known = addMissingAttachments(earlier ?? [], added ?? []);
+      return earlier === undefined ? { own, earlier: known, from: openingRequest } : { own, earlier: known };
+    })());
+  const taskFiles = mergeBriefAttachments(files.earlier, files.own);
+  const brief = withDelegatedAttachments(renderJobBrief(seatBrief, requesterAsks), fresh !== undefined ? taskFiles : files.own);
+  if (recorded === undefined) await rememberWorkAttachments(store, org, requestId, taskFiles, atIso, files.from, input.taskId).catch(() => undefined);
+  // A continuation writes its files into two rows. Each write is a compare-and-set, so two
+  // continuations of one task in flight at the same time both keep their files in each row.
+  //
+  // - The task's files row (`mergeWorkTaskAttachments`), BEFORE the dispatch (`addTaskFiles`). Each
+  //   continuation's own row is a copy of the files it read at its forward, so it can lack the other
+  //   continuation's file, and `task.started` can re-point the task to it. The task's files row holds
+  //   both files from before either worker starts, so a fresh follow-up that reads it at any later
+  //   time gets both. A merge that does not write refuses the dispatch as not delivered, so no
+  //   continuation's worker holds its own file that this row lacks. A dispatch refused before delivery
+  //   takes this execution's mark back out (`dropWorkTaskAttachments`), but only when this execution's
+  //   merge added it. The mark names this execution, not only the job (`workTaskFilesMark`): two
+  //   executions of one forward can overlap when no dedupe key holds between them, and a refused one
+  //   must not take out a file that a delivered one's worker holds. A file leaves the row only when no
+  //   mark is left on it. A forward on the task that reads the row between the merge and that refusal
+  //   copies the refused file into its own job's row, and a delivered continuation then merges it into
+  //   the opening job's row. So the file stays carried for the task although no worker got it. It is
+  //   the requester's own file from a room the task admits, so nothing crosses a room.
+  // - The files row of the job this forward read (`mergeWorkAttachments`), once its worker may hold the
+  //   files: after a delivered dispatch, or after one whose outcome is unknown. A read that fails skips
+  //   this write, so the row is never replaced with this job's files only.
+  const continuesTask = openingRequest !== undefined && input.taskId !== undefined && fresh === undefined;
+  let markedTaskFiles = false;
+  const taskFilesMark = workTaskFilesMark(requestId, randomUUID());
+  const addTaskFiles = async (): Promise<void> => {
+    if (!continuesTask || input.taskId === undefined) return;
+    const merged = await mergeWorkTaskAttachments(store, org, input.taskId, taskFilesMark, files.own, atIso).catch(() => "failed" as const);
+    if (merged === "failed") throw new DispatchNotDeliveredError("the task's files row could not be written, so the job was not dispatched");
+    markedTaskFiles = merged === "marked";
+  };
+  const addFilesToTask = async (): Promise<void> => {
+    if (!continuesTask || openingRequest === undefined) return;
+    await mergeWorkAttachments(store, org, openingRequest, files.own, atIso).catch(() => false);
+  };
   const loss =
     recorded !== undefined
       ? recorded.loss
       : generation.rotated !== undefined
         ? { from: generation.rotated.from, reason: `work-session ${generation.rotated.trigger}`, lost: generation.rotated.lostRequestIds.filter((id) => id !== requestId) }
         : undefined;
-  if (recorded === undefined && deps.resolveWork) await rememberWorkDelivery(store, org, requestId, { token: deliveryToken, ...(loss !== undefined ? { loss } : {}), ...(fresh !== undefined ? { fresh } : {}) }, atIso);
+  if (recorded === undefined && deps.resolveWork) await rememberWorkDelivery(store, org, requestId, { token: deliveryToken, ...(loss !== undefined ? { loss } : {}), ...(fresh !== undefined ? { fresh } : {}), ...(carry !== undefined ? { carry } : {}), files }, atIso);
   if (loss !== undefined && loss.lost.length > 0 && deps.notifyLost) {
     await deps.notifyLost({ org, requestIds: loss.lost, reason: loss.reason, workToken: loss.from });
   }
@@ -195,7 +265,19 @@ export async function forwardWork(input: { readonly message: string; readonly ta
       ...(deps.markEventSeen ? { markEventSeen: deps.markEventSeen } : {}),
       ...(deps.forgetEventSeen ? { forgetEventSeen: deps.forgetEventSeen } : {}),
       releaseKeyOnFailure: (err) => err instanceof DispatchNotDeliveredError,
-      run: () => deps.dispatch(forward),
+      // The drop takes out only this execution's own mark (`taskFilesMark`), so it never takes out a
+      // file that another execution of this forward also marked, whether or not the forward's key still
+      // holds. The drop also runs inside `run`, so it ends before `postOnce` releases the key and a
+      // retry of this forward merges again.
+      run: async () => {
+        await addTaskFiles();
+        try {
+          return await deps.dispatch(forward);
+        } catch (err) {
+          if (err instanceof DispatchNotDeliveredError && markedTaskFiles && input.taskId !== undefined) await dropWorkTaskAttachments(store, org, input.taskId, taskFilesMark, atIso).catch(() => false);
+          throw err;
+        }
+      },
     });
   } catch (err) {
     const definite = err instanceof DispatchNotDeliveredError;
@@ -204,6 +286,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
       await clearGenerationDelegation(org, workSessionLedgerId(requestId));
     } else {
       notePendingDelegation(turnId, workLedgerId(requestId), wakeId);
+      await addFilesToTask();
     }
     await deps
       .audit({
@@ -219,6 +302,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
   if (input.taskId !== undefined) {
     await noteJobForwarded({ requestId, ctx: c, ...(openingRequest !== undefined ? { openingRequestId: openingRequest } : {}), taskId: input.taskId });
   }
+  await addFilesToTask();
   notePendingDelegation(turnId, workLedgerId(requestId), wakeId);
 
   await deps.audit({
@@ -238,7 +322,7 @@ export async function forwardWork(input: { readonly message: string; readonly ta
 
   return {
     requestId,
-    note: fresh !== undefined ? freshFollowUpNote(fresh.taskId) : FORWARDED_NOTE,
+    note: fresh !== undefined ? freshFollowUpNote(fresh.taskId, carry?.earlierResult !== undefined) : FORWARDED_NOTE,
   };
 }
 
@@ -263,7 +347,15 @@ function flatRule(rule: string): string {
   return rule.replace(/\s+/g, " ");
 }
 
-export function freshFollowUpNote(taskId: string): string {
+export function freshFollowUpNote(taskId: string, carriedResult = false): string {
+  if (carriedResult) {
+    return (
+      `The job you asked to continue (task ${taskId}) ran in an earlier work session that can no longer continue it, ` +
+      "so this follow-up was forwarded as a NEW job, with the earlier job's brief and its result attached. The new job builds on that result, but not on its working state. " +
+      "Tell the people who asked, in one plain line, that this part carries on from the earlier result (reply with done:false), then carry on. Do not mention jobs, tasks or sessions. " +
+      "The result arrives to you as a new message."
+    );
+  }
   return (
     `The job you asked to continue (task ${taskId}) ran in an earlier work session that can no longer continue it, ` +
     "so this follow-up was forwarded as a NEW job, with the earlier job's brief attached. The new job does not have the earlier job's work. " +
@@ -280,13 +372,31 @@ interface WorkDelivery {
   readonly token: string;
   readonly loss?: { readonly from: string; readonly reason: string; readonly lost: readonly string[] };
   readonly fresh?: { readonly taskId: string; readonly from: string; readonly reason: string };
+  readonly files?: { readonly own: readonly BriefAttachment[]; readonly earlier: readonly BriefAttachment[]; readonly from?: string };
+  readonly carry?: FreshCarry;
+}
+
+/** What a fresh follow-up's first execution read of the earlier job: its brief and the task's latest result. */
+interface FreshCarry {
+  readonly earlierBrief?: string;
+  readonly earlierResult?: WorkResultRow;
+}
+
+function readFreshCarry(raw: unknown): FreshCarry | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const c = raw as { earlierBrief?: unknown; earlierResult?: { status?: unknown; text?: unknown } | null };
+  const r = c.earlierResult;
+  const status = r?.status;
+  const result: WorkResultRow | undefined =
+    r !== undefined && r !== null && typeof r.text === "string" && (status === "completed" || status === "failed" || status === "cancelled") ? { status, text: r.text } : undefined;
+  return { ...(typeof c.earlierBrief === "string" && c.earlierBrief.length > 0 ? { earlierBrief: c.earlierBrief } : {}), ...(result !== undefined ? { earlierResult: result } : {}) };
 }
 
 async function readWorkDelivery(store: WorkRowStore, org: string, requestId: string): Promise<WorkDelivery | undefined> {
   try {
     const raw = await store.getTaskResult(org, workDeliveryKey(requestId));
     if (raw === null) return undefined;
-    const row = JSON.parse(raw) as { token?: unknown; loss?: { from?: unknown; reason?: unknown; lost?: unknown }; fresh?: { taskId?: unknown; from?: unknown; reason?: unknown } } | null;
+    const row = JSON.parse(raw) as { token?: unknown; loss?: { from?: unknown; reason?: unknown; lost?: unknown }; fresh?: { taskId?: unknown; from?: unknown; reason?: unknown }; files?: { own?: unknown; earlier?: unknown; from?: unknown }; carry?: unknown } | null;
     const token = row?.token;
     if (typeof token !== "string" || !isWorkWindowToken(token)) return undefined;
     const l = row?.loss;
@@ -297,7 +407,13 @@ async function readWorkDelivery(store: WorkRowStore, org: string, requestId: str
     const f = row?.fresh;
     const fresh =
       f !== undefined && typeof f.taskId === "string" && typeof f.from === "string" && typeof f.reason === "string" ? { taskId: f.taskId, from: f.from, reason: f.reason } : undefined;
-    return { token, ...(loss !== undefined ? { loss } : {}), ...(fresh !== undefined ? { fresh } : {}) };
+    const fr = row?.files;
+    const files =
+      fr !== undefined && fr !== null
+        ? { own: briefAttachmentsOf(fr.own), earlier: briefAttachmentsOf(fr.earlier), ...(typeof fr.from === "string" && fr.from.length > 0 ? { from: fr.from } : {}) }
+        : undefined;
+    const carry = readFreshCarry(row?.carry);
+    return { token, ...(loss !== undefined ? { loss } : {}), ...(fresh !== undefined ? { fresh } : {}), ...(files !== undefined ? { files } : {}), ...(carry !== undefined ? { carry } : {}) };
   } catch {
     return undefined;
   }

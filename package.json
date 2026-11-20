@@ -18,8 +18,7 @@
     "dev": "EVE_TELEMETRY_DISABLED=1 eve dev",
     "prebuild": "npm run oe:build && tsx scripts/eve-build-stamp.ts begin",
     "build": "EVE_TELEMETRY_DISABLED=1 NODE_OPTIONS=--max-old-space-size=6144 eve build",
-    "postbuild": "tsx scripts/eve-build-stamp.ts end && tsx scripts/agent-version-seam-bundle-test.ts && npm run test:dynamic-closure-bundle",
-    "test:dynamic-closure-bundle": "NODE_NO_WARNINGS=1 tsx scripts/dynamic-callback-closure-bundle-test.ts",
+    "postbuild": "tsx scripts/eve-build-stamp.ts end && tsx scripts/agent-version-seam-bundle-test.ts",
     "prestart": "npm run oe:build",
     "start": "EVE_TELEMETRY_DISABLED=1 eve start",
     "pretypecheck": "npm run oe:build",
@@ -37,6 +36,7 @@
     "test:scripted-report-address": "NODE_NO_WARNINGS=1 tsx scripts/scripted-report-address-test.ts",
     "test:scripted-wake-ownership": "NODE_NO_WARNINGS=1 tsx scripts/scripted-wake-ownership-test.ts",
     "test:scripted-task-receipt": "NODE_NO_WARNINGS=1 tsx scripts/scripted-task-receipt-test.ts",
+    "test:scripted-resolve-frame": "NODE_NO_WARNINGS=1 tsx scripts/scripted-resolve-frame-test.ts",
     "tidy": "node scripts/tidy/comments.mjs",
     "test:tidy-loc": "NODE_NO_WARNINGS=1 tsx scripts/tidy/loc-test.ts",
     "test:tidy-comments": "NODE_NO_WARNINGS=1 tsx scripts/tidy/comments-test.ts",
@@ -55,7 +55,7 @@
     "lint:consequence": "tsx scripts/consequence-lint.ts",
     "lint:never-tier": "tsx scripts/never-tier-lint.ts",
     "lint:window-gate": "tsx scripts/window-gate-lint.ts",
-    "lint:dynamic-replay": "tsx scripts/dynamic-replay-doctrine-lint.ts",
+    "lint:dynamic-tools": "tsx scripts/dynamic-tool-doctrine-lint.ts",
     "lint:source-gate": "tsx scripts/source-gate-lint.ts",
     "lint:work-mount": "tsx scripts/work-mount-lint.ts",
     "lint:resource-grant-mount": "tsx scripts/resource-grant-mount-lint.ts",
@@ -103,10 +103,12 @@
     "test:model-ab": "NODE_NO_WARNINGS=1 tsx scripts/model-ab-test.ts",
     "report:model-ab": "NODE_NO_WARNINGS=1 tsx scripts/model-ab-report.ts",
     "test:model-pricing-wiring": "NODE_NO_WARNINGS=1 tsx scripts/model-pricing-wiring-test.ts",
+    "test:subagent-root-model": "NODE_NO_WARNINGS=1 tsx scripts/subagent-root-model-test.ts",
     "lint:hydration-stub": "tsx scripts/hydration-stub-lint.ts",
     "lint:human-only-invariants": "tsx scripts/human-only-invariants-lint.ts",
     "lint:principal-gate": "tsx scripts/principal-gate-lint.ts",
     "lint:own-account-gate": "tsx scripts/own-account-gate-lint.ts",
+    "lint:stand-down-gate": "tsx scripts/stand-down-gate-lint.ts",
     "test:own-account-gate-refusal": "NODE_NO_WARNINGS=1 tsx scripts/own-account-gate-lint-refusal-test.ts",
     "lint:principal-key": "tsx scripts/principal-key-lint.ts",
     "lint:hosted-externals": "tsx scripts/hosted-externals-lint.ts",
@@ -143,6 +145,10 @@
     "check:model-catalog-liveness": "tsx scripts/model-catalog-liveness-check.ts",
     "seed:model-catalog": "tsx scripts/seed-model-catalog-cache.ts",
     "test:model-catalog-snapshot": "NODE_NO_WARNINGS=1 tsx scripts/model-catalog-snapshot-drift-test.ts",
+    "test:eve-deep-reads": "NODE_NO_WARNINGS=1 tsx scripts/eve-deep-reads-test.ts",
+    "test:eve-hook-replay": "NODE_NO_WARNINGS=1 tsx scripts/eve-hook-replay-test.ts",
+    "test:skill-package-shape": "NODE_NO_WARNINGS=1 tsx scripts/skill-package-shape-test.ts",
+    "test:egress-rule-shape": "NODE_NO_WARNINGS=1 tsx scripts/egress-rule-shape-test.ts",
     "check:model-config": "tsx scripts/model-config-check.ts",
     "probe:models": "tsx scripts/model-route-probe.ts",
     "e2e:stack": "tsx scripts/e2e-stack-lane.ts",
@@ -367,7 +373,8 @@
   "overrides": {
     "zod": "4.5.4",
     "@agent-browser/eve": {
-      "zod": "4.5.4"
+      "zod": "4.5.4",
+      "eve": "$eve"
     },
     "eve": {
       "undici": "8.11.2",
@@ -377,6 +384,9 @@
     },
     "guarded-fetch": {
       "undici": "7.30.0"
+    },
+    "just-bash": {
+      "typescript": "$typescript"
     }
   },
   "dependencies": {
@@ -391,13 +401,14 @@
     "@open-everywhere/provider-slack": "0.1.0",
     "@open-everywhere/provider-teams": "0.1.0",
     "@vercel/sandbox": "^3.2.1",
-    "eve": "0.71.0",
+    "eve": "1.0.0-rc.18",
     "just-bash": "^3.1.0"
   },
   "devDependencies": {
     "@ai-sdk/provider": "^4.0.7",
     "@arethetypeswrong/cli": "^0.18.5",
     "@types/node": "latest",
+    "esbuild": "~0.28.1",
     "knip": "^6.34.0",
     "oxc-parser": "0.147.0",
     "patch-package": "^8.0.1",

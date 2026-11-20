@@ -7,6 +7,7 @@ import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/iden
 import reply from "@open-everywhere/core/agent/tools/reply.js";
 import { canReceiveJudgedWake } from "@open-everywhere/core/agent/instructions/access.js";
 import { classifySessionId } from "@open-everywhere/core/agent/channels/window-key.js";
+import { _dynamicResolverForTest } from "@open-everywhere/core/agent/access/window-gated.js";
 
 registerDiscordProvider();
 
@@ -25,7 +26,7 @@ ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === true, "'discord-ga
 
 type Handler = (input: Record<string, unknown>, ctx: unknown) => { events: unknown } | null;
 const armReply = (r: unknown, ctx: unknown): unknown =>
-  (r as { events: Record<string, Handler> }).events["session.started"]({}, ctx);
+  _dynamicResolverForTest(r)({}, ctx);
 ok(armReply(reply, ctxFor("discord")) !== null, "reply arms on a discord session (midTurnPost manifest present)");
 ok(armReply(reply, ctxFor("discord-gateway")) !== null, "reply arms on the discord-gateway alias session");
 

@@ -109,17 +109,16 @@ export async function readToolCalls(
         idleMs: 2500,
       });
       for (const e of tr.events) {
-        if (e.type === "actions.requested") {
-          const acts = (e.data as { actions?: { toolName?: string; callId?: string }[] } | undefined)?.actions ?? [];
-          for (const a of acts) {
-            if (typeof a.toolName !== "string") continue;
-            if (typeof a.callId === "string") byCallId.set(a.callId, calls.length);
-            calls.push({ name: a.toolName, errored: false, at: e.at });
-          }
-        } else if (e.type === "action.result") {
-          const d = e.data as { error?: unknown; result?: { callId?: string } } | undefined;
-          if (d?.error !== undefined) {
-            const idx = byCallId.get(typeof d.result?.callId === "string" ? d.result.callId : "");
+        if (e.type === "call.requested") {
+          const d = e.data as { callId?: string; capability?: { name?: unknown } } | undefined;
+          const name = d?.capability?.name;
+          if (typeof name !== "string") continue;
+          if (typeof d?.callId === "string") byCallId.set(d.callId, calls.length);
+          calls.push({ name, errored: false, at: e.at });
+        } else if (e.type === "call.settled") {
+          const d = e.data as { callId?: string; outcome?: string; error?: unknown } | undefined;
+          if (d?.error !== undefined || (d?.outcome !== undefined && d.outcome !== "completed")) {
+            const idx = byCallId.get(typeof d?.callId === "string" ? d.callId : "");
             if (idx !== undefined) calls[idx] = { ...calls[idx], errored: true };
           }
         }

@@ -9,4 +9,4 @@ IN  relay message M91 · guild G9 channel C9 (type 0) · from U_DEV9 · mention
   ⇠ 200 ok
 EVT turn.started on discord:C9
   → POST /channels/C9/typing ⇒ 204
-EVT message.completed on discord:C9 {"finishReason":"stop","message":"Two changes: the cache fix and the new webhook route."}
+EVT content.completed on discord:C9 {"partId":"part-1","kind":"text","phase":"reply","value":"Two changes: the cache fix and the new webhook route."}

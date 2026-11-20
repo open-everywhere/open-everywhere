@@ -37,11 +37,35 @@ function collectPaths(value: unknown, underPathKey: boolean, out: string[], arm:
   }
 }
 
-export function extractMemoryPathReads(events: readonly TranscriptWireEvent[]): string[] {
+/**
+ * The calls whose result is a worker's report, not a read by this session: an `agent` call, and a
+ * call that serves a task (`call.started` with a `taskId`). On eve 1.x the report rides that call's
+ * `call.settled`, the same event a tool result rides.
+ */
+function delegatedCalls(events: readonly TranscriptWireEvent[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const e of events) {
+    const d = e.data as { callId?: unknown; taskId?: unknown; capability?: { kind?: unknown } } | null | undefined;
+    if (d === null || typeof d !== "object" || typeof d.callId !== "string") continue;
+    const t = e.type.toLowerCase();
+    if (t === "call.requested" && d.capability?.kind === "agent") out.add(d.callId);
+    if (t === "call.started" && typeof d.taskId === "string") out.add(d.callId);
+  }
+  return out;
+}
+
+/**
+ * The memory paths `events` read. `lineage` is where the delegated calls are learnt: pass the whole
+ * transcript when `events` is a window of it, because a task started before the window can settle
+ * inside it, and its report must still not count.
+ */
+export function extractMemoryPathReads(events: readonly TranscriptWireEvent[], lineage: readonly TranscriptWireEvent[] = events): string[] {
   const out: string[] = [];
+  const delegated = delegatedCalls(lineage);
   for (const e of events) {
     const t = e.type.toLowerCase();
-    if (t.includes("message.received") || t.includes("wake") || t.includes("user")) continue;
+    if (t.includes("delivery.consumed") || t.includes("wake") || t.includes("user")) continue;
+    if (t === "call.settled" && delegated.has(String((e.data as { callId?: unknown } | null | undefined)?.callId))) continue;
     const isResult = isToolResultEvent(t);
     const found: string[] = [];
     collectPaths(e.data, isResult, found, isResult ? RESULT_ARM : INPUT_ARM);

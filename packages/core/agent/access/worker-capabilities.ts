@@ -9,7 +9,7 @@ export interface WorkerCapabilityGroup {
   readonly tools: readonly string[];
 }
 
-export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_tools", "browser_tools", "grant_tools", "connection_tools"]);
+export const WORKER_INDEX_MACHINERY: ReadonlySet<string> = new Set(["sandbox_tools", "browser_tools", "grant_tools", "notion", "slack-as-you"]);
 
 export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "agent",
@@ -19,8 +19,9 @@ export const WORKER_INDEX_LIFECYCLE: ReadonlySet<string> = new Set([
   "complete_thread",
   "read_thread_seat",
   "message_thread_seat",
-  "task_cancel",
-  "task_wait",
+  "eve__task_cancel",
+  "eve__task_wait",
+  "eve__reply",
 ]);
 
 export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
@@ -41,12 +42,12 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "workspace",
     headline: "Work in a real workspace — check out a repo, read and write files, run commands, inspect output",
-    tools: ["bash", "glob", "grep", "read_file", "write_file", "checkout_repo", "extend_workspace_time"],
+    tools: ["bash", "glob", "grep", "read_file", "write_file", "edit_file", "checkout_repo", "extend_workspace_time"],
   },
   {
     id: "artifacts",
     headline: "Produce something and put it in front of people — a chart, a CSV, an image, a document, a reusable skill, a Slack canvas, or rows in a Slack List",
-    tools: ["post_file", "create_skill", "delete_skill", "load_skill", "list_skills", "write_canvas", "update_list"],
+    tools: ["post_file", "create_skill", "delete_skill", "eve__skill", "list_skills", "write_canvas", "update_list"],
   },
   {
     id: "code-changes",
@@ -56,7 +57,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   {
     id: "external-reach",
     headline: "Reach the open web and the connected services — fetch a page, search, discover and offer connectors, and run an operation on one",
-    tools: ["web_fetch", "web_search", "connection_search", "connection_execute", "connector", "revoke_connector", "clear_connector_override"],
+    tools: ["web_fetch", "web_search", "eve__search", "eve__tool", "connector", "revoke_connector", "clear_connector_override"],
   },
   {
     id: "work-surfaces",
@@ -275,14 +276,19 @@ const SHARED_FILESYSTEM_LINE =
 const DO_NOT_PRE_EMPT_THE_GATE =
   "Permission works the same way. Do not refuse an ask because you judge the person is not allowed it, or because the answer looks internal. You do not hold these verbs, so you do not hold their gates: a verb that needs standing checks it when the worker runs it, and refuses with a reason the person can act on. A refusal you write instead never reaches that gate, so the person gets your guess in place of the real reason. Route the ask, let the verb answer, and relay what it says — its refusal included. Do not refuse, water down, or ask to confirm an ask because of what you forecast the act will do once it runs. You propose a gated act, and the approval plane decides it — the card, the fence and the judge, with the person's own click. The room's earlier rounds are not a verdict on this ask.";
 
-function delegationReturnShape(route: "agent", asyncVerb: "spawn_thread_session" | undefined): string {
+function delegationReturnShape(route: "agent" | "work", asyncVerb: "spawn_thread_session" | undefined): string {
+  const forwards = route === "work";
   const lines = [
-    `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
+    forwards
+      ? "`work` does NOT block. It hands the job to your work session and returns a receipt with a `requestId` at once, so this turn ends and this room stays answerable while the work runs."
+      : `\`${route}\` does NOT block. It starts the worker in the background and hands you a task receipt at once, so this turn ends and this room stays answerable while the work runs.`,
     `If this wake owes an answer — it addressed you, or you promised one — post one short line in the same turn with \`done: false\` that says what will happen, never that you handed it off. That reply keeps the wake open for the real answer.`,
     `If nobody asked you anything (a channel-watch wake you are only listening to), delegate silently and call \`no_reply\`: the worker's settlement then ends in silence too, unless it turns up something the room asked for.`,
-    `When the worker settles, its completion arrives as a NEW message on a later turn, and that message tells you how to read its output. Stop work you no longer need with \`task_cancel\`, using the task id from the receipt.`,
+    forwards
+      ? "When the job settles, its result arrives as a NEW message on a later turn, and that message tells you how to read its output and names the job's task id. Stop a job you no longer need with `cancel_work`: pass the `requestId` from the receipt, or the task id the job's result named."
+      : "When the worker settles, its completion arrives as a NEW message on a later turn, and that message tells you how to read its output. Stop work you no longer need with `eve__task_cancel`, using the task id from the receipt.",
     `Say which request the result answers. Another message can arrive in this room while a worker runs, and an answer posted against the wrong one reads as a non-sequitur.`,
-    `To correct a worker or give it a follow-up, call \`${route}\` again with the \`taskId\` from its receipt: it keeps what it already read and found. Only continue a task from the room that opened it, and only once it has reported back. A task opened in another room is refused, so start a fresh \`${route}\` call there and put everything the new worker needs in its brief.`,
+    `To correct a worker or give it a follow-up, call \`${route}\` again with the \`taskId\` ${forwards ? "that the job's result named" : "from its receipt"}: it keeps what it already read and found. Only continue a task from the room that opened it, and only once it has reported back. A task opened in another room is refused, so start a fresh \`${route}\` call there and put everything the new worker needs in its brief.`,
     SHARED_FILESYSTEM_LINE,
   ];
   if (asyncVerb !== undefined) {
@@ -338,7 +344,7 @@ export function renderWorkerCapabilityIndex(
     "worker can see its own kit and you cannot, so naming a verb for it is a guess at a list that",
     "moves. Give it the context it needs in the brief itself — it does not share your backscroll.",
     "",
-    route === "agent" ? delegationReturnShape(route, asyncVerb) : "",
+    route === "agent" || route === "work" ? delegationReturnShape(route, asyncVerb) : "",
     "",
     "And never say you cannot do something that a worker can. Route it, and come back with the",
     "answer. Routed work is NOT done until the worker reports back: say what will happen (\"I'll post",

@@ -1,5 +1,5 @@
 import { defineAgent } from "eve";
-import { defineDynamic } from "eve/tools";
+import { defineDynamic, type DynamicModelContext } from "eve/models";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import "@open-everywhere/core/agent/access/eve-patch-probe-boot.js";
@@ -26,6 +26,8 @@ import { compactionThresholdTokens } from "./model/stacks.js";
 import { scriptedModelFor } from "./model/scripted-resolve.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { getSettings } from "@open-everywhere/core/agent/settings/settings.js";
+import { sessionUsageLimit } from "@open-everywhere/core/agent/model/session-usage.js";
+import { taskContinuationApproval } from "@open-everywhere/core/agent/access/worker-continuation.js";
 import { EVE_RUNTIME_VERSION } from "@open-everywhere/core/agent/channels/runtime-rotation.js";
 import appPackageJson from "../package.json" with { type: "json" };
 
@@ -40,9 +42,9 @@ const UTILITY_GATEWAY_DEFAULTS = {
 
 const SESSION_INPUT_TOKEN_BUDGET = getSettings().agent.sessionInputTokenBudget;
 
-const COMPACTION_THRESHOLD_PERCENT = getSettings().agent.compactionThresholdPercent;
+const COMPACTION_THRESHOLD = getSettings().agent.compactionThresholdPercent;
 
-const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD_PERCENT);
+const COMPACTION_THRESHOLD_TOKENS = compactionThresholdTokens(PRIMARY_MODEL_CONTEXT_WINDOW_TOKENS, COMPACTION_THRESHOLD);
 
 registerGatewayDreamJudge({ id: UTILITY_MODEL, via: MODELS.utility.via, gateway: UTILITY_GATEWAY_DEFAULTS });
 
@@ -115,17 +117,17 @@ function selectingResolver<TModel>(
 export default defineAgent({
   build: { externalDependencies: ["just-bash"] },
 
-  model: defineDynamic({
-    events: {
-      "step.started": (() => {
-        const gatewayResolve = gatewayModelResolver({ id: DEFAULT_MODEL, via: MODELS.primary.via, gateway: GATEWAY_DEFAULTS });
-        return selectingResolver(async (event, ctx) => (await scriptedModelFor(event, ctx)) ?? (await gatewayResolve(event, ctx)));
-      })(),
-    },
-  }),
+  model: defineDynamic(
+    (() => {
+      const gatewayResolve = gatewayModelResolver({ id: DEFAULT_MODEL, via: MODELS.primary.via, gateway: GATEWAY_DEFAULTS });
+      const resolve = selectingResolver(async (event, ctx) => (await scriptedModelFor(event, ctx)) ?? (await gatewayResolve(event, ctx)));
+      return async (ctx: DynamicModelContext) => await resolve(undefined, ctx);
+    })(),
+  ),
   reasoning: "medium",
-  limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
+  limits: { sessionUsage: sessionUsageLimit(SESSION_INPUT_TOKEN_BUDGET), sessionTimeoutMs: false },
+  approval: taskContinuationApproval,
   compaction: {
-    thresholdPercent: COMPACTION_THRESHOLD_PERCENT,
+    threshold: COMPACTION_THRESHOLD,
   },
 });

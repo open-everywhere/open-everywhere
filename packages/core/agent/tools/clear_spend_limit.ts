@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "eve/tools";
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf, unattendedOf } from "../access/request.js";
@@ -10,7 +10,7 @@ import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, cardPostedTail } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { sessionMountedTool } from "../access/window-gated.js";
 import { placeBesideKey } from "../channels/friendly-ids.js";
 import { placeWords } from "../channels/friendly-ids.js";
 
@@ -139,10 +139,5 @@ const clearSpendLimitEntry = defineTool({
     };
   },
 });
-preRegisterDynamicEntry("clear_spend_limit", "_single", clearSpendLimitEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": () => clearSpendLimitEntry,
-  },
-});
+export default sessionMountedTool("clear_spend_limit", clearSpendLimitEntry);

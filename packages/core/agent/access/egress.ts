@@ -1,4 +1,4 @@
-import type { SandboxNetworkPolicy } from "eve/sandbox";
+import type { SandboxNetworkPolicy, SandboxNetworkRule } from "eve/sandbox";
 import type { EffectiveAccess, ReachableHost } from "./resolver.js";
 import { EgressHostCollisionError } from "./resolver.js";
 import { egressHostsOverlap, normaliseEgressHost, type Connection } from "./bundle.js";
@@ -78,14 +78,20 @@ export type ResolveHeaders = (connection: Connection) => Promise<Record<string, 
 
 export type NarrowConnections = (connectionIds: readonly string[]) => Promise<readonly string[] | null>;
 
-export type EgressRule = {
-  match?: {
-    method?: string[];
-    path?: { startsWith?: string; exact?: string; regex?: string };
-    queryString?: { key?: { exact?: string }; value?: { exact?: string } }[];
-  };
-  transform: { headers?: Record<string, string> }[];
-};
+export type EgressRule = Extract<SandboxNetworkRule, { readonly transform: unknown }>;
+
+export type EgressAllow = Record<string, readonly EgressRule[]>;
+
+export function egressAllowMap(policy: SandboxNetworkPolicy): Record<string, readonly SandboxNetworkRule[]> {
+  if (typeof policy === "string" || policy.allow === undefined) return {};
+  const allow = policy.allow;
+  if (isHostList(allow)) return Object.fromEntries(allow.map((host) => [host, []]));
+  return { ...allow };
+}
+
+function isHostList(allow: NonNullable<Exclude<SandboxNetworkPolicy, string>["allow"]>): allow is readonly string[] {
+  return Array.isArray(allow);
+}
 
 function ruleForHost(
   host: ReachableHost,
@@ -98,23 +104,20 @@ function ruleForHost(
 
   const prefixes = host.pathPrefixes ?? [];
   if (prefixes.length > 0) {
-    return prefixes.map((prefix) => {
-      const rule: EgressRule = { match: { path: { startsWith: prefix } }, transform };
-      if (method) rule.match!.method = method;
-      return rule;
-    });
+    return prefixes.map((prefix): EgressRule => ({
+      match: { path: { startsWith: prefix }, ...(method ? { method } : {}) },
+      transform,
+    }));
   }
 
-  const rule: EgressRule = { transform };
-  if (method) rule.match = { method };
-  return [rule];
+  return [method ? { transform, match: { method } } : { transform }];
 }
 
 async function browserHostRules(
   byId: ReadonlyMap<string, Connection>,
   grantedIds: ReadonlySet<string> | null,
   resolveHeaders: ResolveHeaders,
-): Promise<Record<string, EgressRule[]>> {
+): Promise<EgressAllow> {
   const armed = browserEgressHosts();
 
   const collisions: string[] = [];
@@ -128,7 +131,7 @@ async function browserHostRules(
   }
   if (collisions.length > 0) throw new EgressHostCollisionError(collisions);
 
-  const out: Record<string, EgressRule[]> = {};
+  const out: EgressAllow = {};
   for (const row of armed) {
     const method = [...row.methods];
     if (row.credential === undefined) {
@@ -152,7 +155,7 @@ export async function compileNetworkPolicy(
   networkAccessLevel: NetworkAccessLevel = DEFAULT_NETWORK_ACCESS_LEVEL,
 ): Promise<SandboxNetworkPolicy> {
   const byId = new Map(access.connections.map((c) => [c.id, c]));
-  const allow: Record<string, EgressRule[]> = {};
+  const allow: EgressAllow = {};
 
   const connectionIds = [...byId.keys()];
   const granted = connectionIds.length > 0 ? await narrowConnections(connectionIds) : [];
@@ -225,7 +228,7 @@ export function openWriteHosts(
   if (typeof policy === "string") {
     return policy === "allow-all" ? [{ host: "*", credential: null, credentialed: false, verb: "any" }] : [];
   }
-  const allow = (policy as { allow?: readonly string[] | Record<string, EgressRule[]> }).allow;
+  const allow = policy.allow;
   if (!allow) return [];
   const viaByHost = new Map<string, string | null>(browserHosts.map((h) => [h.host, h.credential ?? null]));
   for (const h of reachableHosts) viaByHost.set(h.host, h.viaConnection);

@@ -1,3 +1,4 @@
+import { SessionNotActiveError } from "eve/sessions";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import {
@@ -241,7 +242,7 @@ async function deliverFor(
     },
     fetch: recordingFetch(seen, parent, shape?.blockParents),
     engagement: FIRST_SIGHTING,
-    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+    attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
     dispatch: async (d) => {
       dispatched = d.credentialId;
       attributes = { ...d.auth.attributes };
@@ -382,7 +383,7 @@ async function deliverFor(
     ambientEnabled: () => true,
     fetch: recordingFetch(seen),
     engagement: FIRST_SIGHTING,
-    attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+    attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
     dispatch: async () => {
       throw new Error("a bound domain with no credential must never dispatch");
     },
@@ -562,7 +563,7 @@ async function deliverFor(
       },
       fetch: recordingFetch([], { type: "page_id", page_id: page }),
       engagement: FIRST_SIGHTING,
-      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+      attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
       dispatch: async (d) => {
         dispatched = true;
         surfaceKey = d.surfaceKey;
@@ -675,7 +676,7 @@ async function deliverFor(
       ambientEnabled: () => true,
       fetch: recordingFetch([], { type: "page_id", page_id: PAGE_PAY }),
       engagement: FIRST_SIGHTING,
-      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+      attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
       dispatch: async (d) => {
         dispatched = true;
         surfaceKey = d.surfaceKey;
@@ -795,7 +796,7 @@ async function deliverFor(
       ambientEnabled: () => true,
       fetch: recordingFetch([], { type: "page_id", page_id: page }),
       engagement: FIRST_SIGHTING,
-      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+      attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
       dispatch: async (d) => {
         dispatched = true;
         surfaceKey = d.surfaceKey;
@@ -861,7 +862,7 @@ async function deliverFor(
         return recordingFetch([])(url, init);
       },
       engagement: FIRST_SIGHTING,
-      attachSession: () => ({ cancel: async () => ({ status: "no_active_turn" }) }),
+      attachSession: () => ({ cancel: async () => { throw new SessionNotActiveError(); } }),
       dispatch: async () => {},
     });
     return { action: out.action, ...(out.detail ? { detail: out.detail } : {}), resolved };

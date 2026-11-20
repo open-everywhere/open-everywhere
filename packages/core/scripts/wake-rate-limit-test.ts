@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
+import { eveWorldVercelSource } from "./_eve-world-source.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-wake-rate-limit-")), "ops.sqlite3");
@@ -84,10 +84,7 @@ async function retryRows(wakeId: string): Promise<Array<Record<string, unknown>>
 }
 
 {
-  const require = createRequire(import.meta.url);
-  const evePkg = require.resolve("eve/package.json");
-  const world = `${dirname(evePkg)}/dist/src/compiled/@workflow/world-vercel/index.js`;
-  const haystack = readFileSync(world, "utf8");
+  const haystack = eveWorldVercelSource();
   ok(
     haystack.includes("TooManyRequestsError"),
     "🔴 §1 pin: eve still names its 429 error class TooManyRequestsError — if this is RED, eve renamed it and isRateLimitThrow no longer matches a rate-limited wake",

@@ -7,6 +7,8 @@ import {
   sendTeamsActivityBackedOff,
   replyToTeamsActivityBackedOff,
   updateTeamsActivityBackedOff,
+  callTeamsConnectorApi,
+  _resetTeamsAccessTokenCacheForTest,
 } from "../agent/channels/teams-connector.js";
 
 let n = 0;
@@ -18,6 +20,15 @@ const eq = (a: unknown, b: unknown, label: string) => {
   assert.deepStrictEqual(a, b, label);
   n++;
 };
+async function rejects(p: Promise<unknown>, label: string): Promise<void> {
+  let threw = false;
+  try {
+    await p;
+  } catch {
+    threw = true;
+  }
+  ok(threw, label);
+}
 
 console.log("teams connector rate limit (OPE-1237):");
 
@@ -160,6 +171,38 @@ try {
     eq(stub.requests[1].url, "https://smba.trafficmanager.net/amer/v3/conversations/conv-1/activities/root-1", "shape: reply hits the root activity's own path");
     eq(stub.requests[2].url, "https://smba.trafficmanager.net/amer/v3/conversations/conv-1/activities/act-1", "shape: update hits the SAME path a reply would, PUT instead of POST");
     eq(stub.requests[2].init?.method, "PUT", "shape: update is a PUT, not a POST");
+  }
+
+  {
+    // OPE-2700: the OE-owned Connector read that replaced eve's removed callTeamsConnectorApi.
+    const SERVICE_URL = "https://smba.trafficmanager.net/amer/";
+    overrideSettingsForTest({ teams: { appId: "app-under-test" } });
+    process.env.MICROSOFT_APP_PASSWORD = "pw";
+    delete process.env.MICROSOFT_TENANT_ID;
+    delete process.env.TEAMS_TENANT_ID;
+    _resetTeamsAccessTokenCacheForTest();
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const fetch = async (url: string, init: RequestInit): Promise<Response> => {
+      calls.push({ url, init });
+      if (url.includes("login.microsoftonline.com")) return new Response(JSON.stringify({ access_token: "tok-1", expires_in: 3600 }));
+      return new Response(JSON.stringify({ id: "m1" }), { status: 200 });
+    };
+    for (const bad of ["http://smba.trafficmanager.net/amer/", "https://user:pw@smba.trafficmanager.net/", "https://smba.trafficmanager.net/?x=1", "not a url"]) {
+      await rejects(callTeamsConnectorApi({ serviceUrl: bad, path: "/v3/x", method: "GET" }, { fetch }), `a service URL of ${JSON.stringify(bad)} is refused`);
+    }
+    eq(calls.length, 0, "a refused service URL mints no token and sends nothing");
+    const res = await callTeamsConnectorApi({ serviceUrl: SERVICE_URL, path: "/v3/conversations/c/members/u", method: "GET" }, { fetch });
+    ok(res.ok && (res.body as { id?: string }).id === "m1", "a good call returns the parsed body");
+    const mint = calls[0]!;
+    ok(mint.url === "https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token", "with no tenant the token is minted on the botframework.com tenant");
+    ok(String(mint.init.body).includes("client_id=app-under-test") && String(mint.init.body).includes("scope=https%3A%2F%2Fapi.botframework.com%2F.default"), "the mint names the teams.appId app and the Bot Connector scope");
+    const call = calls[1]!;
+    eq(call.url, "https://smba.trafficmanager.net/amer/v3/conversations/c/members/u", "the trailing slash of the service URL is trimmed");
+    eq((call.init.headers as Record<string, string>).authorization, "Bearer tok-1", "the call carries the minted token");
+    eq(call.init.redirect, "error", "the call refuses a redirect, so the token reaches no other host");
+    await callTeamsConnectorApi({ serviceUrl: SERVICE_URL, path: "/v3/x", method: "GET" }, { fetch });
+    eq(calls.filter((c) => c.url.includes("login.microsoftonline.com")).length, 1, "the token is cached: a second call mints none");
+    _resetTeamsAccessTokenCacheForTest();
   }
 
   console.log(`  ${n} assertions passed`);

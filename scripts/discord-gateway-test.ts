@@ -48,6 +48,7 @@ import {
   openTypingGate,
   typingGateOpen,
   typingGateFeed,
+  textSoFar,
   isThreadChannelType,
   nameDropEligible,
   stripLeadingMention,
@@ -633,6 +634,22 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   closeTypingGate("C1", gates);
   openTypingGate("C1", gates);
   ok(typingGateOpen("C1", gates) === true, "gate: openTypingGate clears (turn end / addressed dispatch reset)");
+}
+
+{
+  const store = new Map<string, { readonly partId: string; readonly text: string }>();
+  const gates = new Set<string>();
+  ok(textSoFar("C1", "p1", "NO_", store) === "NO_", "delta: the first content.delta of a part is the text so far");
+  ok(textSoFar("C1", "p1", "REP", store) === "NO_REP", "delta: 🔴 later deltas of the SAME part accumulate — v27 sends the delta only, not the text so far");
+  ok(textSoFar("C2", "p9", "Hi", store) === "Hi" && textSoFar("C1", "p1", "LY", store) === "NO_REPLY", "delta: channels accumulate independently");
+  ok(textSoFar("C1", "p2", "Sure", store) === "Sure", "delta: a NEW part starts over — the next step's text is not glued to the last one");
+  ok(textSoFar("C3", "p1", "x".repeat(400), store).length === 256, "delta: the prefix is capped — the gate needs only the start of the text");
+  closeTypingGate("C4", gates);
+  ok(typingGateFeed("C4", textSoFar("C4", "p1", "NO", store), gates) === false, "delta+gate: a sentinel split across deltas holds the gate (first delta)");
+  ok(typingGateFeed("C4", textSoFar("C4", "p1", "_REPLY", store), gates) === false, "delta+gate: 🔴 …and still holds after the second delta: the accumulated NO_REPLY never opens it");
+  closeTypingGate("C5", gates);
+  ok(typingGateFeed("C5", textSoFar("C5", "p1", "NO", store), gates) === false, "delta+gate: negative control — a prefix of the sentinel holds");
+  ok(typingGateFeed("C5", textSoFar("C5", "p1", "pe, not today", store), gates) === true, "delta+gate: negative control — text that leaves the sentinel opens the gate");
 }
 
 {

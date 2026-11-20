@@ -1,6 +1,7 @@
 // proves: turn.stop_ignored
 
 import { expect, test } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
 import { resolveTurnAnchor, turnChannelKey } from "@open-everywhere/core/agent/channels/turn-registry.js";
@@ -124,7 +125,7 @@ test("a cancelled turn's system-prompt reminder is one clean insertion at a fixe
   b.dispose();
 
   await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.cancelled", "turn.stop_ignored"]);
+    const rows = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION, "turn.stop_ignored"]);
     const ignored = rows.find((r) => r.action === "turn.stop_ignored" && r.detail?.turnId === cancelledTurnId);
     if (ignored !== undefined) {
       throw new Error(

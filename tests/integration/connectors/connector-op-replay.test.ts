@@ -165,8 +165,8 @@ test("an approved op.connector card is replayed BY ITS ID from a new job, and th
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: "create the handbook page in notion" }, id: "it2388-delegate" }] }, { say: NO_REPLY_SENTINEL }],
       child: [
-        { delayMs: 120_000, calls: [{ tool: "connection_search", input: { query: "page" }, id: "it2388-search" }] },
-        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: WRITE_VENDOR_TOOL, input: APPROVED_INPUT }, id: WRITE_CALL_ID }] },
+        { delayMs: 120_000, calls: [{ tool: "eve__search", input: { query: `${CONNECTION}__` }, id: "it2388-search" }] },
+        { calls: [{ tool: "eve__tool", input: { name: WRITE_TOOL, input: APPROVED_INPUT }, id: WRITE_CALL_ID }] },
         { say: "reported: the page waits for approval" },
       ],
     }),
@@ -199,7 +199,7 @@ test("an approved op.connector card is replayed BY ITS ID from a new job, and th
   first.dispose();
   firstSettlement.dispose();
 
-  const replayForward = `Replay approved card ${pendingId}: call connection_execute with connection ${CONNECTION}, tool ${WRITE_VENDOR_TOOL}, input {"${REPLAY_KEY}":"${pendingId}"}.`;
+  const replayForward = `Replay approved card ${pendingId}: call eve__tool with name ${WRITE_TOOL}, input {"${REPLAY_KEY}":"${pendingId}"}.`;
   const seatLeg = disposeLater(
     registerScript(
       { parent: [{ calls: [{ tool: "work", input: { message: replayForward }, id: "it2388-replay-forward" }] }, { say: NO_REPLY_SENTINEL }, { say: NO_REPLY_SENTINEL }, { say: NO_REPLY_SENTINEL }] },
@@ -210,7 +210,7 @@ test("an approved op.connector card is replayed BY ITS ID from a new job, and th
     registerScript({
       parent: [],
       child: [
-        { calls: [{ tool: "connection_execute", input: { connection: CONNECTION, tool: WRITE_VENDOR_TOOL, input: { [REPLAY_KEY]: pendingId } }, id: REPLAY_CALL_ID }] },
+        { calls: [{ tool: "eve__tool", input: { name: WRITE_TOOL, input: { [REPLAY_KEY]: pendingId } }, id: REPLAY_CALL_ID }] },
         { say: "replayed" },
       ],
     }),

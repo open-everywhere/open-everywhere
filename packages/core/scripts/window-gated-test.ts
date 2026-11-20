@@ -23,8 +23,6 @@ import {
   withheldFromGrain,
   windowGated,
   windowGatedKit,
-  replayStepNames,
-  preRegisterDynamicEntry,
   resolveWindowGated,
   domainLabelOf,
   _resetWindowGateAuditForTest,
@@ -81,7 +79,7 @@ function stubEntry(name: string): GatedToolEntry {
 }
 
 console.log("0. WINDOW_GATED_TOOLS table pins:");
-const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"] as const;
+const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "edit_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"] as const;
 for (const name of WIDE_HANDS) {
   eq(WINDOW_GATED_TOOLS[name], ["task"], `"${name}" mounts on the one-shot task worker only, delegation armed (the shipped default — withheld from standing AND native)`);
 }
@@ -96,8 +94,8 @@ eq([...(WINDOW_GATED_TOOLS.cancel_work ?? [])], ["standing", "thread"], "cancel_
 eq(WINDOW_GATED_TOOLS.ask_domain, ["standing"], "ask_domain is standing-only (the person's DM seat asks; never a thread seat, never a worker)");
 eq(WINDOW_GATED_TOOLS.answer_domain_question, ["standing"], "answer_domain_question is standing-only (a domain's standing seat answers; never a thread seat, never a worker)");
 eq(WINDOW_GATED_TOOLS.expect_bot_reply, ["standing"], "expect_bot_reply is standing-only (the person's DM seat opens an asked thread; never a thread seat, never a worker)");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 10, "the gated table is EXACTLY the 11 wide-hands tools + the 7 delegation/lifecycle/coordinator tools (agent/work/cancel_work/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) + the 2 domain question verbs (ask_domain/answer_domain_question) + the asked-thread verb (expect_bot_reply) — nothing else narrows.");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"].sort(), "standing withholds the 11 wide-hands tools + complete_thread (it KEEPS agent and the spawner — a standing seat is what delegates)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 10, "the gated table is EXACTLY the 12 wide-hands tools + the 7 delegation/lifecycle/coordinator tools (agent/work/cancel_work/spawn_thread_session/complete_thread/read_thread_seat/message_thread_seat) + the 2 domain question verbs (ask_domain/answer_domain_question) + the asked-thread verb (expect_bot_reply) — nothing else narrows.");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_thread"].sort(), "standing withholds the 12 wide-hands tools + complete_thread (it KEEPS agent and the spawner — a standing seat is what delegates)");
 
 {
   const OFF = { wide: ["task", "native"] as const, armed: false };
@@ -277,19 +275,14 @@ console.log("4b. channel-less domain fallback (OPE-740):");
   eq(attemptRow!.workspace, "payments", "the per-attempt row from a channel-less execute context records the REAL domain, not \"unknown\" (the OPE-740 fix)");
 }
 
-console.log("5. replay alias + eve's own replay path (eve step registry):");
+console.log("5. the resolved entry keeps the gate and the approval (no descriptor, no step registry):");
 {
-  const reg = (globalThis as Record<symbol, unknown>)[Symbol.for("@workflow/core//registeredSteps")] as Map<string, unknown>;
-  ok(reg instanceof Map, "the @workflow/core step registry exists on globalThis");
-  const single = replayStepNames("bash", "_single");
-  ok(typeof reg.get(single.execute) === "function", "windowGated pre-registered bash's execute under eve's replay name");
-  const kitNames = replayStepNames("test_kit", "web_fetch");
-  ok(typeof reg.get(kitNames.execute) === "function", "windowGatedKit pre-registered each map entry under <slug>:<entryKey>");
-
-  const fn = reg.get(single.execute) as (cv: unknown, input: unknown, ctx: unknown) => Promise<unknown>;
-  eq(await fn({}, { v: "y" }, grainCtx.task()), { ran: "bash" }, "the replayed execute runs the real tool on an allowed grain");
-  await assert.rejects(() => fn({}, { v: "y" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-replay" })), /not held by this conversational seat/, "the replayed execute STILL carries the backstop (replay cannot shed the gate; on a delegating standing seat the lean arm speaks)");
+  const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as GatedToolEntry;
+  eq(await armedBash.execute({ v: "y" }, grainCtx.task()), { ran: "bash" }, "the resolved execute runs the real tool on an allowed grain");
+  await assert.rejects(() => Promise.resolve(armedBash.execute({ v: "y" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-replay" }))), /not held by this conversational seat/, "the resolved execute STILL carries the backstop: a call that reaches it on a narrowed seat is refused");
   n++;
+  ok(!(Symbol.for("eve:durable-dynamic-tool-callbacks") in (armedBash as object)), "the armed entry carries NO durable-callback descriptor: eve 1.x rebuilds tools from their definitions");
+  ok((globalThis as Record<symbol, unknown>)[Symbol.for("@workflow/core//registeredSteps")] === undefined || !((globalThis as Record<symbol, unknown>)[Symbol.for("@workflow/core//registeredSteps")] as Map<string, unknown>).has("eve:framework-dynamic:bash:_single"), "…and windowGated registers NO replay step under the retired eve name");
 
   const approvalCalls: unknown[] = [];
   const withApproval = defineTool({
@@ -303,107 +296,54 @@ console.log("5. replay alias + eve's own replay path (eve step registry):");
       return { ok: true };
     },
   }) as unknown as GatedToolEntry;
-  windowGated("post_file", withApproval);
-  const approvalName = replayStepNames("post_file", "_single").approval;
-  const approvalFn = reg.get(approvalName) as (cv: unknown, actx: unknown) => unknown;
-  ok(typeof approvalFn === "function", "an approval-bearing gated tool pre-registers its approval under eve's replay name");
-  eq(approvalFn({}, { toolInput: { html: true } }), "user-approval", "the replayed approval applies the real input-aware policy (publish gate survives resumption)");
-  eq(approvalFn({}, { toolInput: { html: false } }), "not-applicable", "…and stays ungated for the benign path");
-
-  const require2 = createRequire(import.meta.url);
-  const eveRoot = dirname(require2.resolve("eve/package.json"));
-  const lifecycle = (await import(pathToFileURL(join(eveRoot, "dist/src/context/build-dynamic-tools.js")).href)) as {
-    replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): { name: string; execute: unknown }[];
-  };
-  const REPLAY_SCOPE = { scope: "session", sessionId: "sess-window-gated-replay" };
-  const replayed = lifecycle.replayDynamicTools(
-    [
-      {
-        name: "bash",
-        description: "stub bash",
-        inputSchema: { type: "object", properties: {} },
-        resolverSlug: "bash",
-        entryKey: "_single",
-        callbacks: { execute: { closure: {} } },
-      },
-    ],
-    REPLAY_SCOPE,
-  );
-  eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
-  eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
-
-  const rawEntry = defineTool({
-    description: "raw pre-registered tool",
-    inputSchema: z.object({ q: z.string().optional() }),
-    async execute(input: { q?: string }) {
-      return { echoed: input.q ?? "none" };
-    },
-  }) as unknown as GatedToolEntry;
-  preRegisterDynamicEntry("pretend_reply", "_unified", rawEntry);
-  const customNames = replayStepNames("pretend_reply", "_unified");
-  ok(typeof reg.get(customNames.execute) === "function", "preRegisterDynamicEntry registers a custom entryKey under its alias name at module load");
-  ok(!("__executeStepFn" in rawEntry), "RETIRED (OPE-867): the entry carries NO __executeStepFn stamp — eve derives its own step id, not OURS");
-  ok(!("__closureVars" in rawEntry), "RETIRED (OPE-867): the entry carries NO __closureVars stamp either");
-  ok(reg.get(customNames.approval) === undefined, "an approval-less entry registers NO approval step (absent approval === never() on both paths)");
-  const replayedCustom = lifecycle.replayDynamicTools(
-    [
-      {
-        name: "reply",
-        description: "raw pre-registered tool",
-        inputSchema: { type: "object", properties: {} },
-        resolverSlug: "pretend_reply",
-        entryKey: "_unified",
-        callbacks: { execute: { closure: {} } },
-      },
-    ],
-    REPLAY_SCOPE,
-  );
-  eq(replayedCustom.length, 1, "eve replays the alias name fed to it directly (still a valid, functioning step-registry entry)");
-  const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, unknown>;
-  ok(!("__executeStepFn" in armedBash), "RETIRED (OPE-867): a windowGated entry carries no __executeStepFn stamp either");
-
-  const DURABLE_TOOL_CALLBACKS = Symbol.for("eve:durable-dynamic-tool-callbacks");
-  type Ref = { callback: unknown; closure: unknown };
-  const descriptorsOf = (e: unknown): Record<string, Ref | undefined> => ((e as Record<symbol, unknown>)[DURABLE_TOOL_CALLBACKS] as Record<string, Ref | undefined>) ?? {};
-  ok(
-    readFileSync(join(eveRoot, "dist/src/tools/durable-callbacks.js"), "utf8").includes("Symbol.for(`eve:durable-dynamic-tool-callbacks`)"),
-    "the descriptor symbol OE stamps is the one the installed eve reads (pinned against eve's own bytes, not from memory)",
-  );
-  const singleArmed = descriptorsOf((await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown);
-  ok(typeof singleArmed.execute?.callback === "function", "a windowGated entry describes its EXECUTE with a live callback — the shape eve registers under (toolName, phase)");
-  eq(singleArmed.execute?.closure, {}, "…and an empty closure, which is all eve persists");
-  ok(!("stepId" in (singleArmed.execute as object)), "…and NO stepId — eve refuses that key outright, taking the tool off the seat");
-  ok(singleArmed.approvalRequest === undefined, "NEGATIVE CONTROL: an approval-less entry describes NO approval phase (describing one would make eve register a binding nothing calls)");
-  const gatedApproval = descriptorsOf(await resolveWindowGated(windowGated("post_file", withApproval), grainCtx.task()));
-  ok(typeof gatedApproval.approvalRequest?.callback === "function", "an approval-bearing entry describes its approval REQUEST phase too");
-  const kitArmed = descriptorsOf((await resolveWindowGated(windowGatedKit("test_kit", { web_fetch: stubEntry("web_fetch") }), grainCtx.task()) as Record<string, unknown>).web_fetch);
-  ok(typeof kitArmed.execute?.callback === "function", "a KIT member describes its execute the same way");
-  eq(kitArmed.execute?.callback, reg.get(replayStepNames("test_kit", "web_fetch").execute), "…and the alias registry holds that SAME callable (one definition serves both)");
+  const resolvedApproval = (await resolveWindowGated(windowGated("post_file", withApproval), grainCtx.task())) as GatedToolEntry;
+  const policy = resolvedApproval.approval as (actx: unknown) => unknown;
+  ok(typeof policy === "function", "an approval-bearing gated tool keeps its approval policy on the resolved entry");
+  eq(policy({ toolInput: { html: true } }), "user-approval", "the resolved approval applies the real input-aware policy (the publish gate survives a fresh process: it is rebuilt from the definition)");
+  eq(policy({ toolInput: { html: false } }), "not-applicable", "…and stays ungated for the benign path");
 }
 
-console.log("6. mount refresh on a deployment change (OPE-632):");
+console.log("6. the seat is fixed per session through ctx.memo:");
 {
-  const require3 = createRequire(import.meta.url);
-  const eveRoot3 = dirname(require3.resolve("eve/package.json"));
-  const abs3 = (rel: string) => pathToFileURL(join(eveRoot3, rel)).href;
-
-  type Container = { get(k: unknown): unknown; set(k: unknown, v: unknown): unknown };
-  const { ContextContainer } = (await import(abs3("dist/src/context/container.js"))) as { ContextContainer: new () => Container };
-  const keys = (await import(abs3("dist/src/context/keys.js"))) as Record<string, unknown>;
-  const life = (await import(abs3("dist/src/context/dynamic-tool-lifecycle.js"))) as {
-    dispatchDynamicToolEvent(i: unknown): Promise<void>;
-    refreshDynamicSessionToolsForRuntimeRevision(i: unknown): Promise<void>;
+  const memoStore = (): { memo: (key: unknown, fn: () => unknown) => Promise<unknown>; saved: Map<string, unknown> } => {
+    const saved = new Map<string, unknown>();
+    return {
+      saved,
+      memo: async (key, fn) => {
+        const k = JSON.stringify(key);
+        if (!saved.has(k)) saved.set(k, JSON.parse(JSON.stringify(await fn())));
+        return saved.get(k);
+      },
+    };
   };
-  for (const k of ["SessionIdKey", "ContinuationTokenKey", "AuthKey", "StaticModelReferenceKey", "SessionDynamicToolMetadataKey", "SessionDynamicToolRuntimeRevisionKey"]) {
-    ok(keys[k] !== undefined, `eve still exports ${k} from context/keys.js (the refresh reads and writes these)`);
-  }
-  ok(typeof life.refreshDynamicSessionToolsForRuntimeRevision === "function", "eve still exports refreshDynamicSessionToolsForRuntimeRevision — the ONLY thing that re-derives a live seat's roster");
+  const withMemo = (ctx: BindableContext, store: { memo: unknown }): BindableContext => ({ ...ctx, memo: store.memo }) as BindableContext;
+  const namesOf = (mounted: unknown): string[] => (mounted === null ? [] : Object.keys(mounted as Record<string, unknown>).sort());
 
-  const armsOf = (gated: unknown) => Object.keys((gated as { events: Record<string, unknown> }).events);
-  eq(armsOf(windowGated("bash", stubEntry("bash"))), ["session.started"], "windowGated declares exactly the `session.started` arm — the one eve's revision refresh re-invokes");
+  let calls = 0;
+  const counting = windowGatedKit("memo_kit", { bash: stubEntry("bash"), web_fetch: stubEntry("web_fetch") }, {
+    web_fetch: () => {
+      calls++;
+      return true;
+    },
+  });
+  const store = memoStore();
+  const task = withMemo(ctxOf(TASK_TOKEN, { grainStamp: "task", sessionId: "sess-memo" }), store);
+  eq(namesOf(await resolveWindowGated(counting, task)), ["bash", "web_fetch"], "model call 1 on a task seat mounts the kit");
+  eq(namesOf(await resolveWindowGated(counting, task)), ["bash", "web_fetch"], "model call 2 mounts the same kit");
+  eq(calls, 1, "…and the mount gate ran ONCE: eve runs a dynamic before every model call, and the memo keeps the seat decision");
+  eq([...store.saved.values()], [{ grain: "task", names: ["bash", "web_fetch"] }], "the memo holds plain JSON (the grain and the mounted names), which eve can keep across processes");
 
-  const kitV1 = windowGatedKit("refresh_kit", { bash: stubEntry("bash"), web_fetch: stubEntry("web_fetch") });
-  eq(armsOf(kitV1), ["session.started"], "…and so does windowGatedKit");
+  const moved = withMemo(ctxOf(STANDING_TOKEN, { sessionId: "sess-memo" }), store);
+  eq(namesOf(await resolveWindowGated(counting, moved)), ["bash", "web_fetch"], "a later model call of the SAME session keeps the seat it started with, as session.started did on eve 0.x");
+  eq(namesOf(await resolveWindowGated(counting, withMemo(ctxOf(STANDING_TOKEN, { sessionId: "sess-memo-2" }), memoStore()))), [], "NEGATIVE CONTROL: a different session on a standing seat derives its own seat, and the wide hands stay withheld");
+
+  eq(await resolveWindowGated(windowGated("post_file", stubEntry("post_file"), () => false), grainCtx.task()), null, "🔴 windowGated's mount gate withholds the tool on an allowed grain when its predicate refuses");
+  ok((await resolveWindowGated(windowGated("post_file", stubEntry("post_file"), () => true), grainCtx.task())) !== null, "…and mounts it when the predicate allows (negative control)");
+  const single = windowGated("post_file", stubEntry("post_file"));
+  const singleStore = memoStore();
+  eq(await resolveWindowGated(single, withMemo(ctxOf(STANDING_TOKEN, { sessionId: "sess-memo-single" }), singleStore)), null, "windowGated on a standing seat mounts nothing");
+  eq([...singleStore.saved.values()], [{ grain: "standing", mounted: false }], "…and memoizes the withheld decision as JSON");
+
   const bashV2 = defineTool({
     description: "stub bash — REWORDED BY THE NEXT DEPLOY",
     inputSchema: z.object({ v: z.string().optional() }),
@@ -412,75 +352,10 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
       return { ran: "bash" };
     },
   }) as unknown as GatedToolEntry;
-  const kitV2 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch") }, { web_fetch: () => false });
-  const kitV3 = windowGatedKit("refresh_kit", { bash: bashV2, web_fetch: stubEntry("web_fetch"), glob: stubEntry("glob") }, { web_fetch: () => false });
-  const resolverOf = (kit: unknown) => ({
-    slug: "refresh_kit",
-    logicalPath: "agent/tools/refresh_kit.ts",
-    eventNames: ["session.started"],
-    events: (kit as { events: Record<string, unknown> }).events,
-  });
-
-  const ctx6 = new ContextContainer();
-  ctx6.set(keys.SessionIdKey, "sess-refresh");
-  ctx6.set(keys.ContinuationTokenKey, TASK_TOKEN);
-  ctx6.set(keys.AuthKey, { attributes: { oe_grain: "task" } });
-  ctx6.set(keys.StaticModelReferenceKey, null);
-  const event6 = { type: "session.started", data: {} };
-  const meta = () => (ctx6.get(keys.SessionDynamicToolMetadataKey) as { name: string; description?: string }[] | undefined) ?? [];
-  const names = () => meta().map((m) => m.name).sort();
-  const descOf = (name: string) => meta().find((m) => m.name === name)?.description;
-  const refresh = (kit: unknown, revision: string) =>
-    life.refreshDynamicSessionToolsForRuntimeRevision({ ctx: ctx6, resolvers: [resolverOf(kit)], event: event6, messages: [], runtimeRevision: revision });
-
-  await life.dispatchDynamicToolEvent({ ctx: ctx6, resolvers: [resolverOf(kitV1)], event: event6, messages: [] });
-  ctx6.set(keys.SessionDynamicToolRuntimeRevisionKey, "deployment:dep_A");
-  eq(names(), ["bash", "web_fetch"], "turn 1 under deployment A mounts the V1 roster");
-  eq(descOf("bash"), "stub bash", "…with the V1 description");
-
-  await refresh(kitV2, "deployment:dep_A");
-  eq(names(), ["bash", "web_fetch"], "NEGATIVE CONTROL: the same deployment id re-derives NOTHING — the roster is untouched");
-  eq(descOf("bash"), "stub bash", "…and the description is untouched too");
-  eq(ctx6.get(keys.SessionDynamicToolRuntimeRevisionKey), "deployment:dep_A", "…and the recorded revision is unchanged");
-
-  await refresh(kitV2, "deployment:dep_B");
-  eq(names(), ["bash"], "a new deployment id re-derives the roster: a tool the new build NARROWS away is gone from a live seat (no window rotation involved)");
-  eq(descOf("bash"), "stub bash — REWORDED BY THE NEXT DEPLOY", "…and a surviving tool carries the NEW build's description, not the one the session started with");
-  eq(ctx6.get(keys.SessionDynamicToolRuntimeRevisionKey), "deployment:dep_B", "…and the session now records the deployment its roster was derived under");
-
-  await refresh(kitV3, "deployment:dep_C");
-  eq(names(), ["bash", "glob"], "a deploy that ADDS a gated tool reaches a live seat on its next turn");
-
-  const steps6 = readFileSync(join(eveRoot3, "dist", "src", "execution", "session", "turn-step.js"), "utf8");
-  ok(
-    /let (\w+)=process\.env\.VERCEL_DEPLOYMENT_ID\?\.trim\(\),(\w+)=\1\?`deployment:\$\{\1\}`:await resolveRuntimeCompiledArtifactsVersionedCacheKey\(/.test(steps6),
-    "the runtime revision is the VERCEL DEPLOYMENT ID (falling back to the compiled-artifacts cache key) — this is what ties the refresh to a DEPLOY",
-  );
-  ok(
-    /(\w+)=\w+\.sessionStarted;[\s\S]{0,400}?,!\1\)(\w+)\.set\(SessionDynamicSubagentRuntimeRevisionKey,(\w+)\),\2\.set\(SessionDynamicToolRuntimeRevisionKey,\3\);else\{/.test(steps6),
-    "a session's FIRST turn seeds the revision key; every later turn takes the refresh branch",
-  );
-  ok(
-    /refreshDynamicSessionToolsForRuntimeRevision\(\{ctx:(\w+),resolvers:(\w+),event:(\w+),messages:[\w.]+,runtimeRevision:(\w+)\}\)/.test(steps6),
-    "…and that branch calls the tool refresh on the durable turn path (the reachability fact — a refresh nothing calls is no refresh at all)",
-  );
-  const life6 = readFileSync(join(eveRoot3, "dist", "src", "context", "build-dynamic-tools.js"), "utf8");
-  ok(
-    /description:(\w+)\.description,[\s\S]{0,40}?execute:createToolExecuteWithAuth\(\{scope:\1\.name,[\s\S]{0,300}?\}\),inputSchema:replayDynamicToolSchema\(\1,\w+,`inputSchema`\),name:\1\.name/.test(life6),
-    "replay serves the DESCRIPTION and INPUT SCHEMA from the durable metadata — which is exactly why the refresh is load-bearing and not a nicety",
-  );
-  ok(
-    !/execution:\w+\.execution/.test(life6),
-    "eve 0.71 replay carries NO `execution` mode: eve removed background dynamic tools",
-  );
-  ok(
-    /bindDynamicCallback\((\w+),(\w+),`toModelOutput`,\1\.callbacks\.toModelOutput\)/.test(life6),
-    "eve's own replay rebuilds `toModelOutput` from the durable metadata — see OPE-946",
-  );
-  ok(
-    /function bindDynamicCallback\(\w+,\w+,\w+,(\w+)\)\{if\(\1===void 0\)return;let (\w+)=lookupDurableDynamicCallback\([^)]*\);return\(\.\.\.\w+\)=>\{if\(\2===void 0\)throw missingCallbackError/.test(life6),
-    "…and the shared binder still THROWS on an absent binding — a replayed projection fails loudly rather than passing the raw output through unfenced",
-  );
+  const kitV2 = windowGatedKit("memo_kit", { bash: bashV2 });
+  const v2 = (await resolveWindowGated(kitV2, task)) as Record<string, { description?: string }>;
+  eq(namesOf(v2), ["bash"], "a new build that drops a tool serves only the tools it still defines, even with an older kept memo");
+  eq(v2.bash?.description, "stub bash — REWORDED BY THE NEXT DEPLOY", "…and a kept tool carries the NEW build's description: the tool is rebuilt from its definition, not from saved metadata");
 }
 
 {
@@ -514,93 +389,88 @@ console.log("6. mount refresh on a deployment change (OPE-632):");
   }
 }
 
-console.log("7. the sandbox kit mounts through eve's real resolver (OPE-2304):");
+console.log("6b. a deployment change re-decides the seat (eve's own memo store):");
+{
+  const require6 = createRequire(import.meta.url);
+  const eveRoot6 = dirname(require6.resolve("eve/package.json"));
+  const abs6 = (rel: string) => pathToFileURL(join(eveRoot6, "dist", "src", rel)).href;
+  const { openMemos } = (await import(abs6("definitions/memos.js"))) as {
+    openMemos(o: { abortSignal: AbortSignal; afterDeployment?: boolean; kept?: Record<string, unknown>; label: string; scope: string; sessionId: string }): {
+      memo: (key: unknown, fn: () => unknown) => Promise<unknown>;
+      used: () => Record<string, unknown>;
+      close: () => void;
+    };
+  };
+  const kernel = readFileSync(join(eveRoot6, "dist", "src", "definitions", "kernel.js"), "utf8");
+  ok(
+    /function restoreDefinitions\(\w+,\w+=\{\}\)\{[^]*?if\(\w+\.revision!==void 0&&\w+\.revision!==\w+\.revision\)\{[^]*?let\{memos:\w+,\.\.\.\w+\}=\w+;writeDefinitionsState\(/.test(kernel),
+    "🔴 eve's restoreDefinitions drops a session's memos when the deployment revision changes — the reason a deploy reaches a live seat",
+  );
+  const evaluateWith = async (gated: unknown, ctx: BindableContext, kept?: Record<string, unknown>) => {
+    const memos = openMemos({ abortSignal: new AbortController().signal, ...(kept === undefined ? {} : { kept }), label: "agent/tools/deploy_kit.ts", scope: "tool::deploy_kit", sessionId: "sess-deploy" });
+    try {
+      const value = await resolveWindowGated(gated, { ...ctx, memo: memos.memo } as BindableContext);
+      return { names: value === null ? [] : Object.keys(value as Record<string, unknown>).sort(), used: memos.used() };
+    } finally {
+      memos.close();
+    }
+  };
+  const before = oneshotAgentEnabled();
+  try {
+    overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+    const kit = windowGatedKit("deploy_kit", { bash: stubEntry("bash"), work: stubEntry("work") });
+    const nativeSeat = ctxOf(NATIVE_TOKEN, { sessionId: "sess-deploy" });
+    const first = await evaluateWith(kit, nativeSeat);
+    eq(first.names, ["bash"], "deployment A: a native seat mounts the wide-hands tool (delegation unarmed)");
+    const again = await evaluateWith(kit, ctxOf(STANDING_TOKEN, { sessionId: "sess-deploy" }), first.used);
+    eq(again.names, ["bash"], "…and eve's real memo store keeps that seat on a later model call of the same deployment");
+
+    overrideSettingsForTest({ delegation: { oneshotAgent: true } });
+    const kept = await evaluateWith(kit, nativeSeat, first.used);
+    eq(kept.names, [], "🔴 deployment B narrows bash to the task worker: even a memo that SURVIVES the deploy mounts nothing, because each mount re-checks the row against the memoized grain");
+    const fresh = await evaluateWith(kit, nativeSeat);
+    eq(fresh.names, [], "…and with the memo discarded (eve's behaviour on a new revision) the seat is decided again, and bash stays withheld");
+
+    overrideSettingsForTest({ delegation: { oneshotAgent: false } });
+    const single = windowGated("post_file", stubEntry("post_file"));
+    const singleFirst = await evaluateWith(single, nativeSeat);
+    eq(Object.values(singleFirst.used), [{ grain: "native", mounted: true }], "windowGated memoizes the grain with the decision");
+    overrideSettingsForTest({ delegation: { oneshotAgent: true } });
+    const singleKept = await evaluateWith(single, nativeSeat, singleFirst.used);
+    eq(singleKept.names, [], "🔴 …and a surviving memo cannot re-mount a single wide-hands tool on a row the deploy narrowed");
+  } finally {
+    overrideSettingsForTest({ delegation: { oneshotAgent: before } });
+  }
+}
+
+console.log("7. the sandbox kit mounts through eve's real dynamic-tool contribution:");
 {
   const require7 = createRequire(import.meta.url);
   const eveRoot7 = dirname(require7.resolve("eve/package.json"));
   const abs7 = (rel: string) => pathToFileURL(join(eveRoot7, "dist", "src", rel)).href;
-  const keys7 = (await import(abs7("context/keys.js"))) as Record<string, unknown>;
-  const life7 = (await import(abs7("context/dynamic-tool-lifecycle.js"))) as { dispatchDynamicToolEvent(i: unknown): Promise<void> };
-  const build7 = (await import(abs7("context/build-dynamic-tools.js"))) as {
-    replayDynamicTools(meta: readonly unknown[], scope: { sessionId: string; scope: string }): {
-      name: string;
-      inputSchema?: { "~standard": { validate(v: unknown): Promise<{ issues?: unknown }> | { issues?: unknown } } };
-    }[];
+  const { contributeTools } = (await import(abs7("definitions/tools.js"))) as {
+    contributeTools(def: { logicalPath: string; slug: string }, value: unknown, ctx: unknown): { value: unknown; live?: { name: string; execute?: unknown }[] };
   };
-  const { default: sandboxKit } = (await import("../agent/tools/sandbox_tools.js")) as { default: { events: Record<string, unknown> } };
+  const { ContextContainer } = (await import(abs7("context/container.js"))) as { ContextContainer: new () => unknown };
+  const { default: sandboxKit } = (await import("../agent/tools/sandbox_tools.js")) as { default: unknown };
 
-  type Row = { name: string; callbacks: Record<string, unknown> };
-  const resolve7 = async (slug: string, events: Record<string, unknown>, sessionId: string): Promise<{ rows: Row[]; failures: string[] }> => {
-    const store = new Map<unknown, unknown>([
-      [keys7.SessionIdKey, sessionId],
-      [keys7.ContinuationTokenKey, TASK_TOKEN],
-      [keys7.AuthKey, { attributes: { oe_grain: "task" } }],
-      [keys7.StaticModelReferenceKey, null],
-    ]);
-    const ctx = {
-      get: (k: unknown) => store.get(k),
-      set: (k: unknown, v: unknown) => void store.set(k, v),
-      require: (k: unknown) => {
-        if (!store.has(k)) throw new Error(`ctx.require: missing key ${String(k)}`);
-        return store.get(k);
-      },
-    };
-    const failures: string[] = [];
-    const realError = console.error;
-    console.error = (...args: unknown[]) => {
-      const line = JSON.stringify(args);
-      if (line.includes("Dynamic tool resolver")) failures.push(line);
-      else realError(...args);
-    };
-    try {
-      await life7.dispatchDynamicToolEvent({ ctx, resolvers: [{ slug, eventNames: ["session.started"], events }], event: { type: "session.started" }, messages: [] });
-    } finally {
-      console.error = realError;
-    }
-    return { failures, rows: (store.get(keys7.SessionDynamicToolMetadataKey) as Row[] | undefined) ?? [] };
-  };
+  const SANDBOX_SEVEN = ["bash", "glob", "grep", "read_file", "write_file", "edit_file", "web_fetch"];
+  const value = await resolveWindowGated(sandboxKit, grainCtx.task());
+  const contributed = contributeTools({ logicalPath: "agent/tools/sandbox_tools.ts", slug: "sandbox_tools" }, value, new ContextContainer());
+  eq((contributed.live ?? []).map((t) => t.name).sort(), [...SANDBOX_SEVEN].sort(), "eve accepts the task-seat kit: all SEVEN sandbox tools mount, and the kit is not dropped whole");
+  ok((contributed.live ?? []).every((t) => typeof t.execute === "function"), "…and every mounted tool carries a live execute");
 
-  const SANDBOX_SIX = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"];
-  const kit = await resolve7("sandbox_tools", sandboxKit.events, "sess-ope2304-kit");
-  eq(kit.failures, [], "eve logs NO resolver failure for the sandbox kit on a task grain");
-  eq(kit.rows.map((r) => r.name).sort(), [...SANDBOX_SIX].sort(), "…and all SIX sandbox tools mount: the kit is not dropped whole");
-  for (const row of kit.rows) {
-    ok(row.callbacks.inputSchema !== undefined, `${row.name}: the durable row carries an inputSchema descriptor`);
-    ok(row.callbacks.outputSchema !== undefined, `${row.name}: …and an outputSchema descriptor (eve 0.71 requires both for a validator schema)`);
-  }
+  const standing = await resolveWindowGated(sandboxKit, grainCtx.standing());
+  const none = contributeTools({ logicalPath: "agent/tools/sandbox_tools.ts", slug: "sandbox_tools" }, standing, new ContextContainer());
+  eq(none.live ?? [], [], "NEGATIVE CONTROL: on a standing seat the kit resolves to null and eve mounts nothing");
 
-  const writeRow = kit.rows.find((r) => r.name === "write_file");
-  const [replayedWrite] = build7.replayDynamicTools(writeRow === undefined ? [] : [writeRow], { scope: "session", sessionId: "sess-ope2304-kit" });
-  const validate = replayedWrite?.inputSchema?.["~standard"].validate;
-  ok(typeof validate === "function", "eve's replay rebuilds write_file's input schema from its durable descriptor");
-  const good = await validate?.({ filePath: "/workspace/a.md", content: "x" });
-  const bad = await validate?.({ path: "/workspace/a.md", content: "x" });
-  ok(good !== undefined && good.issues === undefined, "…and the replayed schema ACCEPTS a well-formed write_file input");
-  ok(bad !== undefined && bad.issues !== undefined, "…and REJECTS a malformed one");
-  const durable7 = (await import(abs7("tools/durable-callbacks.js"))) as { clearDurableDynamicCallbacks(sessionId: string): void };
-  durable7.clearDurableDynamicCallbacks("sess-ope2304-kit");
-  const [coldWrite] = build7.replayDynamicTools(writeRow === undefined ? [] : [writeRow], { scope: "session", sessionId: "sess-ope2304-kit" });
-  await assert.rejects(
-    async () => coldWrite?.inputSchema?.["~standard"].validate({ filePath: "/workspace/a.md", content: "x" }),
-    /inputSchema/,
-    "with the binding cleared, the replayed schema THROWS on validate: replay calls the bound descriptor, not a JSON fallback",
+  const unbranded = { bash: { description: "raw", inputSchema: z.object({}), execute: async () => ({}) } };
+  assert.throws(
+    () => contributeTools({ logicalPath: "agent/tools/sandbox_tools.ts", slug: "sandbox_tools" }, unbranded, new ContextContainer()),
+    /without defineTool/,
+    "NEGATIVE CONTROL: eve refuses an entry not made with defineTool(), so the section reds on the real check and not on a stand-in",
   );
   n++;
-
-  const bare = defineTool({
-    description: "bare-schema probe",
-    inputSchema: z.object({ v: z.string().optional() }),
-    async execute() {
-      return { ran: "bare" };
-    },
-  }) as unknown as GatedToolEntry;
-  preRegisterDynamicEntry("bare_schema_probe", "_single", bare);
-  const refused = await resolve7("bare_schema_probe", { "session.started": async () => bare }, "sess-ope2304-bare");
-  eq(refused.rows, [], "NEGATIVE CONTROL: an entry whose validator schema has no descriptor mounts NOTHING");
-  ok(
-    refused.failures.some((f) => f.includes('callback \\"inputSchema\\" does not have a durable descriptor')),
-    "…and eve logs the exact OPE-2304 refusal, so this section reds on the real failure mode and not on a stand-in",
-  );
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

@@ -26,13 +26,15 @@ import {
   isWorkWindowToken,
   classifySessionId,
   HOOK_TOKEN_MAX_BYTES,
+  HOOK_PREFIX_RESERVE_BYTES,
   LONGEST_EVE_HOOK_PREFIX,
   WINDOW_TOKEN_MAX_BYTES,
   type WindowKey,
 } from "../agent/channels/window-key.js";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -252,12 +254,51 @@ eq(parseWindowToken("oe-dom:payments:oe-sup:g3-zz"), undefined, "non-hex salt ch
 }
 
 {
-  const eveAddress = readFileSync(join(dirname(createRequire(import.meta.url).resolve("eve/package.json")), "dist/src/execution/session-inbox/address.js"), "utf8");
-  ok(eveAddress.includes("`eve:inbox:handoff:${e}`") && eveAddress.includes("`eve:inbox:v1:${e}`"), "eve's inbox hooks are still `eve:inbox:v1:` and `eve:inbox:handoff:` over the token");
-  ok(LONGEST_EVE_HOOK_PREFIX.startsWith("eve:inbox:handoff:") && LONGEST_EVE_HOOK_PREFIX.length >= "eve:inbox:v1:unified:".length, "the budget prefix is the longer of the two hooks");
-  eq(WINDOW_TOKEN_MAX_BYTES, 255 - 26 - 7, "the unsalted budget leaves room for the hand-off prefix and a rotation salt");
+  // The hook shapes come from the installed eve, not from a copy: its session-inbox address module
+  // has no imports, so the test loads it by path and drives eve's own token builders.
+  const eveSrc = join(dirname(createRequire(import.meta.url).resolve("eve/package.json")), "dist/src");
+  const eveAddressPath = join(eveSrc, "execution/session-inbox/address.js");
+  const eveAddress = readFileSync(eveAddressPath, "utf8");
+  const { sessionInboxHookToken, sessionCommandHookToken } = (await import(pathToFileURL(eveAddressPath).href)) as {
+    sessionInboxHookToken: (logical: string) => string;
+    sessionCommandHookToken: (sessionId: string) => string;
+  };
+  ok(eveAddress.includes("`eve:inbox:v1:`"), "eve's session inbox hook prefix is `eve:inbox:v1:`");
+  // Every `eve:inbox:` literal in eve's execution tree: the inbox hook prefix and the reserved-token check.
+  // A new inbox hook anywhere in that tree (the 0.x hand-off hook was one) turns this red: re-measure the budget.
+  const inboxLiterals = new Set<string>();
+  const scan = (dir: string): void => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, ent.name);
+      if (ent.isDirectory()) scan(p);
+      else if (ent.name.endsWith(".js")) for (const m of readFileSync(p, "utf8").matchAll(/`(eve:inbox:[^`$]*)/g)) inboxLiterals.add(m[1]);
+    }
+  };
+  scan(join(eveSrc, "execution"));
+  eq([...inboxLiterals].sort(), ["eve:inbox:", "eve:inbox:v1:"], "eve builds no `eve:inbox:` hook other than `eve:inbox:v1:` (re-measure the budget if one appears)");
+  const routeArgs = readFileSync(join(eveSrc, "channel/route-args.js"), "utf8");
+  ok(
+    routeArgs.includes("channelName:a,continuationToken:i.continuationToken===void 0?void 0:`${a}:${i.continuationToken}`"),
+    "eve namespaces a session's continuation token with its channel name (`unified:<token>`)",
+  );
+  const sessionEntry = readFileSync(join(eveSrc, "execution/session/entry.js"), "utf8");
+  ok(
+    sessionEntry.includes("bootInitialOwner(e,getWorkflowMetadata().workflowRunId,"),
+    "eve's session id is the Workflow run id, so `eve:session:<sessionId>:inbox` never carries the window token",
+  );
 
-  const hookBytes = (salted: string) => Buffer.byteLength(LONGEST_EVE_HOOK_PREFIX + salted);
+  const T = "oe-dom:payments:oe-sup:g2-abc123";
+  eq(sessionInboxHookToken(`unified:${T}`), LONGEST_EVE_HOOK_PREFIX + T, "the budget prefix is eve's inbox hook over the `unified:` continuation token");
+  ok(Buffer.byteLength(LONGEST_EVE_HOOK_PREFIX) <= HOOK_PREFIX_RESERVE_BYTES, "the budget reserves at least the longest hook prefix");
+  const runId = `wrun_${"0".repeat(26)}`;
+  for (const hook of [sessionCommandHookToken(runId), sessionInboxHookToken(sessionCommandHookToken(runId))]) {
+    ok(Buffer.byteLength(hook) <= HOOK_TOKEN_MAX_BYTES, `the run-id session hook ${hook.slice(0, 13)}… fits the hook limit at a fixed length`);
+  }
+  eq(WINDOW_TOKEN_MAX_BYTES, 255 - 26 - 7, "the unsalted budget leaves room for the reserved prefix and a rotation salt");
+
+  const hookBytes = (salted: string) => Buffer.byteLength(sessionInboxHookToken(`unified:${salted}`));
+  const saltTail = saltSupervisorGeneration("").length;
+  ok(hookBytes("x".repeat(WINDOW_TOKEN_MAX_BYTES + saltTail)) <= HOOK_TOKEN_MAX_BYTES, "a salted token at the full budget fits eve's inbox hook");
   const workKey = (domain: string, seatWindowId: string, generation: number): WindowKey => ({ domain, windowId: workWindowId(seatWindowId), generation });
   const teamsDm = `teams/1b2c3d4e-5f60-4a71-8b92-a3b4c5d6e7f8/a-1${"Xy9_Zq8-Wv7".repeat(8)}Ab_cd-EfG`;
   eq(teamsDm.length, 143, "the Teams DM surface key has the ship-257 length");

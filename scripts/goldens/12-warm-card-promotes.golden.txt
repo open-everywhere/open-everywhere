@@ -16,4 +16,4 @@ IN  relay message M121 · guild G12 channel C12 (type 0) · from U_TALK12 · pla
   ⇠ 200 ok
 EVT turn.started on discord:C12
 ACT propose tool posts an approval card on discord:C12 (card-signal armed)
-EVT message.completed on discord:C12 {"finishReason":"stop","message":"I've posted an approval card."}
+EVT content.completed on discord:C12 {"partId":"part-1","kind":"text","phase":"reply","value":"I've posted an approval card."}

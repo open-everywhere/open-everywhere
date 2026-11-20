@@ -31,6 +31,7 @@ import type { HookContext } from "eve/hooks";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
+import { callView, settledFromToolResult, v27EndOf, type LegacyToolResult } from "./_hook-view.js";
 registerSlackFixtureMapper();
 
 let n = 0;
@@ -219,7 +220,7 @@ function makeSeat(sessionId: string): Seat {
 }
 
 async function inSession<T>(s: Seat, fn: () => Promise<T>): Promise<T> {
-  return await eveContextStorage().run(s.als, fn);
+  return await eveContextStorage().run(Object.assign(s.als, { context: s.als, values: new Map<unknown, unknown>() }), fn);
 }
 
 function makeChild(parent: Seat, index: number): Seat {
@@ -244,22 +245,24 @@ function makeChild(parent: Seat, index: number): Seat {
   return { sessionId, sandbox: parent.sandbox, als: new FakeEveContext(), ctx };
 }
 
-async function fireMemory(s: Seat, event: string): Promise<void> {
+async function fireMemory(s: Seat, event: string, outcome?: string): Promise<void> {
   await inSession(s, async () => {
-    await memory.events[event]({ type: event }, s.ctx);
+    const end = v27EndOf(event, outcome);
+    await memory.events[end.key]!(end.event, s.ctx);
   });
 }
 
 async function fireResult(s: Seat, result: unknown): Promise<void> {
   await inSession(s, async () => {
-    await taint.events["action.result"]({ type: "action.result", data: { result } } as unknown as Parameters<(typeof taint.events)["action.result"]>[0], s.ctx);
+    const settled = settledFromToolResult({ data: { result } } as LegacyToolResult);
+    await taint.events["call.settled"]!(settled.event as never, { ...(s.ctx as object), view: settled.view } as never);
   });
 }
 
 async function fireStarted(s: Seat, taskId: string, callId: string): Promise<void> {
   await inSession(s, async () => {
     await taint.events["task.started"](
-      { type: "task.started", data: { callId, kind: "agent", name: "worker", taskId, turnId: "turn_flush" } } as unknown as Parameters<(typeof taint.events)["task.started"]>[0],
+      { type: "task.started", data: { taskId, startedBy: { callId }, kind: "agent", name: "worker" }, scope: { turnId: "turn_flush" } } as never,
       s.ctx,
     );
   });
@@ -267,16 +270,16 @@ async function fireStarted(s: Seat, taskId: string, callId: string): Promise<voi
 
 async function fireSettled(s: Seat, taskId: string, status = "completed"): Promise<void> {
   await inSession(s, async () => {
-    await taint.events["task.settled"](
-      { type: "task.settled", data: { callId: `call_${taskId}`, kind: "agent", name: "worker", status, taskId, turnId: "turn_flush" } } as unknown as Parameters<(typeof taint.events)["task.settled"]>[0],
-      s.ctx,
+    await taint.events["task.ended"]!(
+      { type: "task.ended", data: { taskId, outcome: status }, scope: { turnId: "turn_flush" } } as never,
+      { ...(s.ctx as object), view: callView({ callId: `call_${taskId}`, name: "worker", kind: "agent", taskId, turnId: "turn_flush" }) } as never,
     );
   });
 }
 
 async function fireTurnEnd(s: Seat): Promise<void> {
   await inSession(s, async () => {
-    await taint.events["turn.completed"]({ type: "turn.completed" } as unknown as Parameters<(typeof taint.events)["turn.completed"]>[0], s.ctx);
+    await taint.events["turn.settled"]!({ type: "turn.settled", data: { turnId: "turn_flush", outcome: "completed" } } as never, s.ctx);
   });
 }
 
@@ -437,7 +440,7 @@ console.log("5. the session-end backstop after a settled flush writes nothing an
   eq(stored()["MEMORY.md"], EDIT, "the settled flush landed the edit");
   eq((await memoryWrites(s.sessionId)).length, 1, "one row so far");
 
-  await fireMemory(s, "session.completed");
+  await fireMemory(s, "session.ended", "completed");
   eq((await memoryWrites(s.sessionId)).length, 1, "the backstop changes nothing, so it emits NO second memory.write row");
   eq(conflictSiblings(), [], "🔴 BASELINE ADVANCE: the backstop does not mint a .conflict- sibling from the session's own settled write");
   eq(stored()["MEMORY.md"], EDIT, "…and the store still holds exactly the flushed content");
@@ -449,7 +452,7 @@ console.log("5. the session-end backstop after a settled flush writes nothing an
   await fireResult(s2, syncResult("call_F"));
   const SECOND = `${FIRST}- second, written after the delegation came back\n`;
   s2.sandbox.childEdit("MEMORY.md", SECOND);
-  await fireMemory(s2, "session.completed");
+  await fireMemory(s2, "session.ended", "completed");
   eq(stored()["MEMORY.md"], SECOND, "a post-settlement edit still lands at session end");
   eq(conflictSiblings(), [], "…with NO .conflict- sibling");
   eq((await memoryWrites(s2.sessionId)).map((r) => (r.detail as { outcome?: string }).outcome).sort(), ["completed", "settled"], "…two real changes, each labelled by the flush point that ran it");
@@ -520,7 +523,7 @@ console.log("7. N concurrent children hold ONE tree and the parent stays its onl
 
   for (const c of children) {
     await inSession(c, async () => {
-      await memory.events["session.completed"]({ type: "session.completed" }, c.ctx);
+      await memory.events["session.ended"]!({ type: "session.ended", data: { outcome: "completed" } }, c.ctx);
     });
   }
   eq(stored()["MEMORY.md"], BEFORE, "🔴 THE SINGLE-WRITER RULE AT N: three children ran BOTH hook halves and the store is untouched");

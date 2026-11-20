@@ -241,17 +241,43 @@ export async function handleRuntimeSignalRead(req: Request): Promise<Response> {
 }
 
 export interface TranscriptEvent {
+  /** The event's stored line: `startIndex` and `nextIndex` count lines, and one line can hold several events. */
   readonly index: number;
   readonly at: string | null;
   readonly type: string;
   readonly data: unknown;
+  /** What the event belongs to: its turn, model run, task or context change (eve's `scope`). */
+  readonly scope?: TranscriptEventScope;
+}
+
+export interface TranscriptEventScope {
+  readonly turnId?: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly changeId?: string;
 }
 
 export interface SourceStreamEvent {
   readonly type: string;
   readonly data?: unknown;
-  readonly meta?: { readonly at?: string };
+  readonly scope?: TranscriptEventScope;
+  readonly meta?: {
+    readonly at?: string;
+    readonly position?: { readonly line: number; readonly index: number };
+    readonly endOfLine?: boolean;
+    readonly next?: number;
+  };
 }
+
+export interface SessionStreamDrain {
+  readonly events: TranscriptEvent[];
+  readonly complete: boolean;
+  /** The first line the next read starts at. A partly read line is never committed, so it is read again whole. */
+  readonly nextIndex: number;
+}
+
+/** The stream failed before it yielded its first event: the session's record is gone or unreadable. */
+export class SessionStreamOpenError extends Error {}
 
 function nonNegIntParam(raw: string | null, def: number): number | null {
   const v = (raw ?? "").trim();
@@ -268,15 +294,31 @@ function posIntCappedParam(raw: string | null, def: number, cap: number): number
   return Math.min(n, cap);
 }
 
+/**
+ * Reads a session's recorded stream from line `startIndex` until `maxEvents`, an idle gap, the wall
+ * budget, the stream's end or `session.ended`. Only `session.ended` marks the read `complete`: a
+ * stream opened with `follow: false` also ends at the durable tail of a session that is still open. `open` receives the signal that stops the read, and
+ * the drain aborts it on exit: a pending read never holds the request open.
+ */
 export async function drainSessionStream(
-  stream: ReadableStream<SourceStreamEvent>,
+  open: (signal: AbortSignal) => AsyncIterable<SourceStreamEvent>,
   startIndex: number,
   maxEvents: number,
   idleMs: number,
-): Promise<{ events: TranscriptEvent[]; complete: boolean }> {
-  const reader = stream.getReader();
+): Promise<SessionStreamDrain> {
+  const stop = new AbortController();
+  let iterator: AsyncIterator<SourceStreamEvent>;
+  try {
+    iterator = open(stop.signal)[Symbol.asyncIterator]();
+  } catch (err) {
+    throw new SessionStreamOpenError(err instanceof Error ? err.message : String(err));
+  }
   const events: TranscriptEvent[] = [];
+  let line: TranscriptEvent[] = [];
+  let lineEndsSession = false;
+  let nextIndex = startIndex;
   let complete = false;
+  let opened = false;
   const deadline = Date.now() + TRANSCRIPT_WALL_MS;
   try {
     while (events.length < maxEvents) {
@@ -286,24 +328,40 @@ export async function drainSessionStream(
       const idle = new Promise<"idle">((resolve) => {
         timer = setTimeout(() => resolve("idle"), budget);
       });
-      const next = await Promise.race([reader.read(), idle]);
-      if (timer) clearTimeout(timer);
-      if (next === "idle") break;
-      if (next.done) {
-        complete = true;
-        break;
+      let next: IteratorResult<SourceStreamEvent> | "idle";
+      try {
+        next = await Promise.race([iterator.next(), idle]);
+      } catch (err) {
+        if (!opened) throw new SessionStreamOpenError(err instanceof Error ? err.message : String(err));
+        throw err;
+      } finally {
+        if (timer) clearTimeout(timer);
       }
+      if (next === "idle") break;
+      opened = true;
+      if (next.done) break;
       const ev = next.value;
-      events.push({ index: startIndex + events.length, at: ev.meta?.at ?? null, type: ev.type, data: ev.data ?? null });
-      if (ev.type === "session.completed" || ev.type === "session.failed") {
+      const lineNo = ev.meta?.position?.line ?? nextIndex;
+      line.push({ index: lineNo, at: ev.meta?.at ?? null, type: ev.type, data: ev.data ?? null, ...(ev.scope !== undefined ? { scope: ev.scope } : {}) });
+      if (ev.type === "session.ended") lineEndsSession = true;
+      if (ev.meta?.endOfLine === false) continue;
+      events.push(...line);
+      line = [];
+      nextIndex = Math.max(nextIndex, ev.meta?.next ?? lineNo + 1);
+      if (lineEndsSession) {
         complete = true;
         break;
       }
     }
   } finally {
-    await reader.cancel().catch(() => {});
+    stop.abort();
+    try {
+      iterator.return?.().catch(() => undefined);
+    } catch {
+      // A stream that refuses to close is already aborted by the signal.
+    }
   }
-  return { events, complete };
+  return { events, complete, nextIndex };
 }
 
 export type SessionExistence = "found" | "missing" | "unknown";
@@ -375,18 +433,17 @@ export async function handleSessionTranscriptRead(
   const existence = await probeSessionExists(session as ProbeableSession, TRANSCRIPT_PROBE_MS);
   if (existence === "missing") return transcriptNotFound(sessionId);
 
-  let stream: ReadableStream<SourceStreamEvent>;
   try {
-    stream = (await session.getEventStream({ startIndex })) as unknown as ReadableStream<SourceStreamEvent>;
-  } catch {
-    return transcriptNotFound(sessionId);
-  }
-
-  try {
-    const { events, complete } = await drainSessionStream(stream, startIndex, limit, idleMs);
+    const { events, complete, nextIndex } = await drainSessionStream(
+      (signal) => session.stream({ startIndex, follow: false, signal }) as AsyncIterable<SourceStreamEvent>,
+      startIndex,
+      limit,
+      idleMs,
+    );
     if (existence === "unknown" && events.length === 0 && startIndex === 0) return transcriptNotFound(sessionId);
-    return json(200, { sessionId, found: true, startIndex, nextIndex: startIndex + events.length, complete, count: events.length, events });
+    return json(200, { sessionId, found: true, startIndex, nextIndex, complete, count: events.length, events });
   } catch (err) {
+    if (err instanceof SessionStreamOpenError) return transcriptNotFound(sessionId);
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }
 }

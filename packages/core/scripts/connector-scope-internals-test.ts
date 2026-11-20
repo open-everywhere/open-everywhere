@@ -68,4 +68,35 @@ ok(bootLines[0]?.includes("unavailable") !== true, "the boot line for a working 
   ok(real?.ChannelKey !== undefined, "the resolved internals still expose ChannelKey");
 }
 
+{
+  // eve's REAL context shape only: its own container, its own store and its own setChannelContext.
+  const { createRequire } = await import("node:module");
+  const { dirname: dirOf } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const eveRoot = dirOf(createRequire(import.meta.url).resolve("eve/package.json"));
+  const eveUrl = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = (await import(eveUrl("dist/src/context/container.js"))) as {
+    ContextContainer: new () => unknown;
+    contextStorage: { run<T>(container: unknown, fn: () => T): T };
+  };
+  const { setChannelContext } = (await import(eveUrl("dist/src/execution/channel-context.js"))) as {
+    setChannelContext: (container: unknown, adapter: unknown, opts: { channelName?: string }) => void;
+  };
+  const { defineChannel } = await import("eve/channels");
+  const { platformFromKind } = await import("../agent/identity/platform.js");
+  const auth = { current: { principalId: "U1", principalType: "user", authenticator: "fixture", attributes: {} }, initiator: null };
+  const kindOn = async (adapter: unknown, channelName: string): Promise<string | undefined> => {
+    const container = new ContextContainer();
+    setChannelContext(container, adapter, { channelName });
+    const ctx = await contextStorage.run(container, () => scope.surfaceContextFromAuth(auth as never));
+    return (ctx?.channel as { kind?: string } | undefined)?.kind;
+  };
+  const unified = defineChannel({ events: { "turn.started": async () => {} } } as never) as unknown as { adapter: { kind?: string } };
+  ok(unified.adapter.kind === "defineChannel", `(precondition) eve's adapter kind is its TYPE, not the channel (got ${String(unified.adapter.kind)})`);
+  const unifiedKind = await kindOn(unified.adapter, "unified");
+  ok(platformFromKind(unifiedKind) === "unified", `🔴 a turn on the unified channel resolves the "unified" platform, not the adapter type (got ${String(unifiedKind)})`);
+  const slackKind = await kindOn({ kind: "http" }, "slack");
+  ok(platformFromKind(slackKind) === "slack", `🔴 a turn on an http channel named slack resolves "slack" (got ${String(slackKind)})`);
+}
+
 console.log(`✓ connector-scope-internals: ${passed} assertions passed`);

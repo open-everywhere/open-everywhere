@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { builtTreeArtifactsSource } from "../tests/integration/prewarm.js";
+import { loadPrewarmAppSandboxes } from "./eve-deep-reads/prewarm.js";
 import { npmCommand } from "./npm-command.js";
 
 const ROOT = process.cwd();
@@ -116,31 +117,8 @@ async function main(): Promise<void> {
   process.env.NITRO_HOST = "127.0.0.1";
 
   console.log("-- prewarming the docker sandbox template (real daemon; reuses the shared image cache) --");
-  const prewarmPath = join(ROOT, "node_modules", "eve", "dist", "src", "execution", "sandbox", "prewarm.js");
-  let prewarmMod: {
-    prewarmAppSandboxes?: (input: {
-      readonly appRoot: string;
-      readonly compiledArtifactsSource?: unknown;
-      readonly log?: (m: string) => void;
-    }) => Promise<void>;
-  };
-  try {
-    prewarmMod = (await import(pathToFileURL(prewarmPath).href)) as typeof prewarmMod;
-  } catch (err) {
-    throw new Error(
-      `sandbox-docker-turn-live-test: eve's sandbox prewarm module is gone from ${prewarmPath} — an eve bump moved it. ` +
-        "Find the new home of prewarmAppSandboxes under eve/dist (same fix tests/integration/prewarm.ts needs).",
-      { cause: err },
-    );
-  }
-  if (typeof prewarmMod.prewarmAppSandboxes !== "function") {
-    throw new Error(
-      `sandbox-docker-turn-live-test: ${prewarmPath} no longer exports prewarmAppSandboxes — an eve bump renamed it. ` +
-        "eve 0.69.0 removed prewarmBuiltAppSandboxes and made prewarmSandboxes module-private, leaving this one " +
-        "export (OPE-2248); see tests/integration/prewarm.ts for the same fix.",
-    );
-  }
-  await prewarmMod.prewarmAppSandboxes({
+  const prewarmAppSandboxes = await loadPrewarmAppSandboxes(ROOT);
+  await prewarmAppSandboxes({
     appRoot: ROOT,
     compiledArtifactsSource: builtTreeArtifactsSource(ROOT),
     log: (m) => console.log(`  ${m}`),

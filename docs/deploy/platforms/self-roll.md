@@ -45,7 +45,9 @@ knob must name a *registered* adapter or the agent refuses to start.
   on a larger machine and push it to a registry. The build stage runs
   `npm ci --ignore-scripts` (the root `prepare` script needs the sources, which that layer does
   not have), then `npm rebuild` for the dependency install scripts that work on alpine, then
-  `patch-package --error-on-fail` and a check that every eve patch marker is present, then
+  `patch-package --error-on-fail` and a check that every eve patch marker is present (the eve
+  1.0.0-rc.18 patch plants no boot marker, that is no `__oe…Patched` global, so the check has
+  nothing to find), then
   `npm run build`.
 - The simplest self-roll: the default embedded-Postgres (PGlite) operational floor — leave
   `OE_OPERATIONAL_PROVIDER` unset and set no `DATABASE_URL` — plus `git` or `sqlite` memory, the

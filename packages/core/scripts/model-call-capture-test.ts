@@ -96,8 +96,9 @@ function turnCtx(sessionId: string, channel = "C_TXN"): BindableContext {
   } as unknown as BindableContext;
 }
 
+// The resolver's legacy event argument: only its `data.turnId` is read.
 function stepEvent(turnId: string): unknown {
-  return { type: "step.started", data: { turnId } };
+  return { data: { turnId } };
 }
 
 function callOptions(text: string): RoutedCallOptions {
@@ -139,6 +140,17 @@ function armed(on: boolean): void {
   ok(captureArmed() === false, "disarmed: captureArmed() is false with soak.capture off — the shipped default");
   const d = deps([]);
   ok(withCapture(d, undefined) === d, "disarmed: withCapture returns the IDENTICAL deps object with no site — no wrapper, no allocation on the disarmed path");
+  {
+    const { noteWakeAttachmentsFrom } = await import("../agent/access/worker-continuation.js");
+    const wake = { role: "user", content: `<wake reason="mention">\n<message author="Rowan">\nsee file\n<attachment kind="image" id="F_V1" name="a.png"/>\n</message>\n</wake>` };
+    eq(await noteWakeAttachmentsFrom({ messages: async () => [wake] }), 1, "🔴 wake attachments are read through eve's messages() FUNCTION on the model-function ctx — an Array.isArray check on the function finds none");
+    eq(await noteWakeAttachmentsFrom({ messages: [wake] }), 1, "…and an array-shaped messages still reads");
+    eq(await noteWakeAttachmentsFrom({ messages: async () => { throw new Error("assembly failed"); } }), 0, "…and a messages() that throws notes none, never a throw into the model call");
+  }
+  {
+    const frame = { ...(turnCtx("s-frame") as object), turn: { id: "turn_frame", status: "running", input: [] } } as unknown as BindableContext;
+    eq(captureSiteFrom(frame)?.turnId, "turn_frame", "🔴 a capture site takes the turn id from eve's model-function ctx (ctx.turn) when no event is passed — else every row files under turn \"\" and the completion cross-check reports a false gap");
+  }
   ok(captureSiteFrom(turnCtx("s-off"), stepEvent("turn_0")) !== undefined, "disarmed: a site is still resolvable — arming, not resolution, is what gates the recorder (so the next assertion means something)");
 
   const calls: FakeCall[] = [];
@@ -245,6 +257,18 @@ function armed(on: boolean): void {
   for (let i = 0; i < 5; i++) noteCompletedModelStep("s-xcheck-gap", "turn_3", ctx);
   await new Promise((r) => setTimeout(r, 50));
   eq((await readAudit({ org: deploymentOrg(), action: CAPTURE_GAP_ACTION })).length, 1, "cross-check: the gap is reported once per turn, not once per step");
+}
+{
+  armed(true);
+  const spendHook = (await import("../agent/hooks/spend.js")).default;
+  const ctx = turnCtx("s-settled");
+  await driveCall(ctx, "turn_s", callOptions("one call"), []);
+  for (const outcome of ["failed", "interrupted", "abandoned", "completed"]) {
+    await spendHook.events!["model.settled"]!({ type: "model.settled", data: { runId: `run-${outcome}`, outcome }, scope: { turnId: "turn_s" } } as never, ctx as never);
+  }
+  await spendHook.events!["model.settled"]!({ type: "model.settled", data: { runId: "run-compaction", outcome: "completed" }, scope: { turnId: "turn_s", changeId: "change-1", runId: "run-compaction" } } as never, ctx as never);
+  eq(captureCountsFor("s-settled", "turn_s")?.reported, false, "…so the one captured call matches the one completed step, and no gap is reported");
+  eq(captureCountsFor("s-settled", "turn_s")?.completed, 1, "🔴 cross-check: the spend hook counts only a model.settled whose outcome is completed and that no context change owns — a failed or retried run, or a compaction's run, is no completed turn step, so it can raise no false capture gap");
 }
 {
   resetSettingsForTest();

@@ -52,7 +52,7 @@ test("the work session parks on its own budget: W's generation retires, the seat
     registerScript({
       parent: [{ calls: [{ tool: "work", input: { message: "ope-2341 park probe: a long job" }, id: "ope2341-park-forward" }] }, { say: NO_REPLY_SENTINEL }],
       work: Array.from({ length: STEPS_TO_BOUND }, (_unused, i) => ({
-        calls: [{ tool: "task_cancel", input: { taskId: `agent-ope2341-none-${i}` }, id: `ope2341-w-loop-${i}` }],
+        calls: [{ tool: "eve__task_cancel", input: { taskId: `agent-ope2341-none-${i}` }, id: `ope2341-w-loop-${i}` }],
         usage: { inputTokens: REPORTED_INPUT_TOKENS_PER_STEP, outputTokens: 100 },
       })),
     }),
@@ -81,6 +81,9 @@ test("the work session parks on its own budget: W's generation retires, the seat
   expect(park).toHaveLength(1);
   const detail = park[0]!.detail ?? {};
   expect(detail["limit"]).toBe(SESSION_INPUT_TOKEN_BUDGET);
+  expect(detail["kind"]).toBe("input");
+  expect(Number(detail["usedTokens"])).toBeGreaterThanOrEqual(SESSION_INPUT_TOKEN_BUDGET);
+  expect(String(detail["requestId"])).toMatch(/:limit:usage:0$/u);
   expect(detail["tier"]).toBe("work");
   expect(detail["remedy"]).toBe("rotate_on_next_wake");
   const wKey = String(detail["registryKey"] ?? "");

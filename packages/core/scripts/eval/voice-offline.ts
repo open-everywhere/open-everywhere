@@ -67,7 +67,7 @@ const resultFor: ResultFor = (name, input, callIndex) => {
     };
   }
   if (name === "read_thread") return { platform: "slack", channel: SLACK_CHANNEL, thread_ts: "0.0", count: 0, messages: [] };
-  if (name === "cancel_work" || name === "task_cancel") return { cancelled: 0, note: "Nothing is running in this conversation." };
+  if (name === "cancel_work" || name === "eve__task_cancel") return { cancelled: 0, note: "Nothing is running in this conversation." };
   return { ok: true };
 };
 

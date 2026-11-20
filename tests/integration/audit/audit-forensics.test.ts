@@ -72,8 +72,15 @@ interface TranscriptBody {
   readonly hint?: string;
 }
 
-async function readTranscript(sessionId: string, opts: { readonly token?: string | null } = {}): Promise<{ status: number; body: TranscriptBody }> {
-  const res = await controlGet(`/control/v1/session/${encodeURIComponent(sessionId)}/transcript`, opts);
+async function readTranscript(
+  sessionId: string,
+  opts: { readonly token?: string | null; readonly startIndex?: number; readonly limit?: number } = {},
+): Promise<{ status: number; body: TranscriptBody }> {
+  const query = new URLSearchParams();
+  if (opts.startIndex !== undefined) query.set("startIndex", String(opts.startIndex));
+  if (opts.limit !== undefined) query.set("limit", String(opts.limit));
+  const qs = query.size > 0 ? `?${query.toString()}` : "";
+  const res = await controlGet(`/control/v1/session/${encodeURIComponent(sessionId)}/transcript${qs}`, { token: opts.token });
   let parsed: TranscriptBody = {};
   try {
     parsed = JSON.parse(res.body) as TranscriptBody;
@@ -98,7 +105,41 @@ test("a reply.post row's detail.sessionId OPENS that turn's transcript — the j
   expect(body.sessionId).toBe(sessionId);
   expect(body.count).toBeGreaterThan(0);
   expect(body.events?.length).toBe(body.count);
-  expect(body.nextIndex).toBe((body.startIndex ?? 0) + (body.count ?? 0));
+
+  // `startIndex` and `nextIndex` count stored LINES, and one line can hold several events, so
+  // `nextIndex` is not `startIndex + count`. The guarantee is the resume cursor: every event read
+  // lies in [startIndex, nextIndex), and a read that resumes at `nextIndex` neither skips nor
+  // repeats an event.
+  const events = body.events ?? [];
+  const startIndex = body.startIndex ?? 0;
+  const nextIndex = body.nextIndex ?? 0;
+  expect(startIndex).toBe(0);
+  expect(nextIndex).toBeGreaterThan(startIndex);
+  for (const [i, ev] of events.entries()) {
+    expect(ev.index).toBeGreaterThanOrEqual(startIndex);
+    expect(ev.index).toBeLessThan(nextIndex);
+    if (i > 0) expect(ev.index).toBeGreaterThanOrEqual(events[i - 1]!.index);
+  }
+  const paged: { readonly index: number; readonly type: string; readonly data: unknown }[] = [];
+  let resumeAt = 0;
+  let pages = 0;
+  while (paged.length < events.length) {
+    const page = await readTranscript(sessionId, { startIndex: resumeAt, limit: 1 });
+    expect(page.status).toBe(200);
+    expect(page.body.startIndex).toBe(resumeAt);
+    const got = page.body.events ?? [];
+    expect(got.length, `the page at line ${resumeAt} returned no event before the single read's ${events.length} were covered`).toBeGreaterThan(0);
+    for (const ev of got) {
+      expect(ev.index).toBeGreaterThanOrEqual(resumeAt);
+      expect(ev.index).toBeLessThan(page.body.nextIndex ?? 0);
+    }
+    expect(page.body.nextIndex ?? 0).toBeGreaterThan(resumeAt);
+    paged.push(...got);
+    resumeAt = page.body.nextIndex ?? 0;
+    expect(++pages).toBeLessThanOrEqual(events.length);
+  }
+  expect(paged.slice(0, events.length)).toEqual(events);
+  expect(pages).toBeGreaterThan(1);
 
   expect(JSON.stringify(body.events)).toContain(nonce);
 

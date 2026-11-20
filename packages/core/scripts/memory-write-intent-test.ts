@@ -293,8 +293,8 @@ const replySrc = readFileSync(join(agentDir, "tools", "reply.ts"), "utf-8");
 const hookSrc = readFileSync(join(agentDir, "hooks", "memory.ts"), "utf-8");
 
 ok(hookSrc.includes("noteWriteIntent("), "the memory hook ARMS the intent — without this call nothing ever sets the flag");
-const received = hookSrc.indexOf('"message.received"');
-ok(received > -1 && hookSrc.indexOf("noteWriteIntent(", received) > -1, "the arm sits in the `message.received` handler, so every inbound message reaches it");
+const received = hookSrc.indexOf('"delivery.consumed"');
+ok(received > -1 && hookSrc.indexOf("noteWriteIntent(", received) > -1, "the arm sits in the `delivery.consumed` handler, so every inbound message reaches it");
 
 const postDoors = ["await postUnifiedReply(", "await postReply("];
 const postAts = postDoors.map((p) => replySrc.indexOf(p));

@@ -26,6 +26,7 @@ import type { HasEventSeen, MarkEventSeen } from "@open-everywhere/core/agent/ac
 import { _setDeploymentIdentityForTest } from "@open-everywhere/core/agent/identity/deployment-identity.js";
 import { removeTempDir } from "../packages/core/scripts/_temp-dir.js";
 import { setPlatformStandInForTest } from "@open-everywhere/core/agent/identity/binding.js";
+import { v27Hooks } from "../packages/core/scripts/_hook-view.js";
 
 const requestOf = (approval: Approval): ((ctx: ApprovalContext) => ApprovalStatus | Promise<ApprovalStatus>) =>
   typeof approval === "function" ? approval : approval.request;
@@ -73,7 +74,6 @@ const ctx = (over: Partial<{ sessionId: string; toolName: string; toolInput: unk
     callId: "call-1",
     toolName: over.toolName ?? "post_file",
     toolInput: over.toolInput ?? { files: [{ filename: "x.html" }] },
-    approvedTools: new Set<string>(),
   }) as unknown as ApprovalContext;
 
 async function simulateApprovalRaised(c: ApprovalContext, store: ReturnType<typeof makeFakeStore>): Promise<void> {
@@ -218,11 +218,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
 {
   const { connectorApprovalPolicy } = await import("@open-everywhere/core/agent/connections/connector-auth.js");
   const { default: approvalRaisedHook } = await import("@open-everywhere/core/agent/hooks/approval-raised.js");
-  const inputRequestedHandler = (
-    approvalRaisedHook as unknown as {
-      events: { "input.requested": (event: unknown, ctx: unknown) => Promise<void> };
-    }
-  ).events["input.requested"];
+  const inputRequestedHandler = v27Hooks(approvalRaisedHook).interactionOpened;
 
   const sessionId = "live-session-string-convergence";
   const toolName = "notion__create_page";
@@ -334,9 +330,7 @@ ok(DUPLICATE_APPROVAL_KEY_PREFIX.length > 0, "6a. the guard's dedupe key carries
   ) => Promise<ApprovalStatus> | ApprovalStatus;
 
   const { default: approvalRaisedHook } = await import("@open-everywhere/core/agent/hooks/approval-raised.js");
-  const inputRequestedHandler = (
-    approvalRaisedHook as unknown as { events: { "input.requested": (event: unknown, c: unknown) => Promise<void> } }
-  ).events["input.requested"];
+  const inputRequestedHandler = v27Hooks(approvalRaisedHook).interactionOpened;
 
   const sessionId = "live-session-followup-repropose";
   const toolName = "post_file";

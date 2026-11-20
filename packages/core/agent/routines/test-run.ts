@@ -1,5 +1,4 @@
-import { classifyConnectorOpTier, isReservedNamespaceTool } from "../access/consequence.js";
-import { qualifiedConnectorToolName, readConnectionExecuteTarget } from "../access/connection-execute-target.js";
+import { classifyConnectorOpTier, isConnectorOpTool, isReservedNamespaceTool } from "../access/consequence.js";
 import { oneAttrValue, routineMarker } from "./routine.js";
 import type { NormalizedEvent } from "./event-model.js";
 
@@ -106,11 +105,10 @@ export const TEST_RUN_OPEN_TOOLS: ReadonlySet<string> = new Set([
   "grep",
   "read_file",
   "sandbox_tools",
-  "connection_tools",
   "web_search",
   "web_fetch",
-  "connection_search",
-  "load_skill",
+  "eve__search",
+  "eve__skill",
   "agent_version",
   "session_cost",
   "spend_report",
@@ -151,20 +149,16 @@ export const TEST_RUN_OPEN_TOOLS: ReadonlySet<string> = new Set([
   "no_reply",
   "fresh_eyes_review",
   "agent",
-  "task_wait",
-  "task_cancel",
+  "eve__task_wait",
+  "eve__task_cancel",
 ]);
 
 export type TestRunToolVerdict = "run" | "block";
 
-export function testRunToolVerdict(toolName: string, input?: unknown): TestRunToolVerdict {
-  if (toolName === "connection_execute") {
-    const target = readConnectionExecuteTarget(input);
-    if (target === undefined) return "block";
-    return classifyConnectorOpTier(qualifiedConnectorToolName(target)) === "read" ? "run" : "block";
-  }
+/** The verdict depends on the tool name only. `_input` stays so that callers need not change. */
+export function testRunToolVerdict(toolName: string, _input?: unknown): TestRunToolVerdict {
   if (isReservedNamespaceTool(toolName)) return "block";
-  if (toolName.includes("__")) return classifyConnectorOpTier(toolName) === "read" ? "run" : "block";
+  if (isConnectorOpTool(toolName)) return classifyConnectorOpTier(toolName) === "read" ? "run" : "block";
   return TEST_RUN_OPEN_TOOLS.has(toolName) ? "run" : "block";
 }
 
@@ -177,24 +171,15 @@ function oneLine(value: string, max: number): string {
 }
 
 function connectorWords(toolName: string, input: unknown): string | undefined {
-  if (toolName === "connection_execute") {
-    const target = readConnectionExecuteTarget(input);
-    return target === undefined ? "an unnamed connector operation" : `${target.tool.replace(/[_-]+/gu, " ")} on ${target.connection}`;
-  }
   const i = toolName.lastIndexOf("__");
   if (i < 0) return undefined;
   return `${toolName.slice(i + 2).replace(/[_-]+/gu, " ")} on ${toolName.slice(0, i).replace(/__/gu, " ")}`;
 }
 
-function innerInput(toolName: string, input: unknown): unknown {
-  if (toolName === "connection_execute" && input !== null && typeof input === "object") return (input as { input?: unknown }).input;
-  return input;
-}
-
 export function describeBlockedCall(toolName: string, input: unknown): { readonly tool: string; readonly what: string } {
   const connector = connectorWords(toolName, input);
   const action = connector ?? toolName.replace(/_/gu, " ");
-  const inner = innerInput(toolName, input);
+  const inner = input;
   let quote: string | undefined;
   if (inner !== null && typeof inner === "object" && !Array.isArray(inner)) {
     const rec = inner as Record<string, unknown>;
@@ -206,7 +191,7 @@ export function describeBlockedCall(toolName: string, input: unknown): { readonl
       }
     }
   }
-  return { tool: toolName === "connection_execute" ? "connection_execute" : toolName, what: quote === undefined ? action : `${action}: “${quote}”` };
+  return { tool: toolName, what: quote === undefined ? action : `${action}: “${quote}”` };
 }
 
 export function testRunBlockedMessage(toolName: string): string {

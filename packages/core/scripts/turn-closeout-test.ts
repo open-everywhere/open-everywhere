@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { _dynamicResolverForTest } from "../agent/access/window-gated.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -54,7 +55,7 @@ const {
 } = await import("../agent/channels/reply-signal.js");
 const { NO_REPLY_REDUNDANT_CLOSEOUT_REASON } = await import("../agent/tools/no_reply.js");
 const { STAND_DOWN_ACTION } = await import("../agent/tools/stand_down.js");
-const { notePendingDelegation } = await import("../agent/access/pending-delegation-signal.js");
+const { notePendingDelegation, noteDelegationRequested } = await import("../agent/access/pending-delegation-signal.js");
 const { seedTailWindow, tailWindowFor } = await import("../agent/channels/session-tail-record.js");
 
 type BindableContext = import("../agent/identity/binding.js").BindableContext;
@@ -69,12 +70,14 @@ const TOKEN = unifiedSupervisorToken(DOMAIN, 1);
 const THREAD = "1757400560.000100";
 
 const posted: { channel: string; text: string }[] = [];
+const updated: string[] = [];
 registerSlackTestBridge({
   channel: { __fixture: "slack" } as never,
   confirmChannelInternal: async () => true,
   form: async (method: string, body: string) => {
     const p = new URLSearchParams(body);
     if (method === "chat.postMessage") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "" });
+    if (method === "chat.update") updated.push(p.get("ts") ?? "");
     return { ok: true, ts: `ts-${posted.length}` } as never;
   },
 });
@@ -101,11 +104,15 @@ const noReplyTool = (await import("../agent/tools/no_reply.js")).default as unkn
 const standDownTool = (await import("../agent/tools/stand_down.js")).default as unknown as {
   readonly execute: (input: { reason?: string }, ctx: unknown) => Promise<{ standingDown: boolean; note: string }>;
 };
+const { ALREADY_ACKNOWLEDGED_NOTE } = await import("../agent/tools/stand_down.js");
+const { wasStoodDownThisTurn, markStoodDownThisTurn } = await import("../agent/channels/reply-signal.js");
 interface Armed {
   readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
-const arm = (ctx: unknown): Armed | null => (replyTool as unknown as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+const arm = (ctx: unknown): Armed | null => _dynamicResolverForTest(replyTool)({}, ctx) as Armed | null;
+const editReplyTool = (await import("../agent/tools/edit_reply.js")).default;
+const armEdit = (ctx: unknown): Armed | null => _dynamicResolverForTest(editReplyTool)({}, ctx) as Armed | null;
 
 function ctxFor(turnWake: string, turnId: string, sessionId = "turn-closeout-test", threadTs = THREAD): BindableContext {
   return {
@@ -264,14 +271,37 @@ async function callReply(
   done = true,
   sessionId = "turn-closeout-test",
   threadTs = THREAD,
-): Promise<{ posted?: boolean; error?: string }> {
+): Promise<{ posted?: boolean; continuesTurn?: boolean; error?: string }> {
   const ctx = ctxFor(turnWake, turnId, sessionId, threadTs);
   const armed = arm(ctx);
   if (!armed) return { error: "reply did not arm" };
   return armed
     .execute({ text, wake, done }, ctx)
-    .then((r) => r as { posted?: boolean })
+    .then((r) => r as { posted?: boolean; continuesTurn?: boolean })
     .catch((e: unknown) => ({ error: String(e) }));
+}
+
+async function callEdit(
+  turnWake: string,
+  turnId: string,
+  wake: string,
+  messageId: string,
+  sessionId: string,
+  threadTs: string,
+): Promise<{ edited?: boolean; error?: string }> {
+  const ctx = ctxFor(turnWake, turnId, sessionId, threadTs);
+  const armed = armEdit(ctx);
+  if (!armed) return { error: "edit_reply did not arm" };
+  return armed
+    .execute({ text: "corrected", wake, message_id: messageId }, ctx)
+    .then((r) => r as { edited?: boolean })
+    .catch((e: unknown) => ({ error: String(e) }));
+}
+
+async function spentRowKeyOf(partition: { readonly org: string; readonly surfaceKey: string }, anchor: string, holder: string): Promise<string> {
+  const raw = await store.getTaskResult(partition.org, `stand-down-ack:${partition.surfaceKey}\n${anchor}`);
+  const claim = raw === null ? undefined : (JSON.parse(raw) as { claim?: string }).claim;
+  return `stand-down-ack-spent:${partition.surfaceKey}\n${anchor}\n${holder}${claim === undefined ? "" : `\n${claim}`}`;
 }
 
 function sessionlessCtx(ctx: BindableContext): BindableContext {
@@ -280,8 +310,8 @@ function sessionlessCtx(ctx: BindableContext): BindableContext {
   return { ...raw, session: { ...session, id: undefined } } as unknown as BindableContext;
 }
 
-async function callReplySessionless(turnWake: string, turnId: string, wake: string, text: string, done = true): Promise<{ posted?: boolean; error?: string }> {
-  const ctx = sessionlessCtx(ctxFor(turnWake, turnId));
+async function callReplySessionless(turnWake: string, turnId: string, wake: string, text: string, done = true, threadTs = THREAD): Promise<{ posted?: boolean; error?: string }> {
+  const ctx = sessionlessCtx(ctxFor(turnWake, turnId, "turn-closeout-test", threadTs));
   const armed = arm(ctx);
   if (!armed) return { error: "reply did not arm" };
   return armed
@@ -393,6 +423,7 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
 
   const ack = await inTurn(() => callReply(w, "turn_300", w, "Standing down here — I'll stay quiet unless someone @mentions me again.", false));
   ok(ack.posted === true, "§4: the ONE acknowledgement `stand_down` asks for still POSTS");
+  ok(ack.continuesTurn === undefined, "🔴 §4: the stand-down acknowledgement carries no `continuesTurn`, even as `done:false` — a stopped turn ends, it never asks the model for more");
   ok(posted.length === before + 1, "§4/ROOM: …and it reached the room");
   ok(turnCloseoutTripped("turn-closeout-test", "turn_300") === false, "§4: the allowed acknowledgement does NOT end the turn");
 
@@ -437,9 +468,48 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
   const first = await inTurn(() => armed.execute({ text: "Part one of the answer.", wake: w, done: false }, ctx).catch((e: unknown) => ({ error: String(e) })));
   const second = await inTurn(() => armed.execute({ text: "Part two of the answer.", wake: w, done: false }, ctx).catch((e: unknown) => ({ error: String(e) })));
   ok((first as { posted?: boolean }).posted === true, "§5: the first post delivers");
+  ok(
+    (first as { continuesTurn?: boolean }).continuesTurn === true,
+    "🔴 §5: a `done:false` part with no worker running says `continuesTurn`, so eve does not end the turn on it and the full answer can post in this turn",
+  );
   ok((second as { posted?: boolean }).posted === true, "§5: and so does the SECOND — a same-turn duplicate stays DISCOURAGED, never hard-blocked (OPE-1452)");
   ok(posted.length === before + 2, "§5/ROOM: both messages reached the room");
   ok(turnCloseoutTripped("turn-closeout-test", "turn_400") === false, "§5: and neither armed the closeout — an unforced duplicate is a matter of style, and this latch refuses nothing new");
+}
+
+{
+  _resetTurnCloseoutForTest();
+  const part = async (channel: string, turnId: string, before: (turnId: string, wake: string) => void): Promise<{ posted?: boolean; continuesTurn?: boolean; error?: string }> => {
+    const inTurn = newSession(`turn-closeout-test-5b-${turnId}`);
+    const thread = `1757172800.0005${turnId.slice(-1)}0`;
+    const w = await wake(channel, thread);
+    const ctx = ctxFor(w, turnId, `turn-closeout-test-5b-${turnId}`, thread);
+    await markThreadEngaged(resolvePartition(ctx), thread, new Date().toISOString(), { participating: true });
+    const armed = arm(ctx)!;
+    return inTurn(async () => {
+      before(turnId, w);
+      return armed
+        .execute({ text: "Part one of the answer.", wake: w, done: false }, ctx)
+        .then((r) => r as { posted?: boolean; continuesTurn?: boolean })
+        .catch((e: unknown) => ({ error: String(e) }));
+    });
+  };
+  const bare = await part("C_5B_BARE", "turn_5b1", () => undefined);
+  ok(bare.posted === true && bare.continuesTurn === true, "§5B/CONTROL: with no worker in the turn, a `done:false` part says `continuesTurn`");
+  const pending = await part("C_5B_PENDING", "turn_5b2", (t, w) => notePendingDelegation(t, "task_5b", w));
+  ok(pending.posted === true, "§5B: the hand-off note posts while a worker of this turn is pending");
+  ok(pending.continuesTurn === undefined, "🔴 §5B: a worker pending in this turn: the part carries no `continuesTurn`, so it ends the turn, and the worker's result comes later");
+  const requested = await part("C_5B_REQ", "turn_5b3", (t) => noteDelegationRequested(t));
+  ok(requested.posted === true, "§5B: the hand-off note posts when a worker was requested in this same step");
+  ok(
+    requested.continuesTurn === undefined,
+    "🔴 §5B: a worker REQUESTED in this turn but not yet started (the same step as the note): no `continuesTurn`, so a further model call never runs ahead of the worker",
+  );
+  const otherTurn = await part("C_5B_OTHER", "turn_5b4", () => {
+    notePendingDelegation("turn_5b_earlier", "task_5b_old", undefined);
+    noteDelegationRequested("turn_5b_earlier");
+  });
+  ok(otherTurn.continuesTurn === true, "§5B: a worker of an EARLIER turn does not count — the predicate is scoped to this turn");
 }
 
 {
@@ -500,17 +570,38 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
   const partition = resolvePartition(ctx);
   ok((await isThreadStopped(partition, THREAD)) === true, "§9/CONTROL: §4's stored stop is still on this thread, so the guard has something to read");
 
+  const lateBefore = posted.length;
+  const late = await callReply(w, "turn_700", w, "A later turn's post into the stopped thread.", false);
+  ok(late.posted !== true, "§9: 🔴 a LATER turn's FIRST post into §4's stopped thread is REFUSED — the one acknowledgement is spent per stopped conversation, not per turn (OPE-2801)");
+  ok(/stand down/i.test(late.error ?? ""), "§9: …refused with the stand-down steer");
+  ok(!/already posted here once this turn/i.test(late.error ?? ""), "§9/COPY: …and the copy never claims THIS turn posted, which is false for it");
+  ok(posted.length === lateBefore, "§9/ROOM: nothing reached the stopped thread");
+
+  const THREAD_9 = "1757172800.000900";
+  const w9 = await wake("C_FAILOPEN", THREAD_9);
+  const ctx9 = ctxFor(w9, "turn_710", "turn-closeout-test", THREAD_9);
+  const partition9 = resolvePartition(ctx9);
+  await markThreadEngaged(partition9, THREAD_9, new Date().toISOString(), { participating: true });
+  const stop9 = await standDownTool.execute({ reason: "asked me to stop" }, ctx9).catch((e: unknown) => ({ error: String(e) }));
+  ok((stop9 as { standingDown?: boolean }).standingDown === true, "§9/WIRING: the real `stand_down` marked THREAD_9 with no eve context at all");
+
   const before = posted.length;
-  const a = await callReply(w, "turn_700", w, "The one allowed post.", false);
-  ok(a.posted === true, "§9: the ONE allowed post still lands with no eve context at all");
-  const b = await callReply(w, "turn_700", w, "And this one is refused.", false);
+  const a = await callReply(w9, "turn_710", w9, "The one allowed post.", false, "turn-closeout-test", THREAD_9);
+  ok(a.posted === true, "§9: the stand-down turn's ONE allowed post still lands with no eve context at all");
+  const b = await callReply(w9, "turn_710", w9, "And this one is refused.", false, "turn-closeout-test", THREAD_9);
   ok(b.posted !== true, "§9: 🔴 …and the SECOND is refused — the durable half needs no eve context, so this turn CAN record its valve and the stop is honoured (OPE-1551)");
   ok(posted.length === before + 1, "§9/ROOM: exactly one message reached the stopped conversation");
 
+  const sessionlessStopped = await callReplySessionless(w9, "turn_711", w9, "A turn that cannot name itself.", false, THREAD_9);
+  ok(sessionlessStopped.posted !== true, "§9: 🔴 a sessionless turn is refused in a conversation whose acknowledgement is spent — the acknowledgement row answers, so the turn's missing identity is not an unknown");
+  ok(posted.length === before + 1, "§9/ROOM: …and still only the one message reached the stopped conversation");
+
+  const OPEN_9 = "1757172800.000901";
+  const wOpen = await wake("C_FAILOPEN_OPEN", OPEN_9);
   const sessionlessBefore = posted.length;
-  const c = await callReplySessionless(w, "turn_701", w, "Nothing here can record a valve.", false);
-  const d = await callReplySessionless(w, "turn_701", w, "So this one lands too.", false);
-  ok(c.posted === true && d.posted === true, "§9: with NEITHER half able to record, BOTH posts land — a guard that cannot record its own state must never swallow an answer");
+  const c = await callReplySessionless(wOpen, "turn_701", wOpen, "Nothing here can record a valve.", false, OPEN_9);
+  const d = await callReplySessionless(wOpen, "turn_701", wOpen, "So this one lands too.", false, OPEN_9);
+  ok(c.posted === true && d.posted === true, "§9/CONTROL: in a thread that did NOT stand down, a sessionless turn posts both — a guard that cannot record its own state must never swallow an answer");
   ok(posted.length === sessionlessBefore + 2, "§9/ROOM: both messages reached the room");
   ok((await noteTurnCloseoutRefusal({} as BindableContext, "anything")) === 0, "§9: and the latch writer answers 0 rather than throwing on a context it cannot read");
 }
@@ -530,17 +621,17 @@ function authoredSourcesUnder(dir: URL): { readonly url: URL; readonly src: stri
   ok((await isThreadStopped(partition, ackThread)) === true, "§10/CONTROL: the thread is stopped before the acknowledgement is attempted");
 
   const before = posted.length;
-  const refusedDownstream = await inTurn(() => callReply(w, "turn_800", w, "Standing down here.", true));
+  const refusedDownstream = await inTurn(() => callReply(w, "turn_800", w, "Standing down here.", true, "turn-closeout-test", ackThread));
   ok(typeof refusedDownstream.error === "string", "§10/CONTROL: a gate BELOW the stand-down read refuses the acknowledgement call");
   ok(!/stand down/i.test(refusedDownstream.error!), "§10/CONTROL: …and it is that other gate, not the stand-down, that refused");
   ok(posted.length === before, "§10/CONTROL: nothing was posted");
 
-  const resent = await inTurn(() => callReply(w, "turn_800", w, "Standing down here.", false));
+  const resent = await inTurn(() => callReply(w, "turn_800", w, "Standing down here.", false, "turn-closeout-test", ackThread));
   ok(resent.posted === true, "§10: the RE-SEND still POSTS — a refused call must not spend the one acknowledgement a stand-down allows");
   ok(posted.length === before + 1, "§10/ROOM: the acknowledgement the human is owed reached the room");
   ok(turnCloseoutTripped("turn-closeout-test", "turn_800") === false, "§10: and nothing ended the turn before the acknowledgement landed");
 
-  const third = await inTurn(() => callReply(w, "turn_800", w, "And again.", false));
+  const third = await inTurn(() => callReply(w, "turn_800", w, "And again.", false, "turn-closeout-test", ackThread));
   ok(typeof third.error === "string", "§10: only THEN is the next post refused");
   ok(/stand down/i.test(third.error!), "§10: …and now it is the stand-down that refuses");
   ok(posted.length === before + 1, "§10/ROOM: nothing further reached the room");
@@ -652,6 +743,10 @@ resetSettingsForTest();
   ok(ack.posted === true, "§13/CONTROL: instance A spends the turn's ONE post");
   ok(posted.length === before + 1, "§13/CONTROL: …and it really reached the room");
 
+  const { readStandDownAck } = await import("../agent/channels/engagement.js");
+  await store.deleteTaskResult(partition.org, await spentRowKeyOf(partition, THREAD_13, turnPairKey("turn-closeout-test", "turn_1300")));
+  const unspent = await readStandDownAck(partition, THREAD_13);
+  ok(unspent.kind === "held" && unspent.spent === false, "§13/WIRING: the acknowledgement row reads UNSPENT again — the spend row is deleted, a lost spend write, staged");
   const instanceB = newSession();
   ok(
     (await instanceB(async () => wasStoppedAckSpentThisTurn("turn_1300"))) === false,
@@ -659,16 +754,543 @@ resetSettingsForTest();
   );
 
   const resumed = await instanceB(() => callReply(w13, "turn_1300", w13, "Here is that same answer once more.", false, "turn-closeout-test", THREAD_13));
-  ok(typeof resumed.error === "string", "§13: 🔴 the resumed instance's post is REFUSED — the valve rode the durable row across the instance change");
+  ok(typeof resumed.error === "string", "§13: 🔴 the resumed instance's post is REFUSED — with the acknowledgement row unspent, the per-turn durable row carries the valve across the instance change");
   ok(resumed.posted !== true, "§13: …and reports no post");
   ok(/stand down/i.test(resumed.error!), "§13: refused with the stand-down steer");
   ok(posted.length === before + 1, "§13/ROOM: the stopped conversation received exactly ONE message across both instances");
 
+  const { spendStandDownAck } = await import("../agent/channels/engagement.js");
+  await spendStandDownAck(partition, THREAD_13, turnPairKey("turn-closeout-test", "turn_1300"));
   const instanceC = newSession();
   await deleteTurnState(turnPairKey("turn-closeout-test", "turn_1300"));
-  const forgotten = await instanceC(() => callReply(w13, "turn_1300", w13, "And again, with no record at all.", false, "turn-closeout-test", THREAD_13));
-  ok(forgotten.posted === true, "§13/CONTROL: with the durable row deleted too, the post lands — the row is what refused it above");
+  const forgotten = await instanceC(() => callReply(w13, "turn_1300", w13, "And again, with no turn record at all.", false, "turn-closeout-test", THREAD_13));
+  ok(forgotten.posted !== true, "§13: 🔴 with the per-turn row deleted too, the post is STILL refused — the acknowledgement row holds the spend (OPE-2801)");
+  ok(posted.length === before + 1, "§13/ROOM: …so the stopped conversation still received exactly ONE message");
+
+  await markThreadEngaged(partition, THREAD_13, new Date().toISOString(), { participating: true, engagedBy: "evt-13-remention" });
+  ok((await isThreadStopped(partition, THREAD_13)) === false, "§13/CONTROL: a fresh @mention re-engages the thread and clears its stop");
+  const instanceD = newSession();
+  const reengaged = await instanceD(() => callReply(w13, "turn_1301", w13, "Back, because someone asked.", false, "turn-closeout-test", THREAD_13));
+  ok(reengaged.posted === true, "§13/CONTROL: after the re-engagement the post lands — the stop is what refused it above, and re-engagement lifts it");
   ok(posted.length === before + 2, "§13/CONTROL: …and that one really reached the room");
+
+  const THREAD_13R = "1757172800.001310";
+  const w13r = await wake("C_REPLAY_STOP", THREAD_13R);
+  const ctx13r = ctxFor(w13r, "turn_1310", "turn-closeout-test", THREAD_13R);
+  await markThreadEngaged(partition, THREAD_13R, new Date().toISOString(), { participating: true });
+  const replayA = newSession();
+  await replayA(() => standDownTool.execute({ reason: "asked me to stop" }, ctx13r));
+  await store.deleteTaskResult(partition.org, `stand-down-ack:${partition.surfaceKey}\n${THREAD_13R}`);
+  ok((await readStandDownAck(partition, THREAD_13R)).kind === "absent", "§13R/WIRING: the hold is gone — the delivery died after the mark and before the hold");
+  await replayA(() => standDownTool.execute({ reason: "asked me to stop" }, ctx13r));
+  const rehold = await readStandDownAck(partition, THREAD_13R);
+  ok(rehold.kind === "held" && rehold.holder === turnPairKey("turn-closeout-test", "turn_1310") && !rehold.spent, "§13R: 🔴 the REPLAYED stand_down writes the hold again, although the thread was already stopped");
+  const replayB = newSession();
+  const replayBefore = posted.length;
+  const ackAfterReplay = await replayB(() => callReply(w13r, "turn_1310", w13r, "Standing down here.", false, "turn-closeout-test", THREAD_13R));
+  ok(ackAfterReplay.posted === true, "§13R: …so the stand-down turn's acknowledgement posts on a fresh instance, where no per-turn slot holds the stand-down");
+  const replayC = newSession();
+  const spentReplay = await replayC(() => standDownTool.execute({ reason: "asked me to stop" }, ctx13r));
+  ok(spentReplay.note === ALREADY_ACKNOWLEDGED_NOTE, "§13R: a replay after the spend steers the turn to post nothing — it does not claim the turn still owes an acknowledgement");
+  ok((await replayC(async () => wasStoodDownThisTurn("turn_1310"))) === false, "§13R: …and it sets no per-turn stand-down mark, so no acknowledgement debt blocks the turn's `no_reply`");
+  await deleteTurnState(turnPairKey("turn-closeout-test", "turn_1310"));
+  const afterSpentReplay = await replayC(() => callReply(w13r, "turn_1310", w13r, "And again.", false, "turn-closeout-test", THREAD_13R));
+  ok(afterSpentReplay.posted !== true, "§13R: 🔴 a replay AFTER the spend does not re-open the acknowledgement");
+  ok(posted.length === replayBefore + 1, "§13R/ROOM: the stopped thread received exactly ONE message");
+
+  const otherCtx = ctxFor(w13r, "turn_1320", "turn-closeout-test-13o", THREAD_13R);
+  const other = newSession("turn-closeout-test-13o");
+  const otherStop = await other(() => standDownTool.execute({ reason: "asked me to stop" }, otherCtx));
+  ok(otherStop.note === ALREADY_ACKNOWLEDGED_NOTE, "§13R: a stand_down by ANOTHER session in the already-stopped thread gets the same steer, not a false debt");
+  ok((await other(async () => wasStoodDownThisTurn("turn_1320"))) === false, "§13R: …and sets no per-turn mark");
+
+  const THREAD_13A = "1757172800.001320";
+  const w13a = await wake("C_ABSENT_SPENT", THREAD_13A);
+  const ctx13a = ctxFor(w13a, "turn_1330", "turn-closeout-test", THREAD_13A);
+  await markThreadEngaged(partition, THREAD_13A, new Date().toISOString(), { participating: true });
+  const absentRun = newSession();
+  await absentRun(() => standDownTool.execute({ reason: "asked me to stop" }, ctx13a));
+  const absentBefore = posted.length;
+  const absentAck = await absentRun(() => callReply(w13a, "turn_1330", w13a, "Standing down here.", false, "turn-closeout-test", THREAD_13A));
+  ok(absentAck.posted === true, "§13A/CONTROL: the stand-down turn's acknowledgement posts");
+  await store.deleteTaskResult(partition.org, `stand-down-ack:${partition.surfaceKey}\n${THREAD_13A}`);
+  ok((await readStandDownAck(partition, THREAD_13A)).kind === "absent", "§13A/WIRING: the acknowledgement row is gone — the case where only the per-turn records answer");
+  const fresh = newSession();
+  await fresh(async () => markStoodDownThisTurn("turn_1330"));
+  const absentAgain = await fresh(() => callReply(w13a, "turn_1330", w13a, "And again.", false, "turn-closeout-test", THREAD_13A));
+  ok(absentAgain.posted !== true, "§13A: 🔴 with the row ABSENT and this turn marked as the stander, the durable per-turn row still refuses the second post");
+  ok(posted.length === absentBefore + 1, "§13A/ROOM: the stopped thread received exactly ONE message");
+}
+
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const THREAD_13C = "1757172800.001340";
+  const w13c = await wake("C_RACE_STOP", THREAD_13C);
+  const ctxA = ctxFor(w13c, "turn_1340", "turn-closeout-test-13ca", THREAD_13C);
+  const ctxB = ctxFor(w13c, "turn_1341", "turn-closeout-test-13cb", THREAD_13C);
+  const partition = resolvePartition(ctxA);
+  await markThreadEngaged(partition, THREAD_13C, new Date().toISOString(), { participating: true, engagedBy: "evt-13c-first" });
+
+  const realMarkStopped = store.markStopped.bind(store);
+  let parkedB: (() => void) | undefined;
+  let reachedB: () => void = () => {};
+  const bReached = new Promise<void>((r) => (reachedB = r));
+  let parkedOnce = false;
+  (store as unknown as Record<string, unknown>)["markStopped"] = async (org: string, surfaceKey: string, threadTs: string): Promise<boolean> => {
+    if (threadTs === THREAD_13C && !parkedOnce) {
+      parkedOnce = true;
+      await new Promise<void>((release) => {
+        parkedB = release;
+        reachedB();
+      });
+    }
+    return realMarkStopped(org, surfaceKey, threadTs);
+  };
+  const sessionA = newSession("turn-closeout-test-13ca");
+  const sessionB = newSession("turn-closeout-test-13cb");
+  const before = posted.length;
+  let stopB: Promise<{ standingDown: boolean; note: string }>;
+  let stopA: { standingDown: boolean; note: string };
+  try {
+    stopB = sessionB(() => standDownTool.execute({ reason: "asked me to stop" }, ctxB));
+    await bReached;
+    ok((await isThreadStopped(partition, THREAD_13C)) === false, "§13C/WIRING: session B is parked BEFORE its stop write — it saw the thread as not stopped");
+    stopA = await sessionA(() => standDownTool.execute({ reason: "asked me to stop" }, ctxA));
+  } finally {
+    (store as unknown as Record<string, unknown>)["markStopped"] = realMarkStopped;
+  }
+  ok(stopA.standingDown === true && stopA.note !== ALREADY_ACKNOWLEDGED_NOTE, "§13C/CONTROL: session A, the first to land, stands down and owes the acknowledgement");
+  const ackA = await sessionA(() => callReply(w13c, "turn_1340", w13c, "Standing down here.", false, "turn-closeout-test-13ca", THREAD_13C));
+  ok(ackA.posted === true, "§13C/CONTROL: session A posts its ONE acknowledgement and spends it");
+  ok(posted.length === before + 1, "§13C/ROOM: …and it reached the room");
+
+  parkedB!();
+  const resB = await stopB;
+  ok(resB.standingDown === true, "§13C: session B's stand_down still lands");
+  ok(resB.note === ALREADY_ACKNOWLEDGED_NOTE, "§13C: 🔴 session B, which raced A on the SAME conversation, is told the acknowledgement belongs to another turn — it does not overwrite A's spent hold");
+  ok((await sessionB(async () => wasStoodDownThisTurn("turn_1341"))) === false, "§13C: …and B owes no acknowledgement");
+  const ackB = await sessionB(() => callReply(w13c, "turn_1341", w13c, "Standing down here too.", false, "turn-closeout-test-13cb", THREAD_13C));
+  ok(ackB.posted !== true && /stand down/i.test(ackB.error ?? ""), "§13C: 🔴 session B's acknowledgement is REFUSED with the stand-down steer");
+  ok(posted.length === before + 1, "§13C/ROOM: 🔴 the room got exactly ONE acknowledgement from the two racing stand-downs");
+  const { readStandDownAck } = await import("../agent/channels/engagement.js");
+  const row = await readStandDownAck(partition, THREAD_13C);
+  ok(row.kind === "held" && row.holder === turnPairKey("turn-closeout-test-13ca", "turn_1340") && row.spent, "§13C/WIRING: the acknowledgement row still names A, spent");
+  const holdsA = async (): Promise<boolean> => {
+    const r = await readStandDownAck(partition, THREAD_13C);
+    return r.kind === "held" && r.holder === turnPairKey("turn-closeout-test-13ca", "turn_1340") && r.spent;
+  };
+  await markThreadEngaged(partition, THREAD_13C, new Date().toISOString(), { participating: true, byOwnPost: true });
+  ok((await isThreadStopped(partition, THREAD_13C)) === true && (await holdsA()), "§13C/NEGATIVE CONTROL: an own-post mark keeps the stop, and the spent row survives");
+  await markThreadEngaged(partition, THREAD_13C, new Date().toISOString(), { participating: false });
+  ok((await isThreadStopped(partition, THREAD_13C)) === true && (await holdsA()), "§13C/NEGATIVE CONTROL: a non-participating mark keeps the stop, and the spent row survives");
+  await markThreadEngaged(partition, THREAD_13C, new Date().toISOString(), { participating: true, engagedBy: "evt-13c-first" });
+  ok((await isThreadStopped(partition, THREAD_13C)) === true, "§13C/WIRING: a REPLAYED mention keeps the stop");
+  ok(await holdsA(), "§13C/NEGATIVE CONTROL: 🔴 …and the spent row survives it, so a stop that stands is never re-acknowledged");
+  const realGetEngagement = store.getEngagement.bind(store);
+  let engagementReads = 0;
+  (store as unknown as Record<string, unknown>)["getEngagement"] = async (org: string, surfaceKey: string, threadTs: string) => {
+    engagementReads += 1;
+    if (threadTs === THREAD_13C && engagementReads > 1) throw new Error("staged read failure");
+    return realGetEngagement(org, surfaceKey, threadTs);
+  };
+  try {
+    await markThreadEngaged(partition, THREAD_13C, new Date().toISOString(), { participating: true, engagedBy: "evt-13c-first" });
+  } finally {
+    (store as unknown as Record<string, unknown>)["getEngagement"] = realGetEngagement;
+  }
+  ok(engagementReads === 2, "§13C/WIRING: the staged failure hit the read after the mark");
+  ok(await holdsA(), "§13C: 🔴 a FAILED read after the mark deletes nothing — an unknown flag is never read as cleared");
+
+  await markThreadEngaged(partition, THREAD_13C, new Date().toISOString(), { participating: true, engagedBy: "evt-13c-remention" });
+  ok((await isThreadStopped(partition, THREAD_13C)) === false, "§13C/WIRING: an @mention re-engages the thread");
+  ok((await readStandDownAck(partition, THREAD_13C)).kind === "absent", "§13C: 🔴 the re-engagement clears the old stop's acknowledgement row, so a later stop is not blocked by it");
+  const ctxC = ctxFor(w13c, "turn_1342", "turn-closeout-test-13cc", THREAD_13C);
+  const sessionC = newSession("turn-closeout-test-13cc");
+  const stopC = await sessionC(() => standDownTool.execute({ reason: "asked me to stop again" }, ctxC));
+  ok(stopC.note !== ALREADY_ACKNOWLEDGED_NOTE, "§13C: 🔴 a fresh stop after the re-engagement owes its own acknowledgement");
+  const ackC = await sessionC(() => callReply(w13c, "turn_1342", w13c, "Standing down again.", false, "turn-closeout-test-13cc", THREAD_13C));
+  ok(ackC.posted === true, "§13C: …and it posts once");
+  ok(posted.length === before + 2, "§13C/ROOM: one acknowledgement per stop, two stops, two messages");
+
+  const THREAD_13S = "1757172800.001350";
+  const w13s = await wake("C_SINGLE_STOP", THREAD_13S);
+  const ctxS = ctxFor(w13s, "turn_1350", "turn-closeout-test-13s", THREAD_13S);
+  await markThreadEngaged(partition, THREAD_13S, new Date().toISOString(), { participating: true });
+  const sessionS = newSession("turn-closeout-test-13s");
+  const stopS = await sessionS(() => standDownTool.execute({ reason: "asked me to stop" }, ctxS));
+  ok(stopS.standingDown === true && stopS.note !== ALREADY_ACKNOWLEDGED_NOTE, "§13S/NEGATIVE CONTROL: a single stand_down owes its acknowledgement");
+  const singleBefore = posted.length;
+  const ackS = await sessionS(() => callReply(w13s, "turn_1350", w13s, "Standing down here.", false, "turn-closeout-test-13s", THREAD_13S));
+  ok(ackS.posted === true, "§13S/NEGATIVE CONTROL: …and the acknowledgement posts");
+  const againS = await sessionS(() => callReply(w13s, "turn_1350", w13s, "And again.", false, "turn-closeout-test-13s", THREAD_13S));
+  ok(againS.posted !== true, "§13S/NEGATIVE CONTROL: …a second post is refused");
+  ok(posted.length === singleBefore + 1, "§13S/NEGATIVE CONTROL: a single stand_down acknowledges exactly ONCE");
+  const { disengageThread } = await import("../agent/channels/engagement.js");
+  ok((await readStandDownAck(partition, THREAD_13S)).kind === "held", "§13S/WIRING: the spent row exists before the disengage");
+  ok((await disengageThread(partition, THREAD_13S)) === true, "§13S/WIRING: the thread is disengaged");
+  ok((await readStandDownAck(partition, THREAD_13S)).kind === "absent", "§13S: 🔴 disengaging the thread deletes its acknowledgement rows too");
+}
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const { readStandDownAck } = await import("../agent/channels/engagement.js");
+  const THREAD_13D = "1757172800.001360";
+  const w13d = await wake("C_DOUBLE_CLEAR", THREAD_13D);
+  const ctxFirst = ctxFor(w13d, "turn_1360", "turn-closeout-test-13d1", THREAD_13D);
+  const partition = resolvePartition(ctxFirst);
+  const holdKey = `stand-down-ack:${partition.surfaceKey}\n${THREAD_13D}`;
+  await markThreadEngaged(partition, THREAD_13D, new Date().toISOString(), { participating: true, engagedBy: "evt-13d-first" });
+  const first = newSession("turn-closeout-test-13d1");
+  await first(() => standDownTool.execute({ reason: "asked me to stop" }, ctxFirst));
+  const before = posted.length;
+  const ackFirst = await first(() => callReply(w13d, "turn_1360", w13d, "Standing down here.", false, "turn-closeout-test-13d1", THREAD_13D));
+  ok(ackFirst.posted === true, "§13D/WIRING: the first stop posts its ONE acknowledgement");
+  const oldHold = await store.getTaskResult(partition.org, holdKey);
+  ok(oldHold !== null, "§13D/WIRING: the first stop's hold row exists");
+
+  const realGetEngagement = store.getEngagement.bind(store);
+  const realGet = store.getTaskResult.bind(store);
+  const aReached = deferred();
+  const aRelease = deferred();
+  const bReached = deferred();
+  const bRelease = deferred();
+  let parkA = true;
+  let parkB = false;
+  (store as unknown as Record<string, unknown>)["getEngagement"] = async (org: string, surfaceKey: string, threadTs: string) => {
+    const out = await realGetEngagement(org, surfaceKey, threadTs);
+    if (threadTs === THREAD_13D && parkA) {
+      parkA = false;
+      aReached.resolve();
+      await aRelease.promise;
+    }
+    return out;
+  };
+  (store as unknown as Record<string, unknown>)["getTaskResult"] = async (org: string, key: string) => {
+    const out = await realGet(org, key);
+    if (key === holdKey && parkB) {
+      parkB = false;
+      bReached.resolve();
+      await bRelease.promise;
+    }
+    return out;
+  };
+  const ctxSecond = ctxFor(w13d, "turn_1361", "turn-closeout-test-13d2", THREAD_13D);
+  const second = newSession("turn-closeout-test-13d2");
+  let secondStop: { standingDown: boolean; note: string };
+  try {
+    const clearA = markThreadEngaged(partition, THREAD_13D, new Date().toISOString(), { participating: true, engagedBy: "evt-13d-a" });
+    await aReached.promise;
+    parkB = true;
+    const clearB = markThreadEngaged(partition, THREAD_13D, new Date().toISOString(), { participating: true, engagedBy: "evt-13d-b" });
+    await bReached.promise;
+    ok((await realGet(partition.org, holdKey)) === oldHold, "§13D/WIRING: re-invitation B read the stop as set, cleared it, and read the OLD hold — it is parked before its delete");
+    aRelease.resolve();
+    await clearA;
+    ok((await realGet(partition.org, holdKey)) === null, "§13D/WIRING: re-invitation A, which also read the stop as set, cleared the old hold");
+    secondStop = await second(() => standDownTool.execute({ reason: "asked me to stop again" }, ctxSecond));
+    ok((await isThreadStopped(partition, THREAD_13D)) === true, "§13D/WIRING: a NEW stop lands between the two clears");
+    ok(secondStop.note !== ALREADY_ACKNOWLEDGED_NOTE, "§13D/WIRING: …and claims a fresh hold, so it owes its own acknowledgement");
+    const freshHold = await realGet(partition.org, holdKey);
+    ok(freshHold !== null && freshHold !== oldHold, "§13D/WIRING: the fresh hold is a different row value from the old one");
+    bRelease.resolve();
+    await clearB;
+  } finally {
+    (store as unknown as Record<string, unknown>)["getEngagement"] = realGetEngagement;
+    (store as unknown as Record<string, unknown>)["getTaskResult"] = realGet;
+  }
+  const afterRace = await readStandDownAck(partition, THREAD_13D);
+  ok(
+    afterRace.kind === "held" && afterRace.holder === turnPairKey("turn-closeout-test-13d2", "turn_1361") && !afterRace.spent,
+    `§13D: 🔴 the late clear does NOT delete the fresh hold — it deletes only the hold it read (OPE-2809) (read ${JSON.stringify(afterRace)})`,
+  );
+  const ackSecond = await second(() => callReply(w13d, "turn_1361", w13d, "Standing down again.", false, "turn-closeout-test-13d2", THREAD_13D));
+  ok(ackSecond.posted === true, "§13D: the new stop's acknowledgement posts");
+  const ctxThird = ctxFor(w13d, "turn_1362", "turn-closeout-test-13d3", THREAD_13D);
+  const third = newSession("turn-closeout-test-13d3");
+  const thirdStop = await third(() => standDownTool.execute({ reason: "asked me to stop" }, ctxThird));
+  ok(thirdStop.note === ALREADY_ACKNOWLEDGED_NOTE, "§13D: 🔴 a later stand_down into the still-stopped thread finds the new hold and owes nothing");
+  const ackThird = await third(() => callReply(w13d, "turn_1362", w13d, "Standing down a third time.", false, "turn-closeout-test-13d3", THREAD_13D));
+  ok(ackThird.posted !== true && /stand down/i.test(ackThird.error ?? ""), "§13D: 🔴 …and its acknowledgement is REFUSED");
+  ok(posted.length === before + 2, "§13D/ROOM: 🔴 two stops, two acknowledgements — the double clear did not open a second one");
+
+  const secondSpentKey = await spentRowKeyOf(partition, THREAD_13D, turnPairKey("turn-closeout-test-13d2", "turn_1361"));
+  ok((await store.getTaskResult(partition.org, secondSpentKey)) !== null, "§13D/WIRING: the second stop's spend row exists before the single re-invitation");
+  await markThreadEngaged(partition, THREAD_13D, new Date().toISOString(), { participating: true, engagedBy: "evt-13d-single" });
+  ok((await isThreadStopped(partition, THREAD_13D)) === false, "§13D/NEGATIVE CONTROL: a single re-invitation still clears the stop");
+  ok((await readStandDownAck(partition, THREAD_13D)).kind === "absent", "§13D/NEGATIVE CONTROL: …and still deletes the hold it read, so the next stop is not blocked");
+  ok((await store.getTaskResult(partition.org, secondSpentKey)) === null, "§13D/NEGATIVE CONTROL: …and its spend row");
+
+  const probeKey = "turn-closeout-test-13d-probe";
+  await store.putTaskResult(partition.org, probeKey, '{"v":1}', new Date().toISOString(), 60_000);
+  ok((await store.deleteTaskResultIf(partition.org, probeKey, '{"v":2}')) === false, "§13D/STORE: a conditional delete with a stale value deletes nothing");
+  ok((await store.getTaskResult(partition.org, probeKey)) === '{"v":1}', "§13D/STORE: …and the row is unchanged");
+  ok((await store.deleteTaskResultIf(partition.org, probeKey, '{"v":1}')) === true, "§13D/STORE: a conditional delete with the stored value deletes the row");
+  ok((await store.getTaskResult(partition.org, probeKey)) === null, "§13D/STORE: …and the row is gone");
+}
+{
+  const { holdStandDownAck, spendStandDownAck, readStandDownAck, markThreadStopped } = await import("../agent/channels/engagement.js");
+  const THREAD_13F = "1757172800.001380";
+  const ctx13f = ctxFor(await wake("C_SPEND_CLEAR", THREAD_13F), "turn_1380", "turn-closeout-test-13f", THREAD_13F);
+  const partition = resolvePartition(ctx13f);
+  const holdKey = `stand-down-ack:${partition.surfaceKey}\n${THREAD_13F}`;
+  await markThreadEngaged(partition, THREAD_13F, new Date().toISOString(), { participating: true, engagedBy: "evt-13f-first" });
+  await markThreadStopped(partition, THREAD_13F);
+  ok((await holdStandDownAck(partition, THREAD_13F, undefined)) === "claimed", "§13F/WIRING: a stop with no turn identity claims a holder-less hold");
+  await spendStandDownAck(partition, THREAD_13F, undefined);
+  const realDeleteIf = store.deleteTaskResultIfUnstopped.bind(store);
+  const parked = deferred();
+  const release = deferred();
+  let parkOnce = true;
+  (store as unknown as Record<string, unknown>)["deleteTaskResultIfUnstopped"] = async (
+    org: string,
+    key: string,
+    expected: string,
+    surfaceKey: string,
+    threadTs: string,
+  ): Promise<boolean> => {
+    const out = await realDeleteIf(org, key, expected, surfaceKey, threadTs);
+    if (key === holdKey && parkOnce) {
+      parkOnce = false;
+      parked.resolve();
+      await release.promise;
+    }
+    return out;
+  };
+  try {
+    const clear = markThreadEngaged(partition, THREAD_13F, new Date().toISOString(), { participating: true, engagedBy: "evt-13f-remention" });
+    await parked.promise;
+    ok((await readStandDownAck(partition, THREAD_13F)).kind === "absent", "§13F/WIRING: the clear deleted the old hold and is parked before its spend-row delete");
+    await markThreadStopped(partition, THREAD_13F);
+    ok((await holdStandDownAck(partition, THREAD_13F, undefined)) === "claimed", "§13F/WIRING: a NEW holder-less stop claims a hold in the gap");
+    await spendStandDownAck(partition, THREAD_13F, undefined);
+    const fresh = await readStandDownAck(partition, THREAD_13F);
+    ok(fresh.kind === "held" && fresh.spent, "§13F/WIRING: …and spends it, with the SAME holder as the old stop");
+    release.resolve();
+    await clear;
+  } finally {
+    (store as unknown as Record<string, unknown>)["deleteTaskResultIfUnstopped"] = realDeleteIf;
+  }
+  const after = await readStandDownAck(partition, THREAD_13F);
+  ok(after.kind === "held" && after.spent, `§13F: 🔴 the late spend-row delete does NOT remove the new stop's spend — each hold's spend row is keyed by its own claim (read ${JSON.stringify(after)})`);
+}
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const { readStandDownAck, markThreadStopped } = await import("../agent/channels/engagement.js");
+  const THREAD_13G = "1757172800.001390";
+  const w13g = await wake("C_STOP_EPOCH", THREAD_13G);
+  const ctxFirst = ctxFor(w13g, "turn_1390", "turn-closeout-test-13g1", THREAD_13G);
+  const partition = resolvePartition(ctxFirst);
+  const holdKey = `stand-down-ack:${partition.surfaceKey}\n${THREAD_13G}`;
+  await markThreadEngaged(partition, THREAD_13G, new Date().toISOString(), { participating: true, engagedBy: "evt-13g-first" });
+  const first = newSession("turn-closeout-test-13g1");
+  await first(() => standDownTool.execute({ reason: "asked me to stop" }, ctxFirst));
+  ok((await store.getTaskResult(partition.org, holdKey)) !== null, "§13G/WIRING: the first stop holds its acknowledgement");
+
+  const realGetEngagement = store.getEngagement.bind(store);
+  const reached = deferred();
+  const release = deferred();
+  let parkAt = 0;
+  let calls = 0;
+  (store as unknown as Record<string, unknown>)["getEngagement"] = async (org: string, surfaceKey: string, threadTs: string) => {
+    const out = await realGetEngagement(org, surfaceKey, threadTs);
+    if (threadTs === THREAD_13G && parkAt > 0 && ++calls === parkAt) {
+      parkAt = 0;
+      reached.resolve();
+      await release.promise;
+    }
+    return out;
+  };
+  const ctxSecond = ctxFor(w13g, "turn_1391", "turn-closeout-test-13g2", THREAD_13G);
+  const second = newSession("turn-closeout-test-13g2");
+  try {
+    parkAt = 2;
+    const clearA = markThreadEngaged(partition, THREAD_13G, new Date().toISOString(), { participating: true, engagedBy: "evt-13g-a" });
+    await reached.promise;
+    ok((await isThreadStopped(partition, THREAD_13G)) === false, "§13G/WIRING: re-invitation A cleared the stop and read the flag back as clear — it is parked before it reads the hold");
+    await store.deleteTaskResult(partition.org, holdKey);
+    ok((await store.getTaskResult(partition.org, holdKey)) === null, "§13G/WIRING: a sibling re-invitation of the same stop has already removed the old hold");
+    const secondStop = await second(() => standDownTool.execute({ reason: "asked me to stop again" }, ctxSecond));
+    ok((await isThreadStopped(partition, THREAD_13G)) === true, "§13G/WIRING: a NEW stop lands in A's window, after A read the flag and before A read the hold");
+    ok(secondStop.note !== ALREADY_ACKNOWLEDGED_NOTE, "§13G/WIRING: …and claims a fresh hold, so it owes its own acknowledgement");
+    release.resolve();
+    await clearA;
+  } finally {
+    (store as unknown as Record<string, unknown>)["getEngagement"] = realGetEngagement;
+  }
+  const afterRace = await readStandDownAck(partition, THREAD_13G);
+  ok(
+    afterRace.kind === "held" && afterRace.holder === turnPairKey("turn-closeout-test-13g2", "turn_1391") && !afterRace.spent,
+    `§13G: 🔴 the late clear does NOT delete the NEW stop's hold — its delete refuses while the conversation is stopped (OPE-2813) (read ${JSON.stringify(afterRace)})`,
+  );
+  ok((await isThreadStopped(partition, THREAD_13G)) === true, "§13G: …and the new stop stays in force");
+  const before = posted.length;
+  const ackSecond = await second(() => callReply(w13g, "turn_1391", w13g, "Standing down again.", false, "turn-closeout-test-13g2", THREAD_13G));
+  ok(ackSecond.posted === true, "§13G: the new stop's acknowledgement posts");
+  const ctxThird = ctxFor(w13g, "turn_1392", "turn-closeout-test-13g3", THREAD_13G);
+  const third = newSession("turn-closeout-test-13g3");
+  const thirdStop = await third(() => standDownTool.execute({ reason: "asked me to stop" }, ctxThird));
+  ok(thirdStop.note === ALREADY_ACKNOWLEDGED_NOTE, "§13G: 🔴 a later stand_down into the still-stopped thread finds the new hold and owes nothing");
+  const ackThird = await third(() => callReply(w13g, "turn_1392", w13g, "Standing down a third time.", false, "turn-closeout-test-13g3", THREAD_13G));
+  ok(ackThird.posted !== true && /stand down/i.test(ackThird.error ?? ""), "§13G: 🔴 …and its acknowledgement is REFUSED");
+  ok(posted.length === before + 1, "§13G/ROOM: 🔴 the new stop posted exactly ONE acknowledgement");
+
+  await markThreadEngaged(partition, THREAD_13G, new Date().toISOString(), { participating: true, engagedBy: "evt-13g-after" });
+  ok((await isThreadStopped(partition, THREAD_13G)) === false, "§13G/NEGATIVE CONTROL: a re-invitation after its own stop still clears the stop");
+  ok((await readStandDownAck(partition, THREAD_13G)).kind === "absent", "§13G/NEGATIVE CONTROL: …and still deletes that stop's hold, so the next stop is not blocked");
+
+  const probeKey = "turn-closeout-test-13g-probe";
+  await store.putTaskResult(partition.org, probeKey, '{"v":1}', new Date().toISOString(), 60_000);
+  await markThreadStopped(partition, THREAD_13G);
+  ok(
+    (await store.deleteTaskResultIfUnstopped(partition.org, probeKey, '{"v":1}', partition.surfaceKey, THREAD_13G)) === false,
+    "§13G/STORE: the guarded delete deletes nothing while the engagement row is stopped",
+  );
+  await markThreadEngaged(partition, THREAD_13G, new Date().toISOString(), { participating: true, engagedBy: "evt-13g-probe" });
+  ok(
+    (await store.deleteTaskResultIfUnstopped(partition.org, probeKey, '{"v":2}', partition.surfaceKey, THREAD_13G)) === false,
+    "§13G/STORE: …and nothing with a stale value",
+  );
+  ok(
+    (await store.deleteTaskResultIfUnstopped(partition.org, probeKey, '{"v":1}', partition.surfaceKey, THREAD_13G)) === true,
+    "§13G/STORE: with the stored value and the row not stopped, it deletes the row",
+  );
+  await store.putTaskResult(partition.org, probeKey, '{"v":1}', new Date().toISOString(), 60_000);
+  ok(
+    (await store.deleteTaskResultIfUnstopped(partition.org, probeKey, '{"v":1}', partition.surfaceKey, "1757172800.000399")) === true,
+    "§13G/STORE: a missing engagement row counts as not stopped",
+  );
+}
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const THREAD_13H = "1757172800.001400";
+  const w13h = await wake("C_REPLAYED_CALL", THREAD_13H);
+  const SESSION_13H = "turn-closeout-test-13h";
+  const withCall = (ctx: BindableContext, callId: string): BindableContext => ({ ...(ctx as object), callId }) as unknown as BindableContext;
+  const ctxTurn = ctxFor(w13h, "turn_1400", SESSION_13H, THREAD_13H);
+  const partition = resolvePartition(ctxTurn);
+  await markThreadEngaged(partition, THREAD_13H, new Date().toISOString(), { participating: true, engagedBy: "evt-13h-first" });
+  const callReplyAs = async (ctx: BindableContext, text: string): Promise<{ posted?: boolean; error?: string }> => {
+    const armed = arm(ctx);
+    if (!armed) return { error: "reply did not arm" };
+    return armed
+      .execute({ text, wake: w13h, done: false }, ctx)
+      .then((r) => r as { posted?: boolean })
+      .catch((e: unknown) => ({ error: String(e) }));
+  };
+  const before = posted.length;
+  const firstRun = await newSession(SESSION_13H)(() => callReplyAs(withCall(ctxTurn, "call_13h_post"), "Here is the answer."));
+  ok(firstRun.posted === true, "§13H/WIRING: the call's first run posts — the conversation is not stopped");
+
+  const ctxStander = ctxFor(w13h, "turn_1401", "turn-closeout-test-13h-stander", THREAD_13H);
+  await newSession("turn-closeout-test-13h-stander")(() => standDownTool.execute({ reason: "asked me to stop" }, ctxStander));
+  ok((await isThreadStopped(partition, THREAD_13H)) === true, "§13H/WIRING: a stop lands after the first run, from another turn");
+
+  const replay = await newSession(SESSION_13H)(() => callReplyAs(withCall(ctxTurn, "call_13h_post"), "Here is the answer."));
+  ok(
+    !/stand down/i.test(replay.error ?? ""),
+    `§13H: 🔴 the RETRIED call decides as its first run did — the gate reads the recorded verdict, not the stop that landed since (OPE-2814) (${replay.error ?? "posted"})`,
+  );
+  ok(replay.posted === true, "§13H: …so it does not claim that nothing was posted for a call whose first run posted");
+
+  const fresh = await newSession(SESSION_13H)(() => callReplyAs(withCall(ctxTurn, "call_13h_next"), "One more thing."));
+  ok(
+    fresh.posted !== true && /stand down/i.test(fresh.error ?? ""),
+    "§13H/NEGATIVE CONTROL: a NEW call in the same turn reads the live state, so the stop refuses it",
+  );
+  ok(
+    posted.length === before + 1,
+    "§13H/ROOM: the stopped room holds ONE copy — the retry passed the gate, and the post path's own de-duplication key absorbed the identical text",
+  );
+
+  await markThreadEngaged(partition, THREAD_13H, new Date().toISOString(), { participating: true, engagedBy: "evt-13h-remention" });
+  ok((await isThreadStopped(partition, THREAD_13H)) === false, "§13H/WIRING: a re-invitation clears the stop");
+  const refusedRetry = await newSession(SESSION_13H)(() => callReplyAs(withCall(ctxTurn, "call_13h_next"), "One more thing."));
+  ok(
+    refusedRetry.posted !== true && /stand down/i.test(refusedRetry.error ?? ""),
+    "§13H: 🔴 a retry of the REFUSED call stays refused after the re-invitation — the recorded verdict holds in both directions",
+  );
+  const afterReinvite = await newSession(SESSION_13H)(() => callReplyAs(withCall(ctxTurn, "call_13h_later"), "Back again."));
+  ok(afterReinvite.posted === true, "§13H/NEGATIVE CONTROL: a NEW call after the re-invitation reads the live state and posts");
+
+  const { standDownState } = await import("../agent/channels/stand-down-gate.js");
+  const { markThreadStopped } = await import("../agent/channels/engagement.js");
+  await markThreadStopped(partition, THREAD_13H);
+  const verdictRows = async (): Promise<number> => {
+    let count = 0;
+    for (const id of ["call_13h_post", "call_13h_next", "call_13h_later", "undefined", ""]) {
+      for (const key of [`stand-down-verdict:${SESSION_13H}\n${id}`, `stand-down-verdict:${SESSION_13H}\nturn_1400\n${id}`]) {
+        if ((await store.getTaskResult(partition.org, key)) !== null) count++;
+      }
+    }
+    return count;
+  };
+  const rowsBefore = await verdictRows();
+  const noCallId = await newSession(SESSION_13H)(() => standDownState(ctxTurn, "turn_1400"));
+  ok(noCallId.stopped === true, "§13H/NEGATIVE CONTROL: a context with no callId reads the live stop");
+  ok((await verdictRows()) === rowsBefore, "§13H/NEGATIVE CONTROL: …and writes no verdict row, under no key of this session");
+  await markThreadEngaged(partition, THREAD_13H, new Date().toISOString(), { participating: true, engagedBy: "evt-13h-nocall" });
+  const noCallIdAfter = await newSession(SESSION_13H)(() => standDownState(ctxTurn, "turn_1400"));
+  ok(
+    noCallIdAfter.stopped === false,
+    "§13H/NEGATIVE CONTROL: 🔴 after a re-invitation the same context with no callId reads the live state again — no verdict answers for it",
+  );
+
+  ok((await isThreadStopped(partition, THREAD_13H)) === false, "§13H/WIRING: the conversation is open again");
+  const reuseFirst = await newSession(SESSION_13H)(() => standDownState(withCall(ctxTurn, "call_reused"), "turn_1400"));
+  ok(reuseFirst.stopped === false, "§13H/WIRING: turn_1400 records an OPEN verdict for call id call_reused");
+  await markThreadStopped(partition, THREAD_13H);
+  const ctxLater = ctxFor(w13h, "turn_1402", SESSION_13H, THREAD_13H);
+  const reuseLater = await newSession(SESSION_13H)(() => standDownState(withCall(ctxLater, "call_reused"), "turn_1402"));
+  ok(
+    reuseLater.stopped === true && reuseLater.refuse === true,
+    "§13H: 🔴 a LATER turn of the same session that reuses the call id reads the live stop — the verdict key carries the turn, so turn_1400's open verdict does not answer for it",
+  );
+  const reuseRetry = await newSession(SESSION_13H)(() => standDownState(withCall(ctxTurn, "call_reused"), "turn_1400"));
+  ok(reuseRetry.stopped === false, "§13H/CONTROL: …while a retry inside turn_1400 still reads its own recorded verdict");
+  const noTurn = await newSession(SESSION_13H)(() => standDownState(withCall(ctxTurn, "call_no_turn"), undefined));
+  ok(noTurn.stopped === true, "§13H/NEGATIVE CONTROL: a call with no turn id reads the live stop");
+  ok(
+    (await store.getTaskResult(partition.org, `stand-down-verdict:${SESSION_13H}\nundefined\ncall_no_turn`)) === null &&
+      (await store.getTaskResult(partition.org, `stand-down-verdict:${SESSION_13H}\n\ncall_no_turn`)) === null,
+    "§13H/NEGATIVE CONTROL: …and writes no verdict row for it",
+  );
+  await markThreadEngaged(partition, THREAD_13H, new Date().toISOString(), { participating: true, engagedBy: "evt-13h-noturn" });
+  const noTurnAfter = await newSession(SESSION_13H)(() => standDownState(withCall(ctxTurn, "call_no_turn"), undefined));
+  ok(
+    noTurnAfter.stopped === false,
+    "§13H/NEGATIVE CONTROL: 🔴 after a re-invitation the same call with no turn id reads the live state again — no verdict answers for it",
+  );
+}
+{
+  _resetTurnCloseoutForTest();
+  _resetStepBoundaryCountsForTest();
+  const THREAD_13E = "1757172800.001370";
+  const OTHER_13E = "1757172800.000379";
+  const w13e = await wake("C_EDIT_STOP", THREAD_13E);
+  const wSibling = await wake("C_EDIT_STOP", THREAD_13E);
+  const wOther = await wake("C_EDIT_OPEN", OTHER_13E);
+  const ctxStander = ctxFor(w13e, "turn_1370", "turn-closeout-test-13e1", THREAD_13E);
+  const partition = resolvePartition(ctxStander);
+  await markThreadEngaged(partition, THREAD_13E, new Date().toISOString(), { participating: true });
+  const stander = newSession("turn-closeout-test-13e1");
+  await stander(() => standDownTool.execute({ reason: "asked me to stop" }, ctxStander));
+  const ack = (await stander(() => callReply(w13e, "turn_1370", w13e, "Standing down here.", false, "turn-closeout-test-13e1", THREAD_13E))) as { posted?: boolean; id?: string };
+  ok(ack.posted === true && typeof ack.id === "string", "§13E/WIRING: the stop's acknowledgement posts and returns its message id");
+  const later = newSession("turn-closeout-test-13e2");
+  const updatesBefore = updated.length;
+  const sameWake = await later(() => callEdit(w13e, "turn_1371", w13e, ack.id!, "turn-closeout-test-13e2", THREAD_13E));
+  ok(sameWake.edited !== true && /stand down/i.test(sameWake.error ?? ""), `§13E: 🔴 a later session's unified edit_reply in the stopped conversation is REFUSED with the stand-down steer (OPE-2808) (${sameWake.error ?? "edited"})`);
+  const sibling = await later(() => callEdit(w13e, "turn_1371", wSibling, ack.id!, "turn-closeout-test-13e2", THREAD_13E));
+  ok(sibling.edited !== true && /stand down/i.test(sibling.error ?? ""), "§13E: 🔴 …and so is the same edit under a SIBLING wake that names the same conversation");
+  ok(updated.length === updatesBefore, "§13E/ROOM: no message in the stopped conversation changed");
+  const otherPost = (await later(() => callReply(w13e, "turn_1371", wOther, "Answering a different room.", false, "turn-closeout-test-13e2", THREAD_13E))) as { posted?: boolean; id?: string };
+  ok(otherPost.posted === true && typeof otherPost.id === "string", "§13E/NEGATIVE CONTROL: a post to a conversation that did NOT stand down lands");
+  const otherEdit = await later(() => callEdit(w13e, "turn_1371", wOther, otherPost.id!, "turn-closeout-test-13e2", THREAD_13E));
+  ok(otherEdit.edited === true && otherEdit.error === undefined, `§13E/NEGATIVE CONTROL: …and an edit of it still lands — the stop is about one conversation (${otherEdit.error ?? "edited"})`);
+  ok(updated.length === updatesBefore + 1, "§13E/NEGATIVE CONTROL: …and that edit reached its room");
 }
 
 {

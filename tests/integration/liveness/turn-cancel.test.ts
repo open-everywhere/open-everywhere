@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "vitest";
+import { TURN_CANCELLED_ACTION } from "@open-everywhere/core/agent/channels/turn-cancel.js";
 
 import { deploymentOrg } from "@open-everywhere/core/agent/identity/binding.js";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/normalized-wake.js";
@@ -79,7 +80,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   expect(unsigned.status).toBe(401);
   expect(unsigned.body).not.toContain("Standing down");
   expect(await resolveTurnAnchor(org, { channelKey })).not.toBeNull();
-  expect(await rowsSinceCursor(cursor, ["turn.cancelled"])).toEqual([]);
+  expect(await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION])).toEqual([]);
 
   const stop = await discordOeCommandPost(discordOeStopInteraction({ channelId: DISCORD_LISTED_CHANNEL_ID, userId: STOPPER_ID }));
   expect(stop.status).toBe(200);
@@ -99,7 +100,7 @@ test("a human stops an in-flight turn, and the turn's own process cleans up and 
   handle.releaseHolds();
 
   const cancelled = await waitFor(async () => {
-    const rows = await rowsSinceCursor(cursor, ["turn.cancelled"]);
+    const rows = await rowsSinceCursor(cursor, [TURN_CANCELLED_ACTION]);
     return rows.length > 0 ? rows : undefined;
   }, "the turn.cancelled row — written from the cancelled turn's OWN process");
   expect(cancelled).toHaveLength(1);
