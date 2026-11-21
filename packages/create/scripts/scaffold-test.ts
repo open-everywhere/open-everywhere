@@ -221,6 +221,13 @@ const INSTRUCTIONS_ALLOWANCE: readonly { readonly reference: string; readonly te
       `template deploy/egress-proxy/${rel}: byte-identical to the repository's deploy/egress-proxy/${rel}`,
     );
   }
+  for (const rel of ["docker-compose.browser.yml", "deploy/browser-qa/Dockerfile"]) {
+    eq(
+      readFileSync(join(TEMPLATE, ...rel.split("/")), "utf8"),
+      readFileSync(join(PACKAGES, "..", ...rel.split("/")), "utf8"),
+      `template ${rel}: byte-identical to the repository's ${rel}`,
+    );
+  }
   const proxyDockerfile = readFileSync(join(TEMPLATE, "deploy", "egress-proxy", "Dockerfile"), "utf8");
   const copied = [...proxyDockerfile.matchAll(/^COPY\s+(.+)\s+\S+$/gm)].flatMap((m) => m[1]!.trim().split(/\s+/)).map((p) => p.replace(/\/$/, ""));
   ok(copied.length > 0, "the egress proxy's Dockerfile COPYs its files");

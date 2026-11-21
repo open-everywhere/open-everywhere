@@ -31,6 +31,7 @@ A bundle (`defineBundle`, `packages/core/agent/access/bundle.ts`) can grant:
 | `repos` | GitHub repositories the agent may clone and work in. Written as `"owner/name"`, or as `{ repo, capabilities }` to opt one repo into a named capability set — see [Source control](../capabilities/source-control.md#per-binding-capability-sets). |
 | `domains` | A credential-*less* egress allowlist — hosts reachable without a credential. |
 | `plugins` | A capability package (skills + connectors + subagents) granted by name. |
+| `optInTools` | Native tools that ship **off**, switched on by name from a closed list (`packages/core/agent/access/opt-in-tools.ts`). An unknown name fails config load. Today the list is `search_slack_public` ([public-channel search](../deploy/surfaces/slack.md#public-channel-search)). |
 | `instructions` | Standing rules (Owner-authored) that outrank channel memory. |
 
 > **The work plane is not here.** Working with a tracker from another surface — filing, closing,

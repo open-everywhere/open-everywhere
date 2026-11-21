@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { PROSE_READ_ON, citedDeclaration } from "./_eve-pruned-declaration.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string): void => {
@@ -21,7 +22,7 @@ const privateJs = read(join(workflowCore, "private.js"));
 const runtimeJs = ((): string => {
   const entry = read(join(workflowCore, "runtime.js"));
   if (entry.includes("isDeliveryIdle:")) return entry;
-  const chunks = join(eveRoot, "dist/src/compiled/_chunks/workflow");
+  const chunks = join(eveRoot, "dist/src/compiled/_chunks/node");
   const carriers = readdirSync(chunks)
     .filter((f) => f.endsWith(".js"))
     .map((f) => read(join(chunks, f)))
@@ -29,7 +30,9 @@ const runtimeJs = ((): string => {
   assert.equal(carriers.length, 1, "exactly one compiled workflow module wires the events consumer's isDeliveryIdle option");
   return carriers[0]!;
 })();
-const consumerDts = read(join(workflowCore, "events-consumer.d.ts"));
+// eve 1.0.1 stopped shipping this declaration. While it is absent, citedDeclaration requires the
+// vendored @workflow/core version the option was read on, and throws when it moved.
+const consumerDts = citedDeclaration(join(eveRoot, "dist/src"), "compiled/@workflow/core/events-consumer.d.ts");
 
 const KNOB = "WORKFLOW_DEFERRED_CHECK_DELAY_MS";
 
@@ -97,7 +100,7 @@ const checkWaitsForIdle = (consumerText: string): boolean => {
 };
 
 const consumerJs = ((): string => {
-  const chunks = join(eveRoot, "dist/src/compiled/_chunks/workflow");
+  const chunks = join(eveRoot, "dist/src/compiled/_chunks/node");
   for (const f of readdirSync(chunks)) {
     if (!f.endsWith(".js")) continue;
     const text = read(join(chunks, f));
@@ -140,9 +143,11 @@ ok(
   "ordering: the unconsumed-event check waits for delivery-idle before it arms the deferred-delay timer",
 );
 ok(
-  consumerDts.includes("isDeliveryIdle: () => boolean;"),
-  "ordering: `isDeliveryIdle` is still a REQUIRED consumer option — an optional one would let a construction site opt a replay path back out silently",
+  !consumerDts.shipped || consumerDts.text.includes("isDeliveryIdle: () => boolean;"),
+  "ordering: `isDeliveryIdle` is still a REQUIRED consumer option — an optional one would let a construction site opt a replay path back out silently" +
+    (consumerDts.shipped ? "" : ` (carried: ${JSON.stringify(consumerDts.carriedBy)} unchanged since the eve ${PROSE_READ_ON} read)`),
 );
+if (!consumerDts.shipped) console.log(`· events-consumer.d.ts is not shipped; its citation is carried by ${JSON.stringify(consumerDts.carriedBy)} (prose last read on eve ${PROSE_READ_ON})`);
 
 const PLACEHOLDER_ONLY = `let H={current:()=>!0};const C=new EC(n,{onUnconsumedEvent:e=>h(e),isDeliveryIdle:()=>H.current()});`;
 ok(

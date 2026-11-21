@@ -5,6 +5,13 @@ import {
   egressProxyUrl,
   postPolicy,
   pushEgressPolicy,
+  pushSessionEgressPolicy,
+  bindSessionBox,
+  hasSessionPolicy,
+  unbindSessionBox,
+  boxEgressBehindProxy,
+  boxDockerNetwork,
+  resetSessionBoxesForTest,
   selfHostEgressBootLog,
   DOCKER_BEHIND_PROXY_FATAL,
   type FetchLike,
@@ -451,6 +458,77 @@ await (async () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
+    resetSettingsForTest();
+  }
+}
+
+{
+  resetSessionBoxesForTest();
+  const pushed: { policy: unknown; sourceIp?: string }[] = [];
+  const push = (async (policy: SandboxNetworkPolicy, opts?: { sourceIp?: string }) => void pushed.push({ policy, ...(opts?.sourceIp !== undefined ? { sourceIp: opts.sourceIp } : {}) })) as unknown as typeof pushEgressPolicy;
+  const policy = { allow: ["docs.example"] } as unknown as SandboxNetworkPolicy;
+  try {
+    withEnv({ VERCEL: undefined }, () => overrideSettingsForTest({ egress: { proxyUrl: "http://proxy.invalid:8080" }, sandbox: { boxDockerNetwork: "" } }));
+    delete process.env.VERCEL;
+    ok(!boxEgressBehindProxy(), "no box network: browser containers do not run behind the proxy");
+    await pushSessionEgressPolicy(policy, { boxSession: "s1" }, push);
+    await assert.rejects(bindSessionBox("s1", "172.30.0.9", push), /pushed no egress policy/);
+    n++;
+    ok(pushed.length === 1 && pushed[0]!.sourceIp === undefined, "🔴 off that mode, the session policy is pushed for the app only and is not remembered (no credential value is kept)");
+    overrideSettingsForTest({ sandbox: { boxDockerNetwork: "oe-net-box" } });
+    ok(boxEgressBehindProxy() && boxDockerNetwork() === "oe-net-box", "proxy + box network: browser containers run behind the proxy");
+    await pushSessionEgressPolicy(policy, { boxSession: "s1" }, push);
+    await bindSessionBox("s1", "172.30.0.9", push);
+    ok(pushed.at(-1)?.sourceIp === "172.30.0.9" && pushed.at(-1)?.policy === policy, "🔴 the bind pushes the session's last policy for the container's IP");
+    const narrowed = { allow: [] } as unknown as SandboxNetworkPolicy;
+    pushed.length = 0;
+    await pushSessionEgressPolicy(narrowed, { boxSession: "s1" }, push);
+    ok(pushed.length === 2 && pushed[1]!.sourceIp === "172.30.0.9" && pushed[1]!.policy === narrowed, "🔴 a later session push reaches the bound container too");
+    pushed.length = 0;
+    await pushSessionEgressPolicy(narrowed, { boxSession: "s2" }, push);
+    ok(pushed.length === 1, "another session's push never reaches this container");
+    unbindSessionBox("s1", "172.30.0.9");
+    pushed.length = 0;
+    await pushSessionEgressPolicy(narrowed, { boxSession: "s1" }, push);
+    ok(pushed.length === 1, "an unbound container gets no more pushes");
+    ok(hasSessionPolicy("s1") && !hasSessionPolicy("never"), "hasSessionPolicy reads the process memory the hook's re-push plan asks about");
+
+    resetSessionBoxesForTest();
+    const older = { allow: ["old.example"] } as unknown as SandboxNetworkPolicy;
+    const newer = { allow: ["new.example"] } as unknown as SandboxNetworkPolicy;
+    await pushSessionEgressPolicy(older, { boxSession: "r1" }, push);
+    pushed.length = 0;
+    let raced = false;
+    const racing = (async (p: SandboxNetworkPolicy, opts?: { sourceIp?: string }) => {
+      pushed.push({ policy: p, ...(opts?.sourceIp !== undefined ? { sourceIp: opts.sourceIp } : {}) });
+      if (!raced && opts?.sourceIp === "172.30.0.20") {
+        raced = true;
+        await pushSessionEgressPolicy(newer, { boxSession: "r1" }, push);
+      }
+    }) as unknown as typeof pushEgressPolicy;
+    await bindSessionBox("r1", "172.30.0.20", racing);
+    const toBox = pushed.filter((p) => p.sourceIp === "172.30.0.20");
+    ok(toBox.length >= 2 && toBox.at(-1)!.policy === newer, "🔴 a push that races the bind reaches the container, and the last policy the container gets is the newer one");
+    const failing = (async () => {
+      throw new Error("503");
+    }) as unknown as typeof pushEgressPolicy;
+    await assert.rejects(bindSessionBox("r1", "172.30.0.21", failing), /503/);
+    n++;
+    pushed.length = 0;
+    await pushSessionEgressPolicy(newer, { boxSession: "r1" }, push);
+    ok(!pushed.some((p) => p.sourceIp === "172.30.0.21"), "a bind whose push failed leaves the IP unbound");
+
+    resetSessionBoxesForTest();
+    await pushSessionEgressPolicy(newer, { boxSession: "bound-0" }, push);
+    await bindSessionBox("bound-0", "172.30.0.30", push);
+    for (let i = 0; i < 300; i++) await pushSessionEgressPolicy(newer, { boxSession: `u-${i}` }, push);
+    ok(hasSessionPolicy("bound-0"), "the oldest session keeps its policy while its container is bound");
+    ok(!hasSessionPolicy("u-0") && hasSessionPolicy("u-299"), "🔴 unbound sessions past the cap are evicted, oldest first, past the bound one");
+
+    overrideSettingsForTest({ egress: { proxyUrl: "" } });
+    ok(!boxEgressBehindProxy(), "🔴 no proxy: no browser container behind it, whatever the box network says");
+  } finally {
+    resetSessionBoxesForTest();
     resetSettingsForTest();
   }
 }

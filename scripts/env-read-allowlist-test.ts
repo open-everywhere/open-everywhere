@@ -138,7 +138,8 @@ function main(): void {
       // eve 1.0 no longer exports its Teams resolvers, so the Teams provider reads the names eve defines
       // itself. They are platform (a vendor-defined name), not operator secrets: eve's own Teams channel
       // reads them from the environment, so a db-store copy would split the two token mints.
-      platform: 27,
+      // OPE-2671: +1 (NODE_EXTRA_CA_CERTS, Node's own name; the docker box backend passes the proxy's CA on).
+      platform: 28,
       "per-run-seam": 4,
       "pending-migration": 0,
     };
@@ -148,9 +149,9 @@ function main(): void {
         `class ${klass} holds ${n} entries (found ${census.get(klass) ?? 0}) — if you meant to change this, say so here`,
       );
     }
-    ok(ENV_READ_ALLOWLIST.size === 40, `the allowlist holds 40 names (found ${ENV_READ_ALLOWLIST.size})`);
+    ok(ENV_READ_ALLOWLIST.size === 41, `the allowlist holds 41 names (found ${ENV_READ_ALLOWLIST.size})`);
     const survivors = [...ENV_READ_ALLOWLIST].filter(([, e]) => e.klass !== "pending-migration");
-    ok(survivors.length === 40, `the allowlist holds 40 survivors (found ${survivors.length})`);
+    ok(survivors.length === 41, `the allowlist holds 41 survivors (found ${survivors.length})`);
     const OPERATOR_SECRET_NAMES = [
       "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "DISCORD_BOT_TOKEN", "OE_RELAY_SECRET", "GITHUB_APP_PRIVATE_KEY",
       "GITHUB_WEBHOOK_SECRET", "GITHUB_TOKEN", "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY",

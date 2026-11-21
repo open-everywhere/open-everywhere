@@ -104,6 +104,8 @@ const bundles: Bundle[] = [
     ],
   }),
 
+  defineBundle({ name: "e2e-slack-public-search-fixture", optInTools: ["search_slack_public"] }),
+
   defineBundle({
     name: "e2e-teams-channel-fixture",
     resourceGrants: [
@@ -142,6 +144,7 @@ const bindings: Binding[] = [
 
   defineBinding({ bundle: "e2e-teams-channel-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
 
+  defineBinding({ bundle: "e2e-slack-public-search-fixture", scope: { level: "domain", domain: "e2e-unified" } }),
   defineBinding({
     bundle: "notion-personal",
     scope: { level: "principal", principal: "slack/T0EXAMPLE/U0EXOWNER" },

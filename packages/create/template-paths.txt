@@ -73,6 +73,7 @@ agent/spend/model-pricing.ts
 agent/webhooks/hooks-overlay.ts
 agent/webhooks/hooks.generated.ts
 agent/webhooks/hooks.ts
+deploy/browser-qa/Dockerfile
 deploy/egress-proxy/Dockerfile
 deploy/egress-proxy/control/acl.ts
 deploy/egress-proxy/control/handlers.ts
@@ -83,6 +84,7 @@ deploy/egress-proxy/gen-ca.sh
 deploy/egress-proxy/install-ca.sh
 deploy/egress-proxy/squid.conf
 deploy/egress-proxy/tier-b.conf
+docker-compose.browser.yml
 docker-compose.yml
 package.json
 roster.config.ts

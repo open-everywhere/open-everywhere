@@ -1,0 +1,55 @@
+# Open Everywhere — the browser overlay for the self-hosted stack (OPE-2671).
+#
+# Bring up:  docker compose -f docker-compose.yml -f docker-compose.browser.yml up --build
+#
+# What it adds to docker-compose.yml:
+#   - `oe-net-box`, an `internal: true` network with no route to the internet. Only the egress proxy joins it from
+#     compose, so a browser container on it has no direct route to another service (postgres, neon-wsproxy, the
+#     app) or to the WAN. Its one way out is the proxy, which holds it to the policy OE pushed for its own IP. 🔴 The
+#     proxy refuses no private address, so that policy is the whole fence: a box behind the proxy refuses open
+#     egress, and a session policy that is allow-all reaches what the proxy reaches on ports 80 and 443.
+#   - `oe-net-boxctl`, a second internal network that holds the app and no proxy. A personal-browser container also
+#     joins it, so the app reaches the container's port at `<name>.oe-box`. The app never joins `oe-net-box`: the proxy
+#     would then sit on two of the app's networks, and the app's policy push and its proxied traffic could key on
+#     two different source IPs.
+#   - the app reaches the docker daemon (the socket), so OE can start each browser container itself with `docker run`.
+#   - NO_PROXY gains `.oe-box`, so the app's call to a personal-browser container stays on `oe-net-boxctl`.
+#
+# 🔴 THE SOCKET IS ROOT ON THE HOST. A process that can talk to the docker daemon can start a privileged container
+# and read the host's disk. With this overlay, an app compromise is a host compromise. The sessions still run on
+# just-bash inside the app process, so a just-bash shell that escaped into the app's own filesystem could reach the
+# socket too. That is the same rating as the docker sandbox backend ("app compromise ≈ host",
+# deploy/egress-proxy/README.md). Use this overlay on a host that runs this deployment only.
+#
+# The app also declares, in agent/settings/settings.ts (config in Git, never env):
+#   sandbox: { selfHostBackend: "justbash", boxDockerNetwork: "oe-net-box" },
+#   egress:  { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" },
+#   browser: { enabled: true, boxImage: "oe-browser-qa:1" },   // the QA kit (docs/capabilities/browser-qa.md)
+# and, for the personal browser, `box: { image: "oe-personal-browser:1", dockerNetwork: "oe-net-boxctl" }` in
+# agent/personal-browser/policy.ts (docs/capabilities/personal-browser.md).
+# Build the images on the same daemon first:
+#   docker build -t oe-browser-qa:1 deploy/browser-qa
+#   docker build -t oe-personal-browser:1 deploy/personal-browser
+#
+# Tier B (OE_EGRESS_MITM=1) is what stamps a declared credential at the proxy. OE passes the proxy's CA to each
+# browser container, which trusts it in Chromium's store.
+
+services:
+  oe-egress-proxy:
+    networks: [oe-net-internal, oe-net-wan, oe-net-box]
+
+  app:
+    networks: [oe-net-internal, oe-net-boxctl]
+    environment:
+      NO_PROXY: "oe-egress-proxy,neon-wsproxy,localhost,127.0.0.1,.oe-box"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+networks:
+  oe-net-box:
+    # A fixed name, so `sandbox.boxDockerNetwork: "oe-net-box"` names it whatever the compose project is called.
+    name: oe-net-box
+    internal: true      # ⚠ the structural floor: OE refuses to open a box on a network that is not internal
+  oe-net-boxctl:
+    name: oe-net-boxctl
+    internal: true      # the app ↔ personal-browser port only; OE refuses it too when it is not internal

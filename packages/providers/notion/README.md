@@ -16,7 +16,7 @@ asserts that **every** one of them is absent from `packages/core/agent`. For Not
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-notion eve@1.0.0-rc.18
+npm i @open-everywhere/core @open-everywhere/provider-notion eve@1.0.2
 npx oe-eve-patch
 ```
 

@@ -17,7 +17,9 @@ docker build -t oe-personal-browser:1 deploy/personal-browser
 
 - **Docker stack:** the docker daemon that runs OE's sandbox needs the image. Set `box.image` in
   `agent/personal-browser/policy.ts` to the tag. Set `box.dockerNetwork` when the app runs in a container
-  on a user-defined network, so it reaches the box by name.
+  on a user-defined network, so it reaches the box by name. Behind the egress proxy (the browser overlay,
+  `docker-compose.browser.yml`, OPE-2671), set it to `oe-net-boxctl`: the box joins `oe-net-box` for its
+  egress and `oe-net-boxctl` for the app, and the proxy holds it to the person's host list.
 - **Vercel stack:** push the same image to your project's Vercel Container Registry, and set `box.image` to
   the registry reference. Each person gets one persistent, named sandbox from that image.
 
@@ -34,6 +36,8 @@ box holds no deployment credential. The only secret is this start's own request 
 | `OE_PB_ALLOW` | The hosts the person's DM egress declaration admits, as a JSON list (`example.com`, `*.example.com`, or `*`). |
 | `OE_PB_IDLE_MINUTES` | The policy's idle window. The box closes itself after this plus five minutes with no signed request. |
 | `OE_PB_PROFILE_DIR` | Where the profile lives: on the docker volume (`/profile/chromium`). On Vercel the default is under the home directory, inside the persistent filesystem. |
+| `OE_BOX_EGRESS_PROXY` | Docker behind the egress proxy only: the proxy's `http://host:port` origin. The fence then asks the proxy for each connection by name (below). Not an `http://` origin ⇒ the box refuses to start. |
+| `OE_BOX_EGRESS_CA` | Docker behind a Tier B proxy only: the proxy's CA, as PEM. The box trusts it in Chromium's NSS store (`certutil`), and deletes the variable from its own environment. It is a public certificate, not a secret. |
 
 ## The HTTP API
 
@@ -66,8 +70,15 @@ message, never the page's own error text (which can carry a URL with a token).
   connects to the address it checked, so a second DNS answer cannot swap one in. Other private addresses (RFC
   1918, the docker host's gateway) stay reachable when the list admits them; a catch-all `*` does. A
   request route repeats the check on each first URL, and service workers cannot register. On Vercel the
-  sandbox firewall holds the same list at the network. On docker this check inside the box is the only one,
-  and OE opens a docker box only under the declared unenforced posture (`egress.allowUnenforced`).
+  sandbox firewall holds the same list at the network. On docker behind the egress proxy (OPE-2671) the proxy
+  holds it at the network: the box sits on internal networks only, OE pushes the list for the box's own IP, and
+  the fence sends each connection on to the proxy by NAME (`upstreamTarget`, `upstreamTunnel` in `fence.mjs`),
+  because the box cannot resolve an outside name there. Then the fence refuses an undeclared name, a loopback
+  name and an internal IP literal, and the proxy resolves the rest. The proxy refuses no private address, so a
+  declared name that resolves to an internal or link-local address (the cloud metadata endpoint) is not refused
+  there. That is why a catch-all `*` refuses to open on this stack. On docker without the proxy this check
+  inside the box is the only one, and OE opens a docker box only under the declared unenforced posture
+  (`egress.allowUnenforced`).
 - **The take-over lock.** `POST /lock` (`{"holder":"agent"|"person","until":…}`) tells the box who holds the
   controls. While the person does, `/cmd` refuses every agent action; `/input` (the person's own) still works.
 - **Secret fields are the person's.** `type` refuses a password, one-time-code or card field. The person types

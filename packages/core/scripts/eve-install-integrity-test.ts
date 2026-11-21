@@ -375,7 +375,7 @@ for (const eveDir of copies) {
   for (const dead of RETIRED) {
     ok(
       !src.includes(dead.symbol),
-      `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; on eve 1.0.0-rc.18 port ONLY part 10 (OPE-2691)`,
+      `absent: ${where} must NOT contain \`${dead.symbol}\` — ${WHY[dead.why]}. A re-roll that ports an old __oe* block wholesale drags it back; on eve 1.x port ONLY part 10 (OPE-2691)`,
     );
   }
   {

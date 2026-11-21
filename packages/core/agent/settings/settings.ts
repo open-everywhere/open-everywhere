@@ -127,6 +127,7 @@ export interface AgentSettings {
   };
   readonly browser: {
     readonly enabled: boolean;
+    readonly boxImage: string;
   };
   readonly auditExport: {
     readonly targets: readonly AuditExportTarget[];
@@ -268,6 +269,7 @@ export interface AgentSettings {
   readonly sandbox: {
     readonly selfHostBackend: SandboxBackendChoice;
     readonly useVercelSandbox: boolean;
+    readonly boxDockerNetwork: string;
     readonly stopAfterTurn: boolean;
     readonly extendMaxMinutes: number;
     readonly timeoutMs: number;
@@ -435,6 +437,8 @@ const httpUrlOrEmpty = (v: string): string | undefined => {
 const branchName = (v: string): string | undefined =>
   typeof v === "string" && /^[A-Za-z0-9_./-]+$/u.test(v) && !v.includes("..") ? undefined : "must be one branch name";
 
+const dockerNetworkOrEmpty = (v: string): string | undefined =>
+  v === "" || /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(v) ? undefined : "must be a docker network name ([A-Za-z0-9][A-Za-z0-9_.-]*) or empty";
 const ipOrEmpty = (v: string): string | undefined =>
   v === "" || /^(?:\d{1,3}\.){3}\d{1,3}$/u.test(v) || (/^[0-9A-Fa-f:.]+$/u.test(v) && v.includes(":"))
     ? undefined
@@ -618,7 +622,7 @@ export const SETTINGS = {
       shipped: "",
       validate: (v: string) => (typeof v === "string" && !/\s/u.test(v) ? undefined : "must be one channel id, with no whitespace"),
       summary:
-        "The channel that hears \"PR opened — merge to grant\" for every pull request the access-request, `create_agent`, `declare_webhook` and `propose_mcp_server` flows open (was `OE_ACCESS_ADMIN_CHANNEL`, OPE-2650). It is also the governance-channel fallback when no memory domain is a governance domain. Empty (shipped) ⇒ unset: with this setting OR `accessRequests.configRepo` unset, each flow refuses politely and nothing else changes. See docs/how-it-works/access-requests.md.",
+        "The channel that hears \"PR opened — merge to grant\" for every pull request the access-request, `create_agent`, `declare_webhook` and `propose_mcp_server` flows open (was `OE_ACCESS_ADMIN_CHANNEL`, OPE-2650). It is also the governance-channel fallback when no memory domain is a governance domain, and the channel where the weekly `upgrade-offer` schedule says that a newer release exists, once for each release unless the record of an offer fails (OPE-2237). Empty (shipped) ⇒ unset: with this setting OR `accessRequests.configRepo` unset, each flow refuses politely and nothing else changes. See docs/how-it-works/access-requests.md.",
       format: (v) => (v === "" ? "(unset)" : v),
     } satisfies SettingSpec<string>,
     configRepo: {
@@ -702,6 +706,13 @@ export const SETTINGS = {
       summary:
         "The in-sandbox browser master flag. Unarmed the capability does not exist: no `browser_*` tools mount, no egress hosts open, no browser bakes into the sandbox template. Arming ALSO requires at least one row in the host declaration (`agent/access/browser-hosts.ts`), which is where the reach itself lives — each row names a host, the HTTP verbs the firewall admits there, an optional credential the firewall injects at the boundary, and whether `browser_evaluate` is armed for it. Both halves are compiled into the build, so the sandbox template and the runtime mount cannot disagree.",
     } satisfies SettingSpec<boolean>,
+    boxImage: {
+      path: "browser.boxImage",
+      shipped: "",
+      summary:
+        "The docker route only (OPE-2671): the image each session's browser container boots from, built from `deploy/browser-qa/Dockerfile` (`docker build -t oe-browser-qa:1 deploy/browser-qa`). The plane arms off the Vercel Sandbox only when this is set AND `sandbox.boxDockerNetwork` puts browser containers behind the egress proxy. Then each session that calls a `browser_*` tool gets its own container on that network, and the proxy holds it to the session's own compiled policy (declared hosts only, credentials stamped at the proxy under Tier B). Empty (shipped) ⇒ the plane keeps its off-Vercel refusal. Inert on the Vercel Sandbox, which runs the browser in the session sandbox.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
   },
   auditExport: {
     targets: {
@@ -1008,7 +1019,7 @@ export const SETTINGS = {
           ? undefined
           : 'must be "withhold" or "envelope" ("taint" is the deprecated alias of "envelope")',
       summary:
-        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `envelope` is the deliberate OPT-OUT: it lets the text enter the context and leaves the consequence to the approval plane. In a rendered wake envelope and in a read result the text is fenced with a do-not-follow notice the body cannot close; a raw `direct` DM or @mention body (Discord, Notion, GitHub, Linear) passes verbatim: OE does not escape, cap or fence it (W4, channels/normalized-wake.ts). The grain decides only whether the body is withheld. Nothing marks the turn under either grain (OPE-2721); the non-member stamp `oe_chat_nonmember` still feeds the guest controls. Choose it only where an excluded author\'s text must reach the model. `taint` is the DEPRECATED ALIAS of `envelope` (OPE-2722): it loads, it behaves as `envelope`, the process reports it once at the first resolution, and OPE-2724 removes it. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread` and the delegated worker\'s `read_work_channel`/`read_work_thread` — routes through ONE grade-and-project body (`readChannelResult`/`readThreadResult`), so the `withhold` read half is declared once and no reader can declare it differently.',
+        'What the agent does with a message an EXCLUDED author wrote — an author the SURFACE positively refuted (Slack `is_restricted`/`is_ultra_restricted`/`is_stranger`, Entra `userType: "guest"`) or the OPERATOR\'s author-trust register refuted (`agent/identity/authors.ts`, Discord and Notion). `withhold` (shipped) stops the text ENTERING: an @mention or DM from that author gets a private notice and no action, ambient engagement never triggers on their messages, and their reply inside a permitted member\'s thread reaches the model as an arrived-marker with no body. It binds the READ verbs too: `read_channel`/`read_thread` replace that author\'s message text with the same arrived-marker, so a body a wake suppressed cannot be fetched back by reading the channel. A withheld body never ingests. The two mechanisms COEXIST — the envelope is provenance-based and stays as it is; withhold is identity-based. On Discord and Notion, where the operator\'s register is the only evidence, a tenant the operator has NOT armed excludes nobody, so `withhold` changes nothing there. `envelope` is the deliberate OPT-OUT: it lets the text enter the context and leaves the consequence to the approval plane. In a rendered wake envelope and in a read result the text is fenced with a do-not-follow notice the body cannot close; a raw `direct` DM or @mention body (Discord, Notion, GitHub, Linear) passes verbatim: OE does not escape, cap or fence it (W4, channels/normalized-wake.ts). The grain decides only whether the body is withheld. Nothing marks the turn under either grain (OPE-2721); the non-member stamp `oe_chat_nonmember` still feeds the guest controls. Choose it only where an excluded author\'s text must reach the model. `taint` is the DEPRECATED ALIAS of `envelope` (OPE-2722): it loads, it behaves as `envelope`, the process reports it once at the first resolution, and OPE-2724 removes it. \u26a0\ufe0f EVERY CHAT SURFACE READS IT, BUT THE EVIDENCE DIFFERS PER SURFACE. Slack and Teams refute an author themselves; Discord and Notion read the operator\'s register; GitHub refutes on the comment\'s `author_association` (`OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant and are internal — every other value, `CONTRIBUTOR` and `MANNEQUIN` included, is excluded); Linear refutes a workspace guest (`User.guest`). \u26a0\ufe0f GITHUB AND LINEAR HAVE NO PRIVATE CHANNEL back to a commenter, so an AMBIENT excluded author\'s message is a silent drop with an audit row and nothing posted. An explicit @mention from an excluded author still gets one fixed, identity-blind acknowledgement line (`EXTERNAL_MENTION_ACK` — names no person, no organisation, no setting, no verdict) on both surfaces, so the mentioning member never reads the agent as broken; on Linear it posts as a `response` Agent Activity, which also ends the session, so no spinner is left open. One known limit elsewhere — Discord\'s hydrated context lines are not filtered, so an excluded author quoted there still reaches the model when the TRIGGER author is permitted. EVERY chat reader — `read_channel`/`read_thread`, the delegated worker\'s `read_work_channel`/`read_work_thread` and Slack\'s opt-in public-channel search `search_slack_public` — decides the `withhold` read half through ONE helper (`readAuthorWithhold`/`projectReadText` in channels/channel-read.ts), so the read half is declared once and no reader can declare it differently.',
     } satisfies SettingSpec<ExternalAuthorGrain>,
     roomGrain: {
       path: "externalPolicy.roomGrain",
@@ -1296,7 +1307,7 @@ export const SETTINGS = {
       shipped: ["default"] as readonly string[],
       validate: (v) => tokenArray(v) ?? (v.length > 0 ? undefined : "must name at least one org"),
       summary:
-        "The orgs the scheduled sweeps cover — the tidy sweep, dream mode 3 and the daily directory sync (was `OE_TIDY_ORGS`). Shipped `[\"default\"]`, the single-operator org. A multi-org deployment lists each org its sweeps run for; an org not listed is never swept.",
+        "The orgs the scheduled sweeps cover — the tidy sweep, dream mode 3, the daily directory sync and the weekly upgrade offer's audit rows (was `OE_TIDY_ORGS`). Shipped `[\"default\"]`, the single-operator org. A multi-org deployment lists each org its sweeps run for; an org not listed is never swept.",
       format: (v) => v.join(", "),
     } satisfies SettingSpec<readonly string[]>,
   },
@@ -1432,6 +1443,14 @@ export const SETTINGS = {
       summary:
         "Run the agent's shell in the Vercel Sandbox from a NON-Vercel host (was `OE_PLATFORM=vercel` on that host) — the \"self-host app, Vercel Sandbox executor\" route. On, the app selects the `vercel()` backend, the egress policy takes the Vercel Sandbox firewall path (`sandbox.setNetworkPolicy`) instead of the self-host proxy push, and the browser plane may arm. The app then needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` (or `VERCEL_ORG_ID`) and `VERCEL_PROJECT_ID` to create sandboxes; this route is UNVERIFIED live. It does NOT make the app a Vercel host: the durable-store floors follow the real host. Inert on a Vercel host, which always runs the Vercel Sandbox. Read at BOOT.",
     } satisfies SettingSpec<boolean>,
+    boxDockerNetwork: {
+      path: "sandbox.boxDockerNetwork",
+      shipped: "",
+      validate: dockerNetworkOrEmpty,
+      summary:
+        "The docker route behind the egress proxy only (OPE-2671): the INTERNAL docker network a browser container joins (the compose overlay `docker-compose.browser.yml` names it `oe-net-box`). Set, with `egress.proxyUrl` set and the agent's shell off the Vercel Sandbox, OE starts each browser container itself (`docker run`, so the app needs the docker CLI and the daemon socket) on this network, which has no WAN route, and pushes a policy for the container's own IP to the proxy before the browser runs: the session's own compiled policy for a `browser_*` session, the person's DM host list for the personal browser. A failed push stops the container. An open refuses when the network is not `internal`. Only browser containers run here: a meeting box still needs the docker backend without the proxy. Empty (shipped) ⇒ no browser container behind the proxy: the browser plane refuses off the Vercel Sandbox, and the personal browser on docker needs `egress.allowUnenforced`. Inert on the Vercel Sandbox.",
+      format: unsetFormat,
+    } satisfies SettingSpec<string>,
     stopAfterTurn: {
       path: "sandbox.stopAfterTurn",
       shipped: true,
@@ -1908,6 +1927,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     },
     browser: {
       enabled: resolve(SETTINGS.browser.enabled, o.browser?.enabled),
+      boxImage: resolve(SETTINGS.browser.boxImage, o.browser?.boxImage),
     },
     auditExport: {
       targets: resolve(SETTINGS.auditExport.targets, o.auditExport?.targets),
@@ -2049,6 +2069,7 @@ export function getSettings(overrides: AgentSettingsOverrides = registeredOverri
     sandbox: {
       selfHostBackend: resolve(SETTINGS.sandbox.selfHostBackend, o.sandbox?.selfHostBackend),
       useVercelSandbox: resolve(SETTINGS.sandbox.useVercelSandbox, o.sandbox?.useVercelSandbox),
+      boxDockerNetwork: resolve(SETTINGS.sandbox.boxDockerNetwork, o.sandbox?.boxDockerNetwork),
       stopAfterTurn: resolve(SETTINGS.sandbox.stopAfterTurn, o.sandbox?.stopAfterTurn),
       extendMaxMinutes: resolve(SETTINGS.sandbox.extendMaxMinutes, o.sandbox?.extendMaxMinutes),
       timeoutMs: resolve(SETTINGS.sandbox.timeoutMs, o.sandbox?.timeoutMs),

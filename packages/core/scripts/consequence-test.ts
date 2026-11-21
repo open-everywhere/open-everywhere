@@ -355,6 +355,7 @@ firesWith(
     "read_notion_comments",
     "notion_search",
     "read_linear_issue",
+    "search_slack_public",
   ]);
   const coreToolNames = new Set(tools.map((t) => t.name));
   const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || !NON_CORE_TOOL_ROWS.has(name)));

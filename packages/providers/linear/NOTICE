@@ -12,25 +12,25 @@ Apache License, Version 2.0.
 
 Modifications to eve
 
-The @open-everywhere/core package distributes patches/eve+1.0.0-rc.18.patch.
-That patch file is a modification of eve 1.0.0-rc.18. Vercel licenses eve
-1.0.0-rc.18 under the Apache License, Version 2.0. The copyright notice of eve
-1.0.0-rc.18 reads "Copyright 2026 Vercel, Inc. and contributors". The Open
+The @open-everywhere/core package distributes patches/eve+1.0.2.patch.
+That patch file is a modification of eve 1.0.2. Vercel licenses eve
+1.0.2 under the Apache License, Version 2.0. The copyright notice of eve
+1.0.2 reads "Copyright 2026 Vercel, Inc. and contributors". The Open
 Everywhere authors made the changes in the patch file.
 
-The patch modifies one file of eve 1.0.0-rc.18:
+The patch modifies one file of eve 1.0.2:
 
   dist/src/internal/authored-package-boundary.js
 
 Open Everywhere does not ship the eve package. eve is a peer dependency, so the
-consumer installs eve 1.0.0-rc.18 from the registry. The patch file carries the
+consumer installs eve 1.0.2 from the registry. The patch file carries the
 modified portions of eve. The oe-eve-patch command, which
 @open-everywhere/core ships, applies them to the eve that the consumer
 installed. The command patches no file outside the consumer's own project. To
 restore an eve that holds an older Open Everywhere patch, it also writes to npm's
 cache and to a temporary directory.
 
-The attribution notice of eve 1.0.0-rc.18 follows, as section 4(d) of the Apache
+The attribution notice of eve 1.0.2 follows, as section 4(d) of the Apache
 License, Version 2.0 requires. The notices for eve's bundled workflow program
 runtime and for the third-party code that eve embeds are not reproduced, because
 the patch modifies no part of that code.

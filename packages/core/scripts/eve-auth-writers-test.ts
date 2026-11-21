@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { filesMatching } from "./eve-dist-search.js";
 
-// Pins the principal each session-auth writer that eve 1.0.0-rc.18 added carries, and the road
+// Pins the principal each session-auth writer that eve 1.x added carries, and the road
 // that reaches it. The census of every writer lives in auth-attribute-provenance-test.ts and in
 // lint:eve-auth-paths (EVE_AUTH_WRITERS). OE keeps three of these writers unreachable on purpose:
 // lint:eve-auth-paths rule C (connection events) and rule E (invokeTool, mcpChannel, a schedule

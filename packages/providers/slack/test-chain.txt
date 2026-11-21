@@ -53,3 +53,4 @@ test:slack-bot-ask
 test:slack-agent-session
 test:slack-reply-feedback
 test:slack-follow-ups
+test:slack-public-search

@@ -116,6 +116,7 @@ export const OE_SCHEDULES: Readonly<Record<string, ScheduleRow>> = {
     pinnedBy: ["packages/core/scripts/personal-watch-test.ts"],
   },
   "packages/core/agent/schedules/tidy.ts": { sends: false, does: "tidies memory silos" },
+  "packages/core/agent/schedules/upgrade-offer.ts": { sends: false, does: "offers a newer core release once in the admin channel" },
   "packages/providers/notion/agent/schedules/notion-ingress.ts": { sends: false, does: "polls Notion for ingress" },
 };
 

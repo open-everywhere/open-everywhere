@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/adapters",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Open Everywhere adapters — the reference Vercel-hosted backends: AI Gateway models and pricing, Sandbox, Neon, OpenTelemetry, AWS and Okta.",
   "keywords": [
     "agent",
@@ -63,6 +63,10 @@
     "./agent/browser/config.js": {
       "types": "./dist/agent/browser/config.d.ts",
       "default": "./dist/agent/browser/config.js"
+    },
+    "./agent/browser/docker-box.js": {
+      "types": "./dist/agent/browser/docker-box.d.ts",
+      "default": "./dist/agent/browser/docker-box.js"
     },
     "./agent/browser/register.js": {
       "types": "./dist/agent/browser/register.d.ts",
@@ -230,6 +234,7 @@
     "test:sandbox-live": "tsx scripts/sandbox-live-test.ts",
     "test:sandbox-extend": "tsx scripts/sandbox-extend-test.ts",
     "test:long-lived-box": "tsx scripts/long-lived-box-test.ts",
+    "test:browser-box-egress": "tsx scripts/browser-box-egress-test.ts",
     "test:native-transcripts": "tsx scripts/native-transcripts-test.ts",
     "test:gateway-probe": "NODE_NO_WARNINGS=1 tsx scripts/gateway-probe-test.ts",
     "test:model-gateway": "tsx scripts/model-gateway-test.ts",
@@ -245,7 +250,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "@open-everywhere/core": "0.11.0",
+    "@open-everywhere/core": "0.12.0",
     "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@vercel/otel": "^2.1.3",
     "@vercel/sandbox": "^3.2.1",
@@ -253,7 +258,7 @@
   },
   "peerDependencies": {
     "@agent-browser/eve": "0.32.4",
-    "eve": "1.0.0-rc.18"
+    "eve": "1.0.2"
   },
   "devDependencies": {
     "@types/node": "latest",

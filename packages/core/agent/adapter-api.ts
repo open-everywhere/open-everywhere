@@ -138,7 +138,7 @@ export { platformName, onVercel } from "./access/platform.js";
 export { resolveSandboxBackend, resolveSelfHostBackendKind, sandboxOnVercel } from "./sandbox/backend-select.js";
 export type { SandboxBackendKind, SelfHostBackendKind } from "./sandbox/backend-select.js";
 
-export { BOX_LABEL, BOX_REF_LABEL, boxLabels, clampBoxMinutes, registerLongLivedBoxBackend } from "./sandbox/long-lived-box.js";
+export { BOX_LABEL, BOX_PURPOSES, BOX_REF_LABEL, boxLabels, clampBoxMinutes, registerLongLivedBoxBackend, resolveLongLivedBoxBackend } from "./sandbox/long-lived-box.js";
 export type { BoxListing, BoxPurpose, BoxSpec, LongLivedBoxBackend, OpenedBox } from "./sandbox/long-lived-box.js";
 
 export { emailPolicy, findEmailInbox } from "./email/policy.js";
@@ -161,9 +161,9 @@ export type { NativeMeetingRef, NativeReadContext, NativeRefusalReason, NativeTr
 export type { NativeTranscriptPolicy } from "./meetings/policy.js";
 export { parseWebVtt } from "./meetings/vtt.js";
 
-export { isSubagentChildContext, subagentParentSessionId } from "./identity/binding.js";
+export { currentSessionId, isSubagentChildContext, subagentParentSessionId } from "./identity/binding.js";
 
-export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, browserPlaneRefusal, openBrowserEgressHosts, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
+export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, browserPlaneRefusal, browserRunsInBox, openBrowserEgressHosts, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
 export type { BrowserToolEntry } from "./access/browser-toolkit.js";
 
 export { browserHostDeclarations, isLoopbackBrowseHost, _setBrowserHostsForTest, resetBrowserHostsForTest } from "./access/browser-hosts.js";
@@ -794,6 +794,7 @@ export { encodeChannelKey, decodeChannelKey, isChannelKey, CHANNEL_KEY_PREFIX } 
 export type { ChannelAddress } from "./channels/channel-key.js";
 
 export { refutedReadAuthorIds, distinctReadAuthorIds } from "./channels/read-author-trust.js";
+export { readAuthorWithhold, projectReadText } from "./channels/channel-read.js";
 export type { ReadAuthorProbe } from "./channels/read-author-trust.js";
 
 export { auditChannelReadRefusal, auditOriginFenceRefusal, auditSourcesGateRefusal } from "./channels/read-scope-audit.js";
@@ -884,9 +885,19 @@ export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
 
 export { parseSlackCommandText, parseOeCommandTokens } from "./commands/core.js";
 
-export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch, type EgressRefusalCause } from "./access/host-egress.js";
+export { assertSafeFetchUrl, resolveEgressRoute, setHostEgressLookup, type EgressDispatch, type EgressRefusalCause } from "./access/host-egress.js";
 export { hostPlaneFetch, hostPlanePolicy } from "./access/host-plane-egress.js";
 export { useSelfHostEgress } from "./access/self-host-egress.js";
+export {
+  boxDockerNetwork,
+  boxEgressBehindProxy,
+  pushBoxEgressPolicy,
+  dropBoxEgressPolicy,
+  bindSessionBox,
+  unbindSessionBox,
+  pushSessionEgressPolicy,
+  resetSessionBoxesForTest,
+} from "./access/self-host-egress.js";
 export {
   egressAuditFields,
   hostCallAuditFields,
@@ -923,7 +934,12 @@ export { _resetOperationalDbForTest } from "./operational/sqlite.js";
 export { resolveAccessFor } from "./access/request.js";
 export { resolveAccess } from "./access/resolver.js";
 export type { EffectiveAccess } from "./access/resolver.js";
-export { defineBundle, defineBinding } from "./access/bundle.js";
+export { OPT_IN_TOOLS } from "./access/opt-in-tools.js";
+export { requesterThisTurn, seatServesManyAskers } from "./access/requester-identity.js";
+export { recordRequesterIdentity } from "./access/requester-identity.js";
+export type { RequesterVerdict } from "./access/requester-identity.js";
+export { currentTurnId, platformIdentityAttributesFor } from "./identity/binding.js";
+export { defineBundle, defineBinding, assertBundlesValid } from "./access/bundle.js";
 export { parseSurfaceKeyEntry, surfaceKeyEntryMatches } from "./identity/surface-key-grammar.js";
 export type { SurfaceKeyEntry } from "./identity/surface-key-grammar.js";
 
@@ -982,6 +998,7 @@ export {
   friendlyTeamsActivity,
   friendlyGitHubComment,
   friendlyOutboundText,
+  friendlyPlainText,
   friendlyGuardSource,
   isFriendlyGuarded,
   registerFriendlyNameResolver,

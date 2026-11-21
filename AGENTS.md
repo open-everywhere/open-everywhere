@@ -490,7 +490,7 @@ specific guide:
 
 - **One word, one meaning — use [`docs/glossary.md`](./docs/glossary.md).** The **seat** is the
   narrow conversational session (18 tools); the **work session** is the one session per
-  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 99, including
+  conversation that runs its jobs; the **worker** is the wide delegated child (seat + 101, including
   `bash` and `write_file`). A conversation seat does its real work by forwarding it with `work`. Never
   write a bare "agent" for a running session. The glossary cites the code for every term — read
   that code before you assert what a run can do.

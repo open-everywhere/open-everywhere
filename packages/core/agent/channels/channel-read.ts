@@ -246,6 +246,20 @@ function authorWithName(m: RenderedLine, names: ReadonlyMap<string, FriendlyName
   return `${label} (${m.author})`;
 }
 
+export async function readAuthorWithhold(
+  ctx: BindableContext,
+  adapter: Pick<ReadAdapter, "refutedAuthorIds">,
+  lines: readonly RenderedLine[],
+): Promise<(m: RenderedLine) => boolean> {
+  const refuted = await adapterRefutedAuthorIds(adapter as ReadAdapter, ctx, lines);
+  const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
+  return (m) => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
+}
+
+export function projectReadText(m: RenderedLine, withheld: boolean): string {
+  return withheld ? WITHHELD_BODY_MARKER : m.bot === true ? redactMachineLinkCodes(m.text) : m.text;
+}
+
 async function gradeAndProject(
   ctx: BindableContext,
   adapter: ReadAdapter,
@@ -254,9 +268,7 @@ async function gradeAndProject(
   where: { readonly platform: string; readonly container: string; readonly threadRoot?: string },
   declared?: { possiblyIncomplete?: boolean; partialReason?: string },
 ): Promise<{ count: number; messages: ReadOutputLine[]; possiblyIncomplete?: boolean; partialReason?: string }> {
-  const refuted = await adapterRefutedAuthorIds(adapter, ctx, lines);
-  const withholding = refuted.size > 0 && readAuthorPolicy(ctx).authorGrain === "withhold";
-  const withheld = (m: RenderedLine): boolean => withholding && m.bot !== true && m.authorId !== undefined && refuted.has(m.authorId);
+  const withheld = await readAuthorWithhold(ctx, adapter, lines);
   const possiblyIncomplete = declared?.possiblyIncomplete !== undefined ? declared.possiblyIncomplete : lines.length >= effectiveLimit;
   const authorNames = await readAuthorNames(where.platform, lines);
   const filesOf = (m: RenderedLine): { id: string; name: string; mimetype?: string }[] =>
@@ -266,7 +278,7 @@ async function gradeAndProject(
     messages: lines.map((m) => ({
       author: authorWithName(m, authorNames),
       ts: m.ts,
-      text: withheld(m) ? WITHHELD_BODY_MARKER : m.bot === true ? redactMachineLinkCodes(m.text) : m.text,
+      text: projectReadText(m, withheld(m)),
       ...(m.readAt !== undefined ? { readAt: m.readAt } : {}),
       ...(m.live !== undefined ? { live: m.live } : {}),
       ...(filesOf(m).length > 0 ? { files: filesOf(m) } : {}),

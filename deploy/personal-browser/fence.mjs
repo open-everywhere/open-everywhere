@@ -82,3 +82,49 @@ export async function checkedAddress(host, allow, opts = {}) {
   if (!Array.isArray(addrs) || addrs.length === 0 || addrs.some((x) => isInternalAddress(x.address, block))) return undefined;
   return addrs[0].address;
 }
+
+export function upstreamTarget(host, allow, block = internalBlockList()) {
+  const h = bareHost(host);
+  if (!hostAllowed(h, allow) || isLoopbackName(h)) return undefined;
+  if (net.isIP(h) && isInternalAddress(h, block)) return undefined;
+  return h;
+}
+
+export function parseUpstream(raw) {
+  if (typeof raw !== "string" || raw.trim() === "") return undefined;
+  let u;
+  try {
+    u = new URL(raw.trim());
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== "http:" || u.hostname === "") return undefined;
+  return { host: bareHost(u.hostname), port: Number(u.port || "80") };
+}
+
+export function upstreamTunnel(upstream, host, port) {
+  return new Promise((resolve) => {
+    const sock = net.connect(upstream.port, upstream.host);
+    let buf = Buffer.alloc(0);
+    const fail = () => {
+      sock.destroy();
+      resolve(undefined);
+    };
+    sock.on("error", fail);
+    sock.on("connect", () => sock.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n\r\n`));
+    const onData = (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end < 0) {
+        if (buf.length > 16 * 1024) fail();
+        return;
+      }
+      sock.off("data", onData);
+      sock.pause();
+      sock.off("error", fail);
+      if (!/^HTTP\/1\.[01] 200/.test(buf.subarray(0, end).toString("latin1"))) return fail();
+      resolve({ socket: sock, head: buf.subarray(end + 4) });
+    };
+    sock.on("data", onData);
+  });
+}

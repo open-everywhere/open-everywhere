@@ -26,7 +26,7 @@ const unresolvableRoot = (): string => {
   throw new Error("Cannot find module 'eve/package.json'");
 };
 
-ok(EVE_PATCH_PARTS.length === 0, `parts: no live runtime patch part is declared on eve 1.0.0-rc.18 (got ${EVE_PATCH_PARTS.length})`);
+ok(EVE_PATCH_PARTS.length === 0, `parts: no live runtime patch part is declared on eve 1.0.2 (got ${EVE_PATCH_PARTS.length})`);
 ok(
   EVE_PATCH_PARTS.map((p) => p.part).join(",") === "",
   `parts: the live runtime parts are exactly {} (got {${EVE_PATCH_PARTS.map((p) => p.part).join(", ")}})`,

@@ -43,16 +43,17 @@ each fail `npm run lint:publish`. The cheap half of the same rule runs on the te
 
 `@open-everywhere/core` runs on a PATCHED `eve`. The tree carries
 `patches/eve+<pinned version>.patch`, and `patch-package` applies it on `postinstall` **in this
-repository**. On the eve 1.0.0-rc.18 pin (the `eve-v1` branch, OPE-2691) the patch holds ONE part:
+repository**. On the eve 1.0.2 pin the patch holds ONE part:
 part 10 (OPE-2276). It changes only eve's CLI-side evaluation of authored files (`eve build`,
-`eve dev`, `eve eval`), so the deployed server never runs it. The patch carries NO runtime part on the
-rc. Part 10 stays on the rc (OPE-2705). Eve 1.0.0-rc.18 evaluates the authored files outside an
+`eve dev`, `eve eval`), so the deployed server never runs it. The patch carries NO runtime part on
+eve 1.x. Part 10 stays on eve 1.x (OPE-2705). Eve 1.x evaluates the authored files outside an
 extension mount as one code-split graph, when that graph builds. On that path a shared module runs once
 per compile with or without the part. An extension-mounted file, or every file after a failed graph
 build, still gets its own bundle. Without part 10, the graph inlines the `@open-everywhere` packages,
-and `eve build` exits 13 (Node's unsettled top-level await) before it writes a build. The cause inside
-the inlined graph is not proven. With part 10 the packages stay external, and the build completes. Parts 1 and 4 lived in `harness/tool-loop.js`, which eve 1.0.0-rc.18 does not ship. Part 1, the
-untrusted output projection (OPE-73), is not carried onto the rc: the connector fence returns as
+and `eve build` exits 13 (Node's unsettled top-level await) before it writes a build (measured on
+eve 1.0.0-rc.18; eve 1.0.2 ships the same `authored-package-boundary.js` bytes). The cause inside
+the inlined graph is not proven. With part 10 the packages stay external, and the build completes. Parts 1 and 4 lived in `harness/tool-loop.js`, which eve 1.x does not ship. Part 1, the
+untrusted output projection (OPE-73), is not carried onto eve 1.x: the connector fence returns as
 OE-owned deferred tools on eve's public API (OPE-2690), and the per-wake seat cuts return as
 `defineDynamic` files (OPE-2697, done: `agent/access/seat-cut.ts`). 🔴 **Part 1 was the only caller of the eve 0.x toolset
 projection, so every control that projection carried needed an eve 1.x home.** The projection is deleted (OPE-2750). The connector and MCP result
@@ -98,12 +99,12 @@ the per-hop `web_fetch` redirect fence (OPE-1568), was dropped (OPE-2688).
 `patch-package` only WARNS when a patch does not apply, so a cold `npm install` that skipped lifecycle
 scripts produces exactly that tree with a green install log. OPE-2168 measured it — in a cold install
 tree `grep -rl __oeProjectToolSet node_modules/eve/dist` found **zero** files, against one in this
-repository at the time (eve 0.71.0). On eve 1.0.0-rc.18 this repository holds zero too, because part 1
+repository at the time (eve 0.71.0). On eve 1.0.2 this repository holds zero too, because part 1
 is not carried.
 
 **Core therefore refuses to boot on an unpatched `eve` when the patch carries a runtime part.** Each
 live runtime part plants a runtime marker, and `agent/access/eve-patch-probe.ts` reads every marker
-before the first wake is served. On the rc the probe's table is empty, so it refuses nothing. Part 10
+before the first wake is served. On eve 1.0.2 the probe's table is empty, so it refuses nothing. Part 10
 plants no marker, because a slow build is no reason to refuse a wake. A missing marker
 throws at module load. The message names the missing part, what that part silently costs, the pinned
 `eve` version and the fix. The refusal is fail-closed by design: no setting and no environment
@@ -118,7 +119,7 @@ exactly what a consumer has to be able to refuse, and
 property. So the patch travels **in the tarball** and a consumer applies it with one explicit command:
 
 ```bash
-npm i @open-everywhere/core eve@1.0.0-rc.18
+npm i @open-everywhere/core eve@1.0.2
 npx oe-eve-patch
 ```
 
@@ -187,7 +188,7 @@ pnpm produces, its target is inside the project root, and the applier writes the
 The last refusal row is the one that matters. The apply step's own verdict is not enough: its
 already-applied route is a reverse match, which is what makes a second run a no-op, and neither route
 reads the bytes afterwards. The applier reads them, and reports one line per patch part. On eve
-1.0.0-rc.18 the patch changes one file, `dist/src/internal/authored-package-boundary.js`. That file
+1.0.2 the patch changes one file, `dist/src/internal/authored-package-boundary.js`. That file
 carries the part 10 header and its `__oe` helpers.
 
 **Copying the patch by hand still works**, and it is what a consumer who would rather not run our bin
@@ -197,7 +198,7 @@ manifest. That route puts patch-package's dependency chain, `braces` included, b
 devDependency. The applier exists so that is not the only route.
 
 **The refusal is two checks, and between them no path serves a wake on an `eve` that lacks a
-declared runtime part.** On eve 1.0.0-rc.18 `EVE_PATCH_PARTS` is empty, so both checks pass an empty
+declared runtime part.** On eve 1.0.2 `EVE_PATCH_PARTS` is empty, so both checks pass an empty
 marker bag and refuse nothing. Part 10 is CLI-side only and gets no boot marker, and
 `test:eve-install` checks its bytes at test time instead. `test:eve-patch-refusal-mechanism`
 pins that empty table, and it proves both checks still refuse when a part is declared.
@@ -211,7 +212,7 @@ Once a part is declared, the boot probe alone is not enough. A hosted build inli
 `node_modules/eve`, so the package root does not resolve and the probe reports `unverifiable` rather
 than refusing — refusing at boot would take down every hosted deploy. The turn gate closes that case:
 a hosted deploy whose bytes lack a declared part's marker fails its first turn instead of serving it.
-On eve 1.0.0-rc.18 no part is declared, so neither check refuses, and a deploy without the patch
+On eve 1.0.2 no part is declared, so neither check refuses, and a deploy without the patch
 serves its turns. The boot probe is kept because it fails earlier and more cheaply on a
 `node_modules` install.
 
@@ -636,7 +637,7 @@ publish until each package's trusted publisher is deleted and created again.
    runs `npm install` with lifecycle scripts, so the app's `postinstall` applies the eve patch. It then
    asserts that the eve patch probe reads `patched`, that `oe build --check` fails before `oe build`
    and passes after it, that the app typechecks, and that `eve build` succeeds with no Docker daemon.
-   On eve 1.0.0-rc.18 no patch part is declared, so the probe reads `patched` on any eve, and that
+   On eve 1.0.2 no patch part is declared, so the probe reads `patched` on any eve, and that
    one assertion proves nothing about the patch bytes. The applier's per-part byte report is the check.
    It needs the network and measures in minutes, so it is off the test chain; the scaffold and the
    template drift checks run on every chain run as `@open-everywhere/create test:scaffold` and

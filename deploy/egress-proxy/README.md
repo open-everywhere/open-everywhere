@@ -91,6 +91,12 @@ Because a docker session would be outside the proxy while the audit recorded "en
 proxy, docker applies only the coarse `"deny-all"` (a session that reaches nothing boots with no
 network) and a session that needs a host allow-list aborts at `session.started` (fail-closed).
 
+**Browser containers are the one exception** (OPE-2671). OE starts them itself with `docker run`
+on an internal network behind this proxy (`sandbox.boxDockerNetwork`, the overlay
+`docker-compose.browser.yml`), and pushes a policy keyed on each container's own IP: the session's
+own policy for a `browser_*` session, the person's host list for the personal browser. The sessions
+stay on `justbash`. See `docs/deploy/platforms/self-host-egress.md`.
+
 The app picks its backend from the setting `sandbox.selfHostBackend` in its
 `agent/settings/settings.ts` (was `OE_SANDBOX_BACKEND` until OPE-2411). This repository's root app
 declares `"justbash"`. An app built into this image must declare `"justbash"` too, because compose

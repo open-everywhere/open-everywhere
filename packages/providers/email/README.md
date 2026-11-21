@@ -29,7 +29,7 @@ The operator guide is the "Email" surface page of the manual (`docs/deploy/surfa
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-email eve@1.0.0-rc.18
+npm i @open-everywhere/core @open-everywhere/provider-email eve@1.0.2
 npx oe-eve-patch
 ```
 

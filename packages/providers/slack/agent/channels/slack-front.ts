@@ -816,6 +816,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           threadTs: ev.threadTs,
           channelType: dmKind,
           isPrivate: true,
+          ...(ev.actionToken === undefined ? {} : { actionToken: ev.actionToken }),
           ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
           ...(showsWorkingSigns && (ev.threadTs ?? ev.ts) ? { workingSignsTs: ev.threadTs ?? ev.ts } : {}),
           ...(roomFacts?.extShared === undefined ? {} : { isExternal: roomFacts.extShared }),

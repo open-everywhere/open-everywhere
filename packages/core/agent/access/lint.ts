@@ -400,6 +400,7 @@ function staticCapabilityFingerprint(
     repoCapabilities: setValuedRecord(access.repoCapabilities),
     resourceCapabilities: setValuedRecord(access.resourceCapabilities),
     awsRoles: unordered(access.awsRoles.map((role) => ({ ...role, allow: [...role.allow].sort() }))),
+    optInTools: access.optInTools,
     approvers: access.approvers.map((a) => ({
       name: a.name,
       source: a.source,

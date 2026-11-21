@@ -337,6 +337,8 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
   ok(!planEgressApply({ phase: "turn.started", fingerprint: "a", lastApplied: "a" }).reapply, "G1: a turn whose policy is unchanged skips the firewall call");
   ok(planEgressApply({ phase: "turn.started", fingerprint: "b", lastApplied: "a" }).reapply, "G1: a turn whose policy CHANGED re-applies");
   ok(planEgressApply({ phase: "turn.started", fingerprint: "a", lastApplied: undefined }).reason === "retry-after-failure", "G1: a turn with no successful apply behind it retries");
+  ok(planEgressApply({ phase: "turn.started", fingerprint: "a", lastApplied: "a", boxPolicyMissing: true }).reason === "box-policy-missing", "OPE-2671: 🔴 an unchanged turn re-applies when this process holds no policy for the session's browser container");
+  ok(!planEgressApply({ phase: "turn.started", fingerprint: "a", lastApplied: "a", boxPolicyMissing: false }).reapply, "OPE-2671 negative control: with the policy held, the unchanged turn still skips");
 
   const p1 = { allow: { "api.acme.test": [{ transform: [{ headers: { authorization: "Bearer OLD" } }] }] } } as never;
   const p2 = { allow: { "api.acme.test": [{ transform: [{ headers: { authorization: "Bearer NEW" } }] }] } } as never;
@@ -394,6 +396,17 @@ const allowOfPolicy = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>): Rec
         failNext = v;
       },
     };
+  }
+
+  {
+    const r = rig(async () => ({ allow: { "api.acme.test": [] } }));
+    let missing = false;
+    const deps = { ...r.deps, boxPolicyMissing: () => missing };
+    await enforceEgress("session.started", deps as never);
+    ok((await enforceEgress("turn.started", deps as never)).reason === "unchanged" && r.applied.length === 1, "OPE-2671 negative control: the policy held in process, an unchanged turn skips");
+    missing = true;
+    const repush = await enforceEgress("turn.started", deps as never);
+    ok(repush.reason === "box-policy-missing" && repush.applied && r.applied.length === 2, "OPE-2671: 🔴 after a restart an unchanged turn re-pushes, so the session's browser container can bind");
   }
 
   {

@@ -3,7 +3,7 @@
 // does not match, and every event-name literal outside it (OPE-2685). `scripts/eve-event-names-drift.ts` refuses the same
 // drift at `typecheck`.
 
-export const EVE_EVENT_NAMES_PIN = "1.0.0-rc.18";
+export const EVE_EVENT_NAMES_PIN = "1.0.2";
 
 export const EVE_EVENT_NAMES = [
   "call.input",

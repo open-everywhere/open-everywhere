@@ -87,7 +87,7 @@ function accessIn(...domains: string[]): EffectiveAccess {
     repos: [],
     repoCapabilities: {}, resourceCapabilities: {},
    
-    awsRoles: [], approvers: [],
+    awsRoles: [], optInTools: [], approvers: [],
     plugins: [],
     skills: [],
     subagents: [],

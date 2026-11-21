@@ -6,8 +6,56 @@ description: Upgrade this Open Everywhere app to a newer release — read the re
 # Upgrade Open Everywhere
 
 One procedure, two drivers. You run it here, in a checkout of this app. The agent runs the same
-steps on itself, in its own sandbox, against this same repository. Nothing below differs between
-the two.
+steps on itself, in its own sandbox, against this same repository. The steps below are the same
+for both. The next section lists the four places where the agent's run differs.
+
+## When the agent drives it ("upgrade yourself")
+
+An org admin tells the agent "upgrade yourself", in a room whose bundle grants this repository.
+The `upgrade_self` tool then checks four things, and refuses with one plain sentence when one fails:
+
+- the person who asked is an org admin (the `org` domain's `admins` in
+  `agent/memory/config/domains.ts`). A domain admin is not enough, because an upgrade changes the
+  whole deployment;
+- `accessRequests.configRepo` names this repository;
+- the installed core and the target are releases (`X.Y.Z`), and the target is newer. The default
+  target is the newest release on the npm registry;
+- the registry answers, when no target is named.
+
+Every start and every refusal writes an audit row (`upgrade.self.started`, `upgrade.self.refused`).
+
+The tool changes nothing. It returns the steps, and the agent follows them with tools it already
+holds. The four differences from your run:
+
+1. **The checkout.** `checkout_repo` clones this repository with a read-only credential. It refuses
+   a room whose bundle does not grant this repository, and the agent then tells the admin. The
+   sandbox needs `registry.npmjs.org` for `npm ci` and `oe upgrade`: grant `PACKAGE_REGISTRY_HOSTS`
+   on the bundle that grants this repository.
+2. **The yes.** The admin's ask is the yes for `oe upgrade`, because the run writes only in the
+   sandbox. The agent runs `--plan` first all the same.
+3. **The questions.** The agent does not stop and decide a BREAKING, ENV, MANUAL or DEFAULT line.
+   It puts each one in the pull request body and in its reply, and the admin answers at the merge.
+4. **The push.** The agent never runs `git push`. `open_pull_request` pushes the branch
+   (`oe-upgrade/<target>`) on the approve click, with the credential every other pull request from
+   the agent uses. The agent never merges it.
+
+The admin check is a front door, not the control on what ships. A worker that can open a pull
+request on this repository can open one for anybody who asks. What stops an unreviewed upgrade is
+the person who merges the pull request, so set branch protection on this repository so that only
+an admin can merge. The approval card applies unless the approver chain lowers
+`open_pull_request`. The upgrade diff fence (`docs/security/self-upgrade-fence.md` in the product
+repository) runs only at the product repository's own merge preflight. It does not run on this
+repository.
+
+**The weekly offer.** Once a week the `upgrade-offer` schedule reads the newest release. When it is
+newer than the installed one, the agent says so in `accessRequests.adminChannel`, with the words
+to take it. It offers each release once. If the record of the offer cannot be written, it can
+offer the same release again the next week. Two interrupts break the once. The tick can stop after it reserves the post and
+before it sends the message. If it runs again within 60 seconds, it records the release as offered,
+but no message is in the channel. The tick can also stop after it sends the message and before it writes the record. If
+it runs again more than 60 seconds later, it posts the offer twice. With no admin channel or no config repo set, it says
+nothing. To turn it off, add an `exclude` for `schedule/upgrade-offer`, with a reason, in
+`roster.config.ts`, then run `npx oe build --accept`.
 
 The procedure is `npx oe upgrade`. It is deterministic: it reads the release record that ships
 inside `@open-everywhere/core`, bumps every package together, installs, applies the config
@@ -17,7 +65,7 @@ codemods the notes name, rebuilds the roster and proves the tree still builds.
 
 - **`oe upgrade` writes and installs.** Show the command, get a yes, then run it. `--plan` writes
   nothing, so run that first, every time.
-- **Never merge the pull request yourself.** An admin merges it, and the merge deploys.
+- **Never merge the pull request yourself.** Nothing ships until someone merges it, and the merge deploys.
 - **Never hand-edit `roster.lock.json`.** `oe build --accept` writes it. Your job is to READ the
   diff: every line is a capability decision, and a new tool that nobody looked at is how an
   upgrade quietly widens what the agent can do.
@@ -200,7 +248,7 @@ Commit on a branch, never on the default branch. The body carries:
 - each new default, and the setting the user chose for it, or that no setting turns it off.
 - the template files you synced or deleted, and each SYNC or DELETE line you left as it is, with the reason.
 
-Then stop. The admin reviews the lock diff and merges. The merge deploys.
+Then stop. Tell the user that the person who merges must read the lock diff first. The merge deploys.
 
 ## 6. Confirm the deployment after it ships
 

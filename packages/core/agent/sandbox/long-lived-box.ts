@@ -1,6 +1,8 @@
 import { processRegistrySlot } from "../lib/process-registry.js";
 
-export type BoxPurpose = "meeting" | "browser";
+export type BoxPurpose = "meeting" | "browser" | "browser-qa";
+
+export const BOX_PURPOSES: readonly BoxPurpose[] = ["meeting", "browser", "browser-qa"];
 
 export interface BoxSpec {
   readonly purpose: BoxPurpose;
@@ -33,6 +35,7 @@ export interface OpenedBox {
   readonly createdAt: number;
   readonly maxMinutes: number;
   readonly url?: string;
+  readonly egressSourceIp?: string;
 }
 
 export interface LongLivedBoxBackend {

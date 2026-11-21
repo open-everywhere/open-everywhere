@@ -120,6 +120,7 @@ export function slackAppManifestTemplate(opts: SlackAppManifestOptions = {}): st
             "lists:read",
             "lists:write",
             "assistant:write",
+            "search:read.public",
             ...(personalMcp ? [SLACK_MCP_BOT_SCOPE] : []),
           ],
           ...(personalMcp ? { user: [...slackAsYouUserScopes()] } : {}),

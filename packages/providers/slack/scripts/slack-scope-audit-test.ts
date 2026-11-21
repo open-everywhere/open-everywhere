@@ -29,6 +29,7 @@ const REQUIRED_SCOPES: Record<string, string[]> = {
   "chat.update": ["chat:write"],
   "chat.postEphemeral": ["chat:write"],
   "assistant.threads.setStatus": ["chat:write"],
+  "assistant.search.context": ["search:read.public"],
   "pins.list": ["pins:read"],
   "pins.add": ["pins:write"],
   "reactions.add": ["reactions:write"],
@@ -168,7 +169,7 @@ const codeOnly = (text: string): string =>
     .join("\n");
 const botBlock = /\bbot:\s*\[([\s\S]*?)\]/.exec(codeOnly(manifestSource));
 ok(botBlock !== null, `packages/providers/slack/agent/app-manifest.ts still declares its bot scopes as a literal \`bot: [ … ]\` array`);
-const manifestScopes = [...(botBlock?.[1] ?? "").matchAll(/"([a-z_]+:[a-z_]+)"/g)].map((m) => m[1] as string);
+const manifestScopes = [...(botBlock?.[1] ?? "").matchAll(/"([a-z_]+:[a-z_.]+)"/g)].map((m) => m[1] as string);
 ok(
   manifestScopes.length >= 10,
   `parse sanity: the app manifest declares at least 10 bot scopes (found ${manifestScopes.length}) — ` +

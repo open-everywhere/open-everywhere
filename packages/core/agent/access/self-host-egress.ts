@@ -120,3 +120,101 @@ export async function pushEgressPolicy(
     { policy, sourceIp: opts?.sourceIp ?? egressSourceIp(), sessionId: opts?.sessionId },
   );
 }
+
+export function boxDockerNetwork(): string | undefined {
+  return getSettings().sandbox.boxDockerNetwork.trim() || undefined;
+}
+
+export function boxEgressBehindProxy(): boolean {
+  return useSelfHostEgress() && boxDockerNetwork() !== undefined;
+}
+
+export async function pushBoxEgressPolicy(sourceIp: string, policy: SandboxNetworkPolicy, opts?: { readonly sessionId?: string }): Promise<void> {
+  if (sourceIp.trim() === "") throw new Error("pushBoxEgressPolicy needs the container's IP");
+  await pushEgressPolicy(policy, { sourceIp, ...(opts?.sessionId !== undefined ? { sessionId: opts.sessionId } : {}) });
+}
+
+export async function dropBoxEgressPolicy(sourceIp: string, fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike): Promise<void> {
+  const proxyUrl = egressProxyUrl();
+  if (!proxyUrl) throw new Error("dropBoxEgressPolicy called with no egress.proxyUrl set");
+  const token = await egressProxyToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  const url = `${proxyUrl.replace(/\/+$/, "")}/policy?sourceIp=${encodeURIComponent(sourceIp)}`;
+  let res: Awaited<ReturnType<FetchLike>>;
+  try {
+    res = await fetchImpl(url, { method: "DELETE", headers, body: "" });
+  } catch (err) {
+    throw new Error(`egress-proxy policy drop failed (network): ${String(err)}`);
+  }
+  if (!res.ok && res.status !== 404) throw new Error(`egress-proxy policy drop rejected (HTTP ${res.status})`);
+}
+
+const SESSION_POLICY_CAP = 256;
+const lastSessionPolicy = new Map<string, SandboxNetworkPolicy>();
+const sessionBoxIps = new Map<string, Set<string>>();
+
+function rememberSessionPolicy(sessionId: string, policy: SandboxNetworkPolicy): void {
+  lastSessionPolicy.delete(sessionId);
+  lastSessionPolicy.set(sessionId, policy);
+  let unbound = [...lastSessionPolicy.keys()].filter((k) => !sessionBoxIps.has(k)).length;
+  for (const k of [...lastSessionPolicy.keys()]) {
+    if (unbound <= SESSION_POLICY_CAP) break;
+    if (sessionBoxIps.has(k)) continue;
+    lastSessionPolicy.delete(k);
+    unbound--;
+  }
+}
+
+export function hasSessionPolicy(sessionId: string): boolean {
+  return lastSessionPolicy.has(sessionId);
+}
+
+export async function pushSessionEgressPolicy(
+  policy: SandboxNetworkPolicy,
+  opts: {
+    readonly auditId?: string;
+    readonly boxSession?: string;
+  },
+  push: typeof pushEgressPolicy = pushEgressPolicy,
+): Promise<void> {
+  const audit = opts.auditId !== undefined ? { sessionId: opts.auditId } : {};
+  await push(policy, opts.auditId !== undefined ? audit : undefined);
+  const key = opts.boxSession;
+  if (key === undefined || !boxEgressBehindProxy()) return;
+  rememberSessionPolicy(key, policy);
+  for (const ip of sessionBoxIps.get(key) ?? []) await push(policy, { sourceIp: ip, ...audit });
+}
+
+export async function bindSessionBox(sessionId: string, sourceIp: string, push: typeof pushEgressPolicy = pushEgressPolicy): Promise<void> {
+  let policy = lastSessionPolicy.get(sessionId);
+  if (policy === undefined) {
+    throw new Error("this session has pushed no egress policy in this process yet, so its browser container would have nothing to enforce — refusing to bind it");
+  }
+  const ips = sessionBoxIps.get(sessionId) ?? new Set<string>();
+  ips.add(sourceIp);
+  sessionBoxIps.set(sessionId, ips);
+  try {
+    for (;;) {
+      await push(policy, { sourceIp, sessionId });
+      const latest = lastSessionPolicy.get(sessionId);
+      if (latest === undefined || latest === policy) break;
+      policy = latest;
+    }
+  } catch (err) {
+    unbindSessionBox(sessionId, sourceIp);
+    throw err;
+  }
+}
+
+export function unbindSessionBox(sessionId: string, sourceIp: string): void {
+  const ips = sessionBoxIps.get(sessionId);
+  if (ips === undefined) return;
+  ips.delete(sourceIp);
+  if (ips.size === 0) sessionBoxIps.delete(sessionId);
+}
+
+export function resetSessionBoxesForTest(): void {
+  lastSessionPolicy.clear();
+  sessionBoxIps.clear();
+}

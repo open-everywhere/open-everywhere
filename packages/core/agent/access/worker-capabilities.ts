@@ -68,6 +68,7 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
       "read_notion_comments",
       "notion_search",
       "search",
+      "search_slack_public",
       "read_linear_issue",
       "read_github_issue",
       "read_work_channel",
@@ -196,6 +197,11 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
     id: "own-version",
     headline: "State which version of this deployment is currently running — package version, commit sha, eve pin — and how it is set up for the person asking: their admin standing, the connections, and what an admin can change from chat",
     tools: ["agent_version"],
+  },
+  {
+    id: "self-upgrade",
+    headline: "Upgrade this deployment to a newer release when an org admin asks (\"upgrade yourself\"): open the upgrade pull request on the deployment's own repository",
+    tools: ["upgrade_self"],
   },
 ];
 

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { PRUNED_DECLARATIONS, citedDeclaration, prunedCodeDrift } from "./_eve-pruned-declaration.js";
 import { eveWorldVercelSource } from "./_eve-world-source.js";
 
 let passed = 0;
@@ -15,7 +18,24 @@ const eveRoot = dirname(require.resolve("eve/package.json"));
 const read = (rel: string): string => readFileSync(join(eveRoot, "dist/src", rel), "utf8");
 const flat = (src: string): string => src.replace(/\n\s*\*/g, " ").replace(/\s+/g, " ");
 
-const workflowChunksDir = join(eveRoot, "dist/src/compiled/_chunks/workflow");
+// eve 1.0.1 stopped shipping its internal declarations. A cited declaration reads as its text while
+// eve ships it, else as `undefined`, and then citedDeclaration has already checked that the code its
+// prose describes is unchanged (it throws when not). `says`/`saysNot` count such a citation as carried.
+let carried = 0;
+const cited = (rel: string): string | undefined => {
+  const declaration = citedDeclaration(join(eveRoot, "dist/src"), rel);
+  return declaration.shipped ? flat(declaration.text) : undefined;
+};
+const says = (text: string | undefined, needle: string): boolean => {
+  if (text === undefined) return (carried++, true);
+  return text.includes(needle);
+};
+const saysNot = (text: string | undefined, needle: string): boolean => {
+  if (text === undefined) return (carried++, true);
+  return !text.includes(needle);
+};
+
+const workflowChunksDir = join(eveRoot, "dist/src/compiled/_chunks/node");
 const workflowChunks = readdirSync(workflowChunksDir)
   .filter((name) => name.endsWith(".js"))
   .map((name) => readFileSync(join(workflowChunksDir, name), "utf8"))
@@ -24,22 +44,22 @@ const workflowChunks = readdirSync(workflowChunksDir)
 const workflowRuntime = read("compiled/@workflow/core/runtime.js");
 const vercelWorld = eveWorldVercelSource();
 const localWorld = read("compiled/@workflow/world-local/index.js");
-const queueContract = flat(read("compiled/@workflow/world/queue.d.ts"));
-const worldCapabilities = flat(read("compiled/@workflow/world/interfaces.d.ts"));
-const specVersionContract = flat(read("compiled/@workflow/world/spec-version.d.ts"));
-const singleFlight = flat(read("compiled/@workflow/core/runtime/step-single-flight.d.ts"));
-const spec8Ownership = flat(read("compiled/@workflow/core/runtime/spec8/step-ownership.d.ts"));
-const spec9SingleFlight = flat(read("compiled/@workflow/core/runtime/spec9/step-single-flight.d.ts"));
-const spec9CreatorRules = flat(read("compiled/@workflow/core/runtime/spec9/creator-rules.d.ts"));
-const spec9InBandWriter = flat(read("compiled/@workflow/core/runtime/spec9/in-band-writer.d.ts"));
-const spec9StepExecutor = flat(read("compiled/@workflow/core/runtime/spec9/step-executor.d.ts"));
-const eveSpecDefaultContract = flat(read("internal/workflow/spec-version-default.d.ts"));
+const queueContract = cited("compiled/@workflow/world/queue.d.ts");
+const worldCapabilities = cited("compiled/@workflow/world/interfaces.d.ts");
+const specVersionContract = cited("compiled/@workflow/world/spec-version.d.ts");
+const singleFlight = cited("compiled/@workflow/core/runtime/step-single-flight.d.ts");
+const spec8Ownership = cited("compiled/@workflow/core/runtime/spec8/step-ownership.d.ts");
+const spec9SingleFlight = cited("compiled/@workflow/core/runtime/spec9/step-single-flight.d.ts");
+const spec9CreatorRules = cited("compiled/@workflow/core/runtime/spec9/creator-rules.d.ts");
+const spec9InBandWriter = cited("compiled/@workflow/core/runtime/spec9/in-band-writer.d.ts");
+const spec9StepExecutor = cited("compiled/@workflow/core/runtime/spec9/step-executor.d.ts");
+const eveSpecDefaultContract = cited("internal/workflow/spec-version-default.d.ts");
 const eveSpecDefault = read("internal/workflow/spec-version-default.js");
 const eveCompiledArtifacts = read("internal/application/compiled-artifacts.js");
-const sessionTurn = flat(read("execution/session/turn.d.ts"));
-const sessionEntry = flat(read("execution/session/entry.d.ts"));
-const sessionHandoff = flat(read("execution/session/handoff.d.ts"));
-const turnStepContract = flat(read("execution/workflow-host/turn-step.d.ts"));
+const sessionTurn = cited("execution/session/turn.d.ts");
+const sessionEntry = cited("execution/session/entry.d.ts");
+const sessionHandoff = cited("execution/session/handoff.d.ts");
+const turnStepContract = cited("execution/workflow-host/turn-step.d.ts");
 const turnStepJs = read("execution/workflow-host/turn-step.js");
 const sessionTurnJs = read("execution/session/turn.js");
 
@@ -59,22 +79,22 @@ const sessionTurnJs = read("execution/session/turn.js");
     "1: the guard keys on (workflowRunId, stepId) in the CODE — the pair, so two DIFFERENT steps of one run are never mutually excluded",
   );
   ok(
-    singleFlight.includes("same run + step correlation ID") && singleFlight.includes("already in flight in this process"),
+    says(singleFlight, "same run + step correlation ID") && says(singleFlight, "already in flight in this process"),
     "1: eve's own contract states the key and the scope — run + step correlation ID, in this process",
   );
   ok(
-    singleFlight.includes("a loser gets `loserResult()` once the winner settled") &&
-      singleFlight.includes("unless `rerunAfter(winner)` says the winner ran nothing") &&
-      singleFlight.includes("in which case the loser re-enters and tries the step itself"),
+    says(singleFlight, "a loser gets `loserResult()` once the winner settled") &&
+      says(singleFlight, "unless `rerunAfter(winner)` says the winner ran nothing") &&
+      says(singleFlight, "in which case the loser re-enters and tries the step itself"),
     "1: the shared (spec 8) rule — the same-process loser takes the winner's result, and runs the body itself only when the winner ran nothing",
   );
   ok(
-    spec9SingleFlight.includes("two executions of one step in one process are two deliveries of that message") &&
-      spec9SingleFlight.includes("instead of running the body"),
+    says(spec9SingleFlight, "two executions of one step in one process are two deliveries of that message") &&
+      says(spec9SingleFlight, "instead of running the body"),
     "1: on a spec 9 run the same-process loser waits for the winner and asks for a redelivery instead of running the body",
   );
   ok(
-    spec9SingleFlight.includes("Background step invocations are not fenced; a cross-instance duplicate runs the body twice."),
+    says(spec9SingleFlight, "Background step invocations are not fenced; a cross-instance duplicate runs the body twice."),
     "🔴 1: eve states in so many words that a cross-instance duplicate of a background step RUNS THE BODY TWICE — the single-flight is per process, never per run",
   );
 }
@@ -83,42 +103,42 @@ const sessionTurnJs = read("execution/session/turn.js");
   const EXCLUSIVITY_CLAUSE =
     "only a delivery of that same message may re-execute the step before the ownership lease expires";
   ok(
-    queueContract.includes("On earlier runs the runtime's inline step ownership uses it as a liveness lease"),
+    says(queueContract, "On earlier runs the runtime's inline step ownership uses it as a liveness lease"),
     "2: eve calls inline step ownership a LIVENESS lease keyed on the queue messageId — and now scopes it to EARLIER (spec <= 8) runs",
   );
   ok(
-    queueContract.includes(EXCLUSIVITY_CLAUSE),
+    says(queueContract, EXCLUSIVITY_CLAUSE),
     "🔴 2: on a spec 8 run eve states a bounded exclusivity: only the owning message may re-execute the step BEFORE THE LEASE EXPIRES. The bound is the finding, not the exclusivity",
   );
   ok(
-    spec8Ownership.includes("0 means the lease has expired") && spec8Ownership.includes("dispatch falls back to the immediate enqueue"),
+    says(spec8Ownership, "0 means the lease has expired") && says(spec8Ownership, "dispatch falls back to the immediate enqueue"),
     "2: an expired (or unstampable) spec 8 lease falls back to the IMMEDIATE enqueue — a slow owner that is still alive does not hold the step",
   );
   ok(
-    queueContract.includes("fresh id per delivery degrades gracefully") &&
-      queueContract.includes("adding recovery latency but never wedging or duplicating"),
+    says(queueContract, "fresh id per delivery degrades gracefully") &&
+      says(queueContract, "adding recovery latency but never wedging or duplicating"),
     "2: eve promises no duplication for the DEGRADED World (a fresh messageId per delivery), where owner redeliveries fall to the delayed backstop — one step under one message, not two turns of one session",
   );
   ok(
-    queueContract.includes("at most one delivery for a given run id is in flight at a time") &&
-      queueContract.includes("That is the queue half of the single-writer guarantee"),
+    says(queueContract, "at most one delivery for a given run id is in flight at a time") &&
+      says(queueContract, "That is the queue half of the single-writer guarantee"),
     "2: on a spec 9 run eve serializes a run's ORCHESTRATOR deliveries — the queue half of a single-writer guarantee",
   );
   ok(
-    queueContract.includes("makes an overlap that the queue still lets through (a delivery that outlives its lease) safe"),
+    says(queueContract, "makes an overlap that the queue still lets through (a delivery that outlives its lease) safe"),
     "🔴 2: …and eve states that the queue half CAN be overrun (a delivery that outlives its lease); the in-band fence makes that overlap safe for the run's LOG",
   );
   ok(
-    spec9InBandWriter.includes("The refusal does not say that another writer is running."),
+    says(spec9InBandWriter, "The refusal does not say that another writer is running."),
     "2: a fence refusal is not a liveness signal — eve does not claim the fence detects a second running orchestrator",
   );
   ok(
-    spec9CreatorRules.includes("Nothing on the write path refuses a second `step_started` of a step that is still running"),
+    says(spec9CreatorRules, "Nothing on the write path refuses a second `step_started` of a step that is still running"),
     "🔴 2: eve states that NOTHING refuses a second start of a running step — a dedupe window, not a lock, keeps a re-send from a second owner",
   );
   for (const nearMiss of ["ownership lock", "exclusive lease", "mutual exclusion"]) {
     ok(
-      !spec8Ownership.includes(nearMiss) && !queueContract.includes(nearMiss) && !spec9CreatorRules.includes(nearMiss),
+      saysNot(spec8Ownership, nearMiss) && saysNot(queueContract, nearMiss) && saysNot(spec9CreatorRules, nearMiss),
       `2: eve does NOT describe ownership as "${nearMiss}"`,
     );
   }
@@ -126,7 +146,7 @@ const sessionTurnJs = read("execution/session/turn.js");
 
 {
   ok(
-    eveSpecDefaultContract.includes("Spec version eve opts new Workflow runs into: one orchestrator per run.") &&
+    says(eveSpecDefaultContract, "Spec version eve opts new Workflow runs into: one orchestrator per run.") &&
       /EVE_WORKFLOW_SPEC_VERSION\s*=\s*9\b/u.test(eveSpecDefault),
     "🔴 3: eve 1.x opts NEW Workflow runs into spec 9, the single-orchestrator model — the change from eve 0.71.0, where per-run serialization was an opt-in gated OFF",
   );
@@ -139,8 +159,8 @@ const sessionTurnJs = read("execution/session/turn.js");
     "3: eve applies the default in the compiled entry BEFORE it constructs the World, which reads the setting at creation",
   );
   ok(
-    specVersionContract.includes("| unset | any | {@link SPEC_VERSION_DEFAULT_MINTED} (8) |") &&
-      specVersionContract.includes("| `9` | not `true` | the default, with a warning once per process |"),
+    says(specVersionContract, "| unset | any | {@link SPEC_VERSION_DEFAULT_MINTED} (8) |") &&
+      says(specVersionContract, "| `9` | not `true` | the default, with a warning once per process |"),
     "3: Workflow's own default is still spec 8, and a World without the in-band fence ignores `9` — eve's default is what moves OE's runs",
   );
   ok(
@@ -153,20 +173,20 @@ const sessionTurnJs = read("execution/session/turn.js");
     "🔴 3: …and both MINT with `{ inBandFence: true }` — without it mintedSpecVersion never returns 9, so this is what lets eve's default take effect on both",
   );
   ok(
-    specVersionContract.includes("so a run never changes orchestrator"),
+    says(specVersionContract, "so a run never changes orchestrator"),
     "🔴 3: a run keeps the spec it was created with — a session run created under eve 0.x never moves to spec 9 (it stays at an earlier spec, <= 8), unserialized, after the upgrade",
   );
   ok(
-    queueContract.includes("Messages of earlier runs (spec <= 8) are not serialized"),
+    says(queueContract, "Messages of earlier runs (spec <= 8) are not serialized"),
     "3: …and eve states that spec 8 runs are not serialized",
   );
   ok(
-    queueContract.includes("it can run beside the run's serialized orchestrator") &&
-      queueContract.includes("which can include running the body of an inline step a second time; it does not corrupt the log"),
+    says(queueContract, "it can run beside the run's serialized orchestrator") &&
+      says(queueContract, "which can include running the body of an inline step a second time; it does not corrupt the log"),
     "🔴 3: even on a spec 9 run, an unstamped message from another producer can run BESIDE the serialized orchestrator, and eve names the cost: an inline step body can run a second time",
   );
   ok(
-    worldCapabilities.includes("The runtime takes no fast path from it: one orchestrator at a time is a frequency mechanism"),
+    says(worldCapabilities, "The runtime takes no fast path from it: one orchestrator at a time is a frequency mechanism"),
     "🔴 3: eve's core runtime still takes NO fast path from per-run serialization — it calls one orchestrator at a time a FREQUENCY mechanism, so neither may we read it as a guarantee",
   );
   ok(
@@ -181,25 +201,25 @@ const sessionTurnJs = read("execution/session/turn.js");
 
 {
   ok(
-    sessionTurn.includes("Executes conversational turns inside the owning session workflow") && sessionTurn.includes("There is no child run"),
+    says(sessionTurn, "Executes conversational turns inside the owning session workflow") && says(sessionTurn, "There is no child run"),
     "4: eve runs each turn INSIDE the owning session workflow, with no child run",
   );
   ok(
-    sessionEntry.includes("The current owner directly executes every turn") &&
-      sessionEntry.includes("An idle owner can transfer its settled checkpoint and hooks to an exact successor deployment"),
+    says(sessionEntry, "The current owner directly executes every turn") &&
+      says(sessionEntry, "An idle owner can transfer its settled checkpoint and hooks to an exact successor deployment"),
     "🔴 4: …but the owner can move: an IDLE session transfers to a successor run, so the turns of one session are no longer always steps of ONE run",
   );
   ok(
-    sessionHandoff.includes("on this deployment after compaction so no single run's event log grows with the session"),
+    says(sessionHandoff, "on this deployment after compaction so no single run's event log grows with the session"),
     "4: the move happens on the SAME deployment too, after compaction — not only on an upgrade",
   );
   ok(
-    sessionHandoff.includes("Until the attempt settles the owner runs no turn.") &&
-      sessionHandoff.includes("Only one run per attempt can hold this; a successor that loses it exits untouched."),
+    says(sessionHandoff, "Until the attempt settles the owner runs no turn.") &&
+      says(sessionHandoff, "Only one run per attempt can hold this; a successor that loses it exits untouched."),
     "4: eve states the turn exclusion ACROSS a move: the owner runs no turn until the attempt settles, and one run per attempt holds the claim",
   );
   ok(
-    turnStepContract.includes("Runs a bounded batch of harness model steps inside one durable `\"use step\"` boundary"),
+    says(turnStepContract, "Runs a bounded batch of harness model steps inside one durable `\"use step\"` boundary"),
     "4: a turn's model work runs in `turnStep`, ONE durable step per batch — so two turns are two DIFFERENT steps, outside §1's (run, step) key",
   );
   ok(
@@ -214,7 +234,7 @@ const sessionTurnJs = read("execution/session/turn.js");
     "🔴 4: `turnStep` declares no `maxRetries`, so it keeps the default retries — and eve takes such a step to be idempotent:",
   );
   ok(
-    spec9StepExecutor.includes("A step that allows retries (`maxRetries > 0`, the default) is taken to be idempotent and to survive running again after a lost write."),
+    says(spec9StepExecutor, "A step that allows retries (`maxRetries > 0`, the default) is taken to be idempotent and to survive running again after a lost write."),
     "🔴 4: …\"taken to be idempotent and to survive running again\". A turn body can therefore run again, and a side effect in it must carry its own fence",
   );
   ok(
@@ -224,7 +244,7 @@ const sessionTurnJs = read("execution/session/turn.js");
   const turnContracts = [sessionTurn, sessionEntry, sessionHandoff, turnStepContract];
   for (const nearMiss of ["one turn at a time", "turns never overlap", "exclusive owner", "at most one turn", "exactly once"]) {
     ok(
-      turnContracts.every((src) => !src.includes(nearMiss)),
+      turnContracts.every((src) => saysNot(src, nearMiss)),
       `4: the session contracts do NOT state "${nearMiss}"`,
     );
   }
@@ -235,10 +255,10 @@ const sessionTurnJs = read("execution/session/turn.js");
   const uniquenessClaims = ["at most one running instance", "at-most-one running", "only one invocation per run", "exactly one live instance"];
   for (const claim of uniquenessClaims) {
     ok(
-      !queueContract.includes(claim) &&
-        !worldCapabilities.includes(claim) &&
-        !spec8Ownership.includes(claim) &&
-        !spec9CreatorRules.includes(claim),
+      saysNot(queueContract, claim) &&
+        saysNot(worldCapabilities, claim) &&
+        saysNot(spec8Ownership, claim) &&
+        saysNot(spec9CreatorRules, claim),
       `4: none of the queue, capability, step-ownership and creator contracts states "${claim}" — one of four exact phrasings, so this is a hint and not a proof. If it ever reds, re-read OPE-1281 step 7a: the residual may be closable by citation`,
     );
   }
@@ -306,17 +326,68 @@ const sessionTurnJs = read("execution/session/turn.js");
   );
   const preV27 = read("execution/session/pre-v27-checkpoint.js");
   ok(
-    flat(read("execution/session/pre-v27-checkpoint.d.ts")).includes("Turns the earlier owner numbered: the next turn takes the next number.") &&
+    says(cited("execution/session/pre-v27-checkpoint.d.ts"), "Turns the earlier owner numbered: the next turn takes the next number.") &&
       /readCount\(\w+\.sequence\)/u.test(preV27) &&
       /turnCount:(\w+),\.\.\.\1>0&&\{latestTurnId:`turn_\$\{String\(\1-1\)\}`\}/u.test(preV27),
     "🔴 5: a session imported from a pre-v27 checkpoint reads the earlier owner's sequence and continues it — the count does not restart at 0 on the upgrade",
   );
   ok(
-    sessionTurn.includes("inside the owning session workflow"),
+    says(sessionTurn, "inside the owning session workflow"),
     "5: a turn runs inside ONE session's workflow — the ordinal this section pins counts turns within that session, never across sessions",
   );
 }
 
+{
+  // 0: the identity pin's own negative controls. Every `says`/`saysNot` above that returns true on
+  // an absent declaration rests on citedDeclaration throwing when the pinned code moved, so prove
+  // that it throws, on a throwaway dist/src, for each way the pin can fail.
+  const fake = mkdtempSync(join(tmpdir(), "oe-pruned-decl-"));
+  try {
+    const moduleRel = "execution/session/turn.d.ts";
+    const moduleCode = PRUNED_DECLARATIONS[moduleRel];
+    const vendoredRel = "compiled/@workflow/core/events-consumer.d.ts";
+    const vendoredCode = PRUNED_DECLARATIONS[vendoredRel];
+    ok(moduleCode?.kind === "module" && vendoredCode?.kind === "vendored", "0: the table pins turn.d.ts by module and events-consumer.d.ts by vendored version");
+    if (moduleCode?.kind !== "module" || vendoredCode?.kind !== "vendored") throw new Error("unreachable");
+    mkdirSync(join(fake, "execution/session"), { recursive: true });
+    mkdirSync(join(fake, "compiled"), { recursive: true });
+
+    assert.throws(() => citedDeclaration(fake, moduleRel), /code its prose describes moved: execution\/session\/turn\.js is gone/u);
+    ok(true, "0: a pinned module that is gone throws");
+    writeFileSync(join(fake, moduleCode.js), "export{};");
+    assert.throws(() => citedDeclaration(fake, moduleRel), /execution\/session\/turn\.js changed/u);
+    ok(true, "0: a pinned module whose bytes differ from the sha256 throws");
+    const same = "export const same=1;";
+    ok(
+      prunedCodeDrift(fake, { kind: "module", js: moduleCode.js, sha256: createHash("sha256").update(same).digest("hex") }) !== undefined,
+      "0 control: the file still holds the other bytes, so a pin of `same` drifts",
+    );
+    writeFileSync(join(fake, moduleCode.js), same);
+    ok(
+      prunedCodeDrift(fake, { kind: "module", js: moduleCode.js, sha256: createHash("sha256").update(same).digest("hex") }) === undefined,
+      "0 control: matching bytes are no drift",
+    );
+
+    assert.throws(() => citedDeclaration(fake, vendoredRel), /vendored @workflow\/core is absent/u);
+    ok(true, "0: a missing vendor stamp throws");
+    writeFileSync(join(fake, "compiled/.vendor-stamp.json"), JSON.stringify({ moduleVersions: { [vendoredCode.pkg]: "0.0.1" } }));
+    assert.throws(() => citedDeclaration(fake, vendoredRel), /vendored @workflow\/core is 0\.0\.1/u);
+    ok(true, "0: a vendored library at another version throws");
+    writeFileSync(join(fake, "compiled/.vendor-stamp.json"), JSON.stringify({ moduleVersions: { [vendoredCode.pkg]: vendoredCode.version } }));
+    const carriedDecl = citedDeclaration(fake, vendoredRel);
+    ok(!carriedDecl.shipped && carriedDecl.carriedBy === vendoredCode, "0 control: the pinned version carries the citation");
+
+    assert.throws(() => citedDeclaration(fake, "execution/not-in-the-table.d.ts"), /names no code that carries its citations/u);
+    ok(true, "0: an absent declaration the table does not name throws");
+
+    writeFileSync(join(fake, moduleRel), "/** shipped prose */");
+    const shippedDecl = citedDeclaration(fake, moduleRel);
+    ok(shippedDecl.shipped && shippedDecl.text === "/** shipped prose */", "0: a shipped declaration is read as its text, and no pin is consulted");
+  } finally {
+    rmSync(fake, { recursive: true, force: true });
+  }
+}
+
 console.log(
-  `✓ eve-turn-concurrency — ${passed} assertions (eve 1.0.0-rc.18 states no at-most-one-turn-body guarantee: it opts new runs into one orchestrator per run, a single-writer guarantee on the run's LOG that an operator env value can turn off and a pre-upgrade run never gets; the single-flight is per process, a background step's cross-instance duplicate runs its body twice, and a turn step is taken to be idempotent; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
+  `✓ eve-turn-concurrency — ${passed} assertions, ${carried} citation(s) carried by an unchanged-code pin (eve 1.0.2 states no at-most-one-turn-body guarantee: it opts new runs into one orchestrator per run, a single-writer guarantee on the run's LOG that an operator env value can turn off and a pre-upgrade run never gets; the single-flight is per process, a background step's cross-instance duplicate runs its body twice, and a turn step is taken to be idempotent; §5 pins the advancing turn_<n> ordinal the OPE-1281 claim key rests on)`,
 );

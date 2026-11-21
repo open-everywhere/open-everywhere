@@ -34,7 +34,7 @@
     "@open-everywhere/provider-notion": "{{OE_VERSION}}",
     "@open-everywhere/provider-slack": "{{OE_VERSION}}",
     "@open-everywhere/provider-teams": "{{OE_VERSION}}",
-    "eve": "1.0.0-rc.18",
+    "eve": "1.0.2",
     "just-bash": "^3.1.0"
   },
   "devDependencies": {

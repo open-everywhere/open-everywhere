@@ -250,7 +250,7 @@ const ANY_WRITE_RE = /\.(?:set|setVirtualContext)\(\s*(?:Initiator)?AuthKey\b|[{
 }
 
 {
-  // The proxied answers writer (eve 1.0.0-rc.18). Two writes live in this module, and the census
+  // The proxied answers writer (eve 1.0.2). Two writes live in this module, and the census
   // sees both. (a) deliverChannelAnswers writes the delivery's auth into a SCRATCH context that only
   // the channel's `deliver` reads. (b) joinAnswerToTurn writes the PARENT's serialized context, and
   // only through continueTurnAuth, so it can never name another principal.
@@ -301,7 +301,7 @@ const ANY_WRITE_RE = /\.(?:set|setVirtualContext)\(\s*(?:Initiator)?AuthKey\b|[{
 }
 
 {
-  // The turn-step writers (eve 1.0.0-rc.18). Four `.set(` writes and two deletes, in order:
+  // The turn-step writers (eve 1.0.2). Four `.set(` writes and two deletes, in order:
   // (1) the delivery's auth, (2) the initiator when it is empty, (3) a sign-in requester, and
   // (4) the closing write, which decides what the step runs with. (4) restores the value read
   // before (1) on a step that yields no turn input and on an attributed answer. A MESSAGE that joins
@@ -434,7 +434,7 @@ const ANY_WRITE_RE = /\.(?:set|setVirtualContext)\(\s*(?:Initiator)?AuthKey\b|[{
   );
   ok(/boundResponder:(\w+)\.boundResponder[,}]/.test(read("runtime/authorization-context.js")), "…runtime/authorization-context.js only forwards one it was given");
   ok(/createAuthorizationContext\(\{scope:(\w+)\.scope,boundResponder:\1\.responder\}\)/.test(read("execution/tool-auth.js")), "…execution/tool-auth.js binds the approval RESPONDER");
-  // The approval responder (eve 1.0.0-rc.18). harness/approval-delivery-coordinator.js is gone: the
+  // The approval responder (eve 1.0.2). harness/approval-delivery-coordinator.js is gone: the
   // responder is now read in harness/hitl/responders.js, off the answer's `responder` label that
   // attributeAnswers stamped (the delivery's own auth), else the session's slot. It is stored on the
   // durable response record and bound only into the approval-response authorizer — it is never
@@ -471,8 +471,16 @@ const ANY_WRITE_RE = /\.(?:set|setVirtualContext)\(\s*(?:Initiator)?AuthKey\b|[{
 }
 
 {
+  // eve 1.0.2 builds the callback's resume value once, then hands it to the hosted hook, else to the
+  // runnable hook. The literal closes after `payloads`, so the regex also proves it carries no `auth`.
+  const callbackRoute = read("execution/connections/callback-route.js");
+  const callbackValue =
+    /let (\w+)=\{kind:`authorization-callback`,payloads:\[\{authorizationCallback:\{attemptId:\w+,callback:\w+,connectionName:\w+\}\}\]\};/.exec(
+      callbackRoute,
+    );
   ok(
-    /resumeAuthorizationCallback\(\w+,\{kind:`authorization-callback`,payloads:\[\{authorizationCallback:/.test(read("execution/connections/callback-route.js")),
+    callbackValue !== null &&
+      new RegExp(`await deliverToHostedHook\\(\\w+,${callbackValue[1]}\\)\\|\\|await resumeRunnableHook\\(\\w+,${callbackValue[1]}\\)`).test(callbackRoute),
     "the connection authorization callback still resumes with NO `auth` field (auth-preserving resume)",
   );
   ok(
@@ -538,7 +546,7 @@ const ANY_WRITE_RE = /\.(?:set|setVirtualContext)\(\s*(?:Initiator)?AuthKey\b|[{
 {
   const turnJs = read("execution/session/turn.js");
 
-  // eve 1.0.0-rc.18: the session loop calls the step through its host (`host.runTurnStep`), and the
+  // eve 1.0.2: the session loop calls the step through its host (`host.runTurnStep`), and the
   // workflow host's runTurnStep is the `turnStep` wrapper.
   const stepCallers = filesMatching(/(?<![\w$.])turnStep\(/u).filter((f) => !/^execution\/(?:session|workflow-host)\/turn-step\.js$/u.test(f));
   ok(

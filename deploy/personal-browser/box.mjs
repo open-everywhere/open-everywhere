@@ -1,12 +1,13 @@
 import http from "node:http";
 import net from "node:net";
-import { bareHost, checkedAddress as fenceAddress, hostAllowed as fenceAllowed, parseAllow } from "./fence.mjs";
+import { bareHost, checkedAddress as fenceAddress, hostAllowed as fenceAllowed, parseAllow, parseUpstream, upstreamTarget, upstreamTunnel } from "./fence.mjs";
 import { createRecorder, nameTarget, SECRET_AUTOCOMPLETE, SECRET_NAME } from "./teach.mjs";
 import { BOX_CAPABILITIES, paymentSubmitRefusal } from "./never.mjs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { chromium } from "playwright";
 
 const KEY = process.env.OE_PB_KEY ?? "";
@@ -22,10 +23,34 @@ const IDLE_MS = Math.max(5, Number(process.env.OE_PB_IDLE_MINUTES ?? "15")) * 60
 const MAX_BODY = 64 * 1024;
 const PROXY_PORT = Number(process.env.OE_PB_PROXY_PORT ?? "8091");
 const SKEW_MS = 2 * 60_000;
+const UPSTREAM = parseUpstream(process.env.OE_BOX_EGRESS_PROXY);
+if (process.env.OE_BOX_EGRESS_PROXY && UPSTREAM === undefined) {
+  console.error("[oe-personal-browser] OE_BOX_EGRESS_PROXY is not an http://host:port origin — refusing to start");
+  process.exit(2);
+}
+const EGRESS_CA = process.env.OE_BOX_EGRESS_CA ?? "";
+delete process.env.OE_BOX_EGRESS_CA;
 const VIEWPORT = { width: 1280, height: 800 };
 
 const hostAllowed = (host) => fenceAllowed(host, ALLOW);
-const checkedAddress = (host) => fenceAddress(host, ALLOW);
+const checkedAddress = (host) => (UPSTREAM !== undefined ? Promise.resolve(upstreamTarget(host, ALLOW)) : fenceAddress(host, ALLOW));
+
+function trustEgressCa() {
+  if (EGRESS_CA.trim() === "") return;
+  const db = path.join(os.homedir(), ".pki", "nssdb");
+  const file = path.join(os.tmpdir(), "oe-egress-ca.crt");
+  try {
+    mkdirSync(db, { recursive: true });
+    writeFileSync(file, EGRESS_CA);
+    try {
+      execFileSync("certutil", ["-d", `sql:${db}`, "-N", "--empty-password"], { stdio: "ignore" });
+    } catch {
+    }
+    execFileSync("certutil", ["-d", `sql:${db}`, "-A", "-t", "C,,", "-n", "oe-egress", "-i", file], { stdio: "ignore" });
+  } catch (err) {
+    console.error(`[oe-personal-browser] could not trust the egress proxy's CA (${String(err)}); a site the proxy decrypts will fail`);
+  }
+}
 
 function urlAllowed(raw) {
   let u;
@@ -84,7 +109,9 @@ function startFenceProxy() {
       return;
     }
     const upstream = http.request(
-      { host: address, port: target.port || 80, method: req.method, path: `${target.pathname}${target.search}`, headers: req.headers },
+      UPSTREAM !== undefined
+        ? { host: UPSTREAM.host, port: UPSTREAM.port, method: req.method, path: target.href, headers: req.headers }
+        : { host: address, port: target.port || 80, method: req.method, path: `${target.pathname}${target.search}`, headers: req.headers },
       (up) => {
         res.writeHead(up.statusCode ?? 502, up.headers);
         up.pipe(res);
@@ -104,6 +131,21 @@ function startFenceProxy() {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
+    if (UPSTREAM !== undefined) {
+      const tunnel = await upstreamTunnel(UPSTREAM, address, port);
+      if (tunnel === undefined) {
+        client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+        return;
+      }
+      upstream = tunnel.socket;
+      client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (tunnel.head.length > 0) client.write(tunnel.head);
+      if (head.length > 0) upstream.write(head);
+      upstream.pipe(client);
+      client.pipe(upstream);
+      upstream.on("error", () => client.destroy());
+      return;
+    }
     upstream = net.connect(port, address, () => {
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head.length > 0) upstream.write(head);
@@ -116,6 +158,7 @@ function startFenceProxy() {
 }
 
 async function launch() {
+  trustEgressCa();
   await startFenceProxy();
   mkdirSync(PROFILE, { recursive: true });
   for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) rmSync(path.join(PROFILE, f), { force: true });

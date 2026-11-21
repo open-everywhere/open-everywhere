@@ -47,7 +47,7 @@ supported routes (Vercel and Docker). The ordered step list lives in ONE place �
 test:quickstart` (`scripts/quickstart-test.ts`) proves the path from the packed tarballs: it
 scaffolds with the packed CLI, installs, and asserts that the eve patch probe reads `patched`,
 that `oe build --check` passes after `oe build`, that the ops MCP server lists its tools, that the
-app typechecks, and that `eve build` succeeds. On eve 1.0.0-rc.18 no patch part is declared, so the
+app typechecks, and that `eve build` succeeds. On eve 1.0.2 no patch part is declared, so the
 probe reads `patched` on any eve, and that one assertion proves nothing about the patch bytes. The
 applier's per-part byte report is the check. The rest of this page explains what the scaffold wrote and why.
 
@@ -137,9 +137,9 @@ that is not the pinned version, and verifies the patched bytes afterwards rather
 own apply step. It applies the patch itself, so core carries no patch tool in its runtime
 dependencies (OPE-2398). And core **refuses to boot, then refuses the first turn**, on an eve that
 lacks a DECLARED runtime patch part (`agent/access/eve-patch-probe.ts`, `agent/hooks/eve-patch-gate.ts`).
-🔴 **On the eve 1.0.0-rc.18 pin (the `eve-v1` branch, OPE-2691) no part is declared, so this refusal is
+🔴 **On the eve 1.0.2 pin no part is declared, so this refusal is
 empty.** An eve without the patch boots and serves wakes, so run `npx oe-eve-patch` and do not wait for a
-refusal. The rc patch carries one part, part 10, and it is CLI-side only, so it has no boot marker. The connector fence and the other controls that patch part 1
+refusal. The eve 1.0.2 patch carries one part, part 10, and it is CLI-side only, so it has no boot marker. The connector fence and the other controls that patch part 1
 carried are absent on every tree until they return on eve's public API (OPE-2690). The seat cuts are
 back as `defineDynamic` tool shims (OPE-2697), with the gaps the glossary **seat cut** entry names.
 [Publishing](../dev/publishing.md) lists them, and carries the recipe and what each refusal means.
@@ -204,6 +204,69 @@ eve says its output may not be deployable, so do not start or deploy it. A Verce
 on Vercel.
 `npx oe upgrade --plan` prints the plan and writes nothing. Review the `roster.lock.json` diff before you deploy.
 `UPGRADING.md` in `@open-everywhere/core` holds the release notes the command reads.
+
+### Upgrade from chat: "upgrade yourself"
+
+An org admin can tell the agent "upgrade yourself" (OPE-2237). The worker tool `upgrade_self`
+(`packages/core/agent/tools/upgrade_self.ts`) runs the same procedure as above: the app's
+`upgrade-open-everywhere` skill. It refuses anybody without org-admin standing, with a plain
+refusal. A domain admin is refused too, because an upgrade changes the whole deployment. Every
+start and every refusal writes an audit row, `upgrade.self.started` or `upgrade.self.refused`,
+attributed to the person who asked. When the gate cannot name the asker, the row names nobody and
+records the turn's own principal as `boundPrincipal`.
+
+It needs two things, and it refuses with the fix when one is missing:
+
+- `accessRequests.configRepo` names the deployment's own repository;
+- a target: the version the admin names, or else the newest release on the npm registry.
+
+The target and the installed core must both be release versions (`X.Y.Z`). The tool refuses a
+prerelease or a dev build, because it cannot tell which one is newer. It also refuses a target
+older than the installed core.
+
+The room's bundle must also grant that repository (fence 1 of
+[the upgrade diff fence](../security/self-upgrade-fence.md#fence-1--the-repo-fence-your-configuration)).
+`checkout_repo`, the first step, is the fence on that grant: it refuses an ungranted room.
+
+The tool changes nothing itself. It returns the steps. The worker clones the repository with
+`checkout_repo`, runs `npx oe upgrade --plan` and `npx oe upgrade` in its sandbox, and opens the pull
+request with `open_pull_request` on the branch `oe-upgrade/<target>`. It never runs `git push`: the
+checkout credential is read-only, and the approve click pushes with the credential every other
+pull request from the agent uses. The sandbox needs `registry.npmjs.org` for the install, so grant
+`PACKAGE_REGISTRY_HOSTS` on that bundle. Every BREAKING, ENV, MANUAL and DEFAULT line goes into the
+pull request body for the admin to decide. The agent never merges, and the merge deploys. After the
+deploy, the status route (`GET /eve/v1/oe/status`) must report the target in `version.core`.
+
+🔴 **The admin check is a front door, not the control on what ships.** A worker that can open a pull
+request on the config repository can open one for anybody who asks. What stops an unreviewed
+upgrade is the person who merges the pull request. Set branch protection on the config repository
+so that only an admin can merge. The approval card applies unless the approver chain lowers
+`open_pull_request`. The [upgrade diff fence](../security/self-upgrade-fence.md) runs only at this
+product repository's own merge preflight. It does not run on your config repository.
+
+**The weekly offer.** The `upgrade-offer` schedule (`packages/core/agent/schedules/upgrade-offer.ts`)
+runs on Mondays at 06:00 UTC. It reads the newest release from the npm registry. When that release
+is newer than the installed core, it posts one message in `accessRequests.adminChannel` with the
+words to take it. With no admin channel or no config repo set, it posts nothing. Every tick writes
+one `upgrade.offer_tick` heartbeat row for each swept org (`schedules.sweepOrgs`), so a dead cron
+and a quiet week do not look the same. An unreadable registry, an installed core that is not a
+release version, or a failed post skips the offer for that week.
+
+It offers each release once. The record of the offer is a deployment meta key,
+`upgrade.offer.v1:<version>`. The `upgrade.offered` audit row is the evidence of the post, not the
+record. When the meta read fails, the tick treats the release as offered, so a store outage never
+posts again. These are the stated limits of the once:
+
+- If the meta write fails after the post, the next week offers the same release again.
+- The tick reserves the post before it sends the message. If the tick stops between the two and
+  runs again within 60 seconds, it records the release as offered, but no message is in the channel.
+- If the tick stops after it sends the message and before it writes the record, and runs again
+  more than 60 seconds later, it posts twice.
+- If the tick stops after the audit rows and before the meta write, and runs again within 60
+  seconds, it writes a second `upgrade.offered` row for one post.
+
+To turn the offer off, add an `exclude` for `schedule/upgrade-offer`, with a reason, in
+`roster.config.ts`.
 
 One honest caveat about the `roster.lock.json` diff: the lock compares **contribution keys**, not versions. A
 version bump that changes an existing capability's behaviour without adding or removing a

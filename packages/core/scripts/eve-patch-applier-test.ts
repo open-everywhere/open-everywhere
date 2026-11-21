@@ -152,7 +152,7 @@ eq(checkEveApplierPacking({ bin: coreManifest.bin, files: coreManifest.files }),
 ok(EVE_PATCH_DIR === "patches" && coreManifest.files.includes(EVE_PATCH_DIR), "§3b core's files allowlist carries the patch directory");
 
 const declaredMarkers = EVE_PATCH_PARTS.map((part) => part.marker);
-ok(declaredMarkers.length === 0, "§3c EVE_PATCH_PARTS declares no part on eve 1.0.0-rc.18 (OPE-2691)");
+ok(declaredMarkers.length === 0, "§3c EVE_PATCH_PARTS declares no part on eve 1.0.2 (OPE-2691)");
 eq(
   checkEvePatchPartTable({ declaredMarkers, patchMarkers: evePatchPartMarkers(PATCH_BODY) }),
   [],

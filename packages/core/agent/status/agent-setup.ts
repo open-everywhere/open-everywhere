@@ -189,6 +189,9 @@ const DOMAIN_CONTROLS: readonly string[] = [
 const CONFIG_CHANGES =
   "change my setup from chat: let a room use a service or a repository, add a new service for me to use, set up an agent for a channel, or let another system send me events. Each one starts as a card and becomes a pull request that an admin merges";
 
+const SELF_UPGRADE =
+  'upgrade me to a newer release: say "upgrade yourself", and I open the upgrade pull request. Nothing ships until someone merges it';
+
 function configGaps(f: AgentSetupFacts, repoWords?: string): { ready: boolean; gaps: SetupGap[]; operator: string[] } {
   const c = f.configChanges;
   const gaps: SetupGap[] = [];
@@ -266,7 +269,7 @@ export function renderAgentSetup(f: AgentSetupFacts): AgentSetupAnswer {
   const isAdmin = f.standing.kind === "org-admin" || f.standing.kind === "domain-admin";
   const config = configGaps(f);
   const controls = f.standing.kind === "org-admin" ? RUNTIME_CONTROLS : DOMAIN_CONTROLS;
-  const adminCanDoNow = [...controls, ...(config.ready ? [CONFIG_CHANGES] : [])];
+  const adminCanDoNow = [...controls, ...(config.ready ? [CONFIG_CHANGES] : []), ...(config.ready && f.standing.kind === "org-admin" ? [SELF_UPGRADE] : [])];
   return {
     you: youSentence(f, org, room),
     admins: adminsSentence(f, org, room),

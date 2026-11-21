@@ -101,6 +101,9 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
   ok(a.adminCanDoNow.some((s) => /change my setup from chat/.test(s) && /pull request that an admin merges/.test(s)), "§1 everything ready: config changes from chat are offered");
   ok(a.connectedTo.includes("GitHub: the app is installed for acme"), `§1 an admin reads which owner the app is installed for (saw: ${a.connectedTo.join(" | ")})`);
   ok(a.adminCanDoNow.includes("stop everything I'm doing at once, and start me again"), "§1 an org admin can start me again");
+  ok(a.adminCanDoNow.some((s) => /"upgrade yourself"/.test(s)), "§1 OPE-2237 an org admin reads that they can upgrade me from chat");
+  const notReady = renderAgentSetup({ ...base, configChanges: { adminChannel: false, appInstalled: "no" } });
+  ok(!notReady.adminCanDoNow.some((s) => /"upgrade yourself"/.test(s)), "§1 OPE-2237 with no config repo ready, the upgrade is not offered (the tool would refuse)");
   ok(a.connectedTo.includes("Also connected here: Notion") && a.connectedTo.includes("Repositories I can work on here: acme/web"), "§1 the room's services and repositories are listed");
 }
 {
@@ -206,6 +209,9 @@ const render = (name: string, f: AgentSetupFacts): AgentSetupAnswer => {
   const a = render("domain admin controls", { ...base, standing: { kind: "domain-admin", domain: "payments" }, roomDomain: { name: "payments", admins: ["slack/T1/U_ME"] }, orgAdmins: ["slack/T1/U_ANA"] });
   ok(a.adminCanDoNow.some((s) => /starting me again needs an org admin/.test(s)) && !a.adminCanDoNow.includes("stop everything I'm doing at once, and start me again"), "§1 🔴 a domain admin is not told they can start me again");
   ok(a.adminCanDoNow.some((s) => /spending limit for one of this domain's rooms/.test(s)), "§1 a domain admin's spending limit is per room");
+  const ready = renderAgentSetup({ ...base, standing: { kind: "domain-admin", domain: "payments" }, roomDomain: { name: "payments", admins: ["slack/T1/U_ME"] }, orgAdmins: ["slack/T1/U_ANA"], github: { mode: "app", appConfigured: true, appSlug: "acme-oe", tokenSet: "no" }, configChanges: { ...READY, appInstalled: "yes" } });
+  ok(ready.adminCanDoNow.some((s) => /Each one starts as a card/.test(s)), "§1 OPE-2237 control: config changes are ready for this domain admin, so the absence below means something");
+  ok(!ready.adminCanDoNow.some((s) => /"upgrade yourself"/.test(s)), "§1 🔴 OPE-2237 a domain admin is not told they can upgrade me (the tool refuses a domain admin)");
   const b = render("admin elsewhere", { ...base, standing: { kind: "member" }, adminElsewhere: ["the payments team"], orgAdmins: ["slack/T1/U_ANA"] });
   ok(b.you === "You're not an admin here. You're an admin for the payments team.", `§1 🔴 a domain admin asking elsewhere is not told a bare "not an admin" (saw: ${b.you})`);
 }

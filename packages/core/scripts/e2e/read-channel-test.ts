@@ -332,6 +332,41 @@ const ok = (cond: boolean, label: string) => {
       ok(o.kind === "settled-relay" && o.answerId === "1758498804.000100", `a fold edit's answerId is the id it rewrote (got "${o.kind}", ${o.answerId})`);
     }
 
+    {
+      const forward = rowAt("work.forwarded", "2026-04-15T09:30:02.500Z", { seatSessionId: "s1", wakeId: "w1", requestId: "r1" });
+      const workStart = rowAt("delegation.task_started", "2026-04-15T09:30:40.000Z", { task: "t9", session: "work-s", request: "r1" });
+      const workSettle = rowAt("delegation.task_settled", "2026-04-15T09:31:10.000Z", { task: "t9", session: "work-s", status: "completed" });
+      const waiting = [handAck, forward];
+      const { deps } = makeDeps([waiting, waiting, waiting, waiting, waiting, waiting, waiting, waiting, waiting, waiting, [workStart, ...waiting], [settledAnswer, workSettle, workStart, ...waiting]]);
+      const o = await pollForFinalReply(deps, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o.kind === "settled-relay" && o.answerId === "1758498880.000300", `a done:false ack holds the wait while the forwarded task has not started (got "${o.kind}", ${o.answerId}: ${o.detail})`);
+
+      const doneAck = rowAt("reply.post", "2026-04-15T09:30:02.000Z", { sessionId: "s1", wakeId: "w1", chars: 79, done: true, id: "1758498804.000100" });
+      const { deps: d2 } = makeDeps([[forward, doneAck]]);
+      const o2 = await pollForFinalReply(d2, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o2.kind === "quiet", `a done:true reply with nothing started still ends on the quiet clock (got "${o2.kind}": ${o2.detail})`);
+
+      const inSeatAnswer = rowAt("reply.post", "2026-04-15T09:30:20.000Z", { sessionId: "s1", wakeId: "w1", chars: 400, done: true, id: "1758498820.000200" });
+      const { deps: d3 } = makeDeps([[inSeatAnswer, handAck]]);
+      const o3 = await pollForFinalReply(d3, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o3.kind === "quiet", `newest first: a done:true answer after the done:false ack, nothing started ⇒ "quiet" (got "${o3.kind}": ${o3.detail})`);
+
+      const handOffEarly = rowAt("reply.post", "2026-04-15T09:30:05.000Z", { sessionId: "s1", wakeId: "w1", chars: 90, done: false, id: "1758498805.000200" });
+      const still4 = [handOffEarly, forward, doneAck];
+      const { deps: d4 } = makeDeps([still4, still4, still4, still4, still4, still4, still4, still4, still4, still4, [workStart, ...still4], [settledAnswer, workSettle, workStart, ...still4]]);
+      const o4 = await pollForFinalReply(d4, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o4.kind === "settled-relay" && o4.answerId === "1758498880.000300", `newest first: a done:false hand-off after a done:true line holds the wait (got "${o4.kind}", ${o4.answerId}: ${o4.detail})`);
+
+      const seqAck = { ...handAck, seq: 1, ts: "2026-04-15T09:30:30.000Z" };
+      const seqAnswer = { ...inSeatAnswer, seq: 2, ts: "2026-04-15T09:30:10.000Z" };
+      const { deps: d5 } = makeDeps([[seqAnswer, seqAck]]);
+      const o5 = await pollForFinalReply(d5, "w1", "s1", 100_000, 4000, 12_000);
+      ok(o5.kind === "quiet", `seq: the higher-seq done:true reply is the newest, despite its earlier ts ⇒ "quiet" (got "${o5.kind}": ${o5.detail})`);
+      const { deps: d6 } = makeDeps([[{ ...seqAck, seq: 2, ts: "2026-04-15T09:30:10.000Z" }, { ...seqAnswer, seq: 1, ts: "2026-04-15T09:30:30.000Z" }]]);
+      const o6 = await pollForFinalReply(d6, "w1", "s1", 40_000, 4000, 12_000);
+      ok(o6.kind === "timeout", `seq: the higher-seq done:false reply is the newest, despite its earlier ts ⇒ the wait holds (got "${o6.kind}": ${o6.detail})`);
+    }
+
     ok(settledAnswerMessage({ kind: "quiet", replyCount: 1, detail: "" }, messages) === undefined, "a quiet outcome hands the judge no message");
     ok(settledAnswerMessage({ kind: "timeout", replyCount: 1, answerId: "1758498880.000300", detail: "" }, messages) === undefined, "a timeout hands the judge no message, even with an id");
   }

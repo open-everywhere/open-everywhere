@@ -7,6 +7,8 @@ import { ingestUntrustedModelOutput } from "./untrusted.js";
 import { browserEvaluateHosts } from "./browser-hosts.js";
 import { resolveSandboxBackend } from "../sandbox/backend-select.js";
 import { registerExtraEgressHosts } from "./extra-hosts.js";
+import { boxEgressBehindProxy } from "./self-host-egress.js";
+import { getSettings } from "../settings/settings.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface BrowserToolEntry {
@@ -22,11 +24,19 @@ const BROWSER_TOOLS_SLUG = "browser_tools";
 export function browserPlaneRefusal(): string | undefined {
   const backend = resolveSandboxBackend();
   if (backend === "vercel") return undefined;
+  if (boxEgressBehindProxy()) {
+    if (getSettings().browser.boxImage.trim() !== "") return undefined;
+    return "browser containers can run behind the egress proxy here (`sandbox.boxDockerNetwork`), but `browser.boxImage` is empty, so there is no image to start. Build deploy/browser-qa and set `browser.boxImage`. Nothing arms here (agent/access/browser-toolkit.ts).";
+  }
   const why =
     backend === "justbash"
       ? "the justbash backend runs no native binary, so it cannot run the agent-browser CLI or Chromium"
       : "the docker backend's session containers sit outside the egress proxy and take no host allow-list (OPE-2407), so the declared hosts and the credential stamp cannot hold";
-  return `the browser plane needs the Vercel Sandbox backend: ${why}. Nothing arms here (agent/access/browser-toolkit.ts).`;
+  return `the browser plane needs the Vercel Sandbox backend, or browser containers behind the egress proxy (\`sandbox.boxDockerNetwork\` with \`egress.proxyUrl\`, and \`browser.boxImage\`): ${why}. Nothing arms here (agent/access/browser-toolkit.ts).`;
+}
+
+export function browserRunsInBox(): boolean {
+  return resolveSandboxBackend() !== "vercel" && browserPlaneRefusal() === undefined;
 }
 
 const BROWSER_EGRESS_SOURCE = "agent-browser";

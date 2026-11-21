@@ -15,18 +15,24 @@ It ships as **one flag-gated layer**: the [agent-browser toolkit](#the-agent-bro
 declaration. The framework default is **off**, because core declares no host. A **new app** from
 `@open-everywhere/create` ships it **on**: its `agent/settings/settings.ts` sets the flag, and its
 `agent/access/browser-hosts.ts` declares the sandbox's own dev server (`localhost` and `127.0.0.1`).
-Set `browser: { enabled: false }` to turn it off. It is **Vercel Sandbox only** for now. The
-blocker is the self-host sandbox backend, not the image: see
-[Why it does not run on Docker](#why-it-does-not-run-on-docker). Off Vercel the whole plane
-**refuses and says why**: no tool mounts, no declared egress host opens, and nothing bakes. The flag stays armed and
-the deployment boots normally — one loud line names the sandbox backend and why it cannot run the browser. A new app that
-deploys to Docker therefore runs with no browser and logs that line at boot; set
-`browser: { enabled: false }` there to silence it.
+Set `browser: { enabled: false }` to turn it off. It runs in two places:
+
+- **The Vercel Sandbox.** The browser runs in the session sandbox, behind the sandbox firewall.
+- **The Docker route, with the browser overlay** (OPE-2671). Each session's browser runs in its own
+  container on an internal network behind the egress proxy, and the proxy holds that container to the
+  session's own policy. See [On Docker: a container per session](#on-docker-a-container-per-session).
+
+Anywhere else the whole plane **refuses and says why**: no tool mounts, no declared egress host
+opens, and nothing bakes. The flag stays armed and the deployment boots normally — one loud line
+names the sandbox backend and why it cannot run the browser. A new app that deploys to the plain
+Docker stack therefore runs with no browser and logs that line at boot. Set
+`browser: { enabled: false }` there to silence it, or add the overlay.
 
 🔴 **No environment variable overrides that refusal.** The plane arms only when the agent's shell
-runs in the Vercel Sandbox: on a Vercel host (Vercel's own `VERCEL`), or with the setting
-`sandbox.useVercelSandbox: true` on any other host. In both cases the browser runs in the Vercel
-Sandbox, which can run it. Until OPE-2411, `OE_PLATFORM=vercel` re-armed the plane on a self-host
+runs in the Vercel Sandbox (on a Vercel host, Vercel's own `VERCEL`, or with the setting
+`sandbox.useVercelSandbox: true` on any other host), or when three settings in Git put browser
+containers behind the egress proxy: `egress.proxyUrl`, `sandbox.boxDockerNetwork` and
+`browser.boxImage`. Until OPE-2411, `OE_PLATFORM=vercel` re-armed the plane on a self-host
 deployment for a browser its sandbox backend could not run. OPE-2411 deleted that override.
 
 ## The agent-browser toolkit (flag-gated)
@@ -85,6 +91,7 @@ Fail-closed matrix:
 | Flag set, declaration empty | Does **not** arm; one loud log line says why. |
 | Declaration holds an invalid row | The boot **throws**. Any bad row invalidates the whole declaration — there is no partial reach. |
 | Armed, off-Vercel | Nothing arms: no tool mounts, no declared egress host opens, no template bakes. One loud line names the backend and why it cannot run the browser (justbash runs no native binary; docker sits outside the egress proxy). The refusal is one core road (`browserPlaneRefusal`), read by the config loader every arming path goes through — and in core by the grain resolver and by the plane's own egress opener, so a registration that arrived by another door mounts nothing and opens no host. |
+| Armed, off-Vercel, behind the egress proxy with `sandbox.boxDockerNetwork` and `browser.boxImage` | Armed in a container (OPE-2671). The tools mount; each one runs `agent-browser` in the session's own container with `docker exec`. The session sandbox bakes nothing. The proxy holds the container's IP to the session's policy. With `browser.boxImage` empty, the plane refuses and the line names that setting. |
 | Armed, off-Vercel, `sandbox.useVercelSandbox: true` | Armed as on Vercel. The agent's shell runs in the Vercel Sandbox, so the browser runs there too. (`OE_PLATFORM=vercel` armed the plane here with no Vercel Sandbox until OPE-2411 deleted it.) |
 | Armed, on Vercel | Tools mount on worker seats; both containment walls carry the declared hosts; the browser is pre-baked into the sandbox template. |
 
@@ -235,33 +242,80 @@ instructions say so, and `bash` refuses the unredirected form up front rather th
 per-call timeout behind it — are tunable: see
 [`bash.backgroundGuard` and `bash.timeoutMs`](../deploy/configuration-reference.md#bash-hang-guard).
 
-### Why it does not run on Docker
+### On Docker: a container per session
 
-Chromium in the image would not lift the refusal. The blocker is the self-host sandbox backend
+Chromium in the app image would not run the browser. The session sandbox backend is the blocker
 (OPE-2666 measured it):
 
-| Backend | Can it run the browser? | Why |
+| Backend | Can the session sandbox run the browser? | Why |
 |---|---|---|
 | `justbash` (what the shipped image runs) | **No** | It is an in-process JS shell. It runs only in-process JS commands (its built-ins and any registered ones), never a native binary, so no `agent-browser` CLI and no Chromium can start in it, whatever the image carries. A probe on this build: `node -v` gives `command not found` while Node is on the host. The vendor README says the same: use the Vercel Sandbox "if you need a full VM with arbitrary binary execution". It cannot run the dev server either, so the localhost QA loop has nothing to look at. |
 | `docker` | **Not with the same guarantees** | It runs real binaries, but eve starts each session container on the daemon's default network, outside the egress proxy, and takes only `"allow-all"` or `"deny-all"` ([OPE-2407](../deploy/platforms/self-host-egress.md)). A declared-host list and a credential stamp cannot hold there. The shipped image cannot run it at all: eve provisions the template at build time, and the build stage has no daemon. |
 
-So the plane keeps its refusal on both, and the boot line names the backend and its reason.
+So OE does not run the browser in the session sandbox on Docker. Since OPE-2671 it runs the browser
+in **its own container, one per session, behind the egress proxy**:
 
-**What would lift it.** Two shapes keep every guarantee above. Neither ships yet, so no image
-variant exists and there is no image size cost to state.
+1. The first `browser_*` call in a session starts a container from `browser.boxImage`, on the
+   internal network `sandbox.boxDockerNetwork`. OE starts it itself with `docker run`, so the app
+   needs the docker CLI and the daemon socket. The network has no route to the internet, so the
+   container's one way out is the egress proxy.
+2. OE refuses the open when that network is not `internal`. It then pushes `"deny-all"` for the
+   container's own IP, and binds the IP to the session: it pushes the **session's own compiled
+   policy** for it (`packages/core/agent/access/self-host-egress.ts` `bindSessionBox`). Every
+   later push for the session (a turn that narrows it, a mid-turn brokered apply) reaches the
+   container too. A failed push, bind or CA import stops the container.
+3. Each vendor tool's `agent-browser` call runs in that container with `docker exec`
+   (`packages/adapters/agent/browser/docker-box.ts`). A screenshot is copied back into the session
+   sandbox at the same path, so `describe_image` reads it. A file to upload is copied into the
+   container first.
+4. The container stops after ten minutes with no browser call, or at its one-hour cap. Its stop
+   drops its IP's policy at the proxy.
 
-1. **The docker backend behind the proxy.** eve's docker options need a network field (an upstream
-   change), so the session container joins the internal network and its source IP gets its own
-   session policy. Tier B (`OE_EGRESS_MITM=1`) then stamps the credential, and Chromium trusts the
-   proxy's CA. This is the only shape that also gives the localhost QA loop, because the dev server
-   runs in the same container.
-2. **A per-session browser container behind the proxy.** The long-lived-box docker path
-   ([the personal browser's](./personal-browser.md#the-two-stacks)) can start a container on a
-   named network, but today only with open egress: `dockerRunArgs`
-   (`packages/adapters/agent/sandbox/long-lived-box.ts`) refuses a host allow-list, and nothing
-   pushes a session policy for a box's own IP. Both have to change. Then, on the internal network
-   behind the proxy, the browser would reach only what the proxy's per-IP session policy admits. It serves declared third-party hosts, not the localhost
-   loop, and it needs a driver that sends the vendor tools' `agent-browser` calls to that container.
+**What holds, as on Vercel:**
+
+| Guarantee | How it holds on Docker |
+|---|---|
+| Declared hosts only | Two walls, as in the sandbox. agent-browser's `--allowed-domains` holds the page to the declared hosts. The proxy decides each request from the container's IP against the session's policy, which is the same reach the session sandbox has on Vercel. A host outside that policy is refused at the proxy, on every hop. |
+| The credential never enters the browser | The container's environment and argv carry no credential. Under Tier B (`OE_EGRESS_MITM=1`) the proxy stamps a declared credential on the request to its host. OE passes the proxy's CA to the container, which trusts it in Chromium's store. Under Tier A the proxy cannot stamp a header, so a credentialed row reaches its host logged out. |
+| Reserved hosts | The declaration refuses `github.com` and `codeload.github.com` at boot, on every route, so no browse row can name them. |
+| The firewall is outside the browser | The internal network has no WAN route; the proxy is the only way out, and it keys on the container's IP. |
+
+**What does not hold, or is different:**
+
+- **No localhost QA loop.** The container's `localhost` is its own, and the dev server runs in the
+  session sandbox (which on `justbash` cannot run it anyway). A `localhost` row reaches nothing
+  there. That loop needs the docker *session* backend behind the proxy, which needs an upstream eve
+  docker network option. It is not built.
+- **The socket.** The app holds the docker daemon socket, so an app compromise is a host compromise.
+  That is the docker backend's rating too. The overlay says so.
+- **A short window at the start.** The container runs before its first push lands. The proxy denies
+  an IP it holds no policy for, so that window is default deny, unless a container that stopped
+  without its drop left a policy on the same IP.
+- **No private-address refusal at the proxy.** The proxy decides by host name and refuses no
+  private or link-local address. A declared host whose name resolves to one (the cloud metadata
+  endpoint) is not refused there, and a session policy that is allow-all lets the container reach
+  what the proxy reaches on ports 80 and 443. agent-browser's `--allowed-domains` still holds the
+  page to the declared names. The session's own shell meets the same proxy, so the container gets
+  no reach the session lacks.
+- **The image size.** Not measured: no docker daemon ran in the build of OPE-2671. The image is the
+  Playwright base plus `agent-browser` and its Chrome build.
+
+**Turn it on.** Build the image on the daemon (`docker build -t oe-browser-qa:1 deploy/browser-qa`),
+declare the settings in `agent/settings/settings.ts`, and bring the stack up with the overlay:
+
+```ts
+sandbox: { selfHostBackend: "justbash", boxDockerNetwork: "oe-net-box" },
+egress: { proxyUrl: "http://oe-egress-proxy:8080", denialLog: "/var/log/oe-egress/denied.log" },
+browser: { enabled: true, boxImage: "oe-browser-qa:1" },
+```
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.browser.yml up --build
+```
+
+Proof: `npm run test:browser-box-egress --workspace @open-everywhere/adapters` drives the open, the
+bind and the close against the proxy's own decision code (`deploy/egress-proxy/control/`), with a
+fake docker CLI. No live docker run of this route is recorded yet.
 
 ## Scope: this kit and the personal browser
 
@@ -276,7 +330,8 @@ OE has two browsers, and each has its own rules:
 
 General web work for a person (read a site with no API, fill a form, check a page) belongs to the
 personal browser. Its reads are open. The first click or keystroke on a site needs the person's own
-card for that site. It ships off. On docker it opens only under `egress.allowUnenforced`, with a
-fence inside the box and no network firewall (see [the two stacks](./personal-browser.md#the-two-stacks)). This kit stays scoped to the
+card for that site. It ships off. On docker it opens behind the egress proxy with the browser
+overlay, or under `egress.allowUnenforced` with a fence inside the box and no network firewall
+(see [the two stacks](./personal-browser.md#the-two-stacks)). This kit stays scoped to the
 deployment's declared hosts. If it did a person's own tasks, an org-wide row would become the
 approval for one person's action, and the person's card would not be asked.

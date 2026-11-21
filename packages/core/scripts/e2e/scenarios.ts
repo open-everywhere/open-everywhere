@@ -10753,7 +10753,8 @@ export const SCENARIOS: readonly Scenario[] = [
 
         const stopFrom = await presenceSince(ctx, "stopFrom", 0);
         await linear.comment(issue.id, ENGAGED_STOP_ASK);
-        await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        const stopReply = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        if (stopReply) seen.add(stopReply.id);
         await gateStandDownMarked(ctx, { sinceIso: stopFrom, platform: "linear" });
 
         const highWater = await auditedSilenceMark(ctx, { platform: "linear", liveFrom: mentionFrom });
@@ -10769,8 +10770,9 @@ export const SCENARIOS: readonly Scenario[] = [
         await linear.comment(issue.id, `noting for the record: this run's build token is ${idleMarker}. No reply needed.`);
         const catchUpFrom = await presenceSince(ctx, "catchUpFrom", 0);
         const triggerMarker = factToken("lin-trig");
+        const beforeTrigger = new Set([...seen, ...(await linear.comments(issue.id)).map((c) => c.id).filter((id) => id.length > 0)]);
         await linear.comment(issue.id, linear.mention(`ref ${triggerMarker} — which build token was posted here while you were not listening? Reply with just the token.`));
-        const caughtUp = await linear.awaitAppReply(issue.id, seen, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        const caughtUp = await linear.awaitAppReply(issue.id, beforeTrigger, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
         ctx.gate(caughtUp !== undefined, "catch-up: the @mention woke the issue again after the stand-down — the wake this leg reads the context of");
         ctx.log(`catch-up: the reply ${caughtUp?.body.includes(idleMarker) ? "REPEATS" : "does not repeat"} the idle-window token (evidence, not a gate)`);
         await gateSeatCatchUp(ctx, { sinceIso: catchUpFrom, platform: "linear", trigger: triggerMarker, caughtUp: idleMarker, stale: [staleMarker], ...(caughtUp ? { replyText: caughtUp.body } : {}) });
@@ -10950,6 +10952,52 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`write: ${cardText ? "a DM card names" : "no DM card text names"} the ${CONNECTION} connection (evidence, not a gate)`);
       const posted = (await room.history(roomMark)).filter((m) => m.text.includes(postMarker));
       ctx.gate(posted.length === 0, "write: nothing was posted in the person's name before an approval");
+    },
+  },
+  {
+    id: "S-SLACK-PUBLIC-SEARCH",
+    title:
+      "Public-channel search for the bot (OPE-2678): a message planted in a PUBLIC channel the bot is NOT in is found from the e2e channel through search_slack_public, the answer cites it, and a slack.public_search audit row records the asker and a non-zero count",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const auditRead = ctx.auditRead;
+      if (!auditRead) return ctx.skip("needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)");
+      const unjoined = (process.env[ENV.slackUnjoinedChannel] ?? "").trim();
+      if (unjoined === "") return ctx.skip(`set ${ENV.slackUnjoinedChannel} to a PUBLIC channel the driver user is in and the bot is NOT`);
+      const slack = ctx.slack!;
+      const room = slack.withChannel(unjoined);
+      if (await room.isMember(slack.botUserId)) {
+        return ctx.skip(`${ENV.slackUnjoinedChannel}=${unjoined} has the bot in it — the scenario needs a channel the bot cannot read by membership`);
+      }
+      const { userId: personId } = await slack.identity();
+      const codename = factToken("pubsearch");
+      await room.post(`e2e S-SLACK-PUBLIC-SEARCH: the beta codename is ${codename}`);
+      const since = await presenceSince(ctx, "ask", 60_000);
+      const { ts: ask } = await slack.post(slack.mention(fixtureLine("Search the public Slack channels for the e2e S-SLACK-PUBLIC-SEARCH beta codename and tell me what it is, with a link to the message.")));
+      const answer = await slack.awaitAnyReply(ask, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isPendingWorkHandoff(m.text) });
+      const refused = await auditRead({ sinceIso: since, actions: ["slack.public_search.refused"] });
+      const reasons = refused.map((r) => String((r.detail as { reason?: unknown } | undefined)?.reason));
+      if (reasons.includes("missing-scope")) {
+        return ctx.skip("the Slack app lacks search:read.public — paste the current manifest into the Slack app and reinstall it, then re-run");
+      }
+      ctx.gate(answer.text.includes(codename), `the answer carries the codename planted in a channel the bot is not in (${codename}); refusals seen: ${reasons.join(",") || "none"}`);
+      ctx.gate(/https:\/\/[^\s>|]+\.slack\.com\/archives\//u.test(answer.text), "the answer cites the message by its Slack permalink");
+      const rows = await pollOptional(
+        async () => {
+          const found = (await auditRead({ sinceIso: since, actions: ["slack.public_search"] })).filter((r) => {
+            const d = r.detail as { requester?: unknown; resultCount?: unknown } | undefined;
+            return d?.requester === personId && typeof d.resultCount === "number" && d.resultCount > 0;
+          });
+          return found.length > 0 ? found : undefined;
+        },
+        { timeoutMs: REPLY_WAIT, what: "a slack.public_search row naming the driver with a non-zero result count" },
+      );
+      ctx.gate((rows?.length ?? 0) > 0, "audit: a slack.public_search row names the asker and a non-zero result count");
+      ctx.gate(!(rows ?? []).some((r) => JSON.stringify(r.detail ?? {}).includes(codename)), "audit: the row never carries the matched text");
     },
   },
   {

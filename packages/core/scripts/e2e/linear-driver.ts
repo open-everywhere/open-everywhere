@@ -50,6 +50,23 @@ export function buildAgentSessionEvent(input: AgentSessionForgeInput): Record<st
   };
 }
 
+export const LINEAR_ANSWERED_ACK_BODY = "Answered in the comments.";
+
+export function pickAppReply(
+  comments: readonly LinearComment[],
+  isApp: (c: LinearComment) => boolean,
+  beforeIds: ReadonlySet<string>,
+  skip?: (c: LinearComment) => boolean,
+): LinearComment | undefined {
+  const stamp = (c: LinearComment): number => {
+    const t = Date.parse(c.createdAt);
+    return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+  };
+  return [...comments]
+    .sort((a, b) => stamp(a) - stamp(b) || 0)
+    .find((c) => isApp(c) && !beforeIds.has(c.id) && c.body.trim() !== LINEAR_ANSWERED_ACK_BODY && !(skip?.(c) ?? false));
+}
+
 export class LinearDriver {
   constructor(private readonly cfg: LinearDriverConfig) {}
 
@@ -146,7 +163,7 @@ export class LinearDriver {
     opts: { timeoutMs: number; skip?: (c: LinearComment) => boolean },
   ): Promise<LinearReplyWithActivity> {
     const c = await pollUntil(
-      async () => (await this.comments(issueId)).find((comment) => this.isAppComment(comment) && !beforeIds.has(comment.id) && !(opts.skip?.(comment) ?? false)),
+      async () => pickAppReply(await this.comments(issueId), (comment) => this.isAppComment(comment), beforeIds, opts.skip),
       { timeoutMs: opts.timeoutMs, what: `an app-authored (user.id=${this.cfg.appUserId}) reply comment on issue ${issueId}${opts.skip !== undefined ? " that is not skipped as an interim ack" : ""}` },
     );
     const activityId = await this.resolveActivityId(issueId, c.id).catch(() => undefined);

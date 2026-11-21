@@ -34,6 +34,9 @@ export function assembleAccessInstructions(access: EffectiveAccess, domains: rea
         `these from this channel. That work runs on the provider's own tools, never on a connection.`,
     );
   }
+  if (access.optInTools.length > 0) {
+    caps.push(`- Opt-in tools switched on here: ${access.optInTools.map((t) => `\`${t}\``).join(", ")}`);
+  }
   if (access.plugins.length > 0) {
     caps.push(`- Plugins granted: ${access.plugins.map((p) => `\`${p}\``).join(", ")}`);
   }

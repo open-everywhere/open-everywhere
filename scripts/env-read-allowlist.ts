@@ -80,6 +80,7 @@ allow("platform", [
   ["VERCEL_URL", "the per-deployment hostname Vercel injects — the self-dispatch route builds its own callback origin from it. No operator sets it."],
   ["VERCEL_PROJECT_PRODUCTION_URL", "the project's production hostname, injected by Vercel and preferred over VERCEL_URL so a preview never dispatches to itself."],
   ["NO_PROXY", "the standard no-proxy exemption list — which network destinations bypass the proxy. `host-egress.ts` mirrors undici's own `EnvHttpProxyAgent` reading of it, so this names the host's network, not behaviour."],
+  ["NODE_EXTRA_CA_CERTS", "Node's own extra-CA path. The compose stack points it at the egress proxy's Tier B CA; the docker box backend reads that file back so a browser container behind the proxy trusts the same CA the app does (OPE-2671). It names a file the host provides, not behaviour."],
   ["EVE_DOCKER_PATH", "eve's OWN variable: eve's docker-cli sandbox binding reads it to find the docker binary on this host. This repo reads it back only so the sandbox stop path and `oe upgrade` reach the same binary eve does."],
 ]);
 

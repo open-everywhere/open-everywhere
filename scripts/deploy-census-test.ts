@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,6 +27,10 @@ import {
 } from "../packages/core/agent/ops/census.js";
 import { consequentialAuditActions, CONSEQUENTIAL_AUDIT_ACTIONS } from "../packages/core/agent/audit/action-registry.js";
 import { OAUTH_SIGNING_SECRET_NAME } from "../packages/core/agent/control/oauth-tokens.js";
+import { SLOT_DIR } from "../packages/core/agent/scaffold/roster-config.js";
+import { readLock } from "../packages/core/agent/scaffold/roster-fs.js";
+import { mountedRowsFromLock } from "../packages/core/agent/scaffold/roster-plan.js";
+import { PRIMITIVE_MOUNTED } from "../packages/core/agent/scaffold/tool-roster.js";
 import type { Bundle } from "../packages/core/agent/access/bundle.js";
 import type { ConnectorCredentials } from "../packages/core/agent/access/connector-credentials.js";
 import type { WebhookHook } from "../packages/core/agent/webhooks/config.js";
@@ -286,13 +291,42 @@ check("the SHIPPED arming table names control-mcp.ts, decides on the tracked iss
   assert.match(entry!.darkReason, new RegExp(OAUTH_SIGNING_SECRET_NAME, "u"), "the reason must name what to set");
 });
 
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function armingKeysNotMounted(arming: readonly { readonly channel: string }[], repoRoot: string): string[] {
+  const { lock, error } = readLock(repoRoot);
+  assert.ok(lock !== undefined, `the roster lock at ${repoRoot} must load (${error ?? "absent"}), or this join proves nothing`);
+  const mounted = new Set(
+    mountedRowsFromLock(lock)
+      .filter((row) => row.key.startsWith(`${SLOT_DIR.channel}/`) && row.value === PRIMITIVE_MOUNTED)
+      .map((row) => row.key.slice(SLOT_DIR.channel.length + 1)),
+  );
+  assert.ok(mounted.size > 0, "the roster lock must mount at least one channel, or this join proves nothing");
+  return arming.map((entry) => entry.channel).filter((channel) => !mounted.has(channel));
+}
+
 check("every channel the arming table names is a real mounted channel file", () => {
-  for (const entry of ROUTE_ARMING) {
-    assert.ok(
-      existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "channels", entry.channel)),
-      `ROUTE_ARMING names agent/channels/${entry.channel}, and no such file exists — the entry can never match a route, so the census would ` +
+  for (const channel of armingKeysNotMounted(ROUTE_ARMING, REPO_ROOT)) {
+    assert.fail(
+      `ROUTE_ARMING names agent/channels/${channel}, and roster.lock.json mounts no such channel — the entry can never match a route, so the census would ` +
         `require that channel's dark routes again. Fix the key, or drop the entry if the channel is gone`,
     );
+  }
+});
+
+check("the arming-table join reads only the committed lock, so a tree with no `oe build` output passes (OPE-2676)", () => {
+  const bare = mkdtempSync(join(tmpdir(), "oe-census-arming-"));
+  try {
+    copyFileSync(join(REPO_ROOT, "roster.lock.json"), join(bare, "roster.lock.json"));
+    assert.equal(existsSync(join(bare, "agent", "channels")), false, "the bare tree has no emitted channel directory");
+    assert.deepEqual(armingKeysNotMounted(ROUTE_ARMING, bare), [], "every shipped key joins without the emitted tree");
+    assert.deepEqual(
+      armingKeysNotMounted([{ channel: "control-plane.ts" }, { channel: "control-mcp" }], bare),
+      ["control-plane.ts", "control-mcp"],
+      "a key that names no mounted channel file is reported",
+    );
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
   }
 });
 

@@ -223,16 +223,16 @@ Source: `packages/core/agent/access/lean-seat.ts#DM_SEAT_CARVE_IN`,
 Not to be confused with: the roster itself. The carve-in is a property of the SEAT, not of the tool.
 
 **worker** (also **delegated child**) — a `task`-grain child of a conversation's work session. It is
-the **WIDE** surface: the seat's kit plus **99** further tools, with two exact exceptions. It holds
-exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 98 of the 99, and
-it does not hold the whole seat kit (see the worker withheld set). The 99 include `bash`, `aws`, `write_file`,
+the **WIDE** surface: the seat's kit plus **101** further tools, with two exact exceptions. It holds
+exactly one of `ask_question` or `ask_room` (`ask_room` on a work-session job), so 100 of the 101, and
+it does not hold the whole seat kit (see the worker withheld set). The 101 include `bash`, `aws`, `write_file`,
 `open_pull_request`, `checkout_repo`, `web_fetch`, `request_credential_grant`, `ask_question`
 and every read tool the seat does not hold. It also holds this conversation's own lent `grant__…` tools, which are minted per
 grant row and so appear in no static count. It also holds the ops of each connector mount
 (`<slug>__<op>`, for example `notion__<op>`). The mount lists them per connection, so they appear in
 no static count either, and `WORKER_INDEX_MACHINERY` keeps the mount slug out of the index. The count is identical for a standing parent and a thread
 parent.
-Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (99 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (99 entries).
+Source: `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_STANDING` (101 entries) and `packages/core/agent/access/worker-capability-index.generated.ts#WORKER_ONLY_TOOLS_THREAD` (101 entries).
 Not to be confused with: the **seat**. 🔴 **A top-level session does its real work by DELEGATING.
 The parent does NOT hold the wide toolset.** Any claim that the parent is wide and the child is
 narrow is backwards. Also not to be confused with a **Claude Code subagent**, which is repo
@@ -538,10 +538,11 @@ is refuted as a non-member — by the surface's own probe, or by the author-trus
 with the arrived-marker. A withheld body never reaches the model. On the `envelope` opt-out grain
 (and its deprecated alias, OPE-2722) nothing is withheld, and the text reaches the model inside the
 fence like every other line. An absent or `false` fact is not a refutation: "the probe could not
-answer" is never "a stranger wrote it". EVERY chat reader — `read_channel` / `read_thread` and the
-delegated worker's `read_work_channel` / `read_work_thread` (OPE-938) — routes through ONE
-grade-and-project body, so no reader can declare the `withhold` grain differently.
-Source: `packages/core/agent/channels/read-author-trust.ts` (`refutedReadAuthorIds`), `packages/core/agent/channels/channel-read.ts` (`gradeAndProject`).
+answer" is never "a stranger wrote it". EVERY chat reader — `read_channel` / `read_thread`, the
+delegated worker's `read_work_channel` / `read_work_thread` (OPE-938) and Slack's opt-in
+`search_slack_public` (OPE-2678) — decides the read half through ONE helper (`readAuthorWithhold` /
+`projectReadText`), so no reader can declare the `withhold` grain differently.
+Source: `packages/core/agent/channels/read-author-trust.ts` (`refutedReadAuthorIds`), `packages/core/agent/channels/channel-read.ts` (`gradeAndProject`, `readAuthorWithhold`, `projectReadText`).
 
 **native-delegation withdrawal** — **withdrawn as a concept (OPE-471). A seat keeps eve's built-in
 `agent` whatever its turn read.** The projection seam removes the tool only when the SEAT was not
@@ -969,7 +970,7 @@ levels:
 org  <  tenant  <  domain  <  surface        (+ group < principal, the DM universe)
 ```
 
-Source: `packages/core/agent/access/bundle.ts#ScopeLevel`, `packages/core/agent/access/bundle.ts#L13` (the ladder, in prose),
+Source: `packages/core/agent/access/bundle.ts#ScopeLevel`, `packages/core/agent/access/bundle.ts#L14` (the ladder, in prose),
 `packages/core/agent/access/bundle.ts#Scope` (the `Scope` shape).
 
 | Level | What it names | Form |
@@ -992,7 +993,7 @@ separate universe, not a fifth and sixth rung of the same one.
 **platform-qualified** — `tenant`, `surface` and `principal` ids all carry a platform prefix,
 because six vendors' bare ids share no namespace and at least one is user-chosen. `domain` and
 `group` stay bare, being cross-platform by construction.
-Source: `packages/core/agent/access/bundle.ts#L14` (the rule, in prose), `packages/core/agent/access/bundle.ts#TENANT_KEY`.
+Source: `packages/core/agent/access/bundle.ts#L15` (the rule, in prose), `packages/core/agent/access/bundle.ts#TENANT_KEY`.
 The address lives on the BINDING, not the bundle: `packages/core/agent/access/bundle.ts#assertBindingsValid` refuses an
 unqualified tenant and an unqualified principal, the second through
 `packages/core/agent/identity/principal-key.ts#PRINCIPAL_KEY`.

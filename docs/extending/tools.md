@@ -250,7 +250,7 @@ built-in declares dispatch handling (`behavior.handling.kind === "dispatch"`, th
 `agent` is neither a
 sentinel nor a mount predicate; it is subtraction at the per-model-call projection seam, and
 `window-gate-lint` refuses both a sentinel and a kit key for the name.
-On eve 1.x the projection seam is gone. eve 1.0.0-rc.18 mounts `agent` from its own root defaults,
+On eve 1.x the projection seam is gone. eve 1.0.2 mounts `agent` from its own root defaults,
 and a dynamic tool cannot carry it (it loses the built-in's self-agent dispatch), so no file can
 withhold it. The model-call cut (`packages/core/agent/model/seat-tool-cut.ts`) takes the subtraction's
 place: it removes `agent` from the list that each model call offers when the wake's verdict is not

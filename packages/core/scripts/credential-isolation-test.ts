@@ -153,14 +153,15 @@ pinNormalisedMatchSet(
 
     "compiled/jsonc-parser/index.js",
     "compiled/shadcn-registry/index.js",
-    // A lexer's token reader (the workflow bundle's parser), not a credential.
-    "compiled/_chunks/workflow/run-CBoukBsx.js",
+    // A lexer's token reader (acorn's `getToken`, in the shared node chunk), not a credential.
+    "compiled/_chunks/node/run-iZaWiaIW.js",
 
     // The Vercel Queue and Schedules clients send the platform's own OIDC token to the platform API
-    // (another plane). The workflow chunk bundles the same queue client.
+    // (another plane). The Vercel workflow world bundles the same queue client (`this.getToken()`
+    // beside `getVercelOidcToken`).
     "compiled/@vercel/queue/index.js",
     "compiled/@vercel/schedules/index.js",
-    "compiled/_chunks/workflow/dist-74tor0XD.js",
+    "compiled/@workflow/world-vercel/index.js",
 
     // eve 1.x's git extension: its `gh` tool resolves a user's GitHub connection token with ctx.getToken
     // and hands it to a sandbox shell. That is exposure, not injection. OE never mounts the extension,
@@ -551,7 +552,7 @@ pinMatchSet(
 }
 
 const OE_POLICY_SEAM = "packages/core/agent/sandbox/network-policy.ts";
-const OE_POLICY_CALLERS = ["packages/core/agent/hooks/egress.ts"];
+const OE_POLICY_CALLERS = ["packages/core/agent/hooks/egress.ts", "packages/core/agent/access/self-host-egress.ts"];
 const OE_MID_TURN_APPLIERS = [
   "packages/core/agent/tools/checkout_repo.ts",
   "packages/core/agent/tools/open_pull_request.ts",

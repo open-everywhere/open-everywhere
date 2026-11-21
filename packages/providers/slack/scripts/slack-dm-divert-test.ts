@@ -1212,6 +1212,17 @@ overrideSettingsForTest({ externalPolicy: { authorGrain: "taint", roomGrain: "en
   eq(signsOf(shortcut), undefined, "NEGATIVE CONTROL: a shortcut stamps nothing — its minted ts names no message");
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (OPE-2577 unchanged-edit drop, classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips)`);
+{
+  const tokenOf = (r: Awaited<ReturnType<typeof runFront>>) => (r.dispatched[0]?.auth.attributes ?? {})["action_token"];
+  const im = await runFront(dmEnvelope("Ev19a", { action_token: "AT-DM" }), { partnerTrust: "internal" });
+  eq(tokenOf(im), "AT-DM", "🔴 a 1:1 DM message carries Slack's action_token into the dispatched auth");
+  const group = await runFront(mpimEnvelope("Ev19b", { action_token: "AT-MPIM" }));
+  eq(tokenOf(group), "AT-MPIM", "🔴 a group-DM message carries it too");
+  const none = await runFront(dmEnvelope("Ev19c"), { partnerTrust: "internal" });
+  eq(none.dispatched.length, 1, "(precondition) a DM with no token still wakes the seat");
+  eq(tokenOf(none), undefined, "NEGATIVE CONTROL: a message Slack sent no token with stamps none");
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (OPE-2577 unchanged-edit drop, classification, window token + fence, addressing, DM auth attrs, dm envelope, carried tail, bot/dedupe/fail-closed, no escape hatch (OPE-368), group-DM divert + mention leg + sibling suppression, OPE-1023 named-driver DM carve-out, OPE-525 external-participant policy, OPE-963 pruned-deployment re-delivery, OPE-970 undelivered-after-heal reason, OPE-2524 voice clips, OPE-2678 action token)`);
 
 // proves: SET-062

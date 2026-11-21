@@ -53,7 +53,7 @@ a code-only row whose module starts to send, and a module there that default-exp
 write the session auth (eve's `AuthKey`), so an eve bump that adds a writer goes red and names it
 (OPE-2686). Each row of that census (`EVE_AUTH_WRITERS`) says which principal its writer carries.
 
-eve 1.0.0-rc.18 added five writers. `test:eve-auth-writers` (core) pins the principal each one
+eve 1.x added five writers. `test:eve-auth-writers` (core) pins the principal each one
 carries and the road that reaches it:
 
 - A **cancelled model-call batch** copies the turn step's own slot forward. It is a copy, not a new
@@ -74,7 +74,7 @@ carries and the road that reaches it:
 OE reaches none of the last three, and the lint keeps it that way for OE's own modules. Rules C and
 E parse every agent module, and they read names and strings after the parser decodes any escape.
 Rule C refuses a connection that declares events, at the top level or as `experimental: { events }`
-(the rc.18 shape), and a connection whose `experimental` block it cannot read. It reads a definer
+(the eve 1.x shape), and a connection whose `experimental` block it cannot read. It reads a definer
 that a module calls by name, or as a namespace member named by an identifier, a string or a template
 string with no substitution. It refuses a definer that a module takes as a value by one of those
 names, or destructures. Rule E refuses any

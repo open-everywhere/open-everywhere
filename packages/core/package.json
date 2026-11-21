@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/core",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Open Everywhere core — the portable, host-agnostic agent runtime: access and approvals, identity, memory, spend, routines, webhooks, connectors, the audit chain and the `oe` roster build.",
   "keywords": [
     "agent",
@@ -485,6 +485,10 @@
     "./agent/access/nullable-optional-fields.js": {
       "types": "./dist/agent/access/nullable-optional-fields.d.ts",
       "default": "./dist/agent/access/nullable-optional-fields.js"
+    },
+    "./agent/access/opt-in-tools.js": {
+      "types": "./dist/agent/access/opt-in-tools.d.ts",
+      "default": "./dist/agent/access/opt-in-tools.js"
     },
     "./agent/access/outbound-filter.js": {
       "types": "./dist/agent/access/outbound-filter.d.ts",
@@ -3262,6 +3266,10 @@
       "types": "./dist/agent/schedules/tidy.d.ts",
       "default": "./dist/agent/schedules/tidy.js"
     },
+    "./agent/schedules/upgrade-offer.js": {
+      "types": "./dist/agent/schedules/upgrade-offer.d.ts",
+      "default": "./dist/agent/schedules/upgrade-offer.js"
+    },
     "./agent/scm/app-permissions.js": {
       "types": "./dist/agent/scm/app-permissions.d.ts",
       "default": "./dist/agent/scm/app-permissions.js"
@@ -3473,6 +3481,10 @@
     "./agent/status/public-url.js": {
       "types": "./dist/agent/status/public-url.d.ts",
       "default": "./dist/agent/status/public-url.js"
+    },
+    "./agent/status/self-upgrade.js": {
+      "types": "./dist/agent/status/self-upgrade.d.ts",
+      "default": "./dist/agent/status/self-upgrade.js"
     },
     "./agent/status/status.js": {
       "types": "./dist/agent/status/status.d.ts",
@@ -3914,6 +3926,10 @@
       "types": "./dist/agent/tools/update_status.d.ts",
       "default": "./dist/agent/tools/update_status.js"
     },
+    "./agent/tools/upgrade_self.js": {
+      "types": "./dist/agent/tools/upgrade_self.d.ts",
+      "default": "./dist/agent/tools/upgrade_self.js"
+    },
     "./agent/tools/usage_report.js": {
       "types": "./dist/agent/tools/usage_report.d.ts",
       "default": "./dist/agent/tools/usage_report.js"
@@ -4191,6 +4207,7 @@
     "test:deploy-contract": "NODE_NO_WARNINGS=1 tsx scripts/deploy-contract-test.ts",
     "test:oe-status": "NODE_NO_WARNINGS=1 tsx scripts/oe-status-test.ts",
     "test:update-status": "NODE_NO_WARNINGS=1 tsx scripts/update-status-test.ts",
+    "test:upgrade-self": "NODE_NO_WARNINGS=1 tsx scripts/upgrade-self-test.ts",
     "test:surface-session-state": "NODE_NO_WARNINGS=1 tsx scripts/surface-session-state-test.ts",
     "test:work-surface-wait": "NODE_NO_WARNINGS=1 tsx scripts/work-surface-wait-test.ts",
     "test:turn-cancel": "NODE_NO_WARNINGS=1 tsx scripts/turn-cancel-test.ts",
@@ -4442,6 +4459,7 @@
     "test:read-channel-e2e": "NODE_NO_WARNINGS=1 tsx scripts/e2e/read-channel-test.ts",
     "test:connector-card-e2e": "NODE_NO_WARNINGS=1 tsx scripts/e2e/connector-card-test.ts",
     "test:e2e-gate-joins": "NODE_NO_WARNINGS=1 tsx scripts/e2e/gate-joins-test.ts",
+    "test:e2e-linear-driver": "NODE_NO_WARNINGS=1 tsx scripts/e2e/linear-driver-test.ts",
     "test:e2e-grant-fence-rows": "NODE_NO_WARNINGS=1 tsx scripts/e2e/grant-fence-rows-test.ts",
     "test:e2e-halt-cleanup": "NODE_NO_WARNINGS=1 tsx scripts/e2e/halt-cleanup-test.ts",
     "test:e2e-qa-repo": "NODE_NO_WARNINGS=1 tsx scripts/e2e/qa-repo-test.ts",
@@ -4611,7 +4629,7 @@
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "1.0.0-rc.18"
+    "eve": "1.0.2"
   },
   "devDependencies": {
     "@types/node": "latest",

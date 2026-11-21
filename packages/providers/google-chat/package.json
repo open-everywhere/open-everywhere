@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-google-chat",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Open Everywhere Google Chat provider — the agent as a Google Chat app: mention and DM wakes, threaded replies.",
   "keywords": [
     "agent",
@@ -104,11 +104,11 @@
     "test:google-chat-post-arm": "NODE_NO_WARNINGS=1 tsx scripts/google-chat-post-arm-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.11.0",
+    "@open-everywhere/core": "0.12.0",
     "jose": "6.2.3"
   },
   "peerDependencies": {
-    "eve": "1.0.0-rc.18"
+    "eve": "1.0.2"
   },
   "devDependencies": {
     "@types/node": "latest",

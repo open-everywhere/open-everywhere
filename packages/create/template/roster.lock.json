@@ -79,6 +79,7 @@
         "schedule/personal-browser-sweep": "mounted",
         "schedule/personal-watch": "mounted",
         "schedule/tidy": "mounted",
+        "schedule/upgrade-offer": "mounted",
         "skill/scoped": "mounted",
         "tool/add_label": "mounted",
         "tool/add_routine_rule": "mounted",
@@ -185,6 +186,7 @@
         "tool/unlink_identity": "mounted",
         "tool/update_list": "mounted",
         "tool/update_status": "mounted",
+        "tool/upgrade_self": "mounted",
         "tool/usage_report": "mounted",
         "tool/waiting_on_me": "mounted",
         "tool/walk_pr": "mounted",
@@ -213,7 +215,8 @@
       "contributions": {
         "channel/slack": "mounted",
         "channel/slack-commands": "mounted",
-        "channel/slack-setup-page": "mounted"
+        "channel/slack-setup-page": "mounted",
+        "tool/search_slack_public": "mounted"
       }
     }
   }

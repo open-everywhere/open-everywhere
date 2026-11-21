@@ -92,6 +92,13 @@ const atOrAfter = (a: string, b: string): boolean => {
   return Number.isFinite(x) && Number.isFinite(y) && x >= y;
 };
 
+const newestRow = (rows: readonly AuditWireEntry[]): AuditWireEntry | undefined =>
+  rows.reduce<AuditWireEntry | undefined>((best, r) => {
+    if (best === undefined) return r;
+    if (best.seq !== undefined && r.seq !== undefined) return r.seq > best.seq ? r : best;
+    return Date.parse(r.ts) > Date.parse(best.ts) ? r : best;
+  }, undefined);
+
 const turnReplies = (rows: readonly AuditWireEntry[], wakeId: string, sessionId: string): readonly AuditWireEntry[] =>
   rows.filter((r) => r.action === REPLY_POST_ACTION && (dS(r, "sessionId") === sessionId || dS(r, "wakeId") === wakeId));
 
@@ -163,8 +170,8 @@ export async function pollForFinalReply(
       lastChangeAt = deps.now();
       continue;
     }
-    const newestAfterSettle = settled ? replies.filter((r) => atOrAfter(r.ts, settled.ts)).at(-1) : undefined;
-    const outstanding = (delegation.started.length > 0 && !settled) || newestAfterSettle?.detail?.["done"] === false;
+    const newestPending = newestRow(settled ? replies.filter((r) => atOrAfter(r.ts, settled.ts)) : replies);
+    const outstanding = (delegation.started.length > 0 && !settled) || newestPending?.detail?.["done"] === false;
     if (!outstanding && deps.now() - lastChangeAt >= quietMs) {
       return {
         kind: "quiet",

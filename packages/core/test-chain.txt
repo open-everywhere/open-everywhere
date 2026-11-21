@@ -154,6 +154,7 @@ test:webhook-verifier
 test:webhook-replay-dedupe
 test:status
 test:update-status
+test:upgrade-self
 test:turn-cancel
 test:spend
 test:checkpoint
@@ -403,6 +404,7 @@ test:source-scoped-mount
 test:read-channel-e2e
 test:connector-card-e2e
 test:e2e-gate-joins
+test:e2e-linear-driver
 test:e2e-halt-cleanup
 test:e2e-qa-repo
 test:e2e-browser-third-party

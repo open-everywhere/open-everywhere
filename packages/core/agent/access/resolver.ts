@@ -58,6 +58,7 @@ export interface EffectiveAccess {
   readonly resourceCapabilities: Readonly<Record<string, readonly ResourceCapability[]>>;
   readonly awsRoles: readonly AwsRoleGrant[];
   readonly approvers: readonly OperatorApprover[];
+  readonly optInTools: readonly string[];
   readonly plugins: readonly string[];
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
@@ -321,6 +322,7 @@ export function resolveAccess(
 
   const approvers = ordered.flatMap(({ bundle }) => bundle.approvers ?? []);
 
+  const optInTools = [...new Set(ordered.flatMap(({ bundle }) => bundle.optInTools ?? []))].sort();
   const plugins = [...new Set(ordered.flatMap(({ bundle }) => bundle.plugins ?? []))].sort();
   const pluginConnectors = new Set<string>();
   const skillSet = new Set<string>();
@@ -407,6 +409,11 @@ export function resolveAccess(
         `broad grant: bundle "${bundle.name}" grants ${bundle.plugins!.length} plugin(s) at ${where} scope — every surface under it gets those plugins' skills + connectors. Bind plugin grants to a domain or specific surface instead.`,
       );
     }
+    if ((bundle.optInTools?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" switches on ${bundle.optInTools!.length} opt-in tool(s) at ${where} scope — every surface under it gets them. Bind opt-in tools to a domain or specific surface instead.`,
+      );
+    }
     if ((bundle.awsRoles?.length ?? 0) > 0) {
       warnings.push(
         `broad grant: bundle "${bundle.name}" grants ${bundle.awsRoles!.length} AWS role(s) at ${where} scope — every surface under it may assume those roles host-side. Bind AWS-role grants to a domain or specific surface instead.`,
@@ -431,6 +438,7 @@ export function resolveAccess(
     repoCapabilities,
     resourceCapabilities,
     awsRoles,
+    optInTools,
     approvers,
     plugins,
     skills,

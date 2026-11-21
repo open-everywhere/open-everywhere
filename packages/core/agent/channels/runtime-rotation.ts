@@ -5,7 +5,7 @@ import type { OperationalStore } from "../operational/store.js";
 import { RUNTIME_CODE_FINGERPRINT_SOURCE } from "./runtime-code-fingerprint.generated.js";
 import { registeredAppCodeFingerprint } from "./app-code-fingerprint.js";
 
-export const EVE_RUNTIME_VERSION = "1.0.0-rc.18";
+export const EVE_RUNTIME_VERSION = "1.0.2";
 
 export const RUNTIME_DEPLOYMENT_ID: string = (process.env.VERCEL_DEPLOYMENT_ID ?? "").trim() || "local";
 

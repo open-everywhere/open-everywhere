@@ -13,6 +13,7 @@ import {
   channelFactsFromRaw,
   forwardedSlackEnterpriseId,
   partnerFactsFromInfo,
+  slackActionTokenOf,
   slackMode,
   type ChannelFacts,
   type OpenEverywhereSlackAuth,
@@ -243,7 +244,7 @@ async function resolveFacts(ctx: SlackContext, message: SlackMessage, isDm: bool
     : enrichVisibility(ctx, message.channelId, channelFactsFromRaw(message.raw));
 }
 
-function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhereSlackAuth | null {
+export function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhereSlackAuth | null {
   const author = message.author;
   if (!author) return null;
   const enterpriseId = forwardedSlackEnterpriseId(message);
@@ -258,6 +259,7 @@ function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhe
     isExternal: facts.isExternal,
     trustChecked: facts.trustChecked,
     dmPartnerTrust: facts.dmPartnerTrust,
+    actionToken: slackActionTokenOf(message.raw),
   });
 }
 

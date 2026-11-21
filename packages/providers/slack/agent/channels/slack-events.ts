@@ -100,6 +100,7 @@ import {
 import {
   slackMode,
   buildSlackAuth,
+  slackActionTokenOf,
   channelFactsFromInfo,
   imRosterFactsFromInfo,
   partnerFactsFromInfo,
@@ -165,6 +166,7 @@ export interface ParsedMessageEvent {
   readonly text: string;
   readonly authoredText: string;
   readonly previousText?: string;
+  readonly actionToken?: string;
   readonly unchangedEdit?: true;
   readonly isAppMention: boolean;
   readonly attachments?: readonly WakeAttachment[];
@@ -437,6 +439,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     text,
     authoredText,
     previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
+    ...(slackActionTokenOf(e) === undefined ? {} : { actionToken: slackActionTokenOf(e) }),
     ...(unchangedEdit ? { unchangedEdit: true as const } : {}),
     isAppMention: e.type === "app_mention",
     attachments,
@@ -1032,6 +1035,7 @@ function authForEvent(ev: ParsedMessageEvent, facts?: ChannelFacts): OpenEverywh
     isPrivate: facts?.isPrivate,
     isExternal: facts?.isExternal,
     trustChecked: facts?.trustChecked,
+    ...(ev.actionToken === undefined ? {} : { actionToken: ev.actionToken }),
   });
 }
 

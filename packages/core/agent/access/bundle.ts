@@ -2,6 +2,7 @@ import type { OperatorApprover } from "./approver-chain.js";
 import { preApprovalRuleProblems, type PreApprovalRule } from "./pre-approval-rules.js";
 import { repoCapabilityProblems, type RepoCapability } from "./repo-capabilities.js";
 import { resourceGrantProblems, type ResourceGrant } from "./resource-grant.js";
+import { optInToolProblems } from "./opt-in-tools.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { parseSurfaceKeyEntry } from "../identity/surface-key-grammar.js";
 import { tenantRungRemedy } from "./tenant-admission.js";
@@ -148,6 +149,7 @@ export interface Bundle {
   readonly resourceGrants?: readonly ResourceGrant[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];
+  readonly optInTools?: readonly string[];
   readonly awsRoles?: readonly AwsRoleGrant[];
   readonly approvers?: readonly OperatorApprover[];
   readonly instructions?: string;
@@ -327,6 +329,7 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
       }
     }
     bad.push(...resourceGrantProblems(`bundle "${b.name}"`, b.resourceGrants));
+    bad.push(...optInToolProblems(b.name, b.optInTools));
     const roleArns = new Set<string>();
     for (const grant of b.awsRoles ?? []) {
       if (!ROLE_ARN_FORM.test(grant.roleArn)) {

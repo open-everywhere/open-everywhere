@@ -1,6 +1,6 @@
 {
   "name": "@open-everywhere/provider-slack",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Open Everywhere Slack provider — Slack channel and DM surfaces, identity mapping, approval cards and slash commands.",
   "keywords": [
     "agent",
@@ -111,6 +111,10 @@
     "./agent/channels/slack-post-arm.js": {
       "types": "./dist/agent/channels/slack-post-arm.d.ts",
       "default": "./dist/agent/channels/slack-post-arm.js"
+    },
+    "./agent/channels/slack-public-search.js": {
+      "types": "./dist/agent/channels/slack-public-search.d.ts",
+      "default": "./dist/agent/channels/slack-public-search.js"
     },
     "./agent/channels/slack-read.js": {
       "types": "./dist/agent/channels/slack-read.d.ts",
@@ -235,6 +239,10 @@
     "./agent/surface-parity.js": {
       "types": "./dist/agent/surface-parity.d.ts",
       "default": "./dist/agent/surface-parity.js"
+    },
+    "./agent/tools/search_slack_public.js": {
+      "types": "./dist/agent/tools/search_slack_public.d.ts",
+      "default": "./dist/agent/tools/search_slack_public.js"
     }
   },
   "scripts": {
@@ -252,6 +260,7 @@
     "slack:manifest-validate-live": "NODE_NO_WARNINGS=1 tsx scripts/slack-manifest-validate-live.ts",
     "test:slack-offboarding": "NODE_NO_WARNINGS=1 tsx scripts/slack-offboarding-test.ts",
     "test:slack-as-you": "NODE_NO_WARNINGS=1 tsx scripts/slack-as-you-test.ts",
+    "test:slack-public-search": "NODE_NO_WARNINGS=1 tsx scripts/slack-public-search-test.ts",
     "test:slack-bot-ask": "NODE_NO_WARNINGS=1 tsx scripts/slack-bot-ask-test.ts",
     "test:slack-commands": "NODE_NO_WARNINGS=1 tsx scripts/slack-commands-test.ts",
     "test:slack-reaction-ingest": "NODE_NO_WARNINGS=1 tsx scripts/slack-reaction-ingest-test.ts",
@@ -296,12 +305,12 @@
     "test:slack-follow-ups": "NODE_NO_WARNINGS=1 tsx scripts/slack-follow-ups-test.ts"
   },
   "dependencies": {
-    "@open-everywhere/core": "0.11.0",
+    "@open-everywhere/core": "0.12.0",
     "undici": "^7.28.0",
     "zod": "4.5.4"
   },
   "peerDependencies": {
-    "eve": "1.0.0-rc.18"
+    "eve": "1.0.2"
   },
   "devDependencies": {
     "@types/node": "latest",

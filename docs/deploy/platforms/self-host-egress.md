@@ -59,6 +59,26 @@ The bundled `docker-compose.yml` runs `justbash`, because this repository's root
 `sandbox: { selfHostBackend: "justbash" }`. Compose sets no backend variable. An app built into the
 Docker image must declare `"justbash"` too.
 
+## Browser containers behind the proxy (`sandbox.boxDockerNetwork`, OPE-2671)
+
+The session backend stays `justbash`, but OE can start **browser containers** itself behind this
+proxy. eve's docker sessions take no network option; OE's own `docker run` does. The browser
+overlay (`docker-compose.browser.yml`) adds an internal network `oe-net-box` that only the proxy
+joins from compose, and gives the app the daemon socket. With `sandbox.boxDockerNetwork:
+"oe-net-box"` declared:
+
+- **The QA kit's browser** (`browser.boxImage`) runs in one container per session. OE pushes the
+  session's own compiled policy for the container's IP, and every later push for the session
+  reaches it. See [the browser](../../capabilities/browser-qa.md#on-docker-a-container-per-session).
+- **The personal browser** runs in its box on `oe-net-box`, and OE pushes the person's host list for
+  the box's IP. The app reaches the box's port on a second internal network, `oe-net-boxctl`. See
+  [the two stacks](../../capabilities/personal-browser.md#the-two-stacks).
+
+OE refuses to open a box on a network that is not `internal`, and a failed push stops the box. A
+box's stop drops its IP's policy (`DELETE /policy?sourceIp=`). Only browser boxes run there: a
+meeting box's media is UDP, which the proxy cannot carry, so it refuses. 🔴 The socket makes an app
+compromise a host compromise, as with the `docker()` backend.
+
 ## The app's own model call: the host plane (OPE-2406)
 
 Under `justbash` the app process and the session send from the same source IP, so the proxy cannot

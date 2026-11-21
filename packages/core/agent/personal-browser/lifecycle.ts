@@ -260,7 +260,7 @@ export async function ensureBrowserOpen(owner: BrowserOwner, hosts: readonly str
   const enforce = backend.enforcesHostAllowList === true;
   if (!enforce && !getSettings().egress.allowUnenforced) {
     throw new Error(
-      `this deployment's sandbox backend (${backend.backend}) cannot enforce a host list on a box, and \`egress.allowUnenforced\` is off — so I won't open a browser that could reach every host. Run on Vercel Sandbox, or declare the unenforced dev posture in agent/settings/settings.ts`,
+      `this deployment's sandbox backend (${backend.backend}) cannot enforce a host list on a box, and \`egress.allowUnenforced\` is off — so I won't open a browser that could reach every host. Run on Vercel Sandbox, put browser boxes behind the egress proxy (\`sandbox.boxDockerNetwork\`, docker-compose.browser.yml), or declare the unenforced dev posture in agent/settings/settings.ts`,
     );
   }
   const myClaim = now();

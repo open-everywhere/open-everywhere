@@ -186,6 +186,7 @@ export const LANE_DECLARATIONS: readonly LaneDeclaration[] = [
   { id: "J-ENGAGED-linear", parallel: "safe", resources: ["seat:engaged-linear"] },
   { id: "J-ENGAGED-notion", parallel: "safe", resources: ["seat:engaged-notion"] },
   { id: "S-SLACK-AS-YOU", parallel: "safe", resources: ["seat:e2e-unified", "seat:dm"] },
+  { id: "S-SLACK-PUBLIC-SEARCH", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-MEETING-RECAP", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-MEETING-DISCORD-VOICE", parallel: "safe", resources: ["seat:e2e-unified"] },
   { id: "S-EMAIL-ROOM-REPLY", parallel: "safe", resources: ["seat:email"] },

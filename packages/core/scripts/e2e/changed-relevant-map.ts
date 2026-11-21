@@ -361,6 +361,16 @@ export const CHANGED_RELEVANT_MAP: readonly ChangedRelevantArea[] = [
     why: "S-PERSONAL-BROWSER (OPE-2441) is the only live leg on the person's own browser: a channel ask opens nothing, and a DM ask opens, reads and closes with the hours billed. The watch page, the take-over lock and the act card are tier 2's.",
   },
   {
+    area: "slack-public-search",
+    globs: [
+      "packages/core/agent/access/opt-in-tools.ts",
+      "packages/providers/slack/agent/channels/slack-public-search.ts",
+      "packages/providers/slack/agent/tools/search_slack_public.ts",
+    ],
+    scenarios: ["S-SLACK-PUBLIC-SEARCH"],
+    why: "S-SLACK-PUBLIC-SEARCH (OPE-2678) is the only live leg on Slack's Real-time Search API: it plants a message in a public channel the bot is not in and proves the answer from another channel cites it.",
+  },
+  {
     area: "personal-surface-mcp",
     globs: [
       "packages/core/agent/connections/mcp-servers.ts",

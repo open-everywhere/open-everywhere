@@ -499,7 +499,7 @@ ok(!currentTurnAddressed(childCtx), "…and is false in the child, which is the 
     eq(
       steps.split("set(AuthKey,").length - 1,
       3,
-      "🔴 D9 TURN SCOPING: the turn step `.set`s `AuthKey` in exactly THREE places (eve 1.0.0-rc.18) — the delivery writer, the authorization-resume writer and the closing writer. A fourth writer is a new road for the bag to be replaced before a dispatch reads it",
+      "🔴 D9 TURN SCOPING: the turn step `.set`s `AuthKey` in exactly THREE places (eve 1.0.2) — the delivery writer, the authorization-resume writer and the closing writer. A fourth writer is a new road for the bag to be replaced before a dispatch reads it",
     );
     const w1 = /let (\w+)=(\w+)\.get\(AuthKey\);(?:let \w+=\2\.has\(InitiatorAuthKey\);)?(\w+)\?\.auth!==void 0&&\(\2\.set\(AuthKey,\3\.auth\?\?null\)/.exec(steps);
     ok(

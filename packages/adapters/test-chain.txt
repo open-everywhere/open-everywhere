@@ -8,6 +8,7 @@ test:sandbox-lifecycle
 test:sandbox-guard
 test:sandbox-extend
 test:long-lived-box
+test:browser-box-egress
 test:model-gateway
 test:model-data-policy
 test:model-targets

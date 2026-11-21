@@ -381,7 +381,7 @@ console.log("§6 the model-call cut hides each name eve mounts outside a seat-cu
   ok(scripted.includes("withSeatToolCut(withWorkSessionCancelFence(withEmptyStopReissue(withWorkerToolsetEvidenceModel("), "🔴 the integration tier's scripted model goes through the same cut, outermost");
 }
 
-console.log("§7 eve 1.0.0-rc.18 offers no per-seat hide for these names (read from eve's own code, then run)");
+console.log("§7 eve 1.0.2 offers no per-seat hide for these names (read from eve's own code, then run)");
 {
   const evePath = (p: string) => pathToFileURL(join(eveRoot, "dist/src", p)).href;
   const defs = (await import(evePath("definitions/tools.js"))) as { contributeTools(def: unknown, value: unknown, ctx: unknown): { live?: Record<string, unknown>[] } };

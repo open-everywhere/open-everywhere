@@ -1,4 +1,5 @@
 import { agentBrowserRevalidationKey, installAgentBrowser, type EveSandboxSession } from "@agent-browser/eve/sandbox";
+import { browserRunsInBox } from "@open-everywhere/core/agent/adapter-api.js";
 import { agentBrowserEnabled, loadAgentBrowserConfig } from "./config.js";
 
 export interface BakeableSandbox {
@@ -17,6 +18,7 @@ export function agentBrowserSandboxHooks(
   if (!agentBrowserEnabled()) return {};
   const cfg = loadAgentBrowserConfig();
   if (cfg === undefined) return {};
+  if (browserRunsInBox()) return {};
   return {
     revalidationKey: () => agentBrowserRevalidationKey(),
     bootstrap: async ({ use }) => {

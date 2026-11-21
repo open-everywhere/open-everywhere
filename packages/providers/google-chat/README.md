@@ -26,7 +26,7 @@ The operator guide is the "Google Chat" surface page of the manual (`docs/deploy
 ## Install
 
 ```sh
-npm i @open-everywhere/core @open-everywhere/provider-google-chat eve@1.0.0-rc.18
+npm i @open-everywhere/core @open-everywhere/provider-google-chat eve@1.0.2
 npx oe-eve-patch
 ```
 

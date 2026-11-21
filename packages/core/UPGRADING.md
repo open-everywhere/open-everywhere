@@ -77,8 +77,8 @@ and the installed core ships no `upgrading.json`. Install the target core beside
 gitignored `.open-everywhere/` directory, and run that core's `oe` from the app root:
 
 ```sh
-npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.11.0 tsx@4
-node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.11.0
+npm install --prefix .open-everywhere/bootstrap @open-everywhere/core@0.12.0 tsx@4
+node .open-everywhere/bootstrap/node_modules/@open-everywhere/core/bin/oe.js upgrade --to 0.12.0
 ```
 
 The run renames `create-open-everywhere`, bumps every pin, installs, and then reads the target's
@@ -94,6 +94,27 @@ that release or a later one as the target, this one-liner is the bootstrap too:
 ```sh
 npx -p @open-everywhere/core@<version> oe upgrade --to <version>
 ```
+
+## 0.12.0 — 2026-11-21
+
+0.12.0 moves the eve peer from 1.0.0-rc.18 to 1.0.2, the final eve 1.0 bug-fix release (OPE-2709). Every `@open-everywhere/*` package now declares the peer `eve` `1.0.2`, and `npx oe upgrade` pins it. The eve patch moves to `patches/eve+1.0.2.patch` with the same content, so run `npx oe-eve-patch` again after the upgrade. See the manual steps below. 🔴 ROLLBACK AND FORWARD LIMIT: no test proves that eve 1.0.2 resumes a session that eve 1.0.0-rc.18 wrote, or the reverse, such as a parked worker or a pending approval card. Upgrade or roll back across this release only when no session is in flight. 0.12.0 lets an org admin upgrade the deployment from chat (OPE-2237). An org admin tells the agent "upgrade yourself". The worker tool `upgrade_self` checks org-admin standing, writes an audit row and returns the steps of the `upgrade-open-everywhere` skill. The worker runs `oe upgrade` in its sandbox and opens the upgrade pull request on `accessRequests.configRepo` with `open_pull_request`. The agent never merges it. A weekly schedule, `upgrade-offer`, says in `accessRequests.adminChannel` that a newer release exists, once for each release unless the record of the offer fails. 0.12.0 also adds public-channel Slack search for the bot (OPE-2678). The opt-in tool `search_slack_public` searches the workspace's public channels, including channels the bot is not in, as the person who asked. It is off until a bundle names it in the new `optInTools` field. 0.12.0 also lets the browser kit run off the Vercel Sandbox, in a per-session docker container behind the egress proxy (OPE-2671). It stays off until `sandbox.boxDockerNetwork` and `browser.boxImage` are both set.
+
+eve peer: `1.0.2`
+
+**Manual steps**
+
+- Run `npx oe-eve-patch` after the upgrade, unless the app's `package.json` runs it as its `postinstall` script, as the template does. The applier picks the patch file by the eve pin, and npm installs eve 1.0.2 unpatched, so the patch must apply again. Core does not refuse an unpatched eve 1.x, so a missing patch shows only as a failed `eve build`.
+- If the app's own code imports `@vercel/connect/eve`, list `@vercel/connect` 2.7.0 or later in the app's own `dependencies`. eve 1.0.1 no longer declares `@vercel/connect` as an optional peer, so npm no longer checks the version of the app's copy.
+- Run `npx oe build --accept` to record the two new roster names `tool/upgrade_self` and `schedule/upgrade-offer` (`oe upgrade` runs it for you). Account for the new schedule `upgrade-offer`, weekly on Mondays at 06:00 UTC (`0 6 * * 1`). Update a cron budget or an allowlist that lists schedules by name.
+- To let the agent upgrade itself, grant the deployment's own repository (`accessRequests.configRepo`) and `PACKAGE_REGISTRY_HOSTS` on the bundle of the room where an admin asks. Without the repository grant `checkout_repo` refuses the first step, and without the registry hosts the sandbox install fails.
+- The Slack app manifest gains the bot scope `search:read.public` (OPE-2678). Fetch the Slack manifest again (`surface_manifest { surface: "slack" }`, or the `/setup` page), paste it into the Slack app (App Manifest → Save Changes) and reinstall the app to the workspace. Until then a granted `search_slack_public` call fails with `missing_scope` and says so. Nothing else changes: the tool stays off until a bundle names it in `optInTools`.
+- The Slack provider contributes the roster name `tool/search_slack_public` (OPE-2678), so the roster needs one review. Run `oe build --accept` and commit the `roster.lock.json` change. The tool mounts nowhere until a bundle names it in `optInTools`.
+- To run the browser kit off the Vercel Sandbox behind the egress proxy (OPE-2671), copy the template files `docker-compose.browser.yml` and `deploy/browser-qa/Dockerfile`, build the image on the docker daemon (`docker build -t oe-browser-qa:1 deploy/browser-qa`), and set `sandbox.boxDockerNetwork` and `browser.boxImage` in `agent/settings/settings.ts`. Point `NODE_EXTRA_CA_CERTS` at the egress proxy's Tier B CA, as the compose stack does, so the browser container trusts the same CA as the app. Nothing changes until both settings are set.
+
+**New defaults (they apply at the next deploy unless your config turns them off)**
+
+- eve 1.0.1 changes the default provider of eve's own `web_search` tool, for AI Gateway models, from Exa to Parallel. Core mounts eve's default `web_search` and pins no provider, so a query from an app on 0.12.0 goes to Parallel. No OE setting turns it off.
+- Once a week the `upgrade-offer` schedule reads the newest release of `@open-everywhere/core` from the npm registry. When it is newer than the installed core, the agent posts one message in `accessRequests.adminChannel`, once for each release unless the record of the offer fails (OPE-2237). With no admin channel or no `accessRequests.configRepo` set, it posts nothing. No setting turns it off: to turn it off, add an `exclude` for `schedule/upgrade-offer`, with a reason, in `roster.config.ts`, then run `npx oe build --accept`.
 
 ## 0.11.0 — 2026-11-19
 

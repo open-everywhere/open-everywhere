@@ -323,6 +323,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   notion_search: open(
     "granted read of page/database TITLES and ids — never page content (OPE-913). Reach is the WORK credential's reach, which Notion enforces itself (an integration sees only the trees a human shared with it), and the tool mounts only where the domain declares that credential. Reading anything it finds still costs a second, domain-fenced call",
   ),
+  search_slack_public: open(
+    "granted read of public Slack channels, including channels the bot is not in, as the person who asked (OPE-2678, Slack's Real-time Search API). It is OPT-IN: it mounts only where a bundle names it in `optInTools`, so the control is the reviewed per-scope switch, not a card. Reach is Slack's own: public channels only, what that person can see, nothing beyond a Slack Connect room. Each call writes an audit row with the asker and the result count",
+  ),
   search: open(
     "the federated cross-surface search verb (OPE-929 piece 3 / OPE-961) — the same shape as notion_search above, generalised: granted read of TITLES and ids only, never body content, across whichever connectors the caller's domain holds a work grant on. Reach on each connector is that connector's own credential reach (never a post-hoc filter); `insideDomain` narrows the QUERY as a convenience and cannot widen anything. Reading anything a hit points at still costs a second, domain-fenced call (read_notion_page, read_linear_issue, check_pr_status, ...)",
   ),
@@ -576,6 +579,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   [RESUME_TOOL]: admin("halt.resume",
     "lifts the break-glass halt — the WIDENING half of the pair, so it is carded where `halt` is not (WIDEN-SLOW / NARROW-FAST). 🔴 It is the one verb the halt arrow in access/approver-chain.ts EXEMPTS by name: it routes through the chain, which is the place the halt denies, so without the exemption a halt would deny its own lift and no chat door could reopen the deployment. The control MCP's own `resume` is the independent second door and never touches the chain",
   ),
+  upgrade_self: {
+    tier: "gate:admin",
+    via: { kind: "admin-roles" },
+    reason:
+      "self-modification of the whole deployment (OPE-2237): an org admin only (requireOrgAdmin), with an audit row on the start and on every refusal, attributed to the person who asked (or to nobody, with the turn's own principal as boundPrincipal, when the gate cannot name the asker). It writes nothing itself — the steps it returns end in open_pull_request, and the agent never merges. The control on what ships is the person who merges on the config repo (its branch protection)",
+  },
   memory_admin_list: {
     tier: "gate:admin",
     via: { kind: "admin-roles" },

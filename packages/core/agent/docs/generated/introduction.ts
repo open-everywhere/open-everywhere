@@ -129,7 +129,7 @@ export const SECTION_INTRODUCTION: readonly DocEntry[] = [
       "**Bundle** — the scoping unit: a named, reusable set of grants. The fields are `connections`",
       "(egress), `connectors` and `connectorOps` (the connector plane), `repos` and `resourceGrants`",
       "(work sources and named containers), `domains` (credential-less egress hosts), `plugins`,",
-      "`awsRoles`, `approvers`, `preApprovalRules`, and `instructions`. A bundle is defined *once* and",
+      "`optInTools` (tools that ship off), `awsRoles`, `approvers`, `preApprovalRules`, and `instructions`. A bundle is defined *once* and",
       "bound to *many* scopes, which is what lets the same Notion+GitHub basket attach to ten teams",
       "without copy-paste. Capabilities don't attach to a scope directly — they're grouped into a",
       "bundle, and the bundle binds to the scope. See",

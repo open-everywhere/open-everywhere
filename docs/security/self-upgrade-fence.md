@@ -32,6 +32,13 @@ defineBundle({ name: "self-upgrade", repos: ["acme/open-everywhere"] })
 This closes "any repo". It needs no code and it is the required deployment shape — the diff fence
 below assumes it.
 
+The chat driver ("upgrade yourself", `upgrade_self`, OPE-2237) needs the same shape: its first step,
+`checkout_repo`, refuses in a room whose bundle does not grant `accessRequests.configRepo`. Its
+org-admin check is a front door. Fence 2 below runs only at this repository's merge preflight, not
+on a deployment's config repository, so there the person who merges is the control: set branch
+protection so that only an admin can merge. See
+[Upgrade from chat](../deploy/consuming-as-packages.md#upgrade-from-chat-upgrade-yourself).
+
 Two configuration rules go with it:
 
 - **Never name the `workflows` capability on that binding.** GitHub refuses a push that adds or

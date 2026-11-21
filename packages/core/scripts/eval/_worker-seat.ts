@@ -50,6 +50,8 @@ export const WORKER_SEAT_UNREACHABLE: Readonly<Record<string, string>> = {
   read_notion_comments: "defined in packages/providers/notion — packages/core may not import a provider bundle (boundary lock rule 1)",
   notion_search: "defined in packages/providers/notion — packages/core may not import a provider bundle (boundary lock rule 1)",
   read_linear_issue: "defined in packages/providers/linear — packages/core may not import a provider bundle (boundary lock rule 1)",
+  search_slack_public:
+    "defined in packages/providers/slack — packages/core may not import a provider bundle (boundary lock rule 1); it is also opt-in (`optInTools`, OPE-2678), which this world does not switch on",
   extend_workspace_time: "defined in @open-everywhere/adapters — packages/core may not import the adapters package (boundary lock rule 1)",
   fresh_eyes_review: "a declared subagent directory (agent/subagents/fresh_eyes_review) — eve lowers it into a tool at build time, so no importable definition exists",
   eve__skill:

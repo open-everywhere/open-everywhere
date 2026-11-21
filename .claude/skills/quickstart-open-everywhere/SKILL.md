@@ -273,9 +273,18 @@ Then:
    Tell the user plainly: this stack runs the `justbash` sandbox backend, so the agent's shell
    shares the app process's filesystem and environment, every `.env` value included. That is
    development grade, and it does not meet the contract's `sandbox-backend` requirement.
-   Tell the user too: the browser does not run on this route. `justbash` runs no native binary, so
-   the plane refuses and logs one line at boot. The new app ships `browser: { enabled: true }`, so
-   set `browser: { enabled: false }` in `agent/settings/settings.ts` to silence that line (OPE-2666).
+   Tell the user too: on this stack alone the browser does not run. `justbash` runs no native
+   binary, so the plane refuses and logs one line at boot (OPE-2666). The new app ships
+   `browser: { enabled: true }`. Ask whether they want the browser on this route:
+   - **No:** set `browser: { enabled: false }` in `agent/settings/settings.ts` to silence that line.
+   - **Yes (OPE-2671):** each session's browser then runs in its own container behind the egress
+     proxy. Build the image on the server, `docker build -t oe-browser-qa:1 deploy/browser-qa`.
+     Declare `sandbox: { selfHostBackend: "justbash", boxDockerNetwork: "oe-net-box" }` and
+     `browser: { enabled: true, boxImage: "oe-browser-qa:1" }` in `agent/settings/settings.ts`. Then
+     run `docker compose -f docker-compose.yml -f docker-compose.browser.yml up --build`. The proxy
+     holds each container to its session's own policy. A declared credential needs Tier B
+     (`OE_EGRESS_MITM=1`). Tell the user plainly: the overlay gives the app the docker socket, so an
+     app compromise is a host compromise. A `localhost` row reaches no dev server on this route.
 7. **Prove it, then the Slack URLs and the hello.** As steps 11–13 of the Vercel route, with
    `--route docker --host https://<host>`.
 

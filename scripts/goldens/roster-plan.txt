@@ -72,6 +72,7 @@ agent/schedules/notion-ingress.ts	mounted @open-everywhere/provider-notion
 agent/schedules/personal-browser-sweep.ts	mounted @open-everywhere/core
 agent/schedules/personal-watch.ts	mounted @open-everywhere/core
 agent/schedules/tidy.ts	mounted @open-everywhere/core
+agent/schedules/upgrade-offer.ts	mounted @open-everywhere/core
 agent/skills/scoped.ts	mounted @open-everywhere/core
 agent/tools/add_label.ts	mounted @open-everywhere/core
 agent/tools/add_routine_rule.ts	mounted @open-everywhere/core
@@ -173,6 +174,7 @@ agent/tools/revoke_routine_permissions.ts	mounted @open-everywhere/core
 agent/tools/rotate_webhook.ts	mounted @open-everywhere/core
 agent/tools/run_routine_now.ts	mounted @open-everywhere/core
 agent/tools/sandbox_tools.ts	mounted @open-everywhere/core
+agent/tools/search_slack_public.ts	mounted @open-everywhere/provider-slack
 agent/tools/search.ts	mounted @open-everywhere/core
 agent/tools/session_cost.ts	mounted @open-everywhere/core
 agent/tools/set_dm_delivery.ts	mounted @open-everywhere/core
@@ -187,6 +189,7 @@ agent/tools/test_routine.ts	mounted @open-everywhere/core
 agent/tools/unlink_identity.ts	mounted @open-everywhere/core
 agent/tools/update_list.ts	mounted @open-everywhere/core
 agent/tools/update_status.ts	mounted @open-everywhere/core
+agent/tools/upgrade_self.ts	mounted @open-everywhere/core
 agent/tools/usage_report.ts	mounted @open-everywhere/core
 agent/tools/waiting_on_me.ts	mounted @open-everywhere/core
 agent/tools/walk_pr.ts	mounted @open-everywhere/core

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { _setDeploymentIdentityForTest } from "../agent/identity/deployment-identity.js";
 import { removeTempDir } from "./_temp-dir.js";
+import { PROSE_READ_ON, citedDeclaration } from "./_eve-pruned-declaration.js";
 import { setPlatformStandInForTest } from "../agent/identity/binding.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-eve-approval-response-"));
@@ -91,8 +92,15 @@ console.log("1. eve dist pins (the Interaction model's responders):");
 
   const executor = read("harness/call-executor.js");
   ok(/approval:\{responder:\w+\.responder\}/.test(executor), "an approved call reads its approver as `ctx.approval.responder` (0.78.0)");
-  const approvedCalls = read("harness/hitl/approved-calls.d.ts");
-  ok(/it still runs as the requester/.test(approvedCalls), "…and still runs as the requester (0.79.1)");
+  // eve 1.0.1 stopped shipping this declaration. While it is absent, citedDeclaration requires the
+  // approved-calls module the sentence was read on, and throws when it changed.
+  const approvedCalls = citedDeclaration(distSrc, "harness/hitl/approved-calls.d.ts");
+  ok(
+    !approvedCalls.shipped || /it still runs as the requester/.test(approvedCalls.text),
+    "…and still runs as the requester (0.79.1)" +
+      (approvedCalls.shipped ? "" : ` (carried: ${JSON.stringify(approvedCalls.carriedBy)} unchanged since the eve ${PROSE_READ_ON} read)`),
+  );
+  if (!approvedCalls.shipped) console.log(`· approved-calls.d.ts is not shipped; its citation is carried by ${JSON.stringify(approvedCalls.carriedBy)} (prose last read on eve ${PROSE_READ_ON})`);
 
   const def = read("approval/definition.d.ts");
   ok(/readonly decision: "approve" \| "deny";/.test(def), "eve's ApprovalResponse carries `decision: \"approve\" | \"deny\"`");

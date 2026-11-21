@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { citedDeclaration } from "../packages/core/scripts/_eve-pruned-declaration.js";
 import {
   DEFAULT_SANDBOX_REGION,
   KNOWN_SANDBOX_REGIONS,
@@ -221,21 +222,32 @@ if (createCopy === undefined) {
 }
 const VENDORED = join(EVE_DIST, "compiled", "@vercel", createCopy);
 
-let createParamsDts: string;
+let createParamsDts: string | undefined;
 let vendoredJs: string;
 try {
-  createParamsDts = readFileSync(join(VENDORED, "sandbox.d.ts"), "utf8");
+  // eve 1.0.1 stopped shipping the vendored SDK's declarations. While `sandbox.d.ts` is absent,
+  // citedDeclaration requires the vendored @vercel/sandbox version whose declaration typed `region?:`,
+  // and throws when it moved. The forwarded half below still reads the shipped `index.js`.
+  const declaration = citedDeclaration(EVE_DIST, join("compiled", "@vercel", createCopy, "sandbox.d.ts"));
+  createParamsDts = declaration.shipped ? declaration.text : undefined;
   vendoredJs = readFileSync(join(VENDORED, "index.js"), "utf8");
 } catch (err) {
   recheck(`cannot read eve's vendored SDK copy \`${createCopy}\`, the one its binding creates through (${String(err)}).`);
 }
 
-if (createParamsBlock(createParamsDts) === "") recheck(`eve's vendored \`${createCopy}\` no longer declares \`interface BaseCreateSandboxParams\`.`);
+if (createParamsDts !== undefined && createParamsBlock(createParamsDts) === "")
+  recheck(`eve's vendored \`${createCopy}\` no longer declares \`interface BaseCreateSandboxParams\`.`);
 if (createBody(vendoredJs) === "") recheck(`eve's vendored \`${createCopy}\` no longer declares \`static async create(\`.`);
 if (forwardedParams(createBody(vendoredJs)) === "")
   recheck(`eve's vendored \`${createCopy}\` create no longer posts a \`createSandbox({ … })\` enumeration — this guard cannot see which fields it forwards.`);
 
-const live: RegionPassthrough = detectRegionPassthrough({ createParamsDts, vendoredJs });
+// An absent declaration is the typed half carried by the version pin above: the declaration it
+// was last read on (eve 1.0.0) typed `region?:` in BaseCreateSandboxParams. The pin sees the vendored
+// version, not the declaration's text, so re-read it at the eve source tag on every bump.
+const live: RegionPassthrough = detectRegionPassthrough({
+  createParamsDts: createParamsDts ?? "interface BaseCreateSandboxParams {\n  region?: SandboxRegion;\n}\n",
+  vendoredJs,
+});
 
 ok(
   live.supported === SANDBOX_REGION_PASSTHROUGH_SUPPORTED,

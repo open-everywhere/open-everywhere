@@ -17,7 +17,7 @@ import { credentialKeyArmed, deriveCredentialSubkey } from "../credentials/db-br
 import { getConfig } from "../access/config.js";
 import { resolveNetworkAccessLevel } from "../access/network-access.js";
 import { resolvePartition } from "../memory/partition.js";
-import { auditSurfaceModeStamp, bindFrom, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
+import { auditSurfaceModeStamp, bindFrom, currentSessionId, isSubagentChildContext, type BindableContext } from "../identity/binding.js";
 import type { SessionMode } from "../access/resolver.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
@@ -26,7 +26,7 @@ import { stampHalted } from "../access/halt-state.js";
 import { WakeSlotWriteError } from "../access/wake-slot.js";
 import { haltScopeFor, resolveHalt } from "../access/halt.js";
 import { applySessionNetworkPolicy, type NetworkPolicyContext } from "../sandbox/network-policy.js";
-import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
+import { boxEgressBehindProxy, hasSessionPolicy, useSelfHostEgress, pushSessionEgressPolicy } from "../access/self-host-egress.js";
 import {
   publishEgressStatus,
   readPublishedEgressFingerprint,
@@ -192,18 +192,20 @@ export function egressPolicyFingerprint(policy: SandboxNetworkPolicy, compileErr
     .digest("hex");
 }
 
-export type EgressApplyReason = "first-apply" | "policy-changed" | "retry-after-failure" | "digest-key-rotated" | "unchanged";
+export type EgressApplyReason = "first-apply" | "policy-changed" | "retry-after-failure" | "digest-key-rotated" | "box-policy-missing" | "unchanged";
 
 export function planEgressApply(input: {
   readonly phase: EgressPhase;
   readonly fingerprint: string;
   readonly lastApplied: string | undefined;
   readonly digestKeyRotated?: boolean;
+  readonly boxPolicyMissing?: boolean;
 }): { readonly reapply: boolean; readonly reason: EgressApplyReason } {
   if (input.phase === "session.started") return { reapply: true, reason: "first-apply" };
   if (input.lastApplied === undefined) return { reapply: true, reason: "retry-after-failure" };
   if (input.lastApplied !== input.fingerprint) return { reapply: true, reason: "policy-changed" };
   if (input.digestKeyRotated === true) return { reapply: true, reason: "digest-key-rotated" };
+  if (input.boxPolicyMissing === true) return { reapply: true, reason: "box-policy-missing" };
   return { reapply: false, reason: "unchanged" };
 }
 
@@ -219,7 +221,8 @@ function recordEnforcedEgressPolicy(recorder: EgressAppliedRecorder, policy: San
 
 async function sendEgressPolicy(policy: SandboxNetworkPolicy, ctx: NetworkPolicyContext, sessionId: string | undefined): Promise<void> {
   if (useSelfHostEgress()) {
-    await pushEgressPolicy(policy, sessionId !== undefined ? { sessionId } : undefined);
+    const boxSession = currentSessionId(ctx as unknown as BindableContext);
+    await pushSessionEgressPolicy(policy, { ...(sessionId !== undefined ? { auditId: sessionId } : {}), ...(boxSession !== undefined ? { boxSession } : {}) });
   } else {
     await applySessionNetworkPolicy(ctx, policy);
   }
@@ -265,6 +268,7 @@ export interface EgressEnforcementDeps {
   readonly parentPublishedFingerprint?: () => Promise<string | undefined>;
   /** @deprecated IGNORED since OPE-2723: the egress pass stamps no connector content origin, because `contentOrigin` is retired. The member stays for one release so an existing caller still compiles; OPE-2724 removes it. */
   readonly stampConnectorContentOrigin?: (declared: Readonly<Record<string, ConnectorContentOriginSpec>>) => void;
+  readonly boxPolicyMissing?: () => boolean;
 }
 
 export interface EgressEnforcementResult {
@@ -385,6 +389,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
     fingerprint,
     lastApplied: deps.lastApplied(),
     digestKeyRotated: wantEnforce && egressDigestKeyRotated(deps.lastEnforcedShape?.(), egressStateDigestKey()),
+    boxPolicyMissing: deps.boxPolicyMissing?.() === true,
   });
   let applied = false;
   let enforced = false;
@@ -555,6 +560,11 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
         resolveNetworkAccessLevel(access, getConfig().loadNetworkAccess?.() ?? []),
       ),
     apply: (policy, scopeKey) => sendEgressPolicy(policy, ctx, scopeKey),
+    boxPolicyMissing: () => {
+      if (!boxEgressBehindProxy()) return false;
+      const session = currentSessionId(ctx as unknown as BindableContext);
+      return session !== undefined && !hasSessionPolicy(session);
+    },
     publish: async (input) => publishEgressStatus(inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox()), input),
     ...(isSubagentChildContext(ctx as unknown as BindableContext)
       ? { parentPublishedFingerprint: async () => readPublishedEgressFingerprint(inLaneSandbox(sandboxLaneKey(ctx), await ctx.getSandbox())) }

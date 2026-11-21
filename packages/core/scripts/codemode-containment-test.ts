@@ -351,12 +351,12 @@ process.stdout.write("\\n" + ${JSON.stringify(COMPILE_MARK)} + JSON.stringify(ag
   ok(hasWorkflowProgram(synthetic), "POSITIVE CONTROL: the predicate sees a generated-program tool on a SUBAGENT");
 }
 
-// eve 1.0.0-rc.18's host-function literal in the program step. The sandbox sees the namespace as
+// eve 1.0.2's host-function literal in the program step. The sandbox sees the namespace as
 // ONE dispatcher function, so no live check can list its members: this exact text is the check.
 const HOST_FUNCTIONS_LITERAL =
   "hostFunctions:{[WORKFLOW_PROGRAM_HOST_NAMESPACE]:{agent:async e=>{let t;try{t=readWorkflowProgramAgentCall(parseWorkflowProgramJson(e,`ctx.agent() input`))}catch(e){throw guestError(toErrorMessage(e))}let{interrupt:n,resume:r}=i();if(r===void 0)return n(t);let a=r.resolution;if(a.status===`failed`)throw guestError(a.error);return a.output}}},limits:";
 
-// The full own-property list of the program sandbox's global object on eve 1.0.0-rc.18. A new
+// The full own-property list of the program sandbox's global object on eve 1.0.2. A new
 // name here is a new reach from inside the sandbox: review it before it joins this list.
 const SANDBOX_GLOBALS = [
   "AggregateError", "Array", "ArrayBuffer", "BigInt", "BigInt64Array", "BigUint64Array", "Boolean", "DataView", "Date", "Error", "EvalError",

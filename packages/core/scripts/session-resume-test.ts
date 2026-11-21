@@ -82,7 +82,7 @@ const REAL_MESSAGE =
 {
   const require = createRequire(import.meta.url);
   const evePkg = require.resolve("eve/package.json");
-  const chunkDir = `${dirname(evePkg)}/dist/src/compiled/_chunks/workflow`;
+  const chunkDir = `${dirname(evePkg)}/dist/src/compiled/_chunks/node`;
   const { readdirSync } = require("node:fs") as typeof import("node:fs");
   const files = readdirSync(chunkDir).filter((f: string) => f.endsWith(".js"));
   ok(files.length > 0, "pin: the installed eve dist has compiled workflow chunks to search");

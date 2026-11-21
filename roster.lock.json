@@ -10,14 +10,14 @@
   },
   "packages": {
     "@open-everywhere/adapters": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "hook/sandbox-lifecycle": "mounted",
         "tool/extend_workspace_time": "mounted"
       }
     },
     "@open-everywhere/core": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/a2a-inbound": "mounted",
         "channel/aws-sso-callback": "mounted",
@@ -79,6 +79,7 @@
         "schedule/personal-browser-sweep": "mounted",
         "schedule/personal-watch": "mounted",
         "schedule/tidy": "mounted",
+        "schedule/upgrade-offer": "mounted",
         "skill/scoped": "mounted",
         "tool/add_label": "mounted",
         "tool/add_routine_rule": "mounted",
@@ -185,6 +186,7 @@
         "tool/unlink_identity": "mounted",
         "tool/update_list": "mounted",
         "tool/update_status": "mounted",
+        "tool/upgrade_self": "mounted",
         "tool/usage_report": "mounted",
         "tool/waiting_on_me": "mounted",
         "tool/walk_pr": "mounted",
@@ -193,39 +195,39 @@
       }
     },
     "@open-everywhere/provider-discord": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/discord": "mounted",
         "channel/discord-gateway": "mounted"
       }
     },
     "@open-everywhere/provider-email": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/email": "mounted"
       }
     },
     "@open-everywhere/provider-github": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/github": "mounted"
       }
     },
     "@open-everywhere/provider-google-chat": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/google-chat": "mounted"
       }
     },
     "@open-everywhere/provider-linear": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/linear": "mounted",
         "tool/read_linear_issue": "mounted"
       }
     },
     "@open-everywhere/provider-notion": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/notion": "mounted",
         "schedule/notion-ingress": "mounted",
@@ -235,15 +237,16 @@
       }
     },
     "@open-everywhere/provider-slack": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/slack": "mounted",
         "channel/slack-commands": "mounted",
-        "channel/slack-setup-page": "mounted"
+        "channel/slack-setup-page": "mounted",
+        "tool/search_slack_public": "mounted"
       }
     },
     "@open-everywhere/provider-teams": {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "contributions": {
         "channel/teams": "mounted"
       }

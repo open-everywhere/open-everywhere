@@ -1,10 +1,16 @@
 import { Sandbox } from "@vercel/sandbox";
 import {
   BOX_LABEL,
+  BOX_PURPOSES,
   BOX_REF_LABEL,
+  boxDockerNetwork,
+  boxEgressBehindProxy,
   boxLabels,
   clampBoxMinutes,
+  dropBoxEgressPolicy,
+  pushBoxEgressPolicy,
   registerLongLivedBoxBackend,
+  resolveEgressRoute,
   resolveSandboxBackend,
   type BoxListing,
   type BoxPurpose,
@@ -14,12 +20,14 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { dockerStatusToSandboxStatus } from "./backend-stop.js";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
+import type { SandboxNetworkPolicy } from "eve/sandbox";
 
 export const VERCEL_BOX_CEILING_MINUTES = 24 * 60;
 const DOCKER_BOX_CEILING_MINUTES = 24 * 60;
 
 function isPurpose(v: string | undefined): v is BoxPurpose {
-  return v === "meeting" || v === "browser";
+  return (BOX_PURPOSES as readonly (string | undefined)[]).includes(v);
 }
 
 export interface VercelBoxSdk {
@@ -218,8 +226,31 @@ function dockerBoxName(spec: Pick<BoxSpec, "purpose" | "ref">, nonce: string): s
   return `oe-box-${spec.purpose}-${ref}-${nonce}`;
 }
 
-export function dockerRunArgs(spec: BoxSpec, name: string, maxMinutes: number): string[] {
-  if (spec.egress !== "open" && spec.egress.allow.length > 0) {
+export interface DockerBoxProxyPlacement {
+  readonly network: string;
+  readonly forwardProxy: string;
+}
+
+const PROXY_BOX_PURPOSES: readonly BoxPurpose[] = ["browser", "browser-qa"];
+
+export const BOX_DNS_SUFFIX = "oe-box";
+
+export const BOX_EGRESS_PROXY_ENV = "OE_BOX_EGRESS_PROXY";
+export const BOX_EGRESS_CA_ENV = "OE_BOX_EGRESS_CA";
+
+export function boxProxyPolicy(egress: Exclude<BoxSpec["egress"], "open">): SandboxNetworkPolicy {
+  return egress.allow.length === 0 ? "deny-all" : ({ allow: [...egress.allow] } as unknown as SandboxNetworkPolicy);
+}
+
+export function dockerRunArgs(spec: BoxSpec, name: string, maxMinutes: number, proxied?: DockerBoxProxyPlacement): string[] {
+  if (proxied !== undefined) {
+    if (!PROXY_BOX_PURPOSES.includes(spec.purpose)) {
+      throw new Error(`a ${spec.purpose} box cannot run behind the egress proxy (its traffic is not HTTP), and this deployment runs boxes only there — refusing to open it`);
+    }
+    if (spec.egress === "open") {
+      throw new Error("a box behind the egress proxy cannot run with open egress (the proxy refuses no private address) — declare the hosts instead of a catch-all");
+    }
+  } else if (spec.egress !== "open" && spec.egress.allow.length > 0) {
     throw new Error("the docker backend cannot enforce a host allow-list on a box — refusing to open it with open network");
   }
   const labels = boxLabels(spec);
@@ -250,19 +281,91 @@ export function dockerRunArgs(spec: BoxSpec, name: string, maxMinutes: number): 
   if (spec.persist !== undefined) {
     args.push("--label", `${DOCKER_BOX_PERSIST_LABEL}=${dockerVolumeName(spec.persist.key)}`, "--volume", `${dockerVolumeName(spec.persist.key)}:${spec.persist.mount}`);
   }
-  if (spec.egress !== "open") {
+  if (proxied !== undefined) {
+    args.push("--network", proxied.network, "--network-alias", `${name}.${BOX_DNS_SUFFIX}`);
+  } else if (spec.egress !== "open") {
     if (spec.port !== undefined) throw new Error("a docker box with no network cannot serve a port — refusing to open it");
     args.push("--network", "none");
   } else if (spec.network !== undefined) {
     args.push("--network", spec.network);
   }
-  if (spec.port !== undefined && spec.network === undefined) args.push("--publish", `127.0.0.1::${spec.port}`);
+  if (spec.port !== undefined && spec.network === undefined && proxied === undefined) args.push("--publish", `127.0.0.1::${spec.port}`);
   for (const k of Object.keys(spec.env)) args.push("--env", k);
+  if (proxied !== undefined) {
+    for (const k of [BOX_EGRESS_PROXY_ENV, BOX_EGRESS_CA_ENV, "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) if (!(k in spec.env)) args.push("--env", k);
+  }
   args.push("--entrypoint", "timeout", spec.image, `${maxMinutes * 60}s`, ...spec.command);
   return args;
 }
 
-export function createDockerBoxBackend(run: BoxDockerRunner = defaultDockerRunner, nonce: () => string = () => Date.now().toString(36)): LongLivedBoxBackend {
+export interface DockerBoxEgressProxy {
+  readonly placement: () => DockerBoxProxyPlacement;
+  readonly push: (sourceIp: string, policy: SandboxNetworkPolicy) => Promise<void>;
+  readonly drop: (sourceIp: string) => Promise<void>;
+  readonly caPem?: () => string | undefined;
+}
+
+export function liveDockerBoxEgressProxy(): DockerBoxEgressProxy {
+  return {
+    placement: () => {
+      const network = boxDockerNetwork();
+      if (network === undefined) throw new Error("sandbox.boxDockerNetwork is empty, so there is no internal network for the box");
+      const route = resolveEgressRoute(new URL("https://example.com/"), process.env, "browser box");
+      if (route.via !== "proxy") throw new Error("the app has no HTTPS_PROXY, so a box behind the egress proxy would have no way out — refusing to open it");
+      return { network, forwardProxy: route.proxyUrl };
+    },
+    push: (ip, policy) => pushBoxEgressPolicy(ip, policy),
+    drop: (ip) => dropBoxEgressPolicy(ip),
+    caPem: () => {
+      const path = process.env.NODE_EXTRA_CA_CERTS?.trim();
+      if (!path) return undefined;
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
+
+export function createDockerBoxBackend(
+  run: BoxDockerRunner = defaultDockerRunner,
+  nonce: () => string = () => Date.now().toString(36),
+  egressProxy?: DockerBoxEgressProxy,
+): LongLivedBoxBackend {
+  const boxIps = new Map<string, string>();
+  async function stopBox(name: string): Promise<void> {
+    let ip = boxIps.get(name);
+    if (ip === undefined && egressProxy !== undefined) {
+      let network: string | undefined;
+      try {
+        network = egressProxy.placement().network;
+      } catch {
+        network = undefined;
+      }
+      if (network !== undefined) ip = await boxIp(name, network);
+    }
+    try {
+      await run(["stop", "-t", "10", name]);
+    } catch {
+    }
+    if (ip !== undefined && egressProxy !== undefined) {
+      boxIps.delete(name);
+      try {
+        await egressProxy.drop(ip);
+      } catch (err) {
+        console.error(`[open-everywhere:box] the egress-proxy policy for a stopped box was not dropped (${String(err)})`);
+      }
+    }
+  }
+  async function boxIp(name: string, network: string): Promise<string | undefined> {
+    try {
+      const out = (await run(["inspect", "--format", `{{with index .NetworkSettings.Networks "${network}"}}{{.IPAddress}}{{end}}`, name])).trim();
+      return /^[0-9a-f.:]+$/i.test(out) ? out : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   async function inspect(names: readonly string[]): Promise<BoxListing[]> {
     if (names.length === 0) return [];
     let out: string;
@@ -313,23 +416,54 @@ export function createDockerBoxBackend(run: BoxDockerRunner = defaultDockerRunne
     backend: "docker",
     metered: false,
     maxMinutesCeiling: DOCKER_BOX_CEILING_MINUTES,
-    enforcesHostAllowList: false,
+    enforcesHostAllowList: egressProxy !== undefined,
     async open(spec) {
       if (spec.command.length === 0) throw new Error("a box needs a command to run");
       const maxMinutes = clampBoxMinutes(spec.maxMinutes, DOCKER_BOX_CEILING_MINUTES);
       const name = dockerBoxName(spec, nonce());
-      const args = dockerRunArgs(spec, name, maxMinutes);
+      const placement = egressProxy?.placement();
+      const args = dockerRunArgs(spec, name, maxMinutes, placement);
+      let env: Readonly<Record<string, string>> = spec.env;
+      const control = placement !== undefined && spec.network !== undefined && spec.network !== placement.network ? spec.network : undefined;
+      if (placement !== undefined && spec.port !== undefined && spec.network === undefined) {
+        throw new Error("a box behind the egress proxy that serves a port needs its own network for the app to reach it (box.dockerNetwork, `oe-net-boxctl` in docker-compose.browser.yml) — refusing to open it");
+      }
+      if (placement !== undefined) {
+        for (const [net, what] of [[placement.network, "sandbox.boxDockerNetwork"], ...(control !== undefined ? [[control, "the box's own network"]] : [])] as const) {
+          const internal = (await run(["network", "inspect", "--format", "{{.Internal}}", net])).trim();
+          if (internal !== "true") {
+            throw new Error(`docker network "${net}" (${what}) is not internal, so a box on it could skip the egress proxy — refusing to open it`);
+          }
+        }
+        const ca = egressProxy?.caPem?.();
+        const p = placement.forwardProxy;
+        env = { HTTP_PROXY: p, HTTPS_PROXY: p, http_proxy: p, https_proxy: p, ...spec.env, [BOX_EGRESS_PROXY_ENV]: p, ...(ca !== undefined ? { [BOX_EGRESS_CA_ENV]: ca } : {}) };
+      }
       if (spec.persist !== undefined) await stopOnVolume(dockerVolumeName(spec.persist.key));
-      await run(args, spec.env);
+      await run(args, env);
+      if (placement !== undefined && egressProxy !== undefined) {
+        const ip = await boxIp(name, placement.network);
+        try {
+          if (ip === undefined) throw new Error(`the box has no IP on "${placement.network}", so the egress proxy cannot hold it`);
+          await egressProxy.push(ip, boxProxyPolicy(spec.egress as Exclude<BoxSpec["egress"], "open">));
+          if (control !== undefined) await run(["network", "connect", "--alias", `${name}.${BOX_DNS_SUFFIX}`, control, name]);
+        } catch (err) {
+          await run(["stop", "-t", "10", name]).catch(() => "");
+          if (ip !== undefined) await egressProxy.drop(ip).catch(() => undefined);
+          throw err;
+        }
+        boxIps.set(name, ip);
+      }
       const [listing] = await inspect([name]);
       let url: string | undefined;
       try {
-        url = await boxUrl(spec, name);
+        url = placement !== undefined && spec.port !== undefined ? `http://${name}.${BOX_DNS_SUFFIX}:${spec.port}` : await boxUrl(spec, name);
       } catch (err) {
-        await run(["stop", "-t", "10", name]).catch(() => "");
+        await stopBox(name);
         throw err;
       }
-      return { name, backend: "docker", createdAt: listing?.createdAt ?? Date.now(), maxMinutes, ...(url !== undefined ? { url } : {}) };
+      const ip = boxIps.get(name);
+      return { name, backend: "docker", createdAt: listing?.createdAt ?? Date.now(), maxMinutes, ...(url !== undefined ? { url } : {}), ...(ip !== undefined ? { egressSourceIp: ip } : {}) };
     },
     async status(name) {
       const [listing] = await inspect([name]);
@@ -342,12 +476,7 @@ export function createDockerBoxBackend(run: BoxDockerRunner = defaultDockerRunne
         .filter((l) => l.length > 0);
       return await inspect(names);
     },
-    async stop(name) {
-      try {
-        await run(["stop", "-t", "10", name]);
-      } catch {
-      }
-    },
+    stop: stopBox,
     async forget(key) {
       const volume = dockerVolumeName(key);
       await stopOnVolume(volume);
@@ -378,6 +507,7 @@ export const justBashBoxBackend: LongLivedBoxBackend = {
 export function selectLongLivedBoxBackend(): LongLivedBoxBackend {
   const backend = resolveSandboxBackend();
   if (backend === "vercel") return createVercelBoxBackend();
+  if (boxEgressBehindProxy()) return createDockerBoxBackend(defaultDockerRunner, undefined, liveDockerBoxEgressProxy());
   return backend === "justbash" ? justBashBoxBackend : createDockerBoxBackend();
 }
 

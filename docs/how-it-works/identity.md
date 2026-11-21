@@ -1239,9 +1239,11 @@ the envelope would leave a member unable to quote an outsider at the agent.
 - **The chat READ verbs** apply behaviour 4 on every wired surface at once. `read_channel` and
   `read_thread` share one grade-and-project body, and the per-author evidence comes from the same
   join the non-member stamp uses — Slack's `users.info`, plus the operator's register on Slack, Teams and
-  Discord. EVERY chat reader routes through that one body — the delegated worker's
-  `read_work_channel` / `read_work_thread` (OPE-938) included — so the read half of `withhold` is declared once and no reader can declare it differently. Since OPE-1145 no
-  PER-SURFACE chat reader stands beside them.
+  Discord. Every generic chat read verb routes through that one body — the delegated worker's
+  `read_work_channel` / `read_work_thread` (OPE-938) included. One per-surface chat reader stands
+  beside them: Slack's opt-in public-channel search `search_slack_public` (OPE-2678). EVERY chat
+  reader, that one included, decides the read half of `withhold` through ONE helper
+  (`readAuthorWithhold` / `projectReadText`), so no reader can declare it differently.
 - **GitHub** (OPE-533) reads the comment's own `author_association`, which rides free on every
   `issue_comment` webhook. `OWNER`, `MEMBER` and `COLLABORATOR` each hold a deliberate access grant
   and are **internal**; every other value — `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`,

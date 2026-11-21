@@ -160,7 +160,8 @@ Create a Slack app from the manifest below, then copy its bot token and signing 
         "canvases:read",
         "lists:read",
         "lists:write",
-        "assistant:write"
+        "assistant:write",
+        "search:read.public"
       ]
     }
   },
